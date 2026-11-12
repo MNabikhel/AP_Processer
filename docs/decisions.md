@@ -5778,3 +5778,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Cost, measured:** the chart's load 15.0 s → 15.2 s (about 1%). The interval matters only while two threads
     want the lock at once; the OCR engine and SQLite let go of it while they work. It is process-wide: revisit if a
     measured slowdown of reading (`python -m ap_coder.bench speed`) is traced to it.
+- **D-238** · **A supplier JD Edwards renamed keeps its vendor checks' history and AP's hold** (`coding/vendors.py`
+  `_same_number`; 12 Nov 2026).
+  - **Why:** the touchless record and last year's journal follow the supplier number, but the vendor checks read the
+    invoices and the hold of the vendor row of the name: under its new name a touchless supplier paying a new bank
+    account raised no VENDOR_BANK_CHANGED, and AP's hold stayed on the old name (B-2540).
+  - **What:** D-222's amendment stands (a renamed supplier is a second vendor row, its lessons under the new name);
+    the vendor checks read the invoices of every vendor master row with the same supplier number, and a hold AP put
+    on any of them holds the others (not a hold for the retired marker of an old name). VENDOR_NEW still skips a
+    vendor in the master: the master vouches for the name, and the old name's approvals are the supplier's.

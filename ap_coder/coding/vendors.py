@@ -354,10 +354,15 @@ def vendor_findings(
              f"invoice #{other['id']} from {other['vendor_name']} has the same number and total: the same bill "
              "under two vendor names?")
         )  # fmt: skip
-    findings += _hold_findings(own, master)
+    renamed = _same_number(store, own, key)
+    findings += _hold_findings(own, master, *renamed)
 
-    # the rows kept for every check, read-only: not a copy of each of a big vendor's 23,000 (D-174)
-    history = [h for h in store.vendor_invoices(key, shared=True) if h["id"] != exclude_invoice_id]
+    # the rows kept for every check, read-only: not a copy of each of a big vendor's 23,000 (D-174); a supplier
+    # JD Edwards renamed is checked against its invoices under the names it had too (D-238)
+    history = [h for k in (key, *(v["vendor_key"] for v in renamed)) for h in store.vendor_invoices(k, shared=True)
+               if h["id"] != exclude_invoice_id]  # fmt: skip
+    if renamed:
+        history.sort(key=lambda h: -h["id"])  # the newest first, as one vendor's are
     findings += _credit_note_findings(coding, store, history)
     # No invoice under this name approved yet (its first, or the others still wait): a person confirms it is a known
     # supplier, even when the GST/HST number printed is a touchless supplier's. The ERP's vendor master vouches for
@@ -541,14 +546,32 @@ def _held_in_jde(held: list[dict[str, Any]]) -> str:
     return f"in JD Edwards ({hold_said(next(v['erp_hold'] for v in held if v.get('erp_hold')))})"
 
 
-def _hold_findings(own: dict[str, Any] | None, master: dict[str, Any] | None) -> list[tuple[str, str, str]]:
-    """VENDOR_ON_HOLD (error): the vendor's own row or the master vendor it is matched to is on hold, in the vendor
-    list or by a JD Edwards hold payment code that stops vouchers. VENDOR_PAYMENTS_HELD (warning) when JD Edwards
-    holds its payments only (code 2): the invoice is coded and keyed, and paid once the hold is lifted there
-    (B-2157)."""
+def _same_number(store: Store, own: dict[str, Any] | None, key: str) -> list[dict[str, Any]]:
+    """The vendor master's other vendors of ``own``'s supplier number: the same supplier under a name JD Edwards gave
+    it before it renamed it (a second vendor here, D-222), whose invoices and AP's hold are this one's (D-238). Not
+    one on hold for the marker its old name had: the name it has now is not marked."""
+    from ..core.store.vendor_master import MARKED
+
+    ident = str((own or {}).get("erp_id") or "").strip()
+    if not ident:
+        return []
+    rows = [store.get_vendor(k) for k in store.master_vendors_of(set(), {ident}) if k != key]
+    return [
+        v
+        for v in rows
+        if v and not (v.get("status") == ON_HOLD and re.fullmatch(MARKED.format(".+"), v.get("notes") or ""))
+    ]
+
+
+def _hold_findings(own: dict[str, Any] | None, master: dict[str, Any] | None,
+                   *renamed: dict[str, Any]) -> list[tuple[str, str, str]]:  # fmt: skip
+    """VENDOR_ON_HOLD (error): the vendor's own row, the master vendor it is matched to or the vendor its supplier
+    number had under an earlier name (``renamed``) is on hold, in the vendor list or by a JD Edwards hold payment
+    code that stops vouchers. VENDOR_PAYMENTS_HELD (warning) when JD Edwards holds its payments only (code 2): the
+    invoice is coded and keyed, and paid once the hold is lifted there (B-2157)."""
     from ..core.store.vendor_master import stops_vouchers
 
-    rows = [v for v in (own, master) if v]
+    rows = [v for v in (own, master, *renamed) if v]
     held = [v for v in rows if v.get("status") == ON_HOLD or stops_vouchers(v.get("erp_hold"))]
     if held:
         notes = list(dict.fromkeys(v["notes"] for v in held if v.get("notes")))
