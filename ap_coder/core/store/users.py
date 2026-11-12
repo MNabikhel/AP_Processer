@@ -52,7 +52,7 @@ from typing import Any
 
 from .. import authenticator
 from ._base import _now
-from .dialect import begin_write
+from .dialect import begin_write, json_get
 
 READONLY, CLERK, APPROVER, ADMIN = "readonly", "clerk", "approver", "admin"
 MANAGER = "manager"  # confirms the cost allocation of the invoices sent to them, nothing else (D-138)
@@ -690,8 +690,8 @@ class UsersMixin:
         ``password_reset`` event; else its creation); not the only Admin's from the console till a sign-in (B-2533)."""
         with self._conn() as conn:  # (no Admin gave it, ``share`` did: nobody else could give it a new one)
             given, by = conn.execute(
-                "SELECT created_at, json_extract(detail, '$.by_user') FROM events WHERE action IN ('user_added', "
-                "'password_reset') AND json_extract(detail, '$.username') = ? ORDER BY created_at DESC, id DESC",
+                f"SELECT created_at, {json_get('detail', '$.by_user')} FROM events WHERE action IN ('user_added', "
+                f"'password_reset') AND {json_get('detail', '$.username')} = ? ORDER BY created_at DESC, id DESC",
                 (row["username"],),
             ).fetchone() or (None, None)
             first = by is None and row["role"] == ADMIN and row["active"] and self._active_admins(conn) == 1 and not (
