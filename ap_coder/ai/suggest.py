@@ -579,7 +579,17 @@ def _from_memory(description: str, vendor_name: str, feedback: list[dict[str, An
             memory.said[asked] = kept
             while len(memory.said) > SAID_KEPT:
                 del memory.said[next(iter(memory.said))]
-    return [replace(s, reasons=list(s.reasons)) for s in kept[1]]
+    centers = _listed_centers(reference)
+    return [replace(s, reasons=list(s.reasons), cost_center=s.cost_center if centers is None or s.cost_center in centers
+                    else "") for s in kept[1]]  # fmt: skip
+
+
+def _listed_centers(reference: ReferenceData) -> frozenset[str] | None:
+    """The cost centers a suggestion may carry from the past line it came from, on plain lists: those still listed,
+    not one taken out of the list since (B-2545); None for any (no cost centers, or a chart's business units:
+    ``complete_pair`` places them)."""
+    listed = reference.line_cost_centers() if reference.pairs is None else None
+    return None if listed is None else frozenset([*listed, UNASSIGNED])
 
 
 def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory, reference: ReferenceData,
@@ -587,10 +597,6 @@ def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory
     """``suggest_gl`` worked out."""
     found: dict[str, Suggestion] = {}
     strong: dict[str, int] = {}  # account -> the highest priority of a source strong enough to code with it
-    # the cost centers still listed, on plain lists (a business unit of a chart is placed by ``complete_pair``): not
-    # one taken out of the list since (B-2545)
-    listed = reference.line_cost_centers() if reference.pairs is None else None
-    centers = None if listed is None else frozenset([*listed, UNASSIGNED])
 
     def add(gl: str, score: float, reason: str, source: str, auto: bool = False, cc: str = "") -> None:
         if gl not in valid:
@@ -598,7 +604,7 @@ def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory
         s = found.setdefault(gl, Suggestion(gl))
         if score > s.score:
             s.score, s.source = score, source
-            if cc and (centers is None or cc in centers):
+            if cc:
                 s.cost_center = cc
             if reason in s.reasons:
                 s.reasons.remove(reason)
