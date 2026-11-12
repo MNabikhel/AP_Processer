@@ -828,14 +828,9 @@ def candidates(description: str, vendor_name: str, feedback: list[dict[str, Any]
                            business_unit=_unit(s.cost_center), code=s.gl_code, score=s.score,
                            reason="; ".join(s.reasons), source=s.source, auto=s.auto, check=s.check,
                            reasons=list(s.reasons)) for s in found][:limit]  # fmt: skip
-        if plain and plain[0].auto and plain[0].source == "usual":
-            # A line of another kind is no usual one, as on the chart's path (B-2520). The list's descriptions are
-            # long ("IT Hardware - Non-Capital - monitors; ... laptops below threshold"): a telling word of one is
-            # enough, and the name before the dash says which.
-            for c in plain:
-                c.name = account_name(reference, c.business_unit, c.code).partition(" - ")[0]
+        if plain and plain[0].auto and plain[0].source == "usual":  # as on the chart's path (B-2520)
             usual = _usual_prior(plain[0], feedback, reference, key or vendor_key(vendor_name))
-            plain = _unless_another_kind(description, plain, usual, reference, [], least=0.0)[:limit]
+            plain = _unless_another_kind(description, plain, usual, reference, [], listed=True)[:limit]
         return plain
     valid = frozenset(reference.line_accounts())
     ranked = [c for c in rank_prior(prior, description, reference) if c.code in valid] if prior else []
@@ -855,6 +850,7 @@ def candidates(description: str, vendor_name: str, feedback: list[dict[str, Any]
         kept.reasons += [r for r in other.reasons if r not in kept.reasons]
         kept.reason = "; ".join(kept.reasons)
         kept.check = kept.check or other.check
+        kept.guess = kept.guess and other.guess  # the business unit known from either source is known (B-2518)
         if not kept.of and other.of:
             kept.lines, kept.of, kept.share, kept.example = other.lines, other.of, other.share, other.example
         offered[c.account] = (best, kept)
@@ -993,7 +989,7 @@ def _usual_prior(top: Candidate, feedback: list[dict[str, Any]], reference: Refe
 
 
 def _unless_another_kind(description: str, ordered: list[Candidate], prior: Prior, reference: ReferenceData,
-                         units: list[str], least: float = KIND_ALIKE) -> list[Candidate]:  # fmt: skip
+                         units: list[str], listed: bool = False) -> list[Candidate]:  # fmt: skip
     """``ordered``, whose first is the supplier's one account about to code the line with no one picking: as it is,
     unless the line plainly says another kind of thing (a lunch on a courier's invoice, B-2228). Then the first is
     left for a person, its ``check`` saying why, and the accounts of that other kind come next.
@@ -1005,7 +1001,11 @@ def _unless_another_kind(description: str, ordered: list[Candidate], prior: Prio
     account of the chart, offered or not (``supplier_prior.reads_like``: a laptop, a hotel, consulting on a
     courier's invoice, B-2251), or it names the kind of another account offered (``_another_kind``: an insurance
     premium, a desk on a courier's invoice, B-2370): then that account is first, its ``check`` saying why. A
-    supplier's own words that say nothing of any account ("waybill 77812") are no other kind: the line is coded."""
+    supplier's own words that say nothing of any account ("waybill 77812") are no other kind: the line is coded.
+
+    ``listed``: a vendor's usual account of the plain lists (B-2520), whose descriptions go on with details ("Office
+    Supplies - paper; toner; ..."): no meal (coffee pods are an office supplier's), and a kind named only by a word of
+    the account's name proper (``_own_name``), not one of its details (paper towels are a cleaning company's)."""
     top, usual = ordered[0], prior.accounts[0]
     likeness = alike(prior, usual, description, reference)
     if likeness >= SAID_ALIKE:
@@ -1015,16 +1015,16 @@ def _unless_another_kind(description: str, ordered: list[Candidate], prior: Prio
     meals = frozenset(getattr(getattr(reference, "tax", None), "meals_gl_codes", None) or ())
     known = " ".join([top.name or account_name(reference, top.business_unit, top.code),
                       *(r.example for r in usual.remarks)])  # fmt: skip
-    if _MEAL_WORDS.search(description) and top.code not in meals and not _MEAL_WORDS.search(known):
+    if not listed and _MEAL_WORDS.search(description) and top.code not in meals and not _MEAL_WORDS.search(known):
         said, others = "a meal", _meal_accounts(line, reference, meals, rest, units)
     else:
         other = max(rest, key=lambda c: similarity(line, name_words(reference, c.business_unit, c.code)), default=None)
         if other is None or similarity(line, name_words(reference, other.business_unit, other.code)) < ANOTHER_ALIKE:
             other = _named_account(description, top, rest, reference, units)
         if other is None:
-            other = kind = _another_kind(line, likeness, top, usual, rest, reference, least)
+            other = kind = _another_kind(line, likeness, top, usual, rest, reference, listed)
         if other is not None:
-            said, others = f"{other.name or 'account'} ({other.account})", [other]
+            said, others = f"{other.name or _own_name(reference, other.code) or 'account'} ({other.account})", [other]
     if not said:
         return ordered
     top.auto = False
@@ -1035,22 +1035,37 @@ def _unless_another_kind(description: str, ordered: list[Candidate], prior: Prio
     return [top, *others, *(c for c in rest if not any(c is o for o in others))]
 
 
+def _own_name(reference: ReferenceData, code: str) -> str:
+    """The name proper of an account of the GL account list, without the details its description goes on with: the
+    parts before the first one in lower case ("IT Hardware - Non-Capital" of "IT Hardware - Non-Capital - monitors;
+    keyboards; ... laptops below threshold", "Professional Fees - Legal" of "... - Legal - external legal counsel")."""
+    parts = account_name(reference, "", code).split(" - ")
+    kept = [parts[0]]
+    for part in parts[1:]:
+        if any(w[:1].islower() for w in part.split()):
+            break
+        kept.append(part)
+    return " - ".join(kept)
+
+
 def _another_kind(line: frozenset[str], likeness: float, top: Candidate, usual: AccountUse, offered: list[Candidate],
-                  reference: ReferenceData, least: float = KIND_ALIKE) -> Candidate | None:  # fmt: skip
+                  reference: ReferenceData, listed: bool = False) -> Candidate | None:  # fmt: skip
     """The account ``offered`` whose kind a line not alike to the supplier's account names (``likeness``: how alike
     it is to that account), or None: the line says a word of its name or category that neither the name of the
     supplier's account nor AP's remarks or the lines approved to it have, a word at most ``KIND_NAMES`` accounts'
     have, and it is ``KIND_ALIKE`` alike to that name, more than to the supplier's account. "Insurance premium -
     cargo policy" names an insurance account on a courier's invoice; "Ergonomic office chair" says only the "office"
-    of many names, and is the courier's. The most alike first, then the one whose word fewer accounts have."""
+    of many names, and is the courier's. The most alike first, then the one whose word fewer accounts have.
+    ``listed`` (``_unless_another_kind``'s): the word is one of the name proper's, however alike the line is."""
     have = name_words(reference, top.business_unit, top.code).union(*usual.remark_keys, *usual.line_keys)
     counts = names_with(reference)
     best, most = None, (0.0, 0)
     for c in offered:
         words = name_words(reference, c.business_unit, c.code)
-        telling = [counts.get(w, 0) for w in line & words - have if counts.get(w, 0) <= KIND_NAMES]
+        named = keys(_own_name(reference, c.code)) if listed else words
+        telling = [counts.get(w, 0) for w in line & named - have if counts.get(w, 0) <= KIND_NAMES]
         score = similarity(line, words)
-        if c.code == top.code or not telling or score < least or score <= likeness:
+        if c.code == top.code or not telling or score < (0.0 if listed else KIND_ALIKE) or score <= likeness:
             continue
         if (score, -min(telling)) > most:
             best, most = c, (score, -min(telling))

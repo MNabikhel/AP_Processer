@@ -648,3 +648,41 @@ def test_a_hold_put_on_a_supplier_holds_it_under_its_new_name(tmp_path):
                                  "gst": RENAMED_GST}], by_erp_id=True)  # fmt: skip
     found = vendor_findings(_renamed_doc("Acme Industrial Holdings Inc", "A-2"), store)
     assert ("error", "VENDOR_ON_HOLD", "this vendor is on hold in the vendor list: bank letter not verified") in found
+
+
+@pytest.mark.parametrize(("numbers", "gst"), [(("0", "0"), "222222222RT0001"), (("000", "000"), "222222222RT0001"),
+                                              (("500", "500"), "222222222RT0001")])  # fmt: skip
+def test_vendors_with_no_real_supplier_number_or_another_business_number_share_nothing(tmp_path, numbers, gst):
+    """B-2517: a supplier number of zeros (a plain list's "code" column read as the ERP ID), or one number on two
+    vendors of different Business Numbers (a rename keeps its own), is no renamed supplier: AP's hold on one and its
+    bank details are not the other's."""
+    bank = "Transit 12345 Institution 004 Account 1234567"
+    store = Store(tmp_path / "s.db")
+    store.import_vendor_master([{"vendor_name": "Northern Paper Co", "erp_id": numbers[0], "gst": "111111111RT0001"},
+                                {"vendor_name": "Bright Cleaning Inc", "erp_id": numbers[1], "gst": gst}])  # fmt: skip
+    northern = store.get_vendor("northern paper")
+    store.save_vendor("northern paper", northern["display_name"], status="on_hold", expected_gst="111111111RT0001",
+                      notes="fraud alert", actor="Mia")  # fmt: skip
+    for n in range(3):
+        doc = gt(vendor_name="Northern Paper Co", invoice_number=f"N-{n}",
+                 gst_hst_registration_number="111111111RT0001", remit_bank_account=bank)  # fmt: skip
+        store.approve_invoice(store.add_invoice(tmp_path / f"n{n}.pdf", doc, None), doc, "pat")
+    for number, account in (("B-1", "Transit 99999 Institution 010 Account 7654321"), ("B-2", bank)):
+        doc = gt(vendor_name="Bright Cleaning Inc", invoice_number=number, gst_hst_registration_number=gst,
+                 remit_bank_account=account)  # fmt: skip
+        codes = {c for _, c, _ in vendor_findings(InvoiceCoding.model_validate(doc), store)}
+        assert not codes & {"VENDOR_ON_HOLD", "VENDOR_BANK_CHANGED", "POSSIBLE_DUPLICATE_AMOUNT"}, codes
+
+
+def test_a_renamed_supplier_with_another_gst_account_of_its_business_number_keeps_its_hold(tmp_path):
+    """B-2517: a renamed supplier keeps its Business Number; another GST/HST account of it (RT0002) is still it."""
+    store = Store(tmp_path / "s.db")
+    store.import_vendor_master([{"vendor_name": "Acme Fasteners Ltd", "erp_id": "100", "gst": "123456789RT0001"}],
+                               by_erp_id=True)  # fmt: skip
+    store.save_vendor("acme fasteners", "Acme Fasteners Ltd", status="on_hold", expected_gst="123456789RT0001",
+                      notes="bank letter not verified", actor="Mia")  # fmt: skip
+    store.import_vendor_master([{"vendor_name": "Acme Industrial Holdings Inc", "erp_id": "100",
+                                 "gst": "123456789RT0002"}], by_erp_id=True)  # fmt: skip
+    doc = gt(vendor_name="Acme Industrial Holdings Inc", invoice_number="A-2",
+             gst_hst_registration_number="123456789RT0002")  # fmt: skip
+    assert "VENDOR_ON_HOLD" in {c for _, c, _ in vendor_findings(InvoiceCoding.model_validate(doc), store)}

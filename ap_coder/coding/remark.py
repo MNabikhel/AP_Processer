@@ -131,10 +131,16 @@ def _get(thing: Any, name: str) -> Any:
 
 
 def described(line: Any) -> str:
-    """A line's description as the invoice prints it: a part of a split line without the split's mark."""
-    text = one_line(_get(line, "description"))
+    """A line's description as the invoice prints it, on one line: a part of a split line without the split's mark."""
+    return one_line(unsplit(line))
+
+
+def unsplit(line: Any) -> str:
+    """A line's description as it is, a part of a split line's without the split's mark (``review.split_line``'s
+    "Diesel - card 30419 (40%)" is "Diesel - card 30419"): what the line memory learns of it (B-2519)."""
+    text = str(_get(line, "description") or "")
     part = _SPLIT.match(str(_get(line, "reasoning_justification") or ""))
-    return text.removesuffix(f"({part[2]})").rstrip() if part else text
+    return text.rstrip().removesuffix(f"({part[2]})").rstrip() if part else text
 
 
 def _first_part(line: Any, coding: Any) -> Any:

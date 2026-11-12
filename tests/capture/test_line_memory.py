@@ -239,3 +239,24 @@ def test_a_split_line_does_not_rename_the_suppliers_next_line(tmp_path, referenc
     nxt = read("N-2")
     apply_line_memory(store, nxt)
     assert nxt.line_items[0].description == "Copy paper case of 10", "the split's share became the line's name"
+
+
+def test_a_line_approved_as_read_in_decomposed_accents_is_no_correction(tmp_path):
+    """B-2519: a line some PDF text layers give with its accents decomposed ("Cafe\u0301 au lait"), approved as it was
+    proposed, counted as AP correcting it once the split's share was taken off the approved text (which also wrote
+    the accents composed); a renamed split part is still remembered under its new name without the share."""
+    from ap_coder.capture.workflow import remember_lines
+    from ap_coder.core.store import Store
+
+    store = Store(tmp_path / "s.db")
+    line = {"line_number": 1, "description": "Cafe\u0301 au lait", "amount": 10.0}
+    proposed = {"line_items": [dict(line)]}
+    assert remember_lines(store, "name:x", 1, {"line_items": [dict(line)]}, proposed, {"line_items": [dict(line)]}) == 0
+    read = {"line_number": 1, "description": "Copy paper case of 10", "amount": 10.0}
+    part = {**read, "description": "Letter paper case (60%)", "reasoning_justification": "Split from line 1 (60%).",
+            "amount": 6.0}  # fmt: skip
+    assert remember_lines(store, "name:y", 2, {"line_items": [dict(read)]}, {"line_items": [dict(read)]},
+                          {"line_items": [part]}) == 1  # fmt: skip
+    with store._conn() as conn:
+        kept = {r[0] for r in conn.execute("SELECT description FROM line_texts WHERE supplier_key = 'name:y'")}
+    assert kept == {"Letter paper case"}

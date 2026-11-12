@@ -549,18 +549,24 @@ def _held_in_jde(held: list[dict[str, Any]]) -> str:
 def _same_number(store: Store, own: dict[str, Any] | None, key: str) -> list[dict[str, Any]]:
     """The vendor master's other vendors of ``own``'s supplier number: the same supplier under a name JD Edwards gave
     it before it renamed it (a second vendor here, D-222), whose invoices and AP's hold are this one's (D-239). Not
-    one on hold for the marker its old name had: the name it has now is not marked."""
+    one on hold for the marker its old name had: the name it has now is not marked. No number of zeros (a plain
+    list's "code" column read as the ERP ID), and not a vendor of another Business Number: a rename keeps its own
+    (B-2517)."""
     from ..core.store.vendor_master import MARKED
 
     ident = str((own or {}).get("erp_id") or "").strip()
-    if not ident:
+    if not ident.lstrip("0"):
         return []
+    gst = (own or {}).get("expected_gst")
     rows = [store.get_vendor(k) for k in store.master_vendors_of(set(), {ident}) if k != key]
     return [
         v
         for v in rows
-        if v and not (v.get("status") == ON_HOLD and re.fullmatch(MARKED.format(".+"), v.get("notes") or ""))
-    ]
+        if v
+        and not (v.get("status") == ON_HOLD and re.fullmatch(MARKED.format(".+"), v.get("notes") or ""))
+        and not (gst and v.get("expected_gst") and not same_tax_number(gst, v["expected_gst"])
+                 and not other_tax_account(gst, v["expected_gst"]))
+    ]  # fmt: skip
 
 
 def _hold_findings(own: dict[str, Any] | None, master: dict[str, Any] | None,
