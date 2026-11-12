@@ -1565,11 +1565,17 @@ def desktop() -> Path | None:
     return Path(folder) if folder else None
 
 
+def ps_quoted(text: str) -> str:
+    """``text`` inside a PowerShell single-quoted string: each quote PowerShell ends one at (' and the typographic
+    ‘ ’ ‚ ‛) doubled, its own rule (B-2571)."""
+    return re.sub("['\u2018\u2019\u201a\u201b]", lambda quote: quote.group() * 2, text)
+
+
 def write_shortcut(folder: Path) -> bool:
     """One 'AP Coder' shortcut to APProcessor.bat: written over in place, never a second copy."""
-    target = str(ROOT / "APProcessor.bat").replace("'", "''")
-    workdir = str(ROOT).replace("'", "''")
-    link = str(folder / SHORTCUT).replace("'", "''")
+    target = ps_quoted(str(ROOT / "APProcessor.bat"))
+    workdir = ps_quoted(str(ROOT))
+    link = ps_quoted(str(folder / SHORTCUT))
     script = (
         f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{link}');"
         f"$s.TargetPath='{target}';$s.WorkingDirectory='{workdir}';"
@@ -1651,7 +1657,7 @@ def old_shortcut_folder() -> str:
     folder = desktop()
     if folder is None or not (folder / SHORTCUT).exists():
         return ""
-    link = str(folder / SHORTCUT).replace("'", "''")
+    link = ps_quoted(str(folder / SHORTCUT))
     target = running.powershell(f"(New-Object -ComObject WScript.Shell).CreateShortcut('{link}').TargetPath", 60)
     return str(Path(target).parent) if target else ""
 
@@ -1976,6 +1982,21 @@ def someone_elses(port: int) -> SetupError:
                       "Coder again.")  # fmt: skip
 
 
+def open_elsewhere(rest: list[str], state: dict) -> SetupError | None:
+    """What a start says when this folder's own AP Coder (this version) is open on another data folder (scripts/
+    demo.bat's APCoder-demo, a guide's made-up company), else None: its start holds this folder's lock while it runs,
+    so waiting for it would last half an hour (B-2572)."""
+    ident = identity()
+    for server in running.find(candidate_ports(rest, state), paths.private_dir()):
+        if (running.judge(server, ROOT, ident["version"], ident["code"], paths.private_dir()) == "elsewhere"
+                and paths.same_folder(server.folder, ROOT) and server.version == ident["version"]):  # fmt: skip
+            return SetupError(f"AP Coder is already open from this folder on another data folder, {server.data} "
+                              f"(port {server.port}): one AP Coder at a time runs from this folder.",
+                              "Close that AP Coder window (the demo's, for example), then start AP Coder "
+                              "again.")  # fmt: skip
+    return None
+
+
 def dashboard_url(port: int) -> str:
     """The address the browser opens: the one the dashboard listens on (127.0.0.1 by default). Never "localhost": a
     Mac or Windows browser tries it as ::1 first, where another program may answer."""
@@ -2092,6 +2113,9 @@ def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: floa
         return blocked
     if take_lock():
         return None
+    beside = open_elsewhere(argv, load_state())
+    if beside:
+        return failed(beside)
     say("AP Coder is being set up or started in another window: waiting for it to open the dashboard...")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -2102,6 +2126,9 @@ def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: floa
         theirs = other_users_dashboard(argv, load_state())
         if theirs:
             return failed(someone_elses(theirs))
+        beside = open_elsewhere(argv, load_state())
+        if beside:
+            return failed(beside)
         if take_lock():
             return None
     say("The other AP Coder window has not opened the dashboard yet: look at that window, or close it and start "

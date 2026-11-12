@@ -575,6 +575,29 @@ def test_an_older_version_running_from_this_folder_is_taken_over_not_waited_for(
     assert "has not opened the dashboard yet" not in capsys.readouterr().out
 
 
+def test_a_start_beside_the_demos_dashboard_stops_at_once_naming_it(lock, tmp_path, monkeypatch, capsys):
+    """B-2572: scripts/demo.bat starts AP Coder from this folder with a data folder of its own (APCoder-demo), and
+    its start holds this folder's lock while its dashboard runs. A double-click for the person's own data found that
+    dashboard serving another data folder (never opened, B-2350) but waited for the lock half an hour, saying "being
+    set up or started in another window". It stops at once, naming that data folder and port: close that window."""
+    launch = lock
+    mine, demo = tmp_path / "APCoder", tmp_path / "APCoder-demo"
+    monkeypatch.setattr(launch.paths, "private_dir", lambda: mine)
+    ident = launch.identity()
+    demos_start = _other_start_holds_the_lock(launch)
+    server = launch.running.Server(8501, ident["version"], str(launch.ROOT), 4242, build=ident["code"],
+                                   user=launch.running.this_user(), data=str(demo))  # fmt: skip
+    monkeypatch.setattr(launch.running, "find", lambda ports, data: [server])
+    monkeypatch.setattr(launch, "stop_older", launch.real_stop_older)
+    monkeypatch.setattr(launch, "open_browser", lambda url: pytest.fail("opened the demo's dashboard"))
+    started = time.monotonic()
+    assert launch.wait_for_other([], timeout=5, every=0.1) == 1
+    out = capsys.readouterr().out
+    demos_start.close()
+    assert time.monotonic() - started < 2 and "being set up or started in another window" not in out, out
+    assert f"{demo} (port 8501)" in out and "Close that AP Coder window" in out, out
+
+
 def test_main_waits_instead_of_setting_up_twice(lock, monkeypatch):
     launch = lock
     other = _other_start_holds_the_lock(launch)

@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from ap_coder.core import paths
 from tests.conftest import SAMPLE_STEM, SAMPLES
 
@@ -125,3 +127,29 @@ def test_two_processes_pruning_a_folder_at_once_leave_what_one_leaves(tmp_path, 
             monkeypatch.setattr(os, "unlink", real)
             left.append(sorted(p.relative_to(folder).as_posix() for p in folder.rglob("*") if p.is_file()))
         assert left[0] and left[1] == left[0], name
+
+
+def test_the_settings_file_is_replaced_even_while_another_process_has_it_open(tmp_path, monkeypatch):
+    """B-2573: Windows refuses to rename over a file another process has open (the dashboard reading settings.json, an
+    antivirus): write_user_settings's bare os.replace failed with PermissionError, as server.json's did (B-1962). The
+    rename is tried again for a moment on Windows; elsewhere such a rename never fails: no wait."""
+    monkeypatch.setenv("AP_USER_SETTINGS", str(tmp_path / "settings.json"))
+    paths.write_user_settings(reviewer="Before")
+    real, tries, waited = os.replace, [], []
+
+    def busy(src, dst):
+        tries.append(dst)
+        if len(tries) == 1:
+            raise PermissionError(13, "The process cannot access the file: another process uses it", str(dst))
+        return real(src, dst)
+
+    monkeypatch.setattr(paths, "REPLACE_WAITS", (0.05, 0.1, 0.2, 0.4, 0.8))  # (Windows' own)
+    monkeypatch.setattr(paths.time, "sleep", waited.append)
+    monkeypatch.setattr(os, "replace", busy)
+    paths.write_user_settings(reviewer="After")
+    assert paths.read_user_settings()["reviewer"] == "After" and len(tries) == 2 and waited == [0.05]
+    monkeypatch.setattr(paths, "REPLACE_WAITS", ())  # (elsewhere)
+    tries.clear()
+    with pytest.raises(PermissionError):
+        paths.write_user_settings(reviewer="Never")
+    assert paths.read_user_settings()["reviewer"] == "After" and len(tries) == 1 and waited == [0.05]
