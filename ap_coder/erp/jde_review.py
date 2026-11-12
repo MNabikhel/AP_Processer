@@ -182,9 +182,15 @@ def voucher_view(
     item: …", or "Not ready to key: <the first reason>")."""
     final = output
     v = _prepare({"id": 0, "final_output": final}, settings, str(an8 or "").strip(), on)
-    today = on or dt.date.today()
     invoice_date = _date(final.get("invoice_date"))
-    gl_date = today if settings.gl_date == GL_DATE_EXPORT else invoice_date
+    gl_date, gl_moved = gl_date_of(final, settings, on)  # as keyed: moved into the open period (D-182, B-2514)
+    gl_from = "the day of the export" if settings.gl_date == GL_DATE_EXPORT else "the invoice date"
+    if settings.gl_date != GL_DATE_EXPORT and invoice_date is None:
+        gl_text = f"— ({gl_from})"
+    elif gl_moved:
+        gl_text = f"{gl_date} (moved into JD Edwards' open period from {gl_from}, {gl_moved}, in a closed period)"
+    else:
+        gl_text = f"{gl_date} ({gl_from})"
     due = sent_due(final)
     credit = v.gross < 0
     code, key, source = terms_code(final, settings)
@@ -222,8 +228,7 @@ def voucher_view(
         ("Supplier (AN8)", "VLAN8", str(an8 or "").strip() or "none", "vendor"),
         ("Invoice number", "VLVINV", str(final.get("invoice_number") or "").strip()[:25] or "—", "invoice"),
         ("Invoice date", "VLDIVJ", invoice_date.isoformat() if invoice_date else "—", "invoice"),
-        ("G/L date", "VLDGJ", (gl_date.isoformat() if gl_date else "—") + (
-            " (the day of the export)" if settings.gl_date == GL_DATE_EXPORT else " (the invoice date)"), "settings"),
+        ("G/L date", "VLDGJ", gl_text, "settings"),
         ("Due date", "VLDDJ", due_text, "invoice"),
         ("Payment terms", "VLPTC", terms_text, "settings"),
         ("Currency", "VLCRCD", v.currency + (" (foreign)" if v.foreign else ""), "invoice"),

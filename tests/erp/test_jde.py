@@ -1308,6 +1308,24 @@ def test_the_voucher_view_says_what_is_keyed_on_the_pay_item_or_why_it_is_not_re
     assert view["keyed"].startswith("Not ready to key: GST 5% and HST 13% are both charged")
 
 
+def test_the_review_screens_g_l_date_row_is_the_date_keyed_moved_into_the_open_period():
+    """B-2514: the review screen's G/L date row ignored the open period: "2026-10-20 (the invoice date)" beside
+    "Keyed on the pay item: G/L date 2026-11-01". It is the date keyed, and says it was moved and from what."""
+    final = {**_invoice(AB)["final_output"], "invoice_date": "2026-10-20"}
+
+    def gl_row(**kw):
+        settings = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX, **kw)
+        view = jde_review.voucher_view(final, settings, "10023", on=dt.date(2026, 11, 12))
+        return next(r for r in view["rows"] if r["column"] == "VLDGJ")["value"], view["gl_date"]
+
+    assert gl_row() == ("2026-10-20 (the invoice date)", "2026-10-20")
+    assert gl_row(open_from="2026-11-01") == (
+        "2026-11-01 (moved into JD Edwards' open period from the invoice date, 2026-10-20, in a closed period)",
+        "2026-11-01",
+    )
+    assert gl_row(gl_date=jde_settings.GL_DATE_EXPORT) == ("2026-11-12 (the day of the export)", "2026-11-12")
+
+
 def test_the_prototype_settings_are_the_way_of_a_department_that_types_its_vouchers():
     """`JdeSettings()` keeps its defaults (existing installs); `prototype_settings()` is the tax on the pay item
     with code V, a tax rate/area a province, the remarks as typed and the identity account rule."""
