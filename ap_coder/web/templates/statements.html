@@ -2,6 +2,9 @@
 {% from "_sheet.html" import sheets, columns, go %}
 {% import "_import.html" as imp with context %}
 {% from "_tiles.html" import tile_row %}
+{# On a statement of open items, the invoices exported are not expected (D-242): the tick box of the upload and of the
+   Reconcile form. #}
+{% macro open_items_box() %}<label class="check"><input type="checkbox" name="open_items" value="1"{% if open_items %} checked{% endif %}> This statement lists only unpaid invoices (open items)</label>{% endmacro %}
 {% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">
 <link rel="stylesheet" href="{{ static_url('/static/imports.css') }}">{% endblock %}
 {% block content %}
@@ -38,21 +41,23 @@
   {% call imp.file_box("/statements/upload", spec.accept, "The statement, a CSV or Excel file (.csv, .xlsx or .xls): one row per invoice, credit or payment, as the vendor sent it. Nothing is stored.", "Reading…", then="Reconcile") %}
     <label class="field">Vendor
       <select name="vendor" data-picker data-picker-noun="vendor">{% for key, name in names.items() %}<option value="{{ key }}"{% if key == vendor %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+    {{ open_items_box() }}
   {% endcall %}
   {% endif %}
   {% else %}
   <p class="muted">A Clerk uploads a vendor's statement here to compare it with the invoices.</p>
   {% endif %}
   {% if s %}
-  {{ sheets(s, "/statements", {"vendor": vendor, "file": s.token}) }}
+  {{ sheets(s, "/statements", {"vendor": vendor, "file": s.token, "open_items": "1" if open_items else ""}) }}
   {% call imp.preview(s.look, "statements") %}{% if rec %}<p id="statements-compared">{{ compared }} <a href="#result">See the comparison</a></p>{% endif %}{% endcall %}
   <form method="get" action="/statements#result" class="stack" id="pick-statements">
     {{ columns(s) }}
+    {{ open_items_box() }}
     <div class="row">
       <label class="field inline">Vendor
         <select name="vendor" data-picker data-picker-noun="vendor">{% for key, name in names.items() %}<option value="{{ key }}"{% if key == vendor %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
       <button class="btn primary" type="submit"{{ go(s) }}><span class="ms" aria-hidden="true">fact_check</span>Reconcile</button>
-      <a class="btn" href="/statements?vendor={{ vendor | urlencode }}"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
+      <a class="btn" href="/statements?vendor={{ vendor | urlencode }}{% if open_items %}&amp;open_items=1{% endif %}"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
     </div>
   </form>
   {% endif %}
@@ -64,6 +69,7 @@
 {# The comparison: where Reconcile takes the person, the focus on it (imports.js) #}
 <div class="imp-result" id="result" tabindex="-1" data-imp-result aria-labelledby="result-title">
 {{ tile_row(tiles) }}
+{% if rec.exported_left_out %}<p class="muted" id="statement-exported">{{ rec.exported_left_out | plural("invoice") }} already exported {{ "is" if rec.exported_left_out == 1 else "are" }} not expected on an open-items statement.</p>{% endif %}
 {% if rec.period_unknown %}<div class="flash warn" id="statement-period-unknown"><span class="ms" aria-hidden="true">warning</span><div>The statement's dates read either way (day or month first) and its invoices didn't tell which, so its period couldn't be told: the invoices it leaves out may not be listed as Not on statement.</div></div>{% endif %}
 <section class="card">
   <div class="card-head">
