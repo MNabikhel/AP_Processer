@@ -211,8 +211,9 @@ def test_a_name_ending_in_a_province_s_letters_is_still_a_name(tmp_path):
 
 
 def test_a_long_company_name_ending_in_its_legal_form_is_read(tmp_path):
-    for i, name in enumerate(["Western Canada Industrial Maintenance and Mechanical Contracting Services Ltd.",
-                              "Les Entreprises de Construction et de Rénovation Côté-Bélanger et Associés Ltée"]):  # fmt: skip
+    names = ["Western Canada Industrial Maintenance and Mechanical Contracting Services Ltd.",
+             "Les Entreprises de Construction et de Rénovation Côté-Bélanger et Associés Ltée"]  # fmt: skip
+    for i, name in enumerate(names):
         f = _read(_pdf(tmp_path, [(40, 40, name, 9), (40, 56, "500 Dock Road, Calgary, AB T2P 1J9"),
                                   (420, 40, "Invoice # 1001"), *_AMOUNTS], name=f"n{i}.pdf"))  # fmt: skip
         assert f["vendor_name"].value == name

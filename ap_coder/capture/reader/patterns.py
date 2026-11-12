@@ -227,6 +227,7 @@ def _long_name(text: str) -> bool:
     "Please make cheques payable to Western Canada Maintenance Ltd.")."""
     return bool(_LEGAL_END.search(plain(text).strip())) and all(w[:1].isupper() for w in text.split() if len(w) > 3)
 
+
 _NOT_NAME = re.compile(r"^(invoice|facture|credit\s*memo|debit\s*(?:note|memo)|avis\s*de\s*credit|(?:sales|tax|commercial|proforma|pro\s*forma)\s*invoice|please\s*pay|your\b|votre\b|credit\s*note|note\s*de\s*credit|statement|page\b|date|bill|"
                        r"ship|sold|remit|total|amount|description|qty|www\.|http|tel|phone|fax|email|courriel|"
                        r"gst|hst|tps|tvq|qst|po\b|p\.o|account|terms|due|original|copy|duplicata|paid|"
