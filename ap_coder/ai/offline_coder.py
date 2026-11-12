@@ -37,7 +37,15 @@ from ..coding.tax import OUTSIDE_CANADA, TaxRateTable
 from ..coding.vendors import bank_digit_count, cut_bank_details
 from ..core.memory import vendor_key
 from ..core.reference_data import UNASSIGNED, ReferenceData
-from ..core.schema import CANDIDATES_KEPT, CANDIDATES_MOST, PROVINCE_VALUES, InvoiceCoding, LineItem, TaxLine
+from ..core.schema import (
+    CANDIDATES_KEPT,
+    CANDIDATES_MOST,
+    PROVINCE_VALUES,
+    InvoiceCoding,
+    LineItem,
+    TaxLine,
+    province_named,
+)
 from .extraction import ExtractionResult
 from .inference import CHAT_SUGGESTED, MODEL_SUGGESTED, CodingResult
 from .suggest import by_pairs, candidates, why_left
@@ -90,6 +98,14 @@ _POSTAL = r"[A-Z][\dOI][A-Z]\s?[\dOI][A-Z][\dOI]"
 _PROVINCE_AT = re.compile(
     r"(?:\(|\b)(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)"
     rf"(?:(?:\)|\b)\s*,?\s*{_POSTAL}|(?={_POSTAL}(?![A-Za-z0-9])){_POSTAL})"
+)
+# A province spelled out or abbreviated after a city's comma or in brackets, then its postal code or the line's end:
+# "Toronto, Ontario M5V 2T6", "Burnaby, British Columbia", "Québec (Québec) G1V 2M2", "Vancouver, B.C.", "Regina,
+# Sask." (``schema.province_named`` says which). A bare code ("Vancouver, BC") still needs its postal code.
+_PROVINCE_NAMED_AT = re.compile(
+    rf"[,(][ \t]*([^\W\d_](?:[^\W\d_]|[.' \t-]){{1,30}}?)[ \t]*\)?[ \t]*,?[ \t]*"
+    rf"(?:{_POSTAL}(?![A-Za-z0-9])|(?i:canada)?[ \t]*$)",
+    re.M,
 )
 # Labels, not any line with the word: "FACTURE" (a French invoice's title), "Customer service" or
 # "Date de livraison" in the letterhead are not the customer's address.
@@ -235,8 +251,7 @@ def addresses(text: str) -> tuple[str, str, str]:
             after_label = True
             pending.append(("bill", n))
         pending = [(kind, at) for kind, at in pending if n - at <= ADDRESS_BLOCK_LINES]
-        m = _PROVINCE_AT.search(line)
-        where = m.group(1) if m else (OUTSIDE_CANADA if us_address(line) else "")
+        where = _province_of(line)
         if not where:
             continue
         if not supplier and not after_label:
@@ -323,7 +338,15 @@ def _block_province(label: Line, lines: list[Line], labels: list[Line], width: f
 
 def _province_of(text: str) -> str:
     m = _PROVINCE_AT.search(text or "")
-    return m.group(1) if m else (OUTSIDE_CANADA if text and us_address(text) else "")
+    if m:
+        return m.group(1)
+    for m in _PROVINCE_NAMED_AT.finditer(text or ""):
+        name = m.group(1)
+        if len(re.sub(r"[\W\d_]", "", name)) >= 3 or "." in name:  # "Ontario", "B.C.", not "ON" alone
+            found = province_named(name)
+            if found:
+                return found
+    return OUTSIDE_CANADA if text and us_address(text) else ""
 
 
 def default_currency(supplier_province: str) -> str:

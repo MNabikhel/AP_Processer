@@ -456,6 +456,20 @@ def test_pst_numbers_are_read_after_their_label(text, found):
     assert norm_pst("PST-1234-5678") == norm_pst("1234 5678") == "12345678"
 
 
+def test_a_bc_pst_number_printed_alone_is_read(tmp_path):
+    from ap_coder.capture.normalize import find_pst_numbers
+
+    text = "GST No. 123456782 RT0001    PST-1234-5678"
+    assert [(v, text[a:b]) for v, a, b in find_pst_numbers(text)] == [("PST-1234-5678", "PST-1234-5678")]
+    assert [v for v, _, _ in find_pst_numbers("PST-1234-5678  MB RST No. 160482-7")] == ["PST-1234-5678", "160482-7"]
+    assert find_pst_numbers("XPST-1234-5678") == find_pst_numbers("PST-1234-56789") == []
+    path = _pdf(tmp_path / "bc.pdf", [
+        (40, 40, "Coastal Supply Ltd.", 14), (40, 56, "77 Marine Dr, Burnaby, BC V5H 1A1"), (420, 40, "INVOICE"),
+        (380, 200, "Total"), (480, 200, "140.00"), (40, 300, "GST No. 123456782 RT0001"), (40, 314, "PST-1234-5678"),
+    ])  # fmt: skip
+    assert analyze(path, ocr=False).fields["pst_registration_number"].value == "PST-1234-5678"
+
+
 @pytest.mark.parametrize(
     ("stem", "number", "pst"),
     [("pacific_BC_GST_PST_PO-77120", "PST-1234-5678", 190.82), ("redriver_MB_GST_RST_RRO-55821", "160482-7", 941.15)],

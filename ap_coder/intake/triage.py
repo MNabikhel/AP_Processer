@@ -265,9 +265,6 @@ def classify_document(doc: Document, email_text: str = "") -> Decision:
         if _find(_STATEMENT_TITLE, top) or _find(_STATEMENT_TITLE, fold(email_text)):
             return Decision(STATEMENT, "a spreadsheet sent as a statement")
         return Decision(NOT_FOR_AP, "a spreadsheet that does not say it is a statement")
-    credit = _find(_CREDIT_TITLE, top)
-    if credit:
-        return Decision(CREDIT, f'it says "{credit}"')
     invoice = _find(_INVOICE_TITLE, top)
     statement = _find(_STATEMENT_TITLE, top)
     # A statement of account lists several invoices or ages the balance; a utility bill called a "statement" (usage,
@@ -275,7 +272,17 @@ def classify_document(doc: Document, email_text: str = "") -> Decision:
     listed = sum(
         1 for line in fold(doc.text[:MAX_TEXT].replace("\n", "\x00")).split("\x00") if _INVOICE_REF.search(line)
     )
-    if statement and (listed >= 3 or (listed >= 2 and _find(_AGING, text))) and not _find(_UTILITY, text):
+    listing = statement and (listed >= 3 or (listed >= 2 and _find(_AGING, text))) and not _find(_UTILITY, text)
+    # A credit note's title is in the file name or starts a line: not "Merci de nous avoir choisi", nor a credit memo
+    # a statement lists under its own title ("Credit Memo CM-1002 -50.00").
+    lines = [fold(line) for line in doc.text[:TOP_CHARS].splitlines()]
+    at = next((i for i, line in enumerate(lines) if _CREDIT_TITLE.match(line)), None)
+    credit = _find(_CREDIT_TITLE, name)
+    if not credit and at is not None and not (listing and _find(_STATEMENT_TITLE, " ".join(lines[:at]))):
+        credit = _find(_CREDIT_TITLE, lines[at])
+    if credit:
+        return Decision(CREDIT, f'it says "{credit}"')
+    if listing:
         return Decision(STATEMENT, f'it says "{statement}" and lists {listed or "aged"} invoices')
     if invoice:
         return Decision(INVOICE, f'it says "{invoice}"')

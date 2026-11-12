@@ -277,10 +277,11 @@ def _date_fit(cands: dict[str, list[Reading]]) -> int:
     return 2 if days in (0, 7, 10, 14, 15, 20, 21, 30, 45, 60, 90) else 1
 
 
-_PREPAYMENT = re.compile(r".*(pre\s*-?\s*payment|deposit)")
+_PREPAYMENT = re.compile(r".*(pre\s*-?\s*payment|deposit|payments?\s*(?:applied|received)|holdback|retainage|retenue)")
 
 _DISCOUNT = re.compile(
-    r".*(discount|escompte|rabais|remise|abschlag|rabatt|abzgl|abzuglich|nachlass|pre\s*-?\s*payment|deposit)"
+    r".*(discount|escompte|rabais|remise|abschlag|rabatt|abzgl|abzuglich|nachlass|pre\s*-?\s*payment|deposit|"
+    r"payments?\s*(?:applied|received)|holdback|retainage|retenue)"
 )
 
 _GLUED_TITLE = re.compile(
@@ -703,8 +704,11 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         cands["currency"] = [Reading("currency", "USD", "$", [], 0.8, "us-supplier" + UNMEASURED)]
     items = read_line_items(layout)
     line_sum = round(sum(i.amount for i in items if i.amount is not None), 2) if items else None
+    # A deposit or holdback printed, before or after a printed total: the totals may add up without it, and it is
+    # dropped, but whether the total before or after it is posted is still AP's call (D-47).
+    taken_off = any(TAKEN_OFF in r.method for r in cands.get("other_charges", []))
     cands = _solve_totals(cands, line_sum)
-    if any(TAKEN_OFF in r.method for r in cands.get("other_charges", [])):
+    if taken_off or any(TAKEN_OFF in r.method for r in cands.get("other_charges", [])):
         for r in cands.get("grand_total", []):
             if TAKEN_OFF not in r.method:
                 r.method += TAKEN_OFF  # a deposit printed: whether the total before or after it is posted is AP's call

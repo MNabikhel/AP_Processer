@@ -244,6 +244,28 @@ def test_process_takes_the_invoice_out_of_a_saved_email(tmp_path, monkeypatch, c
     assert "Traceback" not in capsys.readouterr().err
 
 
+def _repeating_email(path: Path) -> None:
+    """An email of two invoices, the first attached again under another name."""
+    from tests.pdfs import pdf_bytes
+
+    msg = EmailMessage()
+    msg["Subject"], msg["From"] = "Invoices", "billing@supplier.example"
+    msg.set_content("Please find our invoices attached.")
+    first, second = pdf_bytes("INVOICE", "Invoice No: EM-1", "Total 131.25"), pdf_bytes("INVOICE", "Invoice No: EM-2")
+    for name, content in (("invoice.pdf", first), ("invoice 2.pdf", second), ("invoice copy.pdf", first)):
+        msg.add_attachment(content, maintype="application", subtype="pdf", filename=name)
+    path.write_bytes(bytes(msg))
+
+
+def test_an_attachment_repeating_another_is_not_counted_as_an_invoice_to_process(tmp_path):
+    from ap_coder.intake.mailbox import unpack
+
+    _repeating_email(tmp_path / "mail.eml")
+    mail = unpack(tmp_path / "mail.eml")
+    assert len(mail.saved) == 3 and mail.repeated == 1
+    assert cli._sorted_line(mail) == "Invoice, 2 invoices to process, 1 repeated"
+
+
 def test_command_line_output_on_a_windows_1252_console(tmp_path, monkeypatch):
     """A Windows console or a log file (Task Scheduler) in Windows-1252: printing a Japanese file name or vendor
     stopped the command with UnicodeEncodeError, after its work was done (exit code 1, a traceback)."""

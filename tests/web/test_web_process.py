@@ -801,3 +801,14 @@ def test_the_vendor_master_step_writes_its_count_of_address_numbers_as_a_number(
                                 for n in range(1200)])  # fmt: skip
     step = next(s for s in pilot_steps(store) if s[1] == VENDOR_STEP)[2]
     assert step == "1,200 vendors, 1,200 with an address number (AN8)"
+
+
+def test_an_emails_attachment_repeating_another_is_said_repeated_not_sent_to_the_queue(store, tmp_path):
+    from ap_coder.intake.mailbox import unpack
+    from ap_coder.web.pages.process import _email_lines, _read_saved
+    from tests.ops.test_cli_exports_and_data import _repeating_email
+
+    _repeating_email(tmp_path / "mail.eml")
+    mail = unpack(tmp_path / "mail.eml")
+    lines = _email_lines(store, [mail], _read_saved([mail], []), include_failed=False)
+    assert lines[0]["text"] == "mail.eml: Invoice; 2 invoices to the review queue, 1 repeated"
