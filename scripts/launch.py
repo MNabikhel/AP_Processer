@@ -1567,7 +1567,7 @@ def desktop() -> Path | None:
 
 def ps_quoted(text: str) -> str:
     """``text`` inside a PowerShell single-quoted string: each quote PowerShell ends one at (' and the typographic
-    ‘ ’ ‚ ‛) doubled, its own rule (B-2571)."""
+    ‘ ’ ‚ ‛) doubled, its own rule (B-2507)."""
     return re.sub("['\u2018\u2019\u201a\u201b]", lambda quote: quote.group() * 2, text)
 
 
@@ -1985,7 +1985,7 @@ def someone_elses(port: int) -> SetupError:
 def open_elsewhere(rest: list[str], state: dict) -> SetupError | None:
     """What a start says when this folder's own AP Coder (this version) is open on another data folder (scripts/
     demo.bat's APCoder-demo, a guide's made-up company), else None: its start holds this folder's lock while it runs,
-    so waiting for it would last half an hour (B-2572)."""
+    so waiting for it would last half an hour (B-2508)."""
     ident = identity()
     for server in running.find(candidate_ports(rest, state), paths.private_dir()):
         if (running.judge(server, ROOT, ident["version"], ident["code"], paths.private_dir()) == "elsewhere"

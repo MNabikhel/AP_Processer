@@ -55,7 +55,7 @@ def write_user_settings(**values: object) -> Path:
     settings = {**read_user_settings(), **values}
     part = path.with_name(f"{path.name}.{os.getpid()}.part")
     part.write_text(json.dumps(settings, indent=2), encoding="utf-8")
-    for wait in REPLACE_WAITS:  # (another process has it open: B-2573)
+    for wait in REPLACE_WAITS:  # (another process has it open: B-2509)
         try:
             os.replace(part, path)
             return path

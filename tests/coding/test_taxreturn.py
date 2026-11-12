@@ -59,14 +59,14 @@ def test_period_status_and_treatment(tmp_path):
     store.set_tax_treatment("HST", EXPENSE_TO_LINE)
     later, _ = _approved(store, tmp_path, "harbourview_NS_HST_HPS-2026-0347", invoice_date="2026-10-05")
     report = taxreturn.build(store, dt.date(2026, 10, 1), dt.date(2026, 12, 31))
-    # The HST approved after the change is expensed into the lines: not claimed (the one posted before still is, D-239)
+    # The HST approved after the change is expensed into the lines: not claimed (the one posted before still is, D-238)
     assert later not in {c.invoice_id for c in report.claims} and len(report.claims) == 1
     assert "HST" in report.not_recoverable
 
 
 def test_the_itr_report_claims_the_qst_as_it_was_posted_not_by_todays_setup(tmp_path):
     """QST expensed into the lines when the invoice was approved and exported is never claimed once the QST is set
-    recoverable, and QST posted recoverable is still claimed once it is set expensed (D-239)."""
+    recoverable, and QST posted recoverable is still claimed once it is set expensed (D-238)."""
     from ap_coder.core.tax_setup import RECOVERABLE
     from ap_coder.erp import exports
 

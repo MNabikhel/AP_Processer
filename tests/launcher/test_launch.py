@@ -576,7 +576,7 @@ def test_an_older_version_running_from_this_folder_is_taken_over_not_waited_for(
 
 
 def test_a_start_beside_the_demos_dashboard_stops_at_once_naming_it(lock, tmp_path, monkeypatch, capsys):
-    """B-2572: scripts/demo.bat starts AP Coder from this folder with a data folder of its own (APCoder-demo), and
+    """B-2508: scripts/demo.bat starts AP Coder from this folder with a data folder of its own (APCoder-demo), and
     its start holds this folder's lock while its dashboard runs. A double-click for the person's own data found that
     dashboard serving another data folder (never opened, B-2350) but waited for the lock half an hour, saying "being
     set up or started in another window". It stops at once, naming that data folder and port: close that window."""

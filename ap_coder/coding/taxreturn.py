@@ -2,7 +2,7 @@
 
 * Input tax credits (ITCs): GST and HST on approved invoices dated in the period, where it was posted recoverable
   (to the tax account, not into the lines) when the invoice was approved; as the tax setup treats it today for an
-  invoice whose posting lines were not kept (D-239)
+  invoice whose posting lines were not kept (D-238)
 * Input tax refunds (ITRs): the same for Quebec's QST
 * Claims at risk: tax claimed on an invoice of $100 or more ($30 before April 21, 2021) that shows no valid GST/HST
   (or QST) registration number (a documentary requirement for the claim; a GST/HST number failing the CRA's check
@@ -228,7 +228,7 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
         if f is None:  # approved without the reviewer's coding: nothing to claim
             continue
         for tax_type, amount, not_claimed, rate, province_text, number, issue, posted in f["lines"]:
-            if not (recoverable(tax_type) if posted is None else posted):  # as posted (D-239)
+            if not (recoverable(tax_type) if posted is None else posted):  # as posted (D-238)
                 continue
             issues = [issue] if issue and abs(f["total"]) >= document_threshold(date) else []
             issues += f["err"]
@@ -365,7 +365,7 @@ def meals_by_tax_line(doc: dict[str, Any]) -> dict[int, float]:
 
 def posted_recoverable(doc: dict[str, Any]) -> dict[int, bool] | None:
     """{tax line position: whether it was posted recoverable} by the invoice's stored GL distribution, as
-    ``tax.build_gl_distribution`` made it when the invoice was approved (D-239): each tax line posted to a tax account
+    ``tax.build_gl_distribution`` made it when the invoice was approved (D-238): each tax line posted to a tax account
     has a tax entry of its own, in order, recoverable or not; one expensed into the lines has none, nor one wholly on
     meals (recoverable: its meals lines keep it). None when no distribution was kept (coded by an older version)."""
     entries = [e for e in doc.get("gl_distribution") or [] if isinstance(e, dict)]

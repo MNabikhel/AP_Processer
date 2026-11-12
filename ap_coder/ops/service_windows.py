@@ -59,7 +59,7 @@ def task_file(data: Path) -> Path:
 def runner_text(folder: Path, data: Path) -> str:
     """``run.cmd``: the data folder, server mode, and the service host of ``folder``. A % is doubled (cmd.exe). It is
     UTF-8, and cmd.exe reads a batch file in the console's code page: ``chcp 65001`` comes first, so a folder with an
-    accent reaches ``set`` and ``cd /d`` as written (B-2570)."""
+    accent reaches ``set`` and ``cd /d`` as written (B-2506)."""
 
     def cmd(value: str | Path) -> str:
         return str(value).replace("%", "%%")

@@ -130,7 +130,7 @@ def test_two_processes_pruning_a_folder_at_once_leave_what_one_leaves(tmp_path, 
 
 
 def test_the_settings_file_is_replaced_even_while_another_process_has_it_open(tmp_path, monkeypatch):
-    """B-2573: Windows refuses to rename over a file another process has open (the dashboard reading settings.json, an
+    """B-2509: Windows refuses to rename over a file another process has open (the dashboard reading settings.json, an
     antivirus): write_user_settings's bare os.replace failed with PermissionError, as server.json's did (B-1962). The
     rename is tried again for a moment on Windows; elsewhere such a rename never fails: no wait."""
     monkeypatch.setenv("AP_USER_SETTINGS", str(tmp_path / "settings.json"))

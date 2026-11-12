@@ -164,7 +164,7 @@ def as_cmd_reads_it(raw: bytes, code_page: str = "cp850") -> str:
 
 
 def test_run_cmd_keeps_an_accented_data_folder_and_code_folder():
-    """B-2570: run.cmd is written as UTF-8, but cmd.exe reads a batch file in the console's OEM code page (437 or 850
+    """B-2506: run.cmd is written as UTF-8, but cmd.exe reads a batch file in the console's OEM code page (437 or 850
     on an English or French Canadian Windows, under Task Scheduler too): "D:\\Données AP" reached `set` and `cd /d`
     as "D:\\Donn├®es AP". Its second line is `chcp 65001 >nul`, everything before it ASCII."""
     data, folder = PureWindowsPath(r"D:\Données AP"), PureWindowsPath(r"C:\APCoder\Comptabilité\APProcessor")

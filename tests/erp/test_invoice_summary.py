@@ -224,7 +224,7 @@ def test_the_sales_tax_report_gives_what_it_gave(year):
     treatments = {**year.tax_treatments()}
     treatments["QST"] = type(treatments["QST"])("QST", EXPENSE_TO_LINE, "")
     # Another tax setup: an invoice approved by an older version (no posting lines kept) follows it, as the old code
-    # did; the others are claimed as they were posted (D-239), as with today's setup.
+    # did; the others are claimed as they were posted (D-238), as with today's setup.
     kept = {c.invoice_id for c in taxreturn.build(year, *YEAR).claims
             if year.get_invoice(c.invoice_id)["final_output"].get("gl_distribution")}  # fmt: skip
     new, old = taxreturn.build(year, *YEAR, treatments).claims, ref.tax_build(year, *YEAR, treatments).claims

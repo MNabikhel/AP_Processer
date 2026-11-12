@@ -872,7 +872,7 @@ def powershell_strings(script: str) -> list[str]:
 
 
 def test_the_shortcut_command_keeps_a_folder_with_a_typographic_apostrophe(launch, monkeypatch):
-    """B-2571: write_shortcut put each path in a PowerShell single-quoted string doubling only the ASCII apostrophe.
+    """B-2507: write_shortcut put each path in a PowerShell single-quoted string doubling only the ASCII apostrophe.
     PowerShell also ends such a string at a typographic one (U+2018, U+2019, U+201A, U+201B), so a folder such as
     "C:\\Users\\Zoë\\OneDrive - O’Neil & Fils\\Desktop" (Word/Outlook-style, common in company and OneDrive names)
     broke the command: no desktop shortcut, "tried again next time" at every start. Each of them is doubled."""
