@@ -207,3 +207,35 @@ def test_never_another_item_a_digit_another_model_or_more_words():
         "Disinfectant 4 L 12",
     ):
         assert recall(read, known, False) is None, read
+
+
+def test_a_split_line_does_not_rename_the_suppliers_next_line(tmp_path, reference):
+    """B-2542: the first part of a line AP split ("Copy paper case of 10 (60%)") was learned as AP renaming the line:
+    the supplier's next "Copy paper case of 10" was shown with the split's share."""
+    import datetime as dt
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    from ap_coder.ai.offline_coder import code_from_capture
+    from ap_coder.bench.coding import _capture
+    from ap_coder.capture.workflow import apply_line_memory, learn_from_approval
+    from ap_coder.coding.review import split_line
+    from ap_coder.core.store import Store
+
+    def read(number):
+        line = SimpleNamespace(text="Copy paper case of 10", quantity=1.0, unit_price=1000.0, amount=1000.0)
+        return _capture("Northwind Supply Ltd.", number, dt.date(2026, 1, 20), [line])
+
+    store = Store(tmp_path / "s.db")
+    capture = read("N-1")
+    output = code_from_capture(capture, reference, store.feedback_rows(), store).coding.model_dump(mode="json")
+    iid = store.add_invoice(tmp_path / "N-1.pdf", output, None)
+    store.save_capture(iid, capture.to_dict())
+    parts = split_line(pd.DataFrame(output["line_items"]), 1, [("6000", "CC100", 60.0), ("6000", "CC200", 40.0)])
+    final = {**output, "line_items": parts.to_dict("records")}
+    store.approve_invoice(iid, final, "pat")
+    learn_from_approval(store, iid, final, actor="pat")
+    nxt = read("N-2")
+    apply_line_memory(store, nxt)
+    assert nxt.line_items[0].description == "Copy paper case of 10", "the split's share became the line's name"
