@@ -815,7 +815,7 @@ def test_an_emails_attachment_repeating_another_is_said_repeated_not_sent_to_the
 
 
 def test_two_attachments_that_could_not_be_read_are_not_said_repeated(store, tmp_path):
-    """B-2526 keyed each attachment by its SHA-256: two with none (not read) had the same key, None, and the second
+    """B-2498 keyed each attachment by its SHA-256: two with none (not read) had the same key, None, and the second
     was said repeated."""
     from ap_coder.intake.mailbox import unpack
     from ap_coder.web.pages.process import _email_lines

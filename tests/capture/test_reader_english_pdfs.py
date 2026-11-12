@@ -618,7 +618,7 @@ def test_a_deposit_or_holdback_under_a_printed_total_holds_the_total_for_a_perso
 
 
 def test_a_line_item_named_for_a_deposit_or_holdback_or_a_holdback_of_nothing_leaves_the_total_as_it_is(tmp_path):
-    """B-2520 held every total of a document printing a deposit or holdback with an amount: a line item's own words
+    """B-2492 held every total of a document printing a deposit or holdback with an amount: a line item's own words
     ("Holdback release - Phase 1 550.00") and a totals row of nothing ("Holdback 0.00") held ordinary invoices too."""
     for i, desc in enumerate(["Holdback release - Phase 1", "10% Holdback release", "Prepayment 50% of order 1234",
                               "Retainage billing - Phase 2", "Deposit received on PO 1234"]):  # fmt: skip

@@ -147,7 +147,7 @@ def test_a_month_name_with_a_two_digit_year_or_between_slashes_or_after_the_year
 
 
 def test_a_month_name_then_two_numbers_or_a_month_run_into_its_day_is_no_two_digit_year_date():
-    """B-2523 read "Mon D YY" with spaces, and "MAY15/24", as dates: a delivery time, a quantity, a lot or a model
+    """B-2495 read "Mon D YY" with spaces, and "MAY15/24", as dates: a delivery time, a quantity, a lot or a model
     number became a date."""
     from ap_coder.core.parsing import parse_dates
 

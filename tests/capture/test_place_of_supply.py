@@ -83,7 +83,7 @@ def test_a_province_spelled_out_or_abbreviated_with_dots_is_read():
 
 
 def test_a_word_or_a_tagline_or_a_line_item_naming_a_province_is_no_address():
-    """B-2521 read a province named with no postal code too widely: "Labour (man)" as Manitoba, a tagline over the
+    """B-2493 read a province named with no postal code too widely: "Labour (man)" as Manitoba, a tagline over the
     letterhead ("Proudly serving Ottawa, Gatineau, Quebec") over the address with its postal code, a line item ("Hotel
     stay - Montreal, Quebec") as the supplier's."""
     from ap_coder.ai.offline_coder import _province_of, addresses

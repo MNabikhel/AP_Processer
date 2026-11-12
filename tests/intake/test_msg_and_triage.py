@@ -243,7 +243,7 @@ def test_a_credit_memo_a_statement_lists_or_avoir_in_a_sentence_is_no_credit_not
     ],
 )
 def test_a_credit_title_on_a_line_with_other_words_is_still_a_credit_note(text):
-    """B-2522 read a credit title only at the start of a line: one beside the supplier's name was lost, and with a
+    """B-2494 read a credit title only at the start of a line: one beside the supplier's name was lost, and with a
     packing slip or an order mentioned the credit note was kept out of the queue."""
     assert triage.classify_document(triage.Document("scan0001.pdf", text)).kind == triage.CREDIT
 
