@@ -175,6 +175,11 @@ def test_a_tax_line_printed_at_nothing_adds_no_taxable_amount(reference):
                   [tl("GST", "", 0.05, 80.8, 4.08), tl("GST", "", 0.0, 20.0, 0.0)], prov="AB")  # fmt: skip
     assert not {c for c, _ in _findings(rounded, reference)} & {"EXEMPT_LINE_TAXED", "TAX_CALC_MISMATCH"}
     assert math_check(InvoiceCoding.model_validate(rounded), reference.tax)["ok"]
+    # GST 5% on a line of 0.06 is 0.00, and right: that line carries the GST, its tax line counts
+    tiny = doc([line(1, 100.0, "5100", ["GST"]), line(2, 0.06, "5200", ["GST"])],
+               [tl("GST", "", 0.05, 100.0, 5.0), tl("GST", "", 0.05, 0.06, 0.0)], prov="AB")  # fmt: skip
+    assert not {c for c, _ in _findings(tiny, reference)} & {"TAX_BASE_MISMATCH", "TAX_CALC_MISMATCH"}
+    assert math_check(InvoiceCoding.model_validate(tiny), reference.tax)["ok"]
 
 
 def test_missing_pst_suggests_self_assessment(reference):

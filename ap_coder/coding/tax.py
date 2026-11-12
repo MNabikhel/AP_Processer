@@ -309,12 +309,19 @@ def tax_line_ways(coding: Any, tl: Any, places: int) -> list[float]:
     (``_line_by_line_on_its_lines``, B-2502)."""
     ways = [times(tl.taxable_amount, tl.rate, places)]
     flagged = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
-    if sum(1 for t in coding.tax_lines if t.tax_type == tl.tax_type and not nil(t.tax_amount)) == 1:
+    if sum(1 for t in coding.tax_lines if t.tax_type == tl.tax_type and on_its_lines(t, places)) == 1:
         if flagged:
             ways.append(add_up((times(li.amount, tl.rate, places) for li in flagged), places))
     elif (by_line := _line_by_line_on_its_lines(flagged, tl, places)) is not None:
         ways.append(by_line)
     return ways
+
+
+def on_its_lines(tl: Any, places: int = 2) -> bool:
+    """Whether a tax line is charged on lines of the invoice: it charges something, or its rate on its taxable
+    amount rounds to nothing (GST 5% on 0.06). A line of 0.00 at no rate (GST 0% on a zero-rated line), or at a rate
+    that would charge something, is on no line (B-2503)."""
+    return not nil(tl.tax_amount) or (tl.rate > 0 and nil(times(tl.taxable_amount, tl.rate, places)))
 
 
 def _line_by_line_on_its_lines(flagged: list[Any], tl: Any, places: int) -> float | None:
@@ -402,10 +409,11 @@ def _lines_carry_each_tax(check: _TaxCheck) -> None:
     Compared per tax type, because the same tax can be printed more than once (e.g. on goods and on freight). A tax
     line of nothing (GST 0.00 on a zero-rated line) is on no line: its taxable amount is not counted (B-2503)."""
     coding, tol = check.coding, check.tol
+    places = currency_places(getattr(coding, "currency", ""))
     for tax_type in sorted(check.charged):
         name = tax_name(tax_type, check.prov)
         flagged = [li for li in coding.line_items if tax_type in li.taxes_applied]
-        taxes = [t for t in check.tax_lines if t.tax_type == tax_type and not nil(t.tax_amount)]
+        taxes = [t for t in check.tax_lines if t.tax_type == tax_type and on_its_lines(t, places)]
         taxable = add_up(t.taxable_amount for t in taxes)
         if not flagged:
             check.add(WARNING, "TAX_NOT_ALLOCATED",
@@ -480,9 +488,10 @@ def _lines_marked_with_a_tax_not_charged(check: _TaxCheck) -> None:
 def _qst_before_gst(check: _TaxCheck) -> None:
     """QST is calculated on the price excluding GST (no tax-on-tax since 2013): every QST line's base against every
     GST line's, each tax printed on goods and on freight alike (B-2501)."""
-    gst = [t for t in check.tax_lines if t.tax_type == "GST" and not nil(t.tax_amount)]
-    qst = [t for t in check.tax_lines if t.tax_type == "QST" and not nil(t.tax_amount)]
-    if not gst or not qst:
+    places = currency_places(getattr(check.coding, "currency", ""))
+    gst = [t for t in check.tax_lines if t.tax_type == "GST" and on_its_lines(t, places)]
+    qst = [t for t in check.tax_lines if t.tax_type == "QST" and on_its_lines(t, places)]
+    if not any(not nil(t.tax_amount) for t in gst) or not any(not nil(t.tax_amount) for t in qst):
         return
     gst_base, qst_base = add_up(t.taxable_amount for t in gst), add_up(t.taxable_amount for t in qst)
     if not within(qst_base, gst_base, check.tol):
