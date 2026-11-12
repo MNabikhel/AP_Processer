@@ -121,6 +121,21 @@ def test_a_remarks_month_written_as_a_number_follows_the_invoices_period(usual, 
     assert with_period("cell 2025-11", None, "", 2025) == "cell"  # no date: taken out, not kept stale
 
 
+@pytest.mark.parametrize(
+    "usual, wanted",
+    [
+        ("job 2025-07A", "job 2026-07A"),  # a job number: no month of it follows (its year does, as any year)
+        ("lot 3-2025", "lot 3-2025"),  # one digit and a dash: a lot or a reference as likely as a month
+        ("hydro 1-2025", "hydro 1-2025"),
+        ("ref 2025/1", "ref 2025/1"),
+        ("bin A-11/2025", "bin A-11/2026"),  # part of a longer code: no month of it either
+    ],
+)
+def test_a_number_that_only_looks_like_a_month_and_year_is_not_given_this_invoices_month(usual, wanted):
+    """B-2514: "job 2025-07A" became "job 2026-12A" and "lot 3-2025" "lot 12-2026"."""
+    assert with_period(usual, Period(2026, 12, 4), "", 2025) == wanted
+
+
 @pytest.mark.parametrize("number", ["INV-55123", "INV 55123", "inv#55123", "Invoice 55123"])
 def test_the_invoice_number_put_in_a_remark_does_not_repeat_its_label(number):
     """The remark read "INV INV-55123": 8 of JD Edwards' 30 characters, "INV" twice."""
