@@ -5746,3 +5746,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     the report with every column it needs; a file that is another of the page's reports names the card it goes on.
     The chart's "Load it anyway" is gone from the page (the command line keeps `chart import --anyway`, and the page
     still says when a chart was loaded so).
+- **D-235** · **The menu fits the window: full from 1200 px, icons only from 901, a top bar with a Menu button
+  below** (`base.html`, `static/app.css`, `static/js/app.js`; 12 Nov 2026).
+  - **Why:** the pilot tester zooms in on a Windows laptop (Ctrl and the mouse wheel). Browser zoom shrinks the page's
+    width: 150% on a 1366 screen is 911 px, 200% is 683. Under 901 px the 256 px rail became a block of every link
+    above the page, so each page began a screen down, and from 901 to 1199 the rail took a quarter of the width.
+  - **What:** 1200 px and wider, the rail as before; 901 to 1199, icons only (64 px; each link's name as a tooltip
+    and for screen readers); under 901, a slim top bar with the logo and a Menu button, the full menu opening over
+    the page (a real button with `aria-expanded`; Esc, a click elsewhere or tabbing out closes it). The review
+    screen's own menu button shares the code. A window under 400 px high does not keep the approve bar and the
+    JD Edwards strip on screen (B-2398). `tests/web/test_narrow_windows.py` opens every menu page at 683 and 390.

@@ -181,26 +181,6 @@ function openFlaggedDetails() {
   });
 }
 
-/* The Menu button (the menu is off this screen below 1820 px): it opens AP Coder's menu over the page; Esc, a
-   click outside it or a second press closes it. */
-const menuButton = document.querySelector("[data-menu-toggle]");
-function showMenu(open) {
-  document.documentElement.classList.toggle("menu-open", open);
-  menuButton?.setAttribute("aria-expanded", String(open));
-  if (open) document.querySelector(".rail a")?.focus({ preventScroll: true });
-}
-document.addEventListener("click", (e) => {
-  const open = document.documentElement.classList.contains("menu-open");
-  if (e.target.closest?.("[data-menu-toggle]")) showMenu(!open);
-  else if (open && !e.target.closest?.(".rail")) showMenu(false);
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape" || !document.documentElement.classList.contains("menu-open")) return;
-  e.preventDefault();
-  showMenu(false);
-  menuButton?.focus({ preventScroll: true });
-});
-
 /** The row a box, a button or a cell is in (a line or a tax line). */
 const rowOf = (el) => el?.closest?.("[data-row]") || null;
 

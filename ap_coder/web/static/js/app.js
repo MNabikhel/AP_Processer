@@ -460,6 +460,36 @@ document.addEventListener("keydown", (event) => {
   });
 });
 
+/* The Menu buttons: the menu's own, under 1200 px (base.html: its icons only, or a bar above the page under 901 px),
+   and the review screen's with a chart of accounts (the menu is off that screen below 1820 px). One opens the whole
+   menu over the page, the focus on its first link; Esc, a click or the focus outside it, or a second press closes it. */
+const MENU_TOGGLES = "[data-rail-toggle], [data-menu-toggle]";
+let menuOpener = null;
+const menuOpen = () => document.documentElement.classList.contains("menu-open");
+function showMenu(open, opener = null) {
+  document.documentElement.classList.toggle("menu-open", open);
+  document.querySelectorAll(MENU_TOGGLES).forEach((b) => b.setAttribute("aria-expanded", String(open)));
+  if (open) {
+    menuOpener = opener;
+    document.querySelector(".rail .nav a")?.focus({ preventScroll: true });
+  }
+}
+document.addEventListener("click", (event) => {
+  const toggle = event.target.closest?.(MENU_TOGGLES);
+  if (toggle) showMenu(!menuOpen(), toggle);
+  else if (menuOpen() && !event.target.closest?.(".rail")) showMenu(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !menuOpen()) return;
+  event.preventDefault();
+  showMenu(false);
+  const shown = (b) => b?.getClientRects().length > 0;
+  (shown(menuOpener) ? menuOpener : [...document.querySelectorAll(MENU_TOGGLES)].find(shown))?.focus({ preventScroll: true });
+});
+document.addEventListener("focusin", (event) => {
+  if (menuOpen() && !event.target.closest?.(`.rail, ${MENU_TOGGLES}`)) showMenu(false);
+});
+
 // A popover opens inside the screen: on a narrow one (a phone), a popover lined up with the right of its button would
 // start past the left edge, where nothing scrolls to it. ("toggle" doesn't bubble: it is caught on its way down.)
 document.addEventListener(
