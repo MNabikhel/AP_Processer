@@ -235,11 +235,12 @@ def finalise_coding(
     """
     # the vendor's key: of two vendors whose names read alike, the one with this GST/HST number (B-1021)
     key = store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number) if store is not None else None
+    usable = frozenset(reference.line_accounts())  # (not an account closed since: B-2544)
     if feedback is None and store is not None:  # the history check: this vendor's lessons only
         patterns = store.vendor_lessons(coding.vendor_name, key).patterns
-        history = compare_patterns(coding, patterns) if patterns else None
+        history = compare_patterns(coding, patterns, usable) if patterns else None
     else:
-        history = compare_with_history(coding, feedback, key) if feedback else None
+        history = compare_with_history(coding, feedback, key, usable) if feedback else None
     duplicates = (
         duplicates_known(
             store,

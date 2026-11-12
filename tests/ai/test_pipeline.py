@@ -214,3 +214,34 @@ def test_the_invoices_folder_is_listed_by_name_in_the_order_it_always_had(tmp_pa
     with monkeypatch.context() as m:
         m.setattr(Path, "is_file", lambda self: (_ for _ in ()).throw(AssertionError("looked at a file")))
         assert invoice_files(tmp_path) == expected
+
+
+def test_the_history_check_does_not_point_to_an_account_that_can_no_longer_be_used(store, tmp_path):
+    """B-2544: once an account is closed in the chart (posting edit "I" on every business unit), HISTORY_CONFLICT held
+    each of the vendor's lines AP coded to its replacement, "reviewers coded similar lines ... to GL" the closed one."""
+    from ap_coder.ai.offline_coder import code_from_capture
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.core.chart import ChartRow, split_code
+    from tests import books
+
+    def coded(reference, number):
+        capture = books.captured("Rapidway Courier Ltd.", "Courier charges overnight", number=number)
+        return code_from_capture(capture, reference, store.feedback_rows(), store).coding
+
+    reference = books.load_chart(store)
+    for n in range(6):
+        books.approve(store, tmp_path, coded(reference, f"C-{n}"), [f"{books.MAIN}.7420.4207"])
+    coding = coded(reference, "C-8")
+    coding.line_items[0].predicted_cost_center, coding.line_items[0].predicted_gl_code = books.MAIN, "7420.4213"
+    _, report = finalise_coding(coding, reference, Settings(), store=store)
+    assert "HISTORY_CONFLICT" in {i.code for i in report.issues}  # while Courier - Domestic is open
+    rows = [ChartRow(unit, "", "", name, 3) for unit, (name, _) in books.UNITS.items()]
+    for code, (description, units) in books.ACCOUNTS.items():
+        edit = "N" if code in books.TITLES else "I" if code == "7420.4207" else ""
+        rows += [ChartRow(unit, *split_code(code), description, 8, edit, "") for unit in units]
+    store.import_chart(rows)  # Courier - Domestic closed; AP now uses Cross Border's
+    reference = store.reference_data()
+    coding = coded(reference, "C-9")
+    coding.line_items[0].predicted_cost_center, coding.line_items[0].predicted_gl_code = books.MAIN, "7420.4213"
+    _, report = finalise_coding(coding, reference, Settings(), store=store)
+    assert "HISTORY_CONFLICT" not in {i.code for i in report.issues}
