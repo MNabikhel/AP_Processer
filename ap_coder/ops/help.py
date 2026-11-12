@@ -1044,9 +1044,10 @@ FAQ: list[tuple[str, str]] = [
         " correction, and the last 10 without a correction; in practice about 20 to 30 invoices approved without a "
         "correction, and Learning & accuracy → Supplier learning shows each vendor's own number. Its invoices still "
         "go to a person when a field is not verified, a check fails, the bank account or GST/HST number changed, it "
-        "may be a duplicate, the amount is unusual or over the touchless limit, it is a credit note, or it needs a "
-        "second approver; 5% are audited anyway. One correction sends the vendor back to review. An AP lead can keep "
-        "any vendor supervised on Learning & accuracy.",
+        "may be a duplicate, the amount is unusual or over the touchless limit, it is a credit note, it needs a "
+        "second approver, or a line's account was not learned from this vendor (coded from other vendors' approvals "
+        "or by the local model); 5% are audited anyway. One correction sends the vendor back to review. An AP lead "
+        "can keep any vendor supervised on Learning & accuracy.",
     ),
     (
         "What is the difference between errors, warnings and 'good to know'?",
