@@ -619,6 +619,16 @@ def test_a_statement_is_reconciled_and_downloaded(client, busy):
     assert "Votre relevé de compte" in french
 
 
+def test_a_statement_whose_period_cannot_be_told_says_so(client, busy):
+    """Every date reads day or month first and no invoice of AP Coder's tells which: the page says the period is
+    unknown rather than showing nothing left out."""
+    key = busy.vendor_summaries()[0]["vendor_key"]
+    content = b"Invoice No,Date,Amount\nNOT-HELD-1,09/02/2026,10.00\nNOT-HELD-2,09/05/2026,20.00\n"
+    page = follow(client, client.post("/statements/upload", data={"vendor": key},
+                                      files={"file": ("s.csv", content, "text/csv")}, headers=PAGE))  # fmt: skip
+    assert 'id="statement-period-unknown"' in page.text and "period unknown" in page.text
+
+
 def test_statement_columns_can_be_picked(client, busy):
     key, content = _statement(busy)
     page = follow(
