@@ -101,10 +101,11 @@ _PROVINCE_AT = re.compile(
 )
 # A province spelled out or abbreviated after a city's comma or in brackets, then its postal code or the line's end:
 # "Toronto, Ontario M5V 2T6", "Burnaby, British Columbia", "Québec (Québec) G1V 2M2", "Vancouver, B.C.", "Regina,
-# Sask." (``schema.province_named`` says which). A bare code ("Vancouver, BC") still needs its postal code.
+# Sask." (``schema.province_named`` says which). A bare code ("Vancouver, BC") still needs its postal code, and with
+# none a name needs its five letters or its dots: "Labour (man)", "Smith, Ont" are no address ("Hours, Man." is).
 _PROVINCE_NAMED_AT = re.compile(
     rf"[,(][ \t]*([^\W\d_](?:[^\W\d_]|[.' \t-]){{1,30}}?)[ \t]*\)?[ \t]*,?[ \t]*"
-    rf"(?:{_POSTAL}(?![A-Za-z0-9])|(?i:canada)?[ \t]*$)",
+    rf"(?:(?P<postal>{_POSTAL})(?![A-Za-z0-9])|(?i:canada)?[ \t]*$)",
     re.M,
 )
 # Labels, not any line with the word: "FACTURE" (a French invoice's title), "Customer service" or
@@ -204,6 +205,8 @@ def provinces(text: str, layout: DocLayout | None = None) -> tuple[str, str]:
 # city): a province further down is the vendor's footer, a remit-to or another block, never the bill-to's (B-672).
 ADDRESS_BLOCK_LINES = 6
 # The vendor's own payment address: never ours, whatever label waits for an address.
+# The line items' column headings: what is under them is no letterhead ("Hotel stay - Montreal, Quebec").
+_TABLE_HEADING = re.compile(r"(?i)^\s*(?:description|items?|qty|quantity|d[ée]signation|article)\b")
 _REMIT_LABEL = re.compile(
     r"(?i)\bremit(?:tance)?\b|\bpay(?:able|ment)?\s+to\b|cheques?\s+payable|\bpayable\s+(?:à|a)\b|"
     r"\bveuillez\s+(?:remettre|payer)\b|\bfaire\s+(?:le|votre)\s+ch[eè]que\b"
@@ -237,8 +240,8 @@ def addresses(text: str) -> tuple[str, str, str]:
     "Sold to" / "Client" label the customer's. A US address is OUTSIDE_CANADA. Each labelled address goes to the
     labels in the order they were read, so "Bill to" and "Ship to" side by side (labels on one row, then each
     column's address) are told apart; only from its own block (``ADDRESS_BLOCK_LINES``), never from a remit-to."""
-    supplier = bill_to = ship_to = ""
-    after_label = False
+    supplier = bill_to = ship_to = named_supplier = ""
+    after_label = table = False
     pending: list[tuple[str, int]] = []  # labels read whose address has not come yet, with their line
     remit_until = -1
     for n, line in enumerate(text.splitlines()):
@@ -250,18 +253,27 @@ def addresses(text: str) -> tuple[str, str, str]:
         elif _CUSTOMER_LABEL.search(line):
             after_label = True
             pending.append(("bill", n))
+        table = table or bool(_TABLE_HEADING.match(line))
         pending = [(kind, at) for kind, at in pending if n - at <= ADDRESS_BLOCK_LINES]
-        where = _province_of(line)
-        if not where:
+        where = _province_of(line, named=False)
+        named = "" if where else _province_of(line)
+        if not where and not named:
             continue
         if not supplier and not after_label:
-            supplier = where
-        elif pending and n > remit_until:  # a remit-to is the vendor's, never ours
+            # The letterhead's address with its postal code over a province only named (a tagline, "Proudly serving
+            # Ottawa, Gatineau, Quebec"); one only named counts in the letterhead's first lines, never a line item's.
+            if where:
+                supplier = where
+            elif n < ADDRESS_BLOCK_LINES and not table:
+                named_supplier = named_supplier or named
+            continue
+        where = where or named
+        if pending and n > remit_until:  # a remit-to is the vendor's, never ours
             if pending.pop(0)[0] == "ship":
                 ship_to = ship_to or where  # the place of supply: where the goods or services go
             else:
                 bill_to = bill_to or where
-    return supplier, ship_to, bill_to
+    return supplier or named_supplier, ship_to, bill_to
 
 
 # How far under its label an address is looked for, in the label's line heights (the name, an "Attn:" line, a site
@@ -336,16 +348,21 @@ def _block_province(label: Line, lines: list[Line], labels: list[Line], width: f
     return ""
 
 
-def _province_of(text: str) -> str:
+def _province_of(text: str, named: bool = True) -> str:
+    """The province (or OUTSIDE_CANADA) of the address on ``text``, "" when none is; ``named``: one named with no
+    postal code too ("Montreal, Quebec")."""
     m = _PROVINCE_AT.search(text or "")
     if m:
         return m.group(1)
     for m in _PROVINCE_NAMED_AT.finditer(text or ""):
-        name = m.group(1)
-        if len(re.sub(r"[\W\d_]", "", name)) >= 3 or "." in name:  # "Ontario", "B.C.", not "ON" alone
-            found = province_named(name)
-            if found:
-                return found
+        name, letters = m.group(1), re.sub(r"[\W\d_]", "", m.group(1))
+        if m.group("postal"):
+            ok = len(letters) >= 3 or "." in name  # "Ontario", "B.C.", not "ON" alone
+        else:  # "Labrador" alone is a region, not the province's name
+            ok = named and ("." in name or (len(letters) >= 5 and letters.upper() != "LABRADOR"))
+        found = province_named(name) if ok else ""
+        if found:
+            return found
     return OUTSIDE_CANADA if text and us_address(text) else ""
 
 

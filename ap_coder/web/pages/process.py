@@ -1017,7 +1017,7 @@ def _email_lines(store: Store, mails: list[Unpacked], read: list[Any], include_f
         for path in mail.saved:
             sha = shas.get(str(path.parent.resolve() / path.name))
             already += sha in known
-            repeated += sha not in known and sha in seen
+            repeated += sha is not None and sha not in known and sha in seen
             seen.add(sha)
         text, tone = email_line(mail, already, repeated)
         lines.append({"text": text, "tone": tone, "icon": "gpp_maybe" if tone == "err" and mail.triage else "mail"})

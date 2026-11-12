@@ -131,7 +131,7 @@ def test_months_of_other_languages_are_read():
 
 def test_a_month_name_with_a_two_digit_year_or_between_slashes_or_after_the_year_is_read(tmp_path):
     for printed, iso in [("Dec 31/26", "2026-12-31"), ("Oct 30/26", "2026-10-30"), ("Dec. 31/26", "2026-12-31"),
-                         ("DEC 31 26", "2026-12-31"), ("31/Dec/2026", "2026-12-31"), ("31/Dec/26", "2026-12-31"),
+                         ("31/Dec/2026", "2026-12-31"), ("31/Dec/26", "2026-12-31"),
                          ("2026-Dec-31", "2026-12-31"), ("2026/Dec/31", "2026-12-31")]:  # fmt: skip
         assert parse_date(printed) == iso, printed
     # Not inside an invoice number, nor a date and a time run together.
@@ -144,6 +144,16 @@ def test_a_month_name_with_a_two_digit_year_or_between_slashes_or_after_the_year
     ])  # fmt: skip
     f = _read(path).fields
     assert (f["invoice_date"].value, f["due_date"].value) == ("2026-10-15", "2026-11-14")
+
+
+def test_a_month_name_then_two_numbers_or_a_month_run_into_its_day_is_no_two_digit_year_date():
+    """B-2523 read "Mon D YY" with spaces, and "MAY15/24", as dates: a delivery time, a quantity, a lot or a model
+    number became a date."""
+    from ap_coder.core.parsing import parse_dates
+
+    for text in ["Delivery Oct 30 12 pm", "Qty: May 2 24 pcs", "Lot JAN 10 50", "Model: OCT 1 10 BLK", "Jun 30 30 days",
+                 "Ref MAY15/24", "DEC 31 26"]:  # fmt: skip
+        assert parse_dates(text) == [], text
 
 
 def test_a_page_number_run_into_the_label_still_reads_the_date():
