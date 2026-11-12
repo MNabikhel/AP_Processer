@@ -29,11 +29,11 @@ network (the dashboard of this computer is asked whether it runs).
 from __future__ import annotations
 
 import dataclasses
+import importlib.util
 import json
 import os
 import re
 import socket
-import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable
@@ -296,25 +296,22 @@ def sign_in_accounts(db: Path) -> int:
 
 
 # A laptop's own sign-in (D-243): the database's setting, by core/store/sign_in.py's words (SIGN_IN, LAPTOP, OFF),
-# read here without a Store, as ``sign_in_accounts`` counts. With it, the laptop's own account and codes' key are not
+# read without a Store (``sign_in_setting``). With it, the laptop's own account and codes' key are not
 # a team's; a start in server mode sets it to "team" (``mark_team``), and D-211 holds again.
 SIGN_IN_SETTING = "sign_in"
 LAPTOP_SIGN_IN = ("laptop", "off")
 
 
 def sign_in_setting(db: Path) -> str:
-    """The database ``db``'s sign-in setting ("" when it has none, is not there, or can't be read): read-only, no Store
-    opened on it, and no ``-wal`` file left beside one closed cleanly (as ``users.sign_in_accounts``)."""
-    how = "mode=ro" if db.with_name(db.name + "-wal").exists() else "mode=ro&immutable=1"
-    try:
-        conn = sqlite3.connect(f"{db.resolve().as_uri()}?{how}", uri=True, timeout=5)
-        try:
-            row = conn.execute("SELECT value FROM settings WHERE key = ?", (SIGN_IN_SETTING,)).fetchone()
-        finally:
-            conn.close()
-    except (sqlite3.Error, OSError, ValueError):
+    """The database ``db``'s sign-in setting ("" when it has none, is not there, or can't be read), read without a
+    Store (``core/store/peek.py``, loaded by its path: the launcher's first phase can't import the store package)."""
+    path = Path(__file__).resolve().parents[1] / "core" / "store" / "peek.py"
+    spec = importlib.util.spec_from_file_location("ap_coder_store_peek", path)
+    if spec is None or spec.loader is None:
         return ""
-    return str(row[0]) if row else ""
+    peek = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(peek)
+    return peek.setting(db, SIGN_IN_SETTING)
 
 
 def laptop_sign_in(store: Any, data: Path) -> bool:

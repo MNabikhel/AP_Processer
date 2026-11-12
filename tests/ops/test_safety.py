@@ -412,7 +412,8 @@ def test_the_laptops_own_account_and_key_never_make_it_a_team_server(laptop, sta
     Store(db).add_first_admin(GOOD, "Pat Lee")
     assert authenticator.load_key(data, create=True)
     assert safety.team_server(data, db) is None and serve(db) == 0 and len(started) == 2
-    monkeypatch.setitem(sys.modules, "ap_coder.core.store.users", None)  # the launcher's first phase: no store
+    for name in ("ap_coder.core.store", "ap_coder.core.store.users", "ap_coder.core.store.sign_in"):
+        monkeypatch.setitem(sys.modules, name, None)  # the launcher's first phase: no package to import the store with
     assert safety.team_server(data, db) is None
     Store(db).set_setting(SIGN_IN, OFF)  # turned off at the console: its account stays the laptop's
     assert safety.team_server(data, db) is None

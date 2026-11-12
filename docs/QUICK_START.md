@@ -25,10 +25,8 @@ For AP Coder on a laptop, and AP staff on the company server (where the pilot ru
 - Set up your authenticator app: install one on your phone if you have none (Microsoft Authenticator, Google
   Authenticator or any other), scan the QR code AP Coder shows, and type the 6-digit code the app shows. From then
   on: username **admin**, your password, then a code from the app. Left unused for 8 hours, AP Coder asks again.
-- No phone at hand, or lost it? Double-click `scripts\terminal.bat` in AP Coder's folder and type
-  `python -m ap_coder users reset-2fa admin`: it shows a temporary password to log in with, then you choose your
-  own and set the app up again. Or `python -m ap_coder users sign-in off`, then start AP Coder again: it opens
-  without signing in (`python -m ap_coder users sign-in on` turns it back on).
+- No phone at hand, or lost it? The pilot tester's guide (PROTOTYPE.md, "Signing in") has the one command that
+  sets your app up again, and the one that opens AP Coder without signing in.
 
 ## The first steps
 
