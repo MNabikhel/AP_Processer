@@ -22,6 +22,7 @@
     <section class="card">
       {% if step == "/login/first" %}
       <h1 class="apc-title">Make this account yours</h1>
+      {% if error %}<p class="flash err" role="alert">{{ error }}</p>{% endif %}
       <p class="muted">This is the first account of AP Coder: its Admin. Choose your own password to replace admin: at
         least 12 characters, not "admin" and not your name. A few words make a good one.</p>
       <form method="post" action="/login/first" class="stack" data-busy="Saving…" data-urlencoded>

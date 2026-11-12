@@ -45,6 +45,7 @@ from ap_coder.core.store.users import (
     KEY_MISSING,
     LOCKED,
     MANAGER,
+    SETUP_CODE_WHY,
     SETUP_CODE_WRONG,
     TEMPORARY_EXPIRED,
     LoginRefused,
@@ -146,7 +147,8 @@ def first_sign_in_here(request: Request) -> bool:
     own = (request.scope.get("server") or ("", 0))[0] or ""
     host = request.headers.get("host", "").strip().lower()
     named = host.rsplit(":", 1)[0].strip("[]") if host.count(":") <= 1 or host.startswith("[") else host
-    return not server_mode(request) and identity.from_this_computer(request.scope) and named == own.lower()
+    same = identity._ip(named) is not None and identity._ip(named) == identity._ip(own)  # (``::ffff:`` on dual stack)
+    return not server_mode(request) and identity.from_this_computer(request.scope) and (same or named == own.lower())
 
 
 def _pending(request: Request) -> str:
@@ -390,9 +392,11 @@ def first_page(request: Request, next: str = HOME) -> Response:  # noqa: A002
     if not (first_sign_in_here(request) and store.user_count() == 0 and store.first_sign_in_open(_pending(request))):
         return RedirectResponse(_again(wanted), status_code=303)
     name = "" if server_mode(request) else reviewer()  # a laptop's: the name on its approvals so far
+    error = ""
     if server_mode(request):
         store.first_setup_code()  # (made at the server's start; here too, should it not be there)
-    context = {"step": identity.FIRST_PATH, "next": wanted, "username": FIRST_USERNAME, "name": name, "error": "",
+        error = store.setup_code_problem()
+    context = {"step": identity.FIRST_PATH, "next": wanted, "username": FIRST_USERNAME, "name": name, "error": error,
                "needs_code": server_mode(request),
                "flashes": take_flash(request.query_params.get("flash")),
                "title": "Make this account yours"}  # fmt: skip
@@ -417,7 +421,8 @@ def first_save(request: Request, name: str = Form(""), new: str = Form(""), agai
         return refuse(TOO_LONG, 401, redirect=again)
     # (an account made meanwhile: refused below, by ``add_first_admin``'s FIRST_DONE)
     if server_mode(request) and store.user_count() == 0 and not store.setup_code_matches(code):
-        return refuse(SETUP_CODE_WRONG, 403)
+        store.log_event("login_failed", detail={"username": FIRST_USERNAME, "why": SETUP_CODE_WHY})
+        return refuse(store.setup_code_problem() or SETUP_CODE_WRONG, 403)
     if new != again:
         return refuse("The two new passwords are not the same: type it twice the same way.")
     shown = identity.clean_name(name)

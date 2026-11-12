@@ -190,3 +190,37 @@ def test_the_laptop_needs_no_setup_code(store):
     admin_admin(client)
     assert 'name="code"' not in client.get("/login/first").text
     assert choose(client, code="").status_code == 200 and not (store.path.parent / users.SETUP_CODE_FILE).exists()
+
+
+def test_a_wrong_setup_code_is_in_the_audit_trail(store):
+    from ap_coder.core.audit import describe
+
+    client = server(store)
+    admin_admin(client)
+    choose(client, code="abcd-efgh-jkmn-pqrs")
+    (event,) = store.events(actions=["login_failed"])
+    assert {"username": "admin", "why": users.SETUP_CODE_WHY}.items() <= event["detail"].items()
+    assert "setup code" in describe(event)
+
+
+def test_a_setup_code_file_this_account_cant_read_is_said_everywhere(store, monkeypatch, capsys):
+    """Made by another account (a doctor run as an administrator before the service's first start): every code would
+    be refused, in silence. The page, the server's start and the doctor say so, and what to do."""
+    from pathlib import Path
+
+    store.first_setup_code()
+    made = store.path.parent / users.SETUP_CODE_FILE
+    real = Path.read_text
+
+    def unreadable(self, *args, **kwargs):
+        if self == made:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    assert store.first_setup_code() == "" and store.setup_code_problem() == users.SETUP_CODE_UNREADABLE.format(
+        path=made)  # fmt: skip
+    client = server(store)
+    admin_admin(client)
+    assert "be read by the account AP Coder runs as" in client.get("/login/first").text
+    assert choose(client, code="anything").json()["error"].startswith("The setup code's file")

@@ -166,3 +166,21 @@ def test_the_laptops_words_name_the_console_not_an_admin_to_ask(store, owner):
     assert "Ask an Admin" not in code and "users reset-2fa admin" in code
     refused = client.post("/login/code", data={"code": "000000", "next": "/review"}, headers=PAGE).json()["error"]
     assert "clock" in refused
+
+
+def test_the_own_address_is_compared_as_an_address_on_a_dual_stack_socket():
+    """Listening on both stacks, the server's own address comes as ``::ffff:192.168.1.20`` while the browser names
+    ``192.168.1.20``: the same address."""
+    import types
+
+    from starlette.requests import Request
+
+    from ap_coder.web.pages.login import first_sign_in_here
+
+    app = types.SimpleNamespace(state=types.SimpleNamespace(proxy=None, server_mode=False))
+    scope = {"type": "http", "method": "POST", "path": "/login", "app": app, "query_string": b"",
+             "headers": [(b"host", b"192.168.1.20:8501")], "client": ("::ffff:192.168.1.20", 50000),
+             "server": ("::ffff:192.168.1.20", 8501)}  # fmt: skip
+    assert first_sign_in_here(Request(scope))
+    scope["headers"] = [(b"host", b"192.168.1.21:8501")]
+    assert not first_sign_in_here(Request(scope))

@@ -111,3 +111,11 @@ def test_the_made_up_company_never_goes_into_a_folder_with_accounts(tmp_path, ca
     db = tmp_path / "private" / "ap_coder.db"
     Store(db).add_user("boss", "correct horse battery", role="admin")
     assert cli.main(["--db", str(db), "demo", "--company"]) == 1 and Store(db).get_setting("sign_in") == ""
+
+
+@pytest.mark.parametrize("left", ["authenticator.key", "server.json"])
+def test_the_made_up_company_never_goes_into_a_folder_signed_into_or_set_up_as_a_server(tmp_path, capsys, left):
+    db = tmp_path / "private" / "ap_coder.db"
+    Store(db)
+    (db.parent / left).write_text("{}")
+    assert cli.main(["--db", str(db), "demo", "--company"]) == 1 and "new data folder" in capsys.readouterr().err

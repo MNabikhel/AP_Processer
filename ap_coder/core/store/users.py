@@ -11,8 +11,8 @@ that did not match.
   for that username from that address for 15 minutes; 30 from one address, whatever the usernames, pause that
   address (a shared NAT, RDS or proxy address is not paused by five people mistyping); from the 10th within an hour
   from anywhere, a username's logins pause for 1 minute, then longer, from every address but those it logged in from
-  lately (D-109). Someone elsewhere can't lock a person out; the server's own console is never paused by address
-  nor account-wide (D-243). An
+  lately (D-109). Someone elsewhere can't lock a person out; the server's own console is never paused by address,
+  and account-wide only by its own tries (D-243). An
   unknown username is counted the same way (by a hash: the text typed is never kept), and every refusal says the same
   words, so nothing tells whether a username exists. A try is recorded before its password is checked, in one
   transaction with the check of the pause, so guesses sent in parallel get no more checks than guesses sent one by one.
@@ -97,12 +97,10 @@ LOCKED = (
     "Too many tries that didn't match: logging in from this computer is paused for 15 minutes. Wait, then try "
     "again, or ask an Admin to reset your password."
 )
-# An account's logins paused from anywhere (D-109): its own words, since it is no address's doing; never at the
-# server's own console (D-243: the first Admin is "admin" for anyone on the network to guess at).
+# An account's logins paused from anywhere (D-109), in words of its own; at the console from its own tries (D-243).
 ACCOUNT_PAUSED = (
-    "Too many tries that didn't match for this username, from other computers: logging in with it is paused for a few "
-    "minutes, except where it logged in lately and on the computer running AP Coder. Wait, then try again, or ask an "
-    "Admin."
+    "Too many tries that didn't match for this username: logging in with it is paused for a few minutes, except where "
+    "it logged in lately. Wait, then try again, or ask an Admin."
 )
 LAST_ADMIN = "AP Coder needs at least one active Admin: make another person an Admin first."
 WRONG_CODE = ("That code doesn't match, or it was used already. Type the 6 digits your authenticator app shows now "
@@ -123,13 +121,14 @@ PENDING_SECONDS = 15 * 60  # time to change a password and set an app up; the co
 FIRST_USERNAME, FIRST_PASSWORD = "admin", "admin"
 FIRST_KIND = "first-sign-in"  # in the short-lived table, as a login half way is (never a session)
 FIRST_ACTOR = "the first sign-in on this computer"
-# On the server, the first sign-in also needs a setup code (D-243): a forwarder on the server (netsh portproxy, ssh -L,
-# socat, a proxy that adds nothing) brings any browser in from 127.0.0.1, so the address can't prove who is at it. Made
-# while there is no account, in the data folder, readable by the service's account only, said in its window (and so
-# its service log) and by the doctor; gone with the first account (``SignInMixin.first_setup_code``).
+# The server's first sign-in also needs a setup code (D-243; ``sign_in.py`` ``first_setup_code`` says why and how).
 SETUP_CODE_FILE = "first_sign_in.code"
 SETUP_CODE_WRONG = ("That setup code doesn't match. On the server it is in AP Coder's window and in its service log "
                     "(logs\\service.log in the data folder), and python -m ap_coder doctor shows it.")  # fmt: skip
+SETUP_CODE_WHY = "setup code"  # login_failed's why: the first sign-in's setup code didn't match
+SETUP_CODE_UNREADABLE = ("The setup code's file {path} can't be read by the account AP Coder runs as: another account "
+                         "made it (a command run as an administrator before the service's first start). Delete the "
+                         "file: AP Coder makes a new one, said in its window and its service log.")  # fmt: skip
 FIRST_HERE_ONLY = ("No one can sign in yet: the first sign-in is made in a browser on the computer running AP Coder "
                    "(not through another computer or a proxy).")  # fmt: skip
 FIRST_DONE = ("The first sign-in was just finished in another browser: log in with that account (or ask the person "
@@ -703,13 +702,16 @@ class UsersMixin:
         return found is not None
 
     @staticmethod
-    def _account_paused_until(conn: Any, key: str, now: float) -> float:
+    def _account_paused_until(conn: Any, key: str, now: float, only: str | None = None) -> float:
         """Until when ``key``'s logins are paused from anywhere (0 = they are not): its tries that didn't match within
         ``ACCOUNT_WINDOW`` (since its last login), from the ``ACCOUNT_FAILURES``-th on, pause it for a minute,
-        doubling each time up to ``LOCK_SECONDS`` after the last one (D-109)."""
+        doubling each time up to ``LOCK_SECONDS`` after the last one (D-109). ``only``: counting the tries from that
+        address alone (the server's console: the network's tries never pause it, its own do, D-243)."""
         last_ok = conn.execute("SELECT MAX(at) FROM login_attempts WHERE username = ? AND ok = 1", (key,)).fetchone()[0]
-        count, last = conn.execute("SELECT COUNT(*), MAX(at) FROM login_attempts WHERE username = ? AND ok = 0 AND "
-                                   "at > ?", (key, max(now - ACCOUNT_WINDOW, last_ok or 0))).fetchone()  # fmt: skip
+        where, params = ("AND ip = ? ", (key, only)) if only is not None else ("", (key,))
+        since = max(now - ACCOUNT_WINDOW, last_ok or 0)
+        count, last = conn.execute(f"SELECT COUNT(*), MAX(at) FROM login_attempts WHERE username = ? {where}AND ok = 0 "
+                                   "AND at > ?", (*params, since)).fetchone()  # fmt: skip
         if count < ACCOUNT_FAILURES:
             return 0.0
         return float(last) + min(60.0 * 2 ** min(count - ACCOUNT_FAILURES, 10), LOCK_SECONDS)
@@ -733,18 +735,19 @@ class UsersMixin:
     def _locked(self, conn: Any, key: str, ip: str, now: float, console: bool) -> str:
         """Why logins are paused for ``key`` (a username, or ``UNKNOWN`` and its hash) now ("" when they are not):
         from ``ip`` (``LOCKED``), or from ``ip`` whatever the username (``LOCKED``), or for ``key`` from anywhere
-        (``ACCOUNT_PAUSED``); neither of the last two for the server's own console (D-243). An address ``key`` logged
-        in from lately is paused for it by its own tries only: neither a shared address paused by others' tries nor an
-        account-wide pause by tries elsewhere keeps a person out of their own office (D-109)."""
+        (``ACCOUNT_PAUSED``). The server's own console is never paused by the network's tries: not by address, and
+        the account-wide pause counts its own tries only (D-243; a forwarder on the server comes in from there). An
+        address ``key`` logged in from lately is paused for it by its own tries only: neither a shared address paused
+        by others' tries nor an account-wide pause by tries elsewhere keeps a person out of their own office (D-109)."""
         found = conn.execute("SELECT MAX(user_locked_until) FROM login_attempts WHERE username = ? AND ip = ?",
                              (key, ip))  # fmt: skip
         if (found.fetchone()[0] or 0) > now:
             return LOCKED
-        if console or self._known(conn, key, ip, now):
+        if self._known(conn, key, ip, now):
             return ""
-        if self._account_paused_until(conn, key, now) > now:
+        if self._account_paused_until(conn, key, now, ip if console else None) > now:
             return ACCOUNT_PAUSED
-        if ip:
+        if ip and not console:
             found = conn.execute("SELECT MAX(ip_locked_until) FROM login_attempts WHERE ip = ?", (ip,))
             if (found.fetchone()[0] or 0) > now:
                 return LOCKED
@@ -777,8 +780,8 @@ class UsersMixin:
             "VALUES (?, ?, ?, 0, ?, ?)",
             (key, ip, now, now + LOCK_SECONDS if lock_pair else None, now + LOCK_SECONDS if lock_ip else None),
         ).lastrowid
-        lock_account = (not console and not self._known(conn, key, ip, now)
-                        and self._account_paused_until(conn, key, now) > now)  # fmt: skip
+        lock_account = (not self._known(conn, key, ip, now)
+                        and self._account_paused_until(conn, key, now, ip if console else None) > now)  # fmt: skip
         return int(attempt), (lock_pair, lock_ip, lock_account)
 
     def _refused(self, conn: Any, who: dict[str, Any], ip: str, locks: tuple[bool, ...], why: str = "") -> str:

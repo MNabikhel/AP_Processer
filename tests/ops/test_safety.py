@@ -265,21 +265,33 @@ def test_a_stopped_servers_data_is_not_opened_without_sign_in(laptop, started, c
     assert sorted(p.name for p in data.glob("ap_coder.db*")) == ["ap_coder.db"]  # (only read: nothing left beside it)
 
 
-def test_before_the_packages_are_installed_the_sign_in_codes_key_tells(laptop, monkeypatch):
-    """The launcher's first phase in a new AP Coder folder runs on the standard library alone: the store, which reads
-    the accounts, can't be loaded yet. The key made when the first person set up their authenticator app tells."""
+def test_before_the_packages_are_installed_the_accounts_are_counted_all_the_same(laptop, monkeypatch):
+    """The launcher's first phase in a new AP Coder folder runs on the standard library alone: the store package
+    can't be loaded yet. The accounts are counted without it (``core/store/peek.py``, loaded by its path)."""
     import sys
-
-    from ap_coder.core import authenticator
 
     data, db = laptop
     Store(db).add_user("jsmith", GOOD, role="admin")
-    monkeypatch.setitem(sys.modules, "ap_coder.core.store.users", None)  # (as with no packages: ImportError)
-    assert safety.sign_in_accounts(db) == 0 and safety.team_server(data, db) is None
-    assert authenticator.load_key(data, create=True)
+    for name in ("ap_coder.core.store", "ap_coder.core.store.users"):
+        monkeypatch.setitem(sys.modules, name, None)  # (as with no packages: ImportError)
+    assert safety.sign_in_accounts(db) == 1
     team = safety.team_server(data, db)
-    assert team is not None and team.key and not team.running
-    assert "the sign-in codes' key" in team.refusal()[0] and team.refusal(on_purpose=True) == ("", "")
+    assert team is not None and team.accounts == 1 and not team.running
+    assert "1 sign-in account" in team.refusal()[0] and team.refusal(on_purpose=True) == ("", "")
+
+
+def test_the_codes_key_alone_is_a_laptops_leftover_never_a_team(laptop, started):
+    """A laptop's backup from before its sign-in restored (no account, no setting), its authenticator.key left: the
+    laptop's own (D-243), signed into again from admin / admin, never refused as a team's nor opened without sign-in."""
+    from ap_coder.core import authenticator
+
+    data, db = laptop
+    Store(db).set_setting("reviewer_seen", "1")
+    authenticator.load_key(data, create=True)
+    assert safety.team_server(data, db) is None
+    assert serve(db) == 0 and Store(db).get_setting(SIGN_IN) == LAPTOP
+    Store(db).set_setting(SIGN_IN, TEAM)  # a team's, started by hand: its setting says so
+    assert safety.team_server(data, db) is not None
 
 
 def test_server_settings_alone_mark_a_team_servers_data_folder(laptop, started, capsys, monkeypatch):
@@ -420,16 +432,15 @@ def test_the_laptops_own_account_and_key_never_make_it_a_team_server(laptop, sta
 
 
 def test_a_teams_folder_opened_without_sign_in_on_purpose_stays_a_teams(laptop, started, capsys):
-    """Never decided, and with accounts (or the codes' key, or server.json): a team's, whatever the start."""
-    from ap_coder.core import authenticator
-
+    """Never decided, and with accounts (or server.json): a team's, whatever the start. (The codes' key alone, no
+    account, is a laptop's: ``test_the_codes_key_alone_is_a_laptops_leftover_never_a_team``.)"""
     data, db = laptop
     Store(db).add_user("jsmith", GOOD, role="admin")
     assert serve(db, "--without-sign-in") == 0
     assert Store(db).get_setting(SIGN_IN) == "" and safety.team_server(data, db) is not None
     other = data / "other"
     other.mkdir()
-    authenticator.load_key(other, create=True)
+    service.write_config(other, port=8599)
     assert not safety.laptop_sign_in(Store(other / "ap_coder.db"), other)
     assert Store(other / "ap_coder.db").get_setting(SIGN_IN) == ""
 
@@ -456,6 +467,19 @@ def test_a_server_with_no_account_says_its_setup_code_at_its_start(laptop, start
     Store(db).add_first_admin(GOOD, "Pat Lee")
     assert serve(db, "--server", "--insecure-http") == 0 and "setup code" not in capsys.readouterr().err
     assert not (data / "first_sign_in.code").exists()  # an account: the code is gone
+
+
+def test_a_server_whose_setup_code_cant_be_read_says_so_at_its_start(laptop, started, capsys, monkeypatch):
+    from ap_coder.core.store.users import SETUP_CODE_FILE
+
+    data, db = laptop
+    service.write_config(data, port=8599)
+    (data / SETUP_CODE_FILE).write_text("abcd-efgh-jkmn-pqrs\n")
+    real = Path.read_text
+    monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: (_ for _ in ()).throw(PermissionError(13, "no"))
+                        if self.name == SETUP_CODE_FILE else real(self, *a, **k))  # fmt: skip
+    assert serve(db, "--server", "--insecure-http") == 0
+    assert "can't be read" in capsys.readouterr().err
 
 
 def test_without_sign_in_on_a_laptops_folder_opens_it_this_once(laptop, started, capsys):
@@ -522,13 +546,24 @@ def test_a_second_laptop_mode_serve_on_the_same_data_is_refused(laptop, started,
     assert cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser"]) == 0 and len(started) == 1
 
 
-def test_a_new_demo_folder_opens_without_sign_in(laptop, started, monkeypatch):
+def test_a_new_demo_folder_opens_without_sign_in(laptop, started, monkeypatch, capsys):
     """scripts/demo.bat (AP_DEMO=1, a folder of its own): a presenter's demo asks for no admin / admin nor phone, as
     the made-up company doesn't (D-243); a folder whose sign-in is set keeps it."""
     data, db = laptop
     monkeypatch.setenv("AP_DEMO", "1")
     assert serve(db) == 0 and Store(db).get_setting(SIGN_IN) == OFF
+    assert "opens without signing in" in capsys.readouterr().err  # said, once
     Store(db).set_setting(SIGN_IN, LAPTOP)
+    assert serve(db) == 0 and Store(db).get_setting(SIGN_IN) == LAPTOP
+
+
+def test_ap_demo_left_set_never_turns_the_laptops_own_folder_off(laptop, started, monkeypatch):
+    """AP_DEMO=1 left in the environment, on the laptop's own data folder (demo.bat always names another one)."""
+    from ap_coder.core import paths
+
+    data, db = laptop
+    monkeypatch.setenv("AP_DEMO", "1")
+    monkeypatch.setattr(paths, "default_data_dir", lambda: data)
     assert serve(db) == 0 and Store(db).get_setting(SIGN_IN) == LAPTOP
 
 
@@ -542,3 +577,29 @@ def test_a_laptops_database_that_cant_be_read_beside_its_codes_key_is_said_so(la
     assert serve(db) == 2 and started == []
     said = capsys.readouterr().err
     assert "can't read" in said and "backup restore" in said and "share" not in said
+    assert "--without-sign-in" not in said  # it would fail on a damaged file
+    assert serve(db, "--without-sign-in") == 2 and started == []  # refused, never a traceback
+    db.unlink()  # missing: on purpose, a new empty database; later starts sign in as the laptop's
+    assert serve(db, "--without-sign-in") == 0 and "new, empty one" in capsys.readouterr().err
+    assert serve(db) == 0 and Store(db).get_setting(SIGN_IN) == LAPTOP
+
+
+def test_on_windows_the_doctor_warns_when_everyone_on_the_server_may_read_the_data_folder(tmp_path):
+    """D-243: the first sign-in's setup code (and the database, the codes' key) are as private as the data folder: on
+    Windows a file inherits the folder's permissions, whatever mode it is made with."""
+    import types
+
+    def icacls(listed):
+        return lambda cmd, **kwargs: types.SimpleNamespace(returncode=0, stdout=f"{cmd[1]} {listed}\n", stderr="")
+
+    db = tmp_path / "ap_coder.db"
+    open_to = (
+        "BUILTIN\\Administrators:(OI)(CI)(F)\n NT AUTHORITY\\Authenticated Users:(OI)(CI)(M)\n BUILTIN\\Users:(RX)"
+    )
+    checks = {a: (st, d) for a, st, d in safety.doctor_checks(tmp_path, db, True, run=icacls(open_to), windows=True)}
+    status, detail = checks["data folder permissions"]
+    assert status == "WARN" and "Authenticated Users" in detail and "BUILTIN\\Users" in detail and "icacls" in detail
+    kept = "APCoderService:(OI)(CI)(F)\n BUILTIN\\Administrators:(OI)(CI)(F)\n NT AUTHORITY\\SYSTEM:(OI)(CI)(F)"
+    checks = {a: (st, d) for a, st, d in safety.doctor_checks(tmp_path, db, True, run=icacls(kept), windows=True)}
+    assert checks["data folder permissions"][0] == "PASS"
+    assert "data folder permissions" not in {a for a, *_ in safety.doctor_checks(tmp_path, db, True, windows=False)}

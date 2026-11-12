@@ -519,9 +519,13 @@ before putting the proxy in front, or use the console below. A proxy on this ser
 The setup code is what proves you are at the server: any program on it that passes connections on (a port forward
 with `netsh interface portproxy`, `ssh -L`, socat, nginx's default `proxy_pass`) brings other computers' browsers in
 from 127.0.0.1, under any name they give. While there is no account, the service makes a one-time code (four groups
-of four letters and digits) in `D:\APCoderData\first_sign_in.code`, readable by the service's account only, and
-says it in its log (`logs\service.log`: "No account yet ... this setup code: ..."). `python -m ap_coder doctor`,
-run as the service's account, shows it too. It works once: with the first account the file is removed.
+of four letters and digits) in `D:\APCoderData\first_sign_in.code`, and says it in its log (`logs\service.log`:
+"No account yet ... this setup code: ..."). `python -m ap_coder doctor`, run as the service's account, shows it
+too. It works once: with the first account the file is removed. On Windows the file has the data folder's
+permissions: with step 5 of section 2, the service's account, the administrators and SYSTEM may read it; the doctor
+warns when Users, Authenticated Users or Everyone may read the folder. Made by another account (the doctor run as
+an administrator before the service's first start), the service can't read it: the server's window, the doctor and
+the page say so; delete the file and the service makes a new one. Each wrong code is in the audit trail.
 
 **At the server's console**:
 
@@ -1783,7 +1787,7 @@ Admin: nothing is asked, and they sign in to the shared laptop as before.
 without the password and the phone; not another program or Windows account on the laptop itself. Such a program can
 read the data folder anyway, if Windows lets it; it can also send wrong passwords for admin from 127.0.0.1 and pause
 the owner's logins from this computer for 15 minutes, since the owner's browser comes from the same address (the
-account-wide pause never applies there, the one for an address and a username does). And the browser sends the
+pause for one address and username, and the account-wide one counted from that address's own tries). And the browser sends the
 laptop's sign-in cookie (`ap_session`, plain HTTP on 127.0.0.1) to every program listening on another port of
 this computer, as browsers do with cookies of `localhost`. On a laptop shared by several Windows users, or running
 programs one doesn't trust, use `share` with HTTPS, or a server of its own.

@@ -5854,12 +5854,17 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     can pause the first sign-in. On the server that is not enough (the security review): any forwarder on it
     (`netsh portproxy`, `ssh -L`, socat, nginx's default `proxy_pass`) brings anyone in from 127.0.0.1 with a Host
     they write. So the server's first sign-in also needs a one-time setup code, made while there is no account in
-    `first_sign_in.code` in the data folder (readable by the service's account only), said in the server's window
-    and so its service log, and by the doctor; removed with the first account. The laptop needs none, as the user
-    asked: it listens on 127.0.0.1, and a forwarder there is a program on the laptop, which can read the database
-    anyway. `users add --admin` at the console stays, beside it; a server or shared laptop with accounts is
-    unchanged. The account-wide pause (D-109) never applies at the console, as the address pause doesn't, with words
-    of its own: the first Admin is `admin` for anyone to guess at.
+    `first_sign_in.code` in the data folder (made 0600; on Windows it takes the folder's permissions, so the
+    service's account, the administrators and SYSTEM as SERVER.md step 5 sets them, and the doctor warns when
+    Users, Authenticated Users or Everyone may read the folder), said in the server's window and so its service
+    log, and by the doctor (which also says when the service can't read the file: made by another account); each
+    wrong code is a `login_failed` of the audit trail; removed with the first account. The laptop needs none, as
+    the user asked: it listens on 127.0.0.1, and a forwarder there is a program on the laptop, which can read the
+    database anyway. `users add --admin` at the console stays, beside it; a server or shared laptop with accounts is
+    unchanged. The account-wide pause (D-109), with words of its own, counts at the console the console's own tries
+    only: the first Admin is `admin` for anyone on the network to guess at, and their tries never pause the console,
+    while a forwarder's guesses, which come from the console, still back off (one every 20 seconds for a day: 8
+    passwords checked).
   - **The laptop:** the database's `sign_in` setting. `laptop` is set at the first start of a data folder that
     never decided and shows nothing of a team (no account, no codes' key, no server.json): new folders and older
     laptop ones alike; a team's opened with `--without-sign-in` keeps its accounts as a team's. Then every page
@@ -5868,12 +5873,18 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `PERSON` stays None, so the saved name, the computer's login, the drafts and the full folders are as before. A
     session ends after 8 hours unused (the server's 30 minutes and 12 hours stay). The way out at the console:
     `--without-sign-in` for one start, `users sign-in off` (and `on`) for good; `demo --company` is off (made-up
-    data). D-211 reads the setting without a Store: the laptop's own account and key no longer mark a team's
-    folder; a start in server mode sets `team`, and `share` takes the laptop's Admin as its first. A laptop's
+    data). D-211 reads the setting and counts the accounts without a Store (`core/store/peek.py`, also in the
+    launcher's first phase): the laptop's own account and key no longer mark a team's folder, nor does a codes' key
+    alone (no account, no server.json, no `team`: the laptop's, left by a backup from before its sign-in restored),
+    and a database that can't be read beside the key is said so, with the restore's steps; a start in server mode
+    sets `team`, and `share` takes the laptop's Admin as its first. A laptop's
     restore keeps its account and the setting, as the server keeps its accounts (D-101); a new name in Settings
     renames the account (so `share` later knows for the owner's the approvals made under the account's name: those
-    made under an older name, before a rename, keep that name). A new demo folder (`scripts/demo.bat`, AP_DEMO=1)
-    and `demo --company` are off; `demo --company` is refused on a folder with accounts or a sign-in set. A session
+    made under an older name, before a rename, keep that name). A new demo folder (`scripts/demo.bat`, AP_DEMO=1 and
+    a data folder other than the laptop's own, said in one line) and `demo --company` are off; `demo --company` is
+    refused on a folder with accounts, a codes' key, server.json or a sign-in set. CI's Windows update job starts
+    the new version with `--without-sign-in` to read its pages: the signed-in start of an older folder is covered by
+    the unit tests and `scripts/ci/old_versions.py`. A session
     still ends after 12 hours in all. Not stopped (SERVER.md section 16): another program on the laptop pausing the
     owner's logins from 127.0.0.1 with wrong passwords (the pause for one address and username stays, or guesses
     there would be unlimited), and the browser sending `ap_session` to every port of localhost. The older version

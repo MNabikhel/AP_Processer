@@ -9,16 +9,27 @@ import sqlite3
 from pathlib import Path
 
 
-def setting(db: Path, key: str) -> str:
-    """The database ``db``'s setting ``key`` ("" when it has none, is not there, or can't be read): read-only, and no
-    ``-wal`` file left beside one closed cleanly (as ``users.sign_in_accounts`` reads it)."""
+def _read(db: Path, sql: str, params: tuple = ()) -> tuple | None:
+    """The first row ``sql`` answers on ``db``, read-only, no ``-wal`` file left beside one closed cleanly (as
+    ``users.sign_in_accounts`` reads it); None when the file is not there or can't be read."""
     how = "mode=ro" if db.with_name(db.name + "-wal").exists() else "mode=ro&immutable=1"
     try:
         conn = sqlite3.connect(f"{db.resolve().as_uri()}?{how}", uri=True, timeout=5)
         try:
-            row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+            return conn.execute(sql, params).fetchone() or ()
         finally:
             conn.close()
     except (sqlite3.Error, OSError, ValueError):
-        return ""
+        return None
+
+
+def accounts(db: Path) -> int:
+    """How many sign-in accounts the database ``db`` holds, turned off or not (0: none, or it can't be read)."""
+    row = _read(db, "SELECT COUNT(*) FROM users")
+    return int(row[0]) if row else 0
+
+
+def setting(db: Path, key: str) -> str:
+    """The database ``db``'s setting ``key`` ("" when it has none, is not there, or can't be read)."""
+    row = _read(db, "SELECT value FROM settings WHERE key = ?", (key,))
     return str(row[0]) if row else ""

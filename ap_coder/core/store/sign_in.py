@@ -21,6 +21,7 @@ from .users import (
     PENDING_KIND,
     PENDING_SECONDS,
     SETUP_CODE_FILE,
+    SETUP_CODE_UNREADABLE,
     TOKEN_BYTES,
     _clean_display,
     _public,
@@ -115,9 +116,11 @@ class SignInMixin:
         return row is not None and row["expires_at"] >= users._clock()
 
     def first_setup_code(self) -> str:
-        """The server's setup code for the first sign-in (``users.SETUP_CODE_FILE``): while there is no account, the
-        one in the data folder, made now when there is none (readable by this account only; two web workers making it
-        at once keep the first). Once there is an account, "" and the file removed."""
+        """The server's setup code for the first sign-in (``users.SETUP_CODE_FILE``): a forwarder on the server
+        (netsh portproxy, ssh -L, socat, a proxy that adds nothing) brings any browser in from 127.0.0.1, so no
+        address proves who is at the server. While there is no account, the one in the data folder, made now when
+        there is none (0600; on Windows the folder's permissions; two web workers making it at once keep the first),
+        said in the server's window and by the doctor. Once there is an account, "" and the file removed."""
         path = self.path.parent / SETUP_CODE_FILE
         if self.user_count():
             path.unlink(missing_ok=True)
@@ -136,6 +139,18 @@ class SignInMixin:
             return path.read_text(encoding="ascii").strip()
         except (OSError, UnicodeDecodeError):
             return ""
+
+    def setup_code_problem(self) -> str:
+        """Why the server's setup code can't be used though there is no account ("" when it can): its file is there
+        but this account can't read it (``users.SETUP_CODE_UNREADABLE``)."""
+        path = self.path.parent / SETUP_CODE_FILE
+        if self.user_count() or not path.exists():
+            return ""
+        try:
+            path.read_text(encoding="ascii")
+        except (OSError, UnicodeDecodeError):
+            return SETUP_CODE_UNREADABLE.format(path=path)
+        return ""
 
     def setup_code_matches(self, typed: str) -> bool:
         """Whether ``typed`` is the server's setup code (case, spaces and dashes aside: as read off a screen)."""

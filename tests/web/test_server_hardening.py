@@ -364,6 +364,24 @@ def test_an_account_paused_from_anywhere_never_pauses_the_servers_own_console(tm
     assert store.check_code(found["id"], authenticator_code(store, "admin"), "127.0.0.1", console=True)
 
 
+def test_the_consoles_own_wrong_passwords_still_pause_it(tmp_path, clock):
+    """A forwarder on the server brings guesses in from 127.0.0.1, the console: they pause it from their own count
+    (D-243), never from the network's, so a day of one guess every 20 seconds gets few passwords checked."""
+    from ap_coder.core.store.users import WRONG, LoginRefused
+
+    store = Store(tmp_path / "ap_coder.db")
+    store.add_user("admin", GOOD, role="admin", must_change=False)
+    checked, start, n = 0, clock.now, 0
+    while clock.now - start < 86400:
+        n += 1
+        try:
+            store.authenticate("admin", f"wrong guess {n:06d}", "127.0.0.1", console=True)
+        except LoginRefused as exc:
+            checked += str(exc) == WRONG
+        clock.now += 20
+    assert checked <= 120, checked  # (a pause of its own from the 10th, doubling to 15 minutes)
+
+
 def _logged_in(store: Store, username: str, ip: str) -> dict:
     """Both steps of a login (D-146): a known address is one a login went all the way through from."""
     from tests.webclient import authenticator_code

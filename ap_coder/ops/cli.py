@@ -523,7 +523,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
         mark_team(store)  # its accounts are a team's from now on (D-211, D-243)
         code = store.first_setup_code()  # no account yet: the first sign-in needs it (D-243)
-        if code:
+        if problem := store.setup_code_problem():
+            print(problem, file=sys.stderr)
+        elif code:
             scheme = "https" if certfile and keyfile else "http"
             print(f"No account yet. The first Admin signs in in a browser on this server, at {scheme}://127.0.0.1:"
                   f"{port}, with the username admin, the password admin and this setup code: {code} (it works once; "
@@ -1221,8 +1223,10 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
         from ..core.store.sign_in import OFF, SIGN_IN
         from .demo import COMPANY_FOLDER, load_company
 
-        # It turns sign-in off: never a laptop's own nor a team's (off already: its own, or a demo's).
-        if store.user_count() or store.get_setting(SIGN_IN) not in ("", OFF):
+        # It turns sign-in off: never a laptop's own nor a team's (off already: its own, or a demo's; the
+        # codes' key or server.json: a folder signed into, or set up as a server).
+        signed = (store.path.parent / "authenticator.key").is_file() or (store.path.parent / "server.json").is_file()
+        if store.user_count() or signed or store.get_setting(SIGN_IN) not in ("", OFF):
             print("Not loaded: the made-up company is loaded into a new data folder only (set AP_PRIVATE_DIR to a new "
                   "folder first): this one has sign-in accounts, or its sign-in is set.", file=sys.stderr)  # fmt: skip
             return 1
