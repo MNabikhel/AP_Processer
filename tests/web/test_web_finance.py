@@ -629,6 +629,34 @@ def test_a_statement_whose_period_cannot_be_told_says_so(client, busy):
     assert 'id="statement-period-unknown"' in page.text and "period unknown" in page.text
 
 
+def test_an_open_items_statement_counts_the_invoices_exported_instead_of_listing_them(client, busy):
+    """D-242: ticked on the upload, the choice stays through the page (the Reconcile form, the CSV, another file):
+    the vendor's exported invoice is counted in one line, not listed Not on statement; unticked, it is listed."""
+    key = "northwind it solutions"  # the demo's: #1 approved, #10 in review, both in September
+    exported = busy.get_invoice(1)
+    busy.create_export_batch([1], "csv")
+    content = b"Invoice No,Date,Amount\nOPEN-1,2026-09-01,10.00\nOPEN-2,2026-09-30,20.00\n"
+    upload = {"vendor": key, "open_items": "1"}
+    page = follow(client, client.post("/statements/upload", data=upload,
+                                      files={"file": ("s.csv", content, "text/csv")}, headers=PAGE))  # fmt: skip
+    assert page.url.params["open_items"] == "1"
+    text = page.text
+    assert "1 invoice already exported is not expected on an open-items statement." in text
+    assert "Exported (batch" not in text and "1 not on statement" in text
+    assert 'name="open_items" value="1" checked' in text  # the Reconcile form keeps it
+    assert f"/statements?vendor={key.replace(' ', '%20')}&amp;open_items=1" in text  # and Choose another file
+    assert 'name="open_items" value="1" checked' in client.get(f"/statements?vendor={key}&open_items=1").text
+    query = page.url.query.decode()
+    data = attachment(client.get(f"/statements/reconciliation.csv?{query}"), "statement_reconciliation.csv", "text/csv")
+    records = list(csv.DictReader(io.StringIO(content.decode())))
+    columns = stm.map_columns(["Invoice No", "Date", "Amount"])
+    assert data == stm.to_csv(stm.reconcile(records, columns, busy.vendor_invoices(key), open_items=True))
+    assert exported["invoice_number"] not in data.decode("utf-8-sig")
+    plain = client.get("/statements", params={"vendor": key, "file": page.url.params["file"]}).text
+    assert "already exported" not in plain and "Exported (batch" in plain and "2 not on statement" in plain
+    assert 'name="open_items" value="1">' in plain
+
+
 def test_statement_columns_can_be_picked(client, busy):
     key, content = _statement(busy)
     page = follow(

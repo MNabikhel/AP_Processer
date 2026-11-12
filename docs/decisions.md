@@ -5812,3 +5812,14 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Cost:** some ordinary lines are held too ("Paper towels case", "Water damage cleanup", "Delivery charge",
     "Coffee pods"); `bench coding --quick` and `learn --quick` did not move. Revisit if a pilot's queue fills with
     such holds: a tighter rule (only the name proper's words) was tried and missed the laptop.
+- **D-242** · **A statement of open items does not list the invoices already exported as "Not on statement"**
+  (`erp/statements.py` `reconcile`'s `open_items`, the tick box on the Statements page; 12 Nov 2026).
+  - **Why:** many vendors send only what is unpaid. Every invoice AP Coder exported in the statement's period (an
+    export batch: sent to the ERP, or on a JD Edwards keying sheet) was then listed "Not on statement", burying the
+    few that matter. Ticked, those are counted in one line instead ("12 invoices already exported are not expected
+    on an open-items statement"); matching, the other lines and the email to the vendor are as before. Unticked,
+    nothing changes.
+  - **Kept:** in the page's address (`open_items=1`) from the upload through the Reconcile form, another sheet, the
+    CSV and Choose another file. Not remembered per vendor: the Statements page keeps nothing per vendor today
+    (the statement itself is held an hour, never stored), and a table for one tick box would be more than it is
+    worth. An exported invoice an undone batch released counts as not exported (its batch is cleared).
