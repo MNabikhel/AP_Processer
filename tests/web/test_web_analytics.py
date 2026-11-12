@@ -267,6 +267,18 @@ def test_an_activity_search_that_matches_nothing_says_so(client, busy):
     assert csv.status_code == 200 and csv.text.lstrip("﻿").strip() == "When,Who,What,Invoice,Details"
 
 
+def test_the_activity_search_ignores_accents_as_the_directory_does(store):
+    """B-2535: "quebec" found nothing of Hydro-Québec's in the Activity log, though the invoice directory finds it."""
+    from tests.webclient import add_clean, client_for
+
+    iid = add_clean(store, vendor_name="Hydro-Québec", invoice_number="HQ-1")
+    store.log_event("note_added", iid, actor="Élise", detail={"vendor": "Hydro-Québec", "invoice_number": "HQ-1",
+                                                              "note": "called"})  # fmt: skip
+    client = client_for(store)
+    for typed in ("Québec", "quebec", "QUEBEC", "elise"):
+        assert "No events match" not in client.get("/activity", params={"q": typed, "view": "table"}).text, typed
+
+
 def test_activity_csv_has_the_filtered_events(client, busy):
     csv = client.get("/activity/events.csv", params={"group": "Backups"})
     assert csv.status_code == 200 and "attachment" in csv.headers["content-disposition"]
