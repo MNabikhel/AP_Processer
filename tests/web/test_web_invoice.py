@@ -236,6 +236,25 @@ def test_a_header_amount_too_long_to_be_one_is_refused_like_a_word(client, store
     assert store.get_invoice(inv_id)["status"] == REVIEW
 
 
+def test_approve_anyway_and_its_reason_stay_ticked_when_the_invoice_is_opened_again(client, store):
+    """B-2536: "Approve anyway" ticked with its reason was gone once the page was drawn again (a reload, Previous or
+    Next and back): the draft kept neither. They are kept with it, ticked again only while the errors are the same
+    ones (``override_key``); a bare tick keeps nothing (B-825)."""
+    cascade = next(i["id"] for i in store.list_invoices(REVIEW) if "Cascade" in (i["vendor_name"] or ""))
+    data = form_of(store, cascade)
+    key = re.search(r'name="override" value="([0-9a-f]+)"', check(client, cascade, data)["sections"]["bar"])[1]
+    assert not check(client, cascade, {**data, "override": key})["draft"]
+    reason = "US supplier, set up next week"
+    assert check(client, cascade, {**data, "override": key, "override_reason": reason})["allow"]
+    page = client.get(f"/review/{cascade}").text
+    assert re.search(rf'name="override" value="{key}" form="inv" checked', page)
+    assert f'value="{reason}"' in page
+    assert check(client, cascade, {**data, "override": "0" * 10, "override_reason": reason})["draft"]  # other errors'
+    page = client.get(f"/review/{cascade}").text
+    assert not re.search(r'name="override" value="[0-9a-f]+" form="inv" checked', page)
+    assert f'value="{reason}"' not in page
+
+
 def test_errors_need_approve_anyway_with_a_reason_but_not_what_makes_the_voucher_invalid(client, store):
     """D-75: a total that doesn't add up can never be approved anyway; another error (a vendor not in the vendor list)
     can, ticked with a reason, which is kept with the approval."""

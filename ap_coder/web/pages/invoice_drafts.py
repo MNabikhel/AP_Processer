@@ -148,7 +148,10 @@ def current_draft(request: Request, inv: dict[str, Any]) -> tuple[invoice_form.D
     draft = invoice_form.Draft(header=dict(saved["header"]), lines=list(saved["lines"]), taxes=list(saved["taxes"]),
                        taught=dict(saved.get("taught") or {}), reader_at=saved.get("reader_at", ""),
                        absent=list(saved.get("absent") or []), from_vendor=dict(saved.get("from_vendor") or {}),
-                       pay_from_for=str(saved.get("pay_from_for") or ""))  # fmt: skip
+                       pay_from_for=str(saved.get("pay_from_for") or ""),
+                       # "Approve anyway" and why: ticked again only for the same errors (``override_key``, B-2536)
+                       override=str(saved.get("override") or ""),
+                       override_reason=str(saved.get("override_reason") or ""))  # fmt: skip
     return draft, draft.reader_at != _reader_at(inv)
 
 
@@ -216,8 +219,9 @@ def _keep_draft(request: Request, invoice_id: int, draft: invoice_form.Draft, ke
 
 
 def _keeps(draft: invoice_form.Draft, analysis: view.Analysis) -> bool:
-    """Whether a check keeps the screen's edits as a draft: a field to fix, an edit of the coding, words taught."""
-    return analysis.coding is None or analysis.changed or bool(draft.taught)
+    """Whether a check keeps the screen's edits as a draft: a field to fix, an edit of the coding, words taught, why
+    to approve anyway (a bare tick is not kept, B-825)."""
+    return analysis.coding is None or analysis.changed or bool(draft.taught) or bool(draft.override_reason.strip())
 
 
 # --- Many people on one queue (D-184) -----------------------------------------------------------------------------

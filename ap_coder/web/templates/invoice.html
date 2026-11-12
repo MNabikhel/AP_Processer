@@ -433,7 +433,7 @@
     {# Why "Approve anyway": kept with the approval (D-75); shown while the box is ticked. Outside the bar drawn again
        after each check, so what is typed stays. #}
     <input type="text" name="override_reason" form="inv" class="inv-override-why" data-override-reason maxlength="300"
-           value="{{ draft.override_reason }}" placeholder="Why approve anyway? (kept with the approval)" aria-label="Why approve anyway"{% if not live.bar or not live.bar.override %} hidden{% endif %}></div>
+           value="{{ live.bar.override_reason if live.bar else '' }}" placeholder="Why approve anyway? (kept with the approval)" aria-label="Why approve anyway"{% if not live.bar or not live.bar.override %} hidden{% endif %}></div>
   <div class="inv-actionbar-right">
     <span class="inv-checking small muted" data-checking role="status" aria-live="polite"></span>
     {% if can("/review/1/approve") %}{# server mode: only a role that may approve sees these (web/roles.py, D-98) #}
