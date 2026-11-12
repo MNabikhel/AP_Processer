@@ -21,6 +21,7 @@ Entry points: ``read_journal`` (a ``Journal``), ``looks_like_journal``, ``coding
 
 from __future__ import annotations
 
+import calendar
 import codecs
 import csv
 import io
@@ -163,6 +164,7 @@ class _Seen:
     credit: int = 0
     grand: tuple[int, int] | None = None  # the Grand Total row's two amounts, in cents
     no_header: bool = False
+    dates: str = ""  # how the dates that read two ways were read, and why (none: no date did)
 
 
 def _rows(data: bytes) -> list[list[str]]:
@@ -270,11 +272,26 @@ def _voucher(draft: _Draft, intercompany: frozenset[str]) -> Voucher:
     )  # fmt: skip
 
 
-def _day_first(rows: list[list[str]], pos: dict[str, int]) -> bool:
-    """How the file prints its G/L dates, from the vouchers' ones that read one way only (25/03/2026: day first);
-    month first when none tells (or they mix)."""
-    dates = (_cell(row, pos["gl_date"]) for row in rows if SEPARATOR in _cell(row, pos["account"]))
-    return bool(infer_day_first("\n".join(dates)))
+def _date_order(rows: list[list[str]], pos: dict[str, int]) -> tuple[bool, str]:
+    """How the file prints its G/L dates, from the vouchers' ones that read one way only (25/03/2026: day first),
+    month first when none tells (or they mix); and, when a date reads two ways, the note that says how it was read
+    and why (a wrong guess can be seen)."""
+    dates = dict.fromkeys(_cell(row, pos["gl_date"]) for row in rows if SEPARATOR in _cell(row, pos["account"]))
+    told: dict[bool | None, str] = {}
+    for text in dates:
+        told.setdefault(infer_day_first(text), text)
+    day_first = True in told and False not in told
+    two_ways = next((text for text in dates if parse_date(text) is None and parse_date(text, day_first=True)), "")
+    read = parse_date(two_ways, day_first=day_first)
+    if read is None:
+        return day_first, ""
+    said = (f"Dates that read two ways were read {'day' if day_first else 'month'} first ({two_ways}: {read.day} "
+            f"{calendar.month_name[read.month]} {read.year})")  # fmt: skip
+    if True in told and False in told:
+        return day_first, f"{said}: the file has dates printed both ways ({told[True]} and {told[False]})."
+    if day_first or False in told:
+        return day_first, f"{said}, as {told[day_first]} in the file says."
+    return day_first, f"{said}: no date in the file tells the order, as a day after the 12th would."
 
 
 def read_journal(data: bytes, *, payable_objects: PayableObjects, tax_objects: Iterable[str]) -> Journal:
@@ -294,7 +311,7 @@ def read_journal(data: bytes, *, payable_objects: PayableObjects, tax_objects: I
     kinds |= {clean(o): PAYABLE for o in (*payable_objects.trade, *intercompany)}
     seen = _Seen(titles=sum(1 for row in rows[:start] if any(cell.strip() for cell in row)), no_header=header is None)
     drafts: list[_Draft] = []
-    day_first = _day_first(rows[start:], pos)
+    day_first, seen.dates = _date_order(rows[start:], pos)
     for n, row in enumerate(rows[start:], start=start + 1):
         if SEPARATOR not in _cell(row, pos["account"]):
             _not_data(row, pos, seen)
@@ -356,6 +373,8 @@ def _notes(vouchers: tuple[Voucher, ...], totals: Totals, seen: _Seen) -> list[s
         notes.append(
             f"Skipped: {plural(seen.titles, 'title or page header row')} and {plural(seen.total_rows, 'total row')}."
         )
+    if seen.dates:
+        notes.append(seen.dates)
     undated = [str(voucher.row) for voucher in vouchers if not voucher.gl_date]
     if undated:
         notes.append(f"{plural(len(undated), 'voucher')} with no G/L date that could be read: row {_first(undated)}.")

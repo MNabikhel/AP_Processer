@@ -151,6 +151,15 @@ def test_a_remark_written_with_a_hyphen_after_inv_gets_the_new_invoice_number():
     assert with_period("INV - 54001 cell", Period(2026, 2, 1), "55123", 2026) == "INV - 55123 cell"
     assert with_period("INV-54001 cell", None, "", 2026) == "INV cell"  # no number read: no "INV-" left
     assert with_period("acct-1234567 hydro", Period(2026, 2, 1), "55123", 2026) == "acct-1234567 hydro"
+    assert with_period("Contract-9876543 fee Jan", Period(2026, 2, 1), "", 2026) == "Contract-9876543 fee Feb"
+    assert with_period("Customer - 12345678 hydro", Period(2026, 2, 1), "", 2026) == "Customer - 12345678 hydro"
+
+
+@pytest.mark.parametrize("written", ["INV–", "INV—", "INV‑", "INV_", "INV/", "INV.-", "INV: -", "INV-No-"])
+def test_a_remark_with_another_mark_after_inv_gets_the_new_invoice_number_too(written):
+    """An en or em dash, a non-breaking hyphen, an underscore or a slash, or two marks, after INV (B-2630)."""
+    assert with_period(f"{written}54001 cell Jan", Period(2026, 2, 1), "55123", 2026) == f"{written}55123 cell Feb"
+    assert with_period(f"{written}54001 cell", None, "", 2026) in ("INV cell", "INV. cell", "INV: cell", "INV-No cell")
 
 
 def test_with_no_date_the_month_is_taken_out_not_kept_stale():

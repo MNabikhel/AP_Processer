@@ -334,6 +334,16 @@ class JournalMixin:
                                 f"{_in_list('identity')} GROUP BY identity", (json.dumps(list(wanted)),))  # fmt: skip
             return sum(min(wanted[r["identity"]], r["n"]) for r in rows)
 
+    def journal_read_otherwise(self, file_id: int, journal: Any) -> int:
+        """How many vouchers of a journal as read (``voucher_identity``) are not as the loaded file ``file_id`` kept
+        them, or the other way round: 0 when the same file reads as it was loaded; more when the reader reads it
+        better now (the G/L dates of a journal printed day first: B-2631). Nothing is written."""
+        wanted = Counter(voucher_identity(voucher) for voucher in journal.vouchers)
+        with self._conn() as conn:
+            rows = conn.execute("SELECT identity FROM journal_vouchers WHERE file_id = ?", (file_id,))
+            kept = Counter(row["identity"] for row in rows)
+        return max((wanted - kept).total(), (kept - wanted).total())
+
     def journal_lines_for(
         self, supplier_number: str, *, kinds: Sequence[str] = (CODING,), include_affiliates: bool = False,
         include_unbalanced: bool = False,

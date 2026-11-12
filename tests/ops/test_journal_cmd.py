@@ -5,6 +5,7 @@ company's (``ap_coder.bench.jde_company``)."""
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import time
 from dataclasses import replace
@@ -47,6 +48,7 @@ def test_the_small_journal_is_loaded_and_what_was_read_is_said(tmp_path, capsys,
         "Read: 120 vouchers with 405 lines, G/L dates 2024-01-15 to 2024-12-30.",
         "The lines by kind: 195 coding (what AP chose), 129 payable and 81 tax (what JD Edwards added).",
         "Skipped: 7 title or page header rows and 2 total rows.",
+        "Dates that read two ways were read month first (2/1/2024: 1 February 2024), as 1/15/2024 in the file says.",
         "16 vouchers with an intercompany payable line (an affiliate's).",
         "1 voucher with a negative amount (a credit).",
         "1 voucher where the debits and the credits are not the same amount (kept and marked): row 12 (740075 "
@@ -94,6 +96,25 @@ def test_the_same_file_again_adds_nothing_and_says_so(tmp_path, capsys, truth):
     assert "The trade payable object: 2110 (as saved with the last journal loaded)." in out
     assert "there already from a file loaded before" not in out
     assert (store.journal_stamp(), store.events_stamp(), store.journal_files()) == before
+
+
+def test_a_file_loaded_when_it_read_otherwise_says_so_and_reads_as_now_once_forgotten(tmp_path, truth):
+    """B-2631: a journal printed day first, loaded before its dates were read so, is the same file by its bytes;
+    loading it again says it reads otherwise now (it was "nothing to add"), and how to keep it as it reads."""
+    data, store = jde_exports.journal_csv(truth), _store(tmp_path)
+    now = journal_cmd.look(store, data, "R09321.csv").journal
+    first = replace(now.vouchers[0], gl_date="2024-03-04")  # as an older reader read 03/04/2024
+    store.import_journal(replace(now, vouchers=(first, *now.vouchers[1:])), source_name="R09321.csv",
+                         source_hash=hashlib.sha256(data).hexdigest())  # fmt: skip
+    state, said = journal_cmd.load(store, data, "R09321.csv")
+    assert state == journal_cmd.SAME_FILE and said[-1].startswith("This file is loaded already (")
+    assert said[-1].endswith(", but 1 voucher of it reads otherwise now: AP Coder reads such files better than "
+                             "when it was loaded. Forget it and load it again to learn from it as it reads "
+                             "now.")  # fmt: skip
+    store.forget_journal(store.journal_files()[0]["id"])
+    assert journal_cmd.load(store, data, "R09321.csv")[0] == journal_cmd.DONE
+    assert min(v["gl_date"] for v in store.journal_vouchers()) == "2024-01-15"
+    assert journal_cmd.load(store, data, "R09321.csv")[1][-1].endswith("forget it first.")  # as it reads: nothing new
 
 
 def test_two_files_that_overlap_say_how_many_vouchers_were_there(tmp_path, capsys, truth):
