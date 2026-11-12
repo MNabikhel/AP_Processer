@@ -105,7 +105,10 @@ DISTRACTORS: dict[str, list[str]] = {
                      r"date\s*of\s*(?:order|shipment|delivery|service|supply)", r"invoice\s*period", r"billing\s*period", r"ship(?:ping|ment)?\s*date", r"due\s*date", r"date\s*due", r"delivery\s*date",
                      r"date\s*de\s*commande", r"date\s*d'?\s*expedition", r"date\s*de\s*livraison", r"echeance",
                      r"service\s*(?:date|period)", r"period", r"periode", r"date\s*limite", r"payment\s*due",
-                     r"date\s*de\s*la\s*commande", r"quote\s*date", r"date\s*de\s*soumission", r"printed", r"imprime"],
+                     r"date\s*de\s*la\s*commande", r"quote\s*date", r"date\s*de\s*soumission", r"printed", r"imprime",
+                     # The French "date printed / received / of service / paid", a period's start or end (B-2601).
+                     r"date\s*(?:de\s*|d\s*['’]?\s*)(?:impression|reception|service|paiement|debut|fin|effet)\b",
+                     r"date\s*recue?s?\b", r"date\s*(?:required|of\s*(?:last\s*payment|birth|loss))\b"],
     "invoice_number": [r"inv\s?-\s?\d",  # "INV -4471": OCR's space in the number "INV-4471", not a label
                        r"invoice\s*date", r"invoice\s*total", r"invoice\s*amount", r"customer\s*(?:no|#|number|id)",
                        r"account\s*(?:no|#|number)", r"no\s*de\s*client", r"no\s*de\s*compte", r"client\s*(?:no|#)",

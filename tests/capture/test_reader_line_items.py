@@ -346,3 +346,19 @@ def test_a_number_that_starts_a_description_is_kept_where_no_row_number_is_print
     assert _read(licence) == [("1 year licence", 1.0, 900.0, 900.0)]
     unnumbered = _words(*NUMBERED_HEADINGS, *_numbered(0.24, "", "1 year licence", "1", "900.00", "900.00")[1:])
     assert _read(unnumbered) == [("1 year licence", 1.0, 900.0, 900.0)]
+
+
+def test_an_item_whose_description_starts_with_a_totals_word_is_a_line():
+    """B-2603: "Total Station survey rental | 2 | 250.00 | 500.00" ended the table there (its first word a total's
+    label), so its lines and those under it were dropped; a totals row under the lines still ends them. A row named
+    "Subtotal ..." is still left out as a page's subtotal, but no longer drops the lines under it."""
+    items = [("Widget", "1", "100.00", "100.00"), ("Gadget", "1", "50.00", "50.00"), ("Bracket", "2", "25.00", "50.00")]
+    for named in ("Total Station survey rental", "Subtotal Systems licence", "Amount Due collections software"):
+        for at in (0, 1, 3):
+            rows = [*items[:at], (named, "2", "250.00", "500.00"), *items[at:]]
+            cells = [c for i, r in enumerate(rows) for c in _row(0.24 + 0.03 * i, *r)]
+            totals = [("Total hours", 0.10, 0.20, 0.40), ("4", 0.56, 0.568, 0.40), ("700.00", 0.85, 0.90, 0.40),
+                      ("Subtotal", 0.60, 0.68, 0.43), ("700.00", 0.85, 0.90, 0.43)]  # fmt: skip
+            got = [a for *_r, a in _read(_words(*HEADINGS, *cells, *totals))]
+            want = [float(r[3]) for r in (items if named.startswith("Subtotal") else rows)]
+            assert got == want, (named, at, got)

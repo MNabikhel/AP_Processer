@@ -41,6 +41,8 @@ _TOTAL_LABELS = ("subtotal", "grand_total", "tax_total")  # the line table ends 
 
 _FIGURE = re.compile(r"[#(]?[\d.,:/-]*\d[\d.,:/-]*[)%]?")  # a word that is a number: "9", "(2)", "5%", "2026-01"
 
+_NAMED_ITEM = re.compile(r"\s+[a-z]{3,}")  # a word after a total's label: an item's name may start with one
+
 _NUMBER_CELL = re.compile(r"^[\s$€£¢()+\-–.,'%x×@#]*\d[\d\s$€£¢()+\-–.,'%x×@]*(?:[a-z]{1,3}\.?)?\s*$", re.I)
 
 # A row of a long table that sums its lines: carried from page to page ("Balance brought forward / Montant reporté",
@@ -1101,6 +1103,24 @@ def read_line_items(layout: DocLayout, tables: dict[int, list[Box]] | None = Non
     return items
 
 
+def _totals_row(line: Line, lines: list[Line]) -> bool:
+    """``line`` starts with a subtotal's, a total's or the tax's label: the line table ends at it. Not an item named
+    with one's word, priced as the lines are ("Total Station survey rental | 2 | 250.00 | 500.00", B-2603): words
+    that are no label after it, two figures or more beside it."""
+    p = plain(line.text)
+    ends = [(m.end(), f) for f in _TOTAL_LABELS for rx, _ in _LABELS[f] if (m := rx.match(p))]
+    if not ends:
+        return False
+    end, field = max(ends)
+    rest = p[end:].lstrip()
+    if not _NAMED_ITEM.match(p[end:]) or any(rx.match(p) for rx in _DISTRACT[field]):
+        return True  # "Total", "Total: 700.00", "Total hours" (no grand total, still under the lines)
+    if any(rx.match(rest) for pats in _LABELS.values() for rx, _ in pats):
+        return True  # "Total GST 5%"
+    beside = [o for o in lines if o is not line and abs(o.box.cy - line.box.cy) < 0.006 and o.box.x0 > line.box.x1]
+    return sum(bool(_NUMBER_CELL.match(o.text)) for o in beside) < 2
+
+
 def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | None = None,
                      targets: list[float] | None = None, printed: set[float] | None = None,
                      whole: DocLayout | None = None,
@@ -1137,8 +1157,7 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
         for line in page.lines:
             if line.box.y0 <= y_top:
                 continue
-            p = plain(line.text)
-            if any(rx.match(p) for f in _TOTAL_LABELS for rx, _ in _LABELS[f]):
+            if _totals_row(line, page.lines):
                 stop_y, stop_cy = min(stop_y, line.box.y0), min(stop_cy, line.box.cy)
         for line in page.lines:
             # The table ends at its subtotal or total: its amount, printed a hair higher than its label, too.

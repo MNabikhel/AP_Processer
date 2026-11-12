@@ -447,3 +447,15 @@ def test_terms_in_the_next_column_of_a_tight_grid_are_no_po(tmp_path):
         grid += [(x, 190, h, 9), (x, 203, v, 9)]
         x += max(pymupdf.get_text_length(h, fontsize=9), pymupdf.get_text_length(v, fontsize=9)) + 10
     assert _read(_pdf(tmp_path, [*_HEAD, *grid, *_TABLE]))["po_number"].value != "Net 30"
+
+
+@pytest.mark.parametrize("terms", ["Due in 30 days", "Due on delivery", "Due immediately", "Échéance 30 jours"])
+def test_terms_starting_with_due_under_the_invoice_date_do_not_make_it_the_due_date(tmp_path, terms):
+    """B-2602: "Invoice date | 2026-11-05" over "Terms | Due in 30 days": the terms' "Due" read as a label printed
+    under its value, the invoice date over it, so the invoice fell due the day it was issued."""
+    lines = [(40, 50, "Kootenay Supply Co."), (40, 80, "Invoice #"), (150, 80, "7788"), (40, 100, "Invoice date"),
+             (150, 100, "2026-11-05"), (40, 116, "Terms"), (150, 116, terms), (350, 300, "Total"),
+             (480, 300, "50.00")]  # fmt: skip
+    fields = _read(_pdf(tmp_path, lines))
+    assert fields["invoice_date"].value == "2026-11-05"
+    assert fields["due_date"].value != "2026-11-05"

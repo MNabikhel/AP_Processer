@@ -138,6 +138,27 @@ def test_a_web_page_saved_as_a_pdf_is_refused_in_plain_words(pipeline):
     assert page.exists() and store.get_invoice(result.invoice_id)["status"] == FAILED
 
 
+@pytest.mark.parametrize(
+    "head",
+    [
+        b"<!-- saved from url=(0049)https://portal.vendor.ca/invoices/view?id=12345 -->\n<!DOCTYPE html>\n<html>",
+        b'<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0//EN" "x">\n<html>',
+        "<!DOCTYPE html><html>".encode("utf-16"),
+        b'<meta charset="utf-8"><title>Sign in</title>',
+    ],
+    ids=["browser comment", "xml declaration", "utf-16", "meta first"],
+)
+def test_a_web_page_starting_with_a_comment_or_declaration_is_refused_too(pipeline, head):
+    """B-2600: a sign-in page saved by a browser starts with its "saved from" comment, an XHTML one with <?xml?>."""
+    store, pipe, folder = pipeline
+    page = folder / "invoice.pdf"
+    tail = "<head><title>Sign in</title></head><body>Please sign in</body></html>"
+    page.write_bytes(head + (tail.encode("utf-16-le") if head.startswith(b"\xff\xfe") else tail.encode()))
+    result = pipe.process(page)
+    assert not result.ok
+    assert "invoice.pdf is a web page saved with a .pdf name" in result.error
+
+
 # --- B-261: a multi-page TIFF whose last page has a colour palette --------------------------------------------------
 
 

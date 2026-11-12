@@ -31,6 +31,7 @@ import io
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -79,6 +80,9 @@ _PICTURE_MAGIC = ((b"\x89PNG\r\n\x1a\n", ".png"), (b"\xff\xd8\xff", ".jpg"), (b"
                   (b"BM", ".bmp"), (b"GIF87a", ".gif"), (b"GIF89a", ".gif"))  # fmt: skip
 _HEIF_BRANDS = (b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"mif1", b"msf1")
 _SAME_KIND = {".jpeg": ".jpg", ".tiff": ".tif", ".heif": ".heic"}
+# A web page's start, after a browser's "saved from" comment, an XML declaration or a doctype's public id (B-2600)
+_WEB_PAGE_START = re.compile(rb"(?:\s|<!--.*?-->|<\?xml[^>]*>)*<(?:!doctype\s+html|html|head|body|meta|title)\b",
+                             re.IGNORECASE | re.DOTALL)  # fmt: skip
 WEB_PAGE = ("{name} is a web page saved with a {ext} name, not the invoice itself: open the vendor's email or portal "
             "and download the invoice again (as a PDF).")  # fmt: skip
 
@@ -97,7 +101,9 @@ def content_kind(path: str | Path) -> str:
         return ".webp"
     if head[4:8] == b"ftyp" and head[8:12] in _HEIF_BRANDS:
         return ".heic"
-    if head.lstrip(b"\xef\xbb\xbf \t\r\n").lower().startswith((b"<!doctype html", b"<html", b"<head", b"<body")):
+    if head.startswith((b"\xff\xfe", b"\xfe\xff")):  # UTF-16
+        head = head.decode("utf-16", "ignore").encode()
+    if _WEB_PAGE_START.match(head.removeprefix(b"\xef\xbb\xbf")):
         return ".html"
     return ""
 
