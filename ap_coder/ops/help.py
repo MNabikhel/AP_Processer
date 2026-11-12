@@ -40,7 +40,8 @@ CLOUD_CHECKS = frozenset(
 )
 # How the four checks of an account on its business unit begin (D-209): they are only made with a chart loaded.
 CHART_LOADED = "Once a chart of accounts is loaded from JD Edwards"
-CHART_IMPORT = "Setup → JD Edwards files"
+# The page that loads it: in the rail's Setup group in the Simple screens, under More with every page shown (B-2536)
+CHART_IMPORT = "JD Edwards files, under Setup in the simple screens or under More"
 
 CHECKS: dict[str, CheckHelp] = {
     # --- JD Edwards voucher (erp/jde_review.py voucher_findings, D-75): what its batch would hold back -------------
@@ -1081,8 +1082,8 @@ FAQ: list[tuple[str, str]] = [
     ),
     (
         "An invoice is waiting for someone. Where do I put it?",
-        "More → Park, with what it is waiting for and an optional follow-up date. It leaves the queue and waits "
-        "in the Parked tab until you bring it back. Notes on the invoice keep everyone informed.",
+        "The Park button on the review screen, with what it is waiting for and an optional follow-up date. It leaves "
+        "the queue and waits in the Parked tab until you bring it back. Notes on the invoice keep everyone informed.",
     ),
     (
         "How does PO matching work?",
