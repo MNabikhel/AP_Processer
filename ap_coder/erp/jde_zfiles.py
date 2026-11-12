@@ -132,7 +132,7 @@ def voucher_rows(
     for ``vendor_an8`` (``_vouchers``), not prepared again. ``site``: the batch's code (``batch_site``) in VLEDBT."""
     from .exports import entry_lines
 
-    v = prepared if prepared is not None else _prepare(invoice, settings, str(vendor_an8 or "").strip())
+    v = prepared if prepared is not None else _prepare(invoice, settings, str(vendor_an8 or "").strip(), on)
     final = v.final
     keys = _keys("VL", settings, batch, invoice, v.inv_id, site)
     invoice_date = _date(final.get("invoice_date")) or (on or dt.date.today())
@@ -246,9 +246,12 @@ def voucher_rows(
             if t["tax_type"] in v.recoverable_types:
                 part = _split(_units(t.get("tax_amount"), v.decimals), carrying(t["tax_type"]), unit)
                 shares = [a + b for a, b in zip(shares, part, strict=True)]
-        on_item = [t for t in v.charged if t["tax_type"] not in v.expensed]
-        widest = max(on_item, key=lambda t: abs(_units(t.get("taxable_amount"), v.decimals)), default=None)
-        base = carrying(widest["tax_type"]) if widest else weights  # the tax whose taxable amount is VLATXA
+        bases: dict[str, int] = {}  # each tax's taxable amount, its lines added up, as VLATXA is (B-923, B-2511)
+        for t in v.charged:
+            if t["tax_type"] not in v.expensed:
+                bases[t["tax_type"]] = bases.get(t["tax_type"], 0) + _units(t.get("taxable_amount"), v.decimals)
+        widest = max(bases, key=lambda tax_type: abs(bases[tax_type]), default=None)
+        base = carrying(widest) if widest else weights  # the tax whose taxable amount is VLATXA
         atxas = _split(v.atxa, base, unit)
         # Half the tax on a meals line is in its expense amount (D-90): not E1's to post, so neither in its share
         # of the recoverable tax nor in its tax.
@@ -367,7 +370,7 @@ def export_batch(
     dists: list[dict[str, Any]] = []
     matches: list[dict[str, Any]] = []
     if prepared is None:
-        prepared = _vouchers(invoices, settings, vendor_lookup)
+        prepared = _vouchers(invoices, settings, vendor_lookup, on)
     for inv, (an8, v) in zip(invoices, prepared, strict=True):
         h, d, m = voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on, prepared=v, site=site)
         headers += h

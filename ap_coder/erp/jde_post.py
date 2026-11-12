@@ -174,9 +174,9 @@ def _payloads(store: Any, batch: int) -> tuple[dict[int, dict[str, Any]], dict[i
     settings, lookup, fx_rates = jde_settings.load(store), store.vendor_ids(), store.fx_rates()
     invoices = store.get_invoices(store.batch_invoice_ids(batch))
     blocking = jde_settings.settings_problems(settings)
-    prepared = jde_voucher._vouchers(invoices, settings, lookup)
-    problems = jde.validate(invoices, settings, lookup, prepared=prepared)
     on = dt.date.fromisoformat(known["created_at"][:10])
+    prepared = jde_voucher._vouchers(invoices, settings, lookup, on)
+    problems = jde.validate(invoices, settings, lookup, prepared=prepared)
     installation, site = installation_id(store), jde_zfiles.batch_site(known, invoices)
     out: dict[int, dict[str, Any]] = {}
     for inv, (an8, v) in zip(invoices, prepared, strict=True):

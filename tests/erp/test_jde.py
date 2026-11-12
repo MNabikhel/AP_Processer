@@ -670,6 +670,21 @@ def test_a_voucher_in_jd_edwards_for_one_of_two_suppliers_of_a_name_is_found_by_
     }
 
 
+def test_a_voucher_in_jd_edwards_is_found_when_the_supplier_number_was_typed_with_a_leading_zero():
+    """B-2510: the duplicate check compared JD Edwards' supplier number with ours as text: an override typed
+    "02004" missed the voucher list's "2004" (and the name is not asked when both sides have a number), so a voucher
+    JD Edwards already has went out again. The hold check and the API's compare the numbers without leading zeros."""
+    final = {"vendor_name": "LAKESIDE CATERING LTD", "invoice_number": "LC-7781", "grand_total": 525.0,
+             "invoice_date": "2026-11-02"}  # fmt: skip
+    register = [{"invoice_number": "LC-7781", "total": 525.0, "an8": "2004", "vendor_name": "LAKESIDE CATERING",
+                 "invoice_date": "2026-11-02"}]  # fmt: skip
+    for typed in ("2004", "02004"):
+        settings = jde_settings.JdeSettings(an8_overrides={vendor_key(final["vendor_name"]): typed})
+        assert jde.duplicate_problems([{"id": 1, "final_output": final}], settings, None, {"register": register}) == {
+            1: ["already in the ERP (invoice LC-7781, dated 2026-11-02)"]
+        }, typed
+
+
 def test_an8_from_the_vendor_master_and_the_overrides():
     final = _invoice(ON)["final_output"]
     ids = {"northwind it solutions": "4410"}
@@ -1291,6 +1306,24 @@ def test_the_voucher_view_says_what_is_keyed_on_the_pay_item_or_why_it_is_not_re
     two = _two_provinces([tl("GST", "", 0.05, 3000.0, 150.0), tl("HST", "ON", 0.13, 1000.0, 130.0)])
     view = jde_review.voucher_view(two["final_output"], tax_amounts, "10023")
     assert view["keyed"].startswith("Not ready to key: GST 5% and HST 13% are both charged")
+
+
+def test_the_review_screens_g_l_date_row_is_the_date_keyed_moved_into_the_open_period():
+    """B-2514: the review screen's G/L date row ignored the open period: "2026-10-20 (the invoice date)" beside
+    "Keyed on the pay item: G/L date 2026-11-01". It is the date keyed, and says it was moved and from what."""
+    final = {**_invoice(AB)["final_output"], "invoice_date": "2026-10-20"}
+
+    def gl_row(**kw):
+        settings = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX, **kw)
+        view = jde_review.voucher_view(final, settings, "10023", on=dt.date(2026, 11, 12))
+        return next(r for r in view["rows"] if r["column"] == "VLDGJ")["value"], view["gl_date"]
+
+    assert gl_row() == ("2026-10-20 (the invoice date)", "2026-10-20")
+    assert gl_row(open_from="2026-11-01") == (
+        "2026-11-01 (moved into JD Edwards' open period from the invoice date, 2026-10-20, in a closed period)",
+        "2026-11-01",
+    )
+    assert gl_row(gl_date=jde_settings.GL_DATE_EXPORT) == ("2026-11-12 (the day of the export)", "2026-11-12")
 
 
 def test_the_prototype_settings_are_the_way_of_a_department_that_types_its_vouchers():
