@@ -218,7 +218,7 @@ def test_a_rate_printed_with_one_decimal_is_not_zero_rated():
     for cell in ("13.0%", "GST 5.0%", "TPS 5,0 %", "20.0%", "10%"):
         assert read_flags(cell, None, ["HST"]) != ([], "zero_rated"), cell
     assert parse_legend("Tax codes: G = GST 5%, Z = Zero-rated 0%") == {"G": ("GST",), "Z": "zero_rated"}
-    for cell in ("0.0%", "0,0 %", "GST 0%", "0 %"):
+    for cell in ("0.0%", "0,0 %", "GST 0%", "0 %", "5%,0%", "GST 5%,0%"):
         assert read_flags(cell, None, ["GST"]) == ([], "zero_rated"), cell
 
 
