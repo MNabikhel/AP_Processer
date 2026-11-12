@@ -152,7 +152,7 @@ async def receive_sheet(file: UploadFile, accept: Iterable[str] | None = (),
     if content is None:
         return "", TOO_BIG
     if not name.lower().endswith((".xlsx", ".xls")) and looks_like_journal(content):
-        return "", import_specs.elsewhere("journal", verb="loaded" if accept is None else "imported")
+        return "", import_specs.elsewhere("journal")
     if not name.lower().endswith(SHEET_TYPES):
         return "", NOT_A_SHEET
     if keep is not None:
@@ -184,7 +184,7 @@ def jde_refusal(rows: list[list[Any]], accept: Iterable[str] = ()) -> str:
         if key := import_specs.recognise(row):
             if key in accept:
                 return import_specs.check(import_specs.SPECS[key], row).problem()
-            return import_specs.elsewhere(key, verb="imported")
+            return import_specs.elsewhere(key)
     return ""
 
 
@@ -504,7 +504,7 @@ def pick_refusal(spec: ImportSpec, chosen: Mapping[str, str]) -> str:
     """Why an import of ``spec`` with these columns is refused ("" when it is not): the needed fields still without a
     column, named. There is no import without them."""
     missing = unpicked(spec, chosen)
-    return f"Pick the column for: {', '.join(missing)}. Nothing was imported." if missing else ""
+    return f"Pick the column for: {', '.join(missing)}. Nothing was loaded." if missing else ""
 
 
 def spec_sheet(token: str, upload: Upload, df: pd.DataFrame, sheets: list[str], sheet: str | None, spec: ImportSpec,

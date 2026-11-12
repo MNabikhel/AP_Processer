@@ -416,7 +416,7 @@ def import_notes(result: dict[str, Any]) -> list[Any]:
     """What an import of the vendor master says: how many, the names merged, and the hold payment codes it did not
     treat as a hold."""
     notes = [
-        flash_message(f"Vendor master: {result['added']} added, {result['updated']} updated.", "ok", icon="storefront")
+        flash_message(f"Loaded: {result['added']} added, {result['updated']} updated.", "ok", icon="storefront")
     ]
     dupes = result["duplicates"]
     if dupes:

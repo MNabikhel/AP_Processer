@@ -163,7 +163,7 @@
     {% else %}{{ columns(reg) }}{% endif %}
     {% if register_count %}<label class="check"><input type="checkbox" name="replace" value="1"> Replace the list loaded now, {{ register_count | plural("invoice") }} (otherwise these are added to it)</label>{% endif %}
     <div class="row">
-      <button class="btn primary" type="submit"{% if not reg.vouchers %}{{ go(reg) }}{% endif %}><span class="ms" aria-hidden="true">upload</span>Load</button>
+      <button class="btn primary" type="submit"{% if not reg.vouchers %}{{ go(reg) }}{% endif %}><span class="ms" aria-hidden="true">upload</span>Load invoices</button>
       <a class="btn" href="/exports#register"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
     </div>
   </form>

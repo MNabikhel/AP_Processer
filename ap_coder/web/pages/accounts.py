@@ -302,13 +302,13 @@ def _bank_import(request: Request, form: Any) -> JSONResponse:
                     r[f] = old[f]
     rows, problems = banks.clean_rows(records, _gl_codes(store))
     if problems:
-        return refuse("Nothing was imported: " + " ".join(problems[:6]) + (" …" if len(problems) > 6 else ""))
+        return refuse("Nothing was loaded: " + " ".join(problems[:6]) + (" …" if len(problems) > 6 else ""))
     if not rows:
-        return refuse("No row has a code in the column picked: nothing was imported.")
+        return refuse("No row has a code in the column picked: nothing was loaded.")
     result = store.save_bank_accounts(rows, actor=reviewer(), imported=True)
     drop_upload(token)
     return done(request, "/accounts?tab=bank",
-                f"Imported: {result['added']} added, {result['updated']} updated.")  # fmt: skip
+                f"Loaded: {result['added']} added, {result['updated']} updated.")  # fmt: skip
 
 
 @router.post("/accounts/bank/save")
@@ -413,7 +413,7 @@ def _accounts_import(request: Request, table: str, form: Any) -> JSONResponse:
     return done(
         request,
         f"/accounts?tab={tab}",
-        f"Imported: {result['added']} added, {result['updated']} updated, {result['skipped']} skipped "
+        f"Loaded: {result['added']} added, {result['updated']} updated, {result['skipped']} skipped "
         "(blank or repeated codes).",
     )
 

@@ -6,7 +6,7 @@
 <link rel="stylesheet" href="{{ static_url('/static/imports.css') }}">{% endblock %}
 {% block content %}
 <details class="card expander" id="import"{% if not pos or imp or imp_error %} open{% endif %}>
-  <summary><span class="ms" aria-hidden="true">upload</span>Import purchase orders from CSV or Excel</summary>
+  <summary><span class="ms" aria-hidden="true">upload</span>Load purchase orders from CSV or Excel</summary>
   <p class="muted">One row per PO line, as exported from your ERP. Re-importing a PO replaces its lines, so a fresh export
     also updates the quantities received. Columns are recognised by their names; check them before importing. An open
     amount column (optional, such as JD Edwards' AOPN: what the ERP has left on the line) sets what the review screen

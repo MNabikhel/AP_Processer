@@ -127,7 +127,7 @@ def test_an_uploaded_file_shows_each_column_found_or_missing_and_is_refused_with
     before = PAGES[key][6](store)
     refused = _import(client, key, token, html)
     assert refused.status_code == 400 and refused.json()["error"] == (f"Pick the column for: {needed.label}. Nothing "
-                                                                      "was imported.")  # fmt: skip
+                                                                      "was loaded.")  # fmt: skip
     assert PAGES[key][6](store) == before
 
 
@@ -361,7 +361,7 @@ def test_a_jd_edwards_report_is_refused_on_every_column_picker_naming_its_card(c
             answer = client.post(url, files={"file": (name, (jde / name).read_bytes())}, headers=PAGE)
             assert answer.status_code == 400, (key, name)
             said = answer.json()["error"]
-            assert said.startswith("Not imported: this file is ") and f"under {card}" in said, (key, name, said)
+            assert said.startswith("Not loaded: this file is ") and f"under {card}" in said, (key, name, said)
     assert sorted(a["code"] for a in store.list_accounts("gl_accounts")) == before
     assert store.master_vendors() == [] and store.erp_register_count() == 0
     # Chosen on the page from a workbook's other sheet, at the import too.
@@ -461,7 +461,7 @@ def test_vendors_refuses_the_vendor_information_list_naming_its_card(client, sto
     answer = client.post("/vendors/master/upload", files={"file": (made.VENDOR_INFO_FILE,
                          (jde / made.VENDOR_INFO_FILE).read_bytes())}, headers=PAGE)  # fmt: skip
     assert answer.status_code == 400
-    assert answer.json()["error"] == import_specs.elsewhere("vendor_info", verb="imported")
+    assert answer.json()["error"] == import_specs.elsewhere("vendor_info")
     assert "under 3. Suppliers" in answer.json()["error"] and store.master_vendors() == []
 
 
@@ -551,7 +551,7 @@ def test_in_a_browser_after_check_and_load_the_focus_is_on_what_the_page_says(ch
         page.locator("button[data-imp-go]").click()
         page.wait_for_selector(".imp-preview", state="detached")
         page.wait_for_function("document.activeElement.classList.contains('flash')")
-        assert "Vendor master: 1 added" in page.evaluate(FOCUSED)[3]
+        assert "Loaded: 1 added" in page.evaluate(FOCUSED)[3]
         page.goto(base + "/jde-files")
         page.locator("#units input[type=file]").set_input_files(str(jde / made.UNITS_FILE))
         page.locator("#units .imp-upload button[type=submit]").click()
@@ -726,3 +726,36 @@ def test_past_coding_shows_one_verdict_and_its_way_back_says_choose_another_file
     assert "Not found by its name: GL account." in html
     assert "Read list.xlsx" not in html and len(re.findall(r'class="flash (?:ok|warn|err)\b', html)) == 1
     assert "Choose another file</a>" in html and ">Cancel</a>" not in html
+
+
+_IMPORT_WORDS = re.compile(r"Imported[: ]|Taught \d|Vendor master: \d|mapping rows? imported|Not imported|othing was "
+                           r"imported|Import [\w ]+ from CSV|\(imported\)")  # fmt: skip
+
+
+def test_every_import_says_loaded_in_its_results_refusals_titles_and_buttons(client, store, jde):
+    """B-2472: behind Load buttons the pages said "Imported: 12 added…", "Imported 8 POs…", "Vendor master: 10
+    added", "Taught 10 past lines", "1 mapping row imported", "Not imported:" (but "Not loaded:" on JD Edwards files),
+    "Import … from CSV or Excel" and "Vendor master from the ERP (imported)"; Exports' button was a bare Load. One
+    pattern: "Loaded: N added, M updated", "Not loaded:", "Load <thing>"."""
+    from ap_coder.bench import jde_exports as made
+
+    for key in PAGES:
+        html, token = _upload(client, key, PAGES[key][5])
+        assert not _IMPORT_WORDS.search(html), (key, _IMPORT_WORDS.search(html))
+        page = client.get(_import(client, key, token, html).json()["redirect"]).text
+        assert not _IMPORT_WORDS.search(page), (key, _IMPORT_WORDS.search(page))
+        assert key == "erp_register" or "Loaded: " in page, key
+        assert "Load</button>" not in page, key
+    assert "Load invoices</button>" in _upload(client, "erp_register", PAGES["erp_register"][5])[0]
+    answer = client.post("/settings/jde/gl-map/upload", headers=PAGE,
+                         files={"file": ("map.csv", b"GL Code,BU,Object\r\n6010,100,6010\r\n")})  # fmt: skip
+    token = parse_qs(urlsplit(answer.json()["redirect"]).query)["gl_map"][0]
+    page = client.get(post(client, "/settings/jde/gl-map/import", {"token": token}).json()["redirect"]).text
+    assert "Loaded: 1 added, 0 updated." in page and not _IMPORT_WORDS.search(page)
+    chart = (jde / made.CHART_FILE).read_bytes()
+    for url in PICKERS.values():
+        answer = client.post(url, files={"file": (made.CHART_FILE, chart)}, headers=PAGE)
+        assert answer.status_code == 400 and answer.json()["error"].startswith("Not loaded: "), url
+    refused = post(client, "/accounts/gl_accounts/import", {"file": _upload(client, "gl_accounts", [["Description"],
+                                                                                                   ["Paper"]])[1]})
+    assert refused.json()["error"] == "Pick the column for: Code. Nothing was loaded."

@@ -724,8 +724,8 @@ CUT_SHORT_REPLACE = (
 )
 
 
-def load_vouchers(store: Store, rows: list[dict[str, Any]], read: dict[str, Any], *, replace: bool, whole: bool,
-                  verb: str = "loaded") -> tuple[str, int]:  # fmt: skip
+def load_vouchers(store: Store, rows: list[dict[str, Any]], read: dict[str, Any], *, replace: bool,
+                  whole: bool) -> tuple[str, int]:  # fmt: skip
     """JD Edwards' voucher list into the register, as Exports and JD Edwards files' card 5 both load it (B-2435):
     its vouchers added (``replace``: the register is these and nothing else, refused for a list that may be cut
     short, B-2434), and out of it the vouchers the list shows at 0.00 (voided in JD Edwards since an earlier list
@@ -740,7 +740,7 @@ def load_vouchers(store: Store, rows: list[dict[str, Any]], read: dict[str, Any]
     left = store.erp_vouchers_left(read["voided"], covers, [row["key"] for row in rows])
     if not rows and not left:  # "Replace" would empty the list the duplicate checks look in (B-1405)
         said = registers.vouchers_said(read)
-        return f"No voucher of this list can be kept: nothing was {verb}, the list is as it was. {said}", 0
+        return f"No voucher of this list can be kept: nothing was loaded, the list is as it was. {said}", 0
     return "", left
 
 
@@ -758,7 +758,7 @@ def _vouchers_import(request: Request, form: Any, token: str, rows: list[dict[st
                      read: dict[str, Any]) -> JSONResponse:  # fmt: skip
     """JD Edwards' voucher list into the register (``load_vouchers``), saying what was read and what left it."""
     store, said, whole = get_store(request), registers.vouchers_said(read), bool(form.get("whole"))
-    refusal, left = load_vouchers(store, rows, read, replace=bool(form.get("replace")), whole=whole, verb="imported")
+    refusal, left = load_vouchers(store, rows, read, replace=bool(form.get("replace")), whole=whole)
     if refusal:
         return refuse(refusal)
     drop_upload(token)
@@ -797,7 +797,7 @@ def _register_import(request: Request, form: Any) -> JSONResponse:
     rows, skipped = registers.rows_from_records(df.to_dict("records"), chosen)
     if not rows:  # "Replace" would empty the list the duplicate checks look in (B-1405)
         return refuse(f"No row has a vendor, an invoice number and an amount in the columns picked ({skipped} "
-                      "skipped): nothing was imported, the list is as it was. Check the columns, then import "
+                      "skipped): nothing was loaded, the list is as it was. Check the columns, then load "
                       "again.")  # fmt: skip
     total = store.import_erp_register(rows, replace_all=bool(form.get("replace")), actor=current_reviewer())
     drop_upload(token)

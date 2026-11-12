@@ -63,7 +63,7 @@ def test_the_jd_edwards_mapping_from_a_semicolon_csv_with_a_comma_in_a_header_is
     answer = client.post("/settings/jde/gl-map/upload", files={"file": ("map.csv", SEMICOLON_GL_MAP.encode())},
                          headers=PAGE)  # fmt: skip
     token = answer.json()["redirect"].split("gl_map=")[1].split("#")[0]
-    assert "2 mapping rows imported." in follow(client, post(client, "/settings/jde/gl-map/import", {"token": token}))
+    assert "Loaded: 2 added, 0 updated." in follow(client, post(client, "/settings/jde/gl-map/import", {"token": token}))
 
 
 # --- B-1401: the past coding and the JD Edwards mapping were read whole, however large ------------------------------
@@ -172,7 +172,7 @@ def test_replacing_the_erp_register_with_a_file_of_no_usable_row_keeps_it(store)
     assert _register(client, good).status_code == 200 and store.erp_register_count() == 2
     unreadable = "Supplier,Doc No,Amount\nAcme Ltd,A-2,n/a\nBeta Inc,B-8,—\n"  # the wrong column picked, say
     answer = _register(client, unreadable, replace="1")
-    assert answer.status_code == 400 and "nothing was imported" in answer.json()["error"]
+    assert answer.status_code == 400 and "nothing was loaded" in answer.json()["error"]
     assert _register(client, "Supplier,Doc No,Amount\n", replace="1").status_code == 400  # no rows at all
     assert store.erp_register_count() == 2  # the duplicate checks still know the bills in the ERP
 
@@ -192,7 +192,7 @@ def test_replacing_the_purchase_orders_with_a_file_of_no_usable_row_keeps_them(s
     good = "PO,Item,Amount\nPO-1,Gloves,100\nPO-2,Paper,50\n"
     assert _purchase_orders(client, good).status_code == 200 and len(store.purchase_orders()) == 2
     answer = _purchase_orders(client, "PO,Item,Amount\n,Gloves,100\n,Paper,50\n", replace="1")  # no PO numbers
-    assert answer.status_code == 400 and "nothing was imported" in answer.json()["error"]
+    assert answer.status_code == 400 and "nothing was loaded" in answer.json()["error"]
     assert len(store.purchase_orders()) == 2
 
 

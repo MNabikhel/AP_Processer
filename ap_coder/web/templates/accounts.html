@@ -50,7 +50,7 @@
   {% endif %}
   {% if edit %}
   <details class="expander" id="import"{% if not a.rows or a.imp or a.imp_error %} open{% endif %}>
-    <summary><span class="ms" aria-hidden="true">upload</span>Import {{ a.noun }}s from CSV or Excel</summary>
+    <summary><span class="ms" aria-hidden="true">upload</span>Load {{ a.noun }}s from CSV or Excel</summary>
     <div class="stack imp-pane">
     {{ imp.report(a.spec) }}
     {% if a.imp_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ a.imp_error }}</div></div>{% endif %}
@@ -191,7 +191,7 @@
 
   {% if can("/accounts/bank/import") and not short %}
   <details class="expander" id="import"{% if not b.rows or b.imp or b.imp_error %} open{% endif %}>
-    <summary><span class="ms" aria-hidden="true">upload</span>Import bank accounts from CSV or Excel</summary>
+    <summary><span class="ms" aria-hidden="true">upload</span>Load bank accounts from CSV or Excel</summary>
     <div class="stack imp-pane">
     {{ imp.report(b.spec) }}
     {% if b.imp_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ b.imp_error }}</div></div>{% endif %}

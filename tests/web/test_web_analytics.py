@@ -494,7 +494,7 @@ def test_history_upload_columns_teach_and_forget(client, busy):
             "col_cost_center": "Dept"}  # fmt: skip
     taught = client.post("/learning/history/teach", data=form, headers=PAGE)
     assert taught.status_code == 200 and busy.history_count() == 2
-    assert "Taught 2 past lines" in client.get(taught.json()["redirect"]).text
+    assert "Loaded: 2 past lines added" in client.get(taught.json()["redirect"]).text
     assert client.post("/learning/history/teach", data=form, headers=PAGE).status_code == 400  # used up
     bad = client.post("/learning/history/upload", files={"file": ("x.pdf", b"%PDF", "application/pdf")}, headers=PAGE)
     assert bad.status_code == 400

@@ -343,7 +343,7 @@ def test_the_vendor_master_is_uploaded_checked_and_imported(client, busy):
     )
     # two supplier numbers under one name are two vendors, named with their numbers (B-2161); two rows of one name
     # with no number to tell them apart are one, as before
-    assert "Vendor master: 4 added" in page.text and "1 name is shared by more than one supplier number" in page.text
+    assert "Loaded: 4 added" in page.text and "1 name is shared by more than one supplier number" in page.text
     assert "V2 Beta Supply / V3 BETA SUPPLY." in page.text
     assert "more than once" in page.text and "Gamma Signs / GAMMA SIGNS INC" in page.text
     assert {v["erp_id"] for v in busy.master_vendors()} >= {"V1", "V2", "V3"}
@@ -621,7 +621,7 @@ def test_pos_are_uploaded_checked_and_imported(client, busy):
             headers=PAGE,
         ),
     )
-    assert "Imported 2 POs with 3 lines" in page.text
+    assert "(2 POs with 3 lines)" in page.text
     assert store_po(busy, "PO-9001")["total"] == 2300
     text = client.get("/purchase-orders?q=9001").text
     assert "PO-9001" in text and "PO-9002" not in text
@@ -675,7 +675,7 @@ def test_gl_accounts_are_imported_from_excel_edited_and_downloaded(client, store
             headers=PAGE,
         ),
     )
-    assert "Imported: 3 added, 0 updated, 0 skipped" in page.text
+    assert "Loaded: 3 added, 0 updated, 0 skipped" in page.text
     assert "Software &lt;b&gt;" in page.text and "Opex · 2" in page.text
     # download: the CSV the earlier dashboard gave
     data = client.get("/accounts/gl_accounts.csv")
@@ -720,7 +720,7 @@ def test_bank_accounts_are_imported_edited_and_never_shown_in_full(client, store
               ("institution", "institution"), ("transit", "transit"), ("account_number", "account_number"),
               ("gl_account", "gl_account"), ("is_default", "default"), ("active", "active"))}  # fmt: skip
     page = follow(client, client.post("/accounts/bank/import", data={"file": token, **picked}, headers=PAGE))
-    assert "Imported: 2 added, 0 updated." in page.text
+    assert "Loaded: 2 added, 0 updated." in page.text
     accounts = {a["code"]: a for a in store.bank_accounts()}
     assert accounts["CAD-OP"]["account_number"] == "0000001234" and accounts["CAD-OP"]["is_default"]
     assert "0000001234" not in page.text and "••••1234" in page.text  # the last 4 digits only
@@ -906,7 +906,7 @@ def test_gl_accounts_under_a_report_title_are_guessed_and_imported(client, store
     token = page.url.params["file"]
     data = {"file": token, "col_code": "Object Account", "col_description": "Account Description"}
     page = follow(client, client.post("/accounts/gl_accounts/import", data=data, headers=PAGE))
-    assert "Imported: 2 added, 0 updated, 0 skipped" in page.text
+    assert "Loaded: 2 added, 0 updated, 0 skipped" in page.text
     assert sorted(a["code"] for a in store.list_accounts("gl_accounts")) == ["1500", "6010"]
 
 

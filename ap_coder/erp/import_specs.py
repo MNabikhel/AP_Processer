@@ -633,15 +633,15 @@ def recognise(headers: Iterable[Any]) -> str | None:
     return whole.key if whole is not None and counts.get(whole.key, 0) >= 2 else None
 
 
-def elsewhere(key: str, card: str = "", verb: str = "loaded") -> str:
-    """Why a file that is JD Edwards' report ``key`` (``recognise``) is not ``verb`` here: what it is and the card
+def elsewhere(key: str, card: str = "") -> str:
+    """Why a file that is JD Edwards' report ``key`` (``recognise``) is not loaded here: what it is and the card
     of the JD Edwards files page it is loaded on (``card``: the card it was dropped on, when it is one)."""
     if key in VOUCHER_GRIDS:
         load = "here" if card == "vouchers" else f"on the JD Edwards files page, under {VOUCHERS.card}"
         what = f"this file is {VOUCHER_GRIDS[key]}, from a voucher's screen in JD Edwards"
-        return f"Not {verb}: {what}. {_LEDGER} and load it {load}."
+        return f"Not loaded: {what}. {_LEDGER} and load it {load}."
     spec = SPECS[key]
-    return f"Not {verb}: this file is {spec.report}. It is loaded on the JD Edwards files page, under {spec.card}."
+    return f"Not loaded: this file is {spec.report}. It is loaded on the JD Edwards files page, under {spec.card}."
 
 
 def header_row(rows: Sequence[Sequence[Any]], specs: Iterable[ImportSpec]) -> int:
