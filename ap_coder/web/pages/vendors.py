@@ -34,7 +34,7 @@ from ap_coder.coding.vendors import (
     vendor_number_problems,
 )
 from ap_coder.core import ui
-from ap_coder.core.store import PARKED, REVIEW, Store, reports
+from ap_coder.core.store import PARKED, REVIEW, Store, fold_text, reports
 from ap_coder.core.store.vendor_master import JDE_FILES, PAYMENTS_ONLY, stops_vouchers
 from ap_coder.core.store.vendors import HOLD_CODES_SETTING, SKIP_WORDS_SETTING, listed
 from ap_coder.erp import recurring
@@ -93,7 +93,7 @@ def sort_vendors(rows: list[dict[str, Any]], order: str) -> list[dict[str, Any]]
     if order == "accuracy":
         return sorted(rows, key=lambda r: (r["accuracy"] is None, r["accuracy"] or 0))
     if order == "name":
-        return sorted(rows, key=lambda r: (r["vendor_name"] or "").lower())
+        return sorted(rows, key=lambda r: fold_text(r["vendor_name"] or ""))  # (Éclair before Zed)
     return sorted(rows, key=lambda r: -r["spend_in_cad"])
 
 
@@ -232,7 +232,7 @@ def vendors_page(
     on_hold = [v for v in vendors if v["status"] == ON_HOLD or stops_vouchers(v.get("erp_hold"))]  # or in JDE
     shown = on_hold if view == "hold" else new if view == "new" else vendors
     if q.strip():
-        shown = [v for v in shown if q.strip().lower() in (v["vendor_name"] or "").lower()]
+        shown = [v for v in shown if fold_text(q.strip()) in fold_text(v["vendor_name"] or "")]  # accent-blind
     shown = sort_vendors(shown, sort)
 
     tiles = []

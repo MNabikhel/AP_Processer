@@ -177,13 +177,27 @@ def test_layouts_saved_replaced_defaulted_and_deleted(store):
     d.save_preset(store, "Approved", "col=vendor&f_status=approved&page=3&evil=1", make_default=True)
     d.save_preset(store, "approved", "col=total")  # the same name, another case: replaced
     assert [(p["name"], p["query"]) for p in d.presets(store)] == [("approved", "col=total&sort=received&dir=desc")]
-    assert d.default_preset(store) is None  # its default was the old spelling
+    assert d.default_preset(store)["name"] == "approved"  # the default follows the new spelling
     assert d.set_default(store, "approved") and d.default_preset(store)["name"] == "approved"
     assert not d.set_default(store, "nope")
     assert d.delete_preset(store, "approved") and d.presets(store) == [] and d.default_preset(store) is None
     assert not d.delete_preset(store, "approved")
     store.set_setting(d.PRESETS_SETTING, "not json")
     assert d.presets(store) == []
+
+
+def test_a_default_layout_saved_again_in_another_case_stays_the_default(store):
+    """Saved again as "month end", the default layout "Month end" is still the one the directory opens with."""
+    d.save_preset(store, "Month end", "f_status=review", make_default=True)
+    d.save_preset(store, "month end", "f_status=approved")  # the default not ticked again
+    assert d.default_preset(store) == {"name": "month end", "query": d._clean("f_status=approved"), "shared": False}
+
+
+def test_a_layout_named_standard_leaves_a_choice_of_the_standard_layout_alone(store):
+    """A person who chose the standard layout saves one named "(Standard)": their choice stays the standard one."""
+    d.set_default(store, "", "user:1")
+    d.save_preset(store, d.STANDARD.title(), "f_status=approved", owner="user:1")
+    assert d.default_preset(store, "user:1") is None
 
 
 # --- The page ---------------------------------------------------------------------------------------------------------
@@ -214,6 +228,18 @@ def test_the_page_opens_with_the_default_layout(store):
     assert "deleted" in follow(client, client.post("/search/presets/delete", data={"name": "Credits"}, headers=PAGE))
     assert client.post("/search/presets/delete", data={"name": "Credits"}, headers=PAGE).status_code == 404
     assert client.post("/search/presets", data={"name": ""}, headers=PAGE).status_code == 400
+
+
+def test_the_page_after_choosing_or_deleting_a_layout_opens_with_the_default(store):
+    """The page that says "now opens with Credits" (its address only ``?flash=``) shows Credits, as does the page
+    after another layout is deleted, not the standard layout."""
+    client = client_for(store)
+    for name in ("Credits", "Other"):
+        client.post("/search/presets", data={"name": name, "query": "col=vendor&col=total&f_total=<0"}, headers=PAGE)
+    assert "Rows 1–1 of 1" in follow(client, client.post("/search/presets/default", data={"name": "Credits"},
+                                                         headers=PAGE))  # fmt: skip
+    assert "Rows 1–1 of 1" in follow(client, client.post("/search/presets/delete", data={"name": "Other"},
+                                                         headers=PAGE))  # fmt: skip
 
 
 def test_export_has_the_columns_shown_and_every_row_kept(store):
