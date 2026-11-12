@@ -181,7 +181,7 @@ def voucher_view(
     held back, each reason; empty when it can go) and ``keyed``, the one line that says it all ("Keyed on the pay
     item: …", or "Not ready to key: <the first reason>")."""
     final = output
-    v = _prepare({"id": 0, "final_output": final}, settings, str(an8 or "").strip())
+    v = _prepare({"id": 0, "final_output": final}, settings, str(an8 or "").strip(), on)
     today = on or dt.date.today()
     invoice_date = _date(final.get("invoice_date"))
     gl_date = today if settings.gl_date == GL_DATE_EXPORT else invoice_date

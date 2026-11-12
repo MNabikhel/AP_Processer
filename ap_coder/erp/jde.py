@@ -193,13 +193,15 @@ def duplicate_problems(
 def validate(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None,
     prior: Mapping[str, list[dict[str, Any]]] | None = None, *, prepared: list[tuple[str, _Voucher]] | None = None,
+    on: dt.date | None = None,
 ) -> dict[int, list[str]]:  # fmt: skip
     """{invoice id: blocking problems} for the invoices that cannot go out (the others are fine). ``prepared``: the
-    invoices' vouchers already prepared (``_vouchers``). A voucher whose vendor is on hold now (``prior``'s "held",
-    here or in JD Edwards) is held too: approved before the hold, it is not typed or loaded (B-2340)."""
+    invoices' vouchers already prepared (``_vouchers``); ``on``: the batch's day (else today). A voucher whose vendor
+    is on hold now (``prior``'s "held", here or in JD Edwards) is held too: approved before the hold, it is not typed
+    or loaded (B-2340)."""
     out: dict[int, list[str]] = {}
     if prepared is None:
-        prepared = _vouchers(invoices, settings, vendor_lookup)
+        prepared = _vouchers(invoices, settings, vendor_lookup, on)
     held = held_index((prior or {}).get("held") or [])
     for inv, (an8, v) in zip(invoices, prepared, strict=True):
         if v.problems:
@@ -315,7 +317,7 @@ def build_zip(
     for their vendor, number and date in DRY_RUN.txt (B-1197); ``no_undo``: why it can't be undone (``readme``);
     ``check_now``: ``to_check`` is what ``validate`` now finds in ``invoices`` (each voucher prepared once for all);
     ``site``: the batch's code in VLEDBT (``batch_site``)."""
-    vouchers = _vouchers(invoices, settings, vendor_lookup)
+    vouchers = _vouchers(invoices, settings, vendor_lookup, on)
     if check_now:
         to_check = validate(invoices, settings, vendor_lookup, prepared=vouchers)
     files = export_batch(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers,
@@ -389,7 +391,7 @@ def dry_run(
     already made with the same batch, rates, date and ``site`` (the batch's code, ``batch_site``)."""
     blocking = settings_problems(settings)
     if prepared is None:
-        prepared = _vouchers(invoices, settings, vendor_lookup)
+        prepared = _vouchers(invoices, settings, vendor_lookup, on)
     problems = validate(invoices, settings, vendor_lookup, prior, prepared=prepared)
     notes = bank_notes(invoices, settings)
     out: dict[str, Any] = {

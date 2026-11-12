@@ -132,7 +132,7 @@ def voucher_rows(
     for ``vendor_an8`` (``_vouchers``), not prepared again. ``site``: the batch's code (``batch_site``) in VLEDBT."""
     from .exports import entry_lines
 
-    v = prepared if prepared is not None else _prepare(invoice, settings, str(vendor_an8 or "").strip())
+    v = prepared if prepared is not None else _prepare(invoice, settings, str(vendor_an8 or "").strip(), on)
     final = v.final
     keys = _keys("VL", settings, batch, invoice, v.inv_id, site)
     invoice_date = _date(final.get("invoice_date")) or (on or dt.date.today())
@@ -370,7 +370,7 @@ def export_batch(
     dists: list[dict[str, Any]] = []
     matches: list[dict[str, Any]] = []
     if prepared is None:
-        prepared = _vouchers(invoices, settings, vendor_lookup)
+        prepared = _vouchers(invoices, settings, vendor_lookup, on)
     for inv, (an8, v) in zip(invoices, prepared, strict=True):
         h, d, m = voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on, prepared=v, site=site)
         headers += h

@@ -139,7 +139,9 @@ def jde_left_out(store: Store, batch: int) -> tuple[list[dict[str, Any]], dict[i
     if known and known["format"] in JDE_FORMATS:
         return invoices, {}
     prior = jde.prior_records(store, exclude_ids=ids, invoices=invoices)  # only what has their numbers (D-156)
-    left_out = jde.validate(invoices, jde_settings.load(store), store.vendor_ids(), prior)
+    created = (known or {}).get("created_at") or ""  # its G/L date's day, the export day's (B-2513)
+    left_out = jde.validate(invoices, jde_settings.load(store), store.vendor_ids(), prior,
+                            on=dt.date.fromisoformat(created[:10]) if created else None)  # fmt: skip
     return invoices, left_out
 
 
