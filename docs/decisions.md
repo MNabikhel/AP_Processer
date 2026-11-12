@@ -5801,3 +5801,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     (no supplier number), and a row whose GST/HST number belongs to another Business Number (a rename keeps its
     own). VENDOR_NEW still skips a vendor in the master: the master vouches for the name, and the old name's
     approvals are the supplier's.
+- **D-241** · **A line coded from other vendors' approvals always goes to a person** (`capture/workflow.py`
+  `invoice_gates`, `capture/supplier.py` `touchless_gates`; 12 Nov 2026). The user chose this.
+  - **Why:** in the coding bench (`coding --quick`) the lines other vendors' approvals coded are 87.5% precise (8
+    lines, 1 wrong) against 98.6% for the vendor's own (210 lines, 3 wrong); yet an invoice with one such line beside
+    the vendor's own could be approved touchless, nobody looking at it (B-2530).
+  - **What:** the touchless gate reads each line's `decided_by`: a source in `validation.GUESS_SOURCES` ("model",
+    "words", "others") always sends the invoice to a person, as a reasoning that says guess still does (invoices from
+    older versions). "Others" lines are named in the reason ("line 2 was coded from other vendors' approvals, not
+    this vendor's"); Settings → Automation lists "An account not learned from this vendor". No check code: the
+    line's own words on the review screen already say where its account came from.

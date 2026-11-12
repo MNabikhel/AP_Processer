@@ -29,7 +29,7 @@ import datetime as dt
 import hashlib
 import math
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from functools import lru_cache
@@ -1564,6 +1564,8 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("Tax to look at", "a PST or QST exemption learned from earlier approvals, a tax charged that the lines' tax "
      "codes don't add up to, a meals line sharing a tax with other lines, a tax at the wrong rate or of the wrong "
      "kind for the province, a tax due but not charged, or no valid GST/HST number"),
+    ("An account not learned from this vendor", "a line coded from other vendors' approvals, by the local model, "
+     "or from the words of an account's name"),
     ("Any warning", "any finding a person would look at, and an invoice its checks flag for review"),
     ("Dated in the future", "an invoice date after today: misread, or a bill sent ahead"),
     ("File cut off", "a PDF whose end is missing (a download that stopped): part of the invoice may be too"),
@@ -1578,7 +1580,7 @@ def touchless_gates(
     issues: Iterable[dict[str, Any]] | None = None, *, grand_total: Any = None, over_limit: float | None = None,
     over_approval_limit: bool = False, awaiting_page_reader: bool = False, pages_unread: int = 0,
     no_rate_for: str = "", no_page: bool = False, model_coded_lines: int = 0, credit_note: bool = False,
-    pages_left_out: int = 0,
+    pages_left_out: int = 0, lines_from_others: Sequence[int] = (),
 ) -> list[str]:  # fmt: skip
     """Why this invoice must be seen by a person whatever its supplier's record (plain English; empty: none applies).
     ``issues``: the validation findings ({"code", ...}); ``grand_total``: below zero is a credit note;
@@ -1590,7 +1592,8 @@ def touchless_gates(
     local readers did not read (``CaptureResult.pages_left_out``: a long file's middle, or OCR failed on it);
     ``no_page``: a text file (.md, .txt), which the page reader cannot look at, so only one reader has read it;
     ``model_coded_lines``: lines whose account only the local chat model chose, or a weak match (neither AP's
-    approvals nor a coding rule)."""
+    approvals nor a coding rule); ``lines_from_others``: the numbers of the lines whose account other vendors'
+    approvals decided (``decided_by`` "others"), not this vendor's own (D-241)."""
     reasons: list[str] = []
     for issue in issues or []:
         reason = ALWAYS_A_PERSON.get(str(issue.get("code") or ""))
@@ -1619,6 +1622,10 @@ def touchless_gates(
         n = model_coded_lines
         reasons.append(f"{n} line{'' if n == 1 else 's'} coded by the local model or from a weak match, not from "
                        "AP's approvals")  # fmt: skip
+    if lines_from_others:
+        *first, last = [str(n) for n in lines_from_others]
+        which = f"lines {', '.join(first)} and {last} were" if first else f"line {last} was"
+        reasons.append(f"{which} coded from other vendors' approvals, not this vendor's")
     return reasons
 
 
