@@ -60,7 +60,8 @@ CODE_FOLDER = core.WEB_DIR.parent.parent  # the folder holding ap_coder/ (the la
 # How long a thread may hold Python's lock while another waits for it (B-2436; Python's default: 5 ms). A page reads
 # the database a row at a time, letting go of the lock for each row, then waits for it: while a chart was being read
 # on another thread (10 to 20 s of Python), JD Edwards files took 11 to 13 s to open. Half a millisecond: 0.3 s, and
-# the load no slower.
+# the load no slower. Not on Windows (B-2481): there, with threads taking turns that often, the server under three
+# people's load left requests unanswered and a chat call's failover took twice its limit; Python's 5 ms is kept.
 SWITCH_INTERVAL = 0.0005
 
 
@@ -382,7 +383,8 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     background work (the reader, the daily backup, the hub's schedule...); ``processes``: how many web workers serve
     this database (the company server, D-111), which then share their jobs and the rest through the database;
     ``secret``: the key those workers share (else one made at this start)."""
-    sys.setswitchinterval(SWITCH_INTERVAL)
+    if sys.platform != "win32":
+        sys.setswitchinterval(SWITCH_INTERVAL)
     store = store or default_store()
     server = offline.server_mode() if server is None else bool(server)
     if server:  # how long a login lasts: server.json's, or 30 minutes unused and 12 hours (D-109)
