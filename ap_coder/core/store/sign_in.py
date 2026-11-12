@@ -14,11 +14,15 @@ from typing import Any
 from . import users
 from .users import (
     _USER_COLUMNS,
+    ADMIN,
+    FIRST_ACTOR,
     FIRST_KIND,
+    FIRST_USERNAME,
     PENDING_KIND,
     PENDING_SECONDS,
     SETUP_CODE_FILE,
     TOKEN_BYTES,
+    _clean_display,
     _public,
     token_hash,
 )
@@ -35,6 +39,24 @@ LAPTOP_IDLE_SECONDS = 8 * 3600  # a laptop's session unused this long ends (its 
 
 class SignInMixin:
     """A login half way and the first sign-in (D-146, D-243)."""
+
+    # --- The first Admin, and the laptop's account's name (D-243) ---------------------------------------------------
+
+    def add_first_admin(self, password: str, display_name: str) -> int:
+        """The first account (D-243): ``FIRST_USERNAME``, an Admin, with the password its person chose at the first
+        sign-in (their own: nothing to change at the next login; the authenticator app still to set up). ValueError
+        when an account was made meanwhile (``FIRST_DONE``) or the policy refuses the password."""
+        made = self.add_user(FIRST_USERNAME, password, role=ADMIN, display_name=display_name, actor=FIRST_ACTOR,
+                             must_change=False, only_first=True)  # fmt: skip
+        (self.path.parent / SETUP_CODE_FILE).unlink(missing_ok=True)  # the server's setup code: used
+        return made
+
+    def rename_user(self, user_id: int, display_name: str) -> None:
+        """The name an account shows (a laptop's Admin renamed in Settings, D-243: the name on their approvals)."""
+        shown = _clean_display(display_name)
+        if shown:
+            with self._conn() as conn:
+                conn.execute("UPDATE users SET display_name = ? WHERE id = ?", (shown, int(user_id)))
 
     # --- A login half way: the password right, the code still to come (D-146) ----------------------------------------
 

@@ -416,15 +416,6 @@ class UsersMixin:
             self._log(conn, "user_added", None, actor or None, {"username": name, "name": shown, "role": role, **by})
             return int(cur.lastrowid)
 
-    def add_first_admin(self, password: str, display_name: str) -> int:
-        """The first account (D-243): ``FIRST_USERNAME``, an Admin, with the password its person chose at the first
-        sign-in (their own: nothing to change at the next login; the authenticator app still to set up). ValueError
-        when an account was made meanwhile (``FIRST_DONE``) or the policy refuses the password."""
-        made = self.add_user(FIRST_USERNAME, password, role=ADMIN, display_name=display_name, actor=FIRST_ACTOR,
-                             must_change=False, only_first=True)  # fmt: skip
-        (self.path.parent / SETUP_CODE_FILE).unlink(missing_ok=True)  # the server's setup code: used
-        return made
-
     def user(self, user_id: int) -> dict[str, Any] | None:
         with self._conn() as conn:
             return _public(conn.execute(f"SELECT {_USER_COLUMNS} FROM users WHERE id = ?", (int(user_id),)).fetchone())
@@ -469,13 +460,6 @@ class UsersMixin:
             conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, row["id"]))
             self._log(conn, "role_changed", None, actor or None,
                       {"username": row["username"], "from": row["role"], "to": role})  # fmt: skip
-
-    def rename_user(self, user_id: int, display_name: str) -> None:
-        """The name an account shows (a laptop's Admin renamed in Settings, D-243: the name on their approvals)."""
-        shown = _clean_display(display_name)
-        if shown:
-            with self._conn() as conn:
-                conn.execute("UPDATE users SET display_name = ? WHERE id = ?", (shown, int(user_id)))
 
     def set_user_cost_centers(self, user_id: int, codes: str, *, actor: str = "") -> str:
         """The cost centers a Manager account answers for (D-138), as typed ("CC-200, CC-300"): kept cleaned, comma
