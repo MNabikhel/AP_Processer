@@ -196,7 +196,7 @@ def remember_lines(store: Any, key: str, invoice_id: int, capture: dict[str, Any
     """What an approval says about the supplier's lines (D-120): each line AP approved, with the text it was read as
     (the capture's line it was proposed from), for ``apply_line_memory`` on the next invoice. ``bulk``: nobody opened
     it, so only the lines AP changed (on a reopened invoice) say anything. Returns how many were corrected."""
-    from ..coding.remark import described
+    from ..coding.remark import unsplit
     from ..core.memory import pair_lines
 
     read_lines = list((capture or {}).get("line_items") or [])
@@ -208,7 +208,7 @@ def remember_lines(store: Any, key: str, invoice_id: int, capture: dict[str, Any
         if bulk and line_memory.same_text(before.get("description"), after.get("description")):
             continue
         # (a part of a line AP split: its description without the split's share, which is no new name, B-2519)
-        pairs.append((printed, str(before.get("description") or ""), described(after)))
+        pairs.append((printed, str(before.get("description") or ""), unsplit(after)))
     return store.remember_line_texts(key, line_memory.observations(pairs), invoice_id=invoice_id)
 
 
