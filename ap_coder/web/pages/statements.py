@@ -94,7 +94,7 @@ def statements_page(
                                "open_items": bool(open_items)}  # fmt: skip
     if file and names:
         try:
-            upload, df, sheets = read_upload(file, sheet or None)
+            upload, df, sheets = read_upload(file, sheet or None, [STATEMENTS])
         except SheetError as exc:
             context["error"] = str(exc)
         else:
@@ -126,7 +126,9 @@ def statements_page(
                         (
                             "Not on statement",
                             rec.count(stm.NOT_ON_STATEMENT),
-                            "period unknown" if rec.period_unknown else "in AP Coder for the period",
+                            "period unknown"
+                            if rec.period_unknown or rec.dates_unread
+                            else "in AP Coder for the period",
                         ),
                     ],
                     lines=[
@@ -190,7 +192,7 @@ def reconciliation_csv(
 ) -> Response:
     store = get_store(request)
     try:
-        _upload, df, _sheets = read_upload(file, sheet or None)
+        _upload, df, _sheets = read_upload(file, sheet or None, [STATEMENTS])
     except SheetError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     columns = list(df.columns)

@@ -123,6 +123,9 @@ class Reconciliation:
     # The statement's dates read either way (day or month first) and nothing told which: its period is unknown, so
     # the invoices it leaves out may not all be listed "Not on statement".
     period_unknown: bool = False
+    # None of the statement's dates read as a date (15-Sep-2026, 15.09.2026, no date column): its period is unknown
+    # too, so no invoice it leaves out is listed "Not on statement".
+    dates_unread: bool = False
     # An open-items statement (``reconcile``'s ``open_items``): the invoices exported it leaves out, counted.
     exported_left_out: int = 0
 
@@ -220,6 +223,7 @@ def reconcile(
             li.date = read_date(li.date, day_first)
         dates = [read_date(d, day_first) for d in dates]
     result.period_unknown = any(_EITHER_WAY.fullmatch(d) for d in dates)
+    result.dates_unread = bool(result.lines) and _period(dates) is None and not result.period_unknown
     left_out = _not_on_statement(_period(dates), invoices, seen)
     if open_items:
         exported = {inv["id"] for inv in invoices if inv.get("export_batch")}

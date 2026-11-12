@@ -46,6 +46,10 @@ CANNOT_READ = (
     "This file could not be read as a spreadsheet: it may be empty, damaged or another format. In Excel, save it as "
     "CSV UTF-8 or Excel Workbook (.xlsx) and upload it again."
 )
+OLD_XLS = (
+    "This is an older Excel file (.xls), or a workbook with a password, which AP Coder cannot read. In Excel, save it "
+    "as Excel Workbook (.xlsx) or CSV UTF-8 and upload it again."
+)
 NOT_A_SHEET = "Upload a CSV or Excel file (.csv or .xlsx)."
 EMPTY = "This file is empty: it has no column names and no rows. Export the list again and upload the file it saved."
 NO_ROWS = "This file has no rows under its header line."
@@ -209,11 +213,12 @@ def read_excel(content: bytes, sheet_name: int | None = None) -> Any:
 
 
 def read_csv(content: bytes) -> pd.DataFrame:
-    """An uploaded CSV as text cells, as every page reads one: UTF-8 (with or without its mark) or Windows-1252
-    (Excel's "CSV"), its delimiter found from several lines (``sniff_delimiter``: a semicolon file whose header has a
-    comma in a cell too, B-1400). Raises SheetError when it is neither encoding; pandas' own error for a file that
-    is no CSV."""
-    for encoding in ("utf-8-sig", "cp1252"):
+    """An uploaded CSV as text cells, as every page reads one: UTF-8 (with or without its mark), Windows-1252
+    (Excel's "CSV") or UTF-16 with its mark (PowerShell's Out-File, Excel's "Unicode Text", B-2644), its delimiter
+    found from several lines (``sniff_delimiter``: a semicolon file whose header has a comma in a cell too, B-1400).
+    Raises SheetError when it is no such encoding; pandas' own error for a file that is no CSV."""
+    utf16 = content.startswith((b"\xff\xfe", b"\xfe\xff"))
+    for encoding in ("utf-16",) if utf16 else ("utf-8-sig", "cp1252"):
         try:
             text = content.decode(encoding)
         except UnicodeDecodeError:
@@ -223,7 +228,10 @@ def read_csv(content: bytes) -> pd.DataFrame:
         columns = _header_cells(text, sep)
         if columns > MAX_COLUMNS:
             raise SheetError(too_wide(columns))
-        return pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False, sep=sep, engine="python")
+        # index_col=False: rows ending with a delimiter the header line lacks keep their first column (B-2641)
+        return pd.read_csv(
+            io.StringIO(text), dtype=str, keep_default_na=False, sep=sep, engine="python", index_col=False
+        )
     raise SheetError("Could not read this file. In Excel, use Save As → CSV UTF-8 and upload it again.")
 
 
@@ -329,10 +337,18 @@ def read_sheet(name: str, content: bytes, sheet: str | None = None,
     except SheetError:
         raise
     except Exception as exc:  # noqa: BLE001 - empty file, not really a spreadsheet, damaged workbook...
-        raise SheetError(CANNOT_READ) from exc
+        raise SheetError(cannot_read(content)) from exc
     if not _filled(df):
         raise SheetError(EMPTY)
     return df, names
+
+
+def cannot_read(content: bytes) -> str:
+    """Why a file no reader could read was refused: an old Excel file (.xls) by name, as no reader of one is
+    installed (B-2643), else ``CANNOT_READ``."""
+    from ap_coder.core.chart_file import OLD_EXCEL
+
+    return OLD_XLS if content.startswith(OLD_EXCEL) else CANNOT_READ
 
 
 def _long_report(name: str, content: bytes, sheet: str | None) -> tuple[pd.DataFrame, list[str]]:

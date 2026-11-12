@@ -28,7 +28,7 @@
   </form>
   {% endif %}
   {% elif can("/purchase-orders/upload") %}
-  {{ imports.file_box("/purchase-orders/upload", spec.accept, "PO lines, a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…") }}
+  {{ imports.file_box("/purchase-orders/upload", spec.accept, "PO lines, a CSV or Excel file (.csv or .xlsx)", "Reading…") }}
   {% else %}<p class="muted">{{ imports.done_by("An Admin loads the purchase orders.", "The purchase orders are loaded") }}</p>{# server mode (D-98), the office network #}
   {% endif %}
   </div>

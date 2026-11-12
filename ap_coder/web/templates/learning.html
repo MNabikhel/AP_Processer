@@ -102,7 +102,7 @@
   {% if can("/learning/history/upload") %}{# server mode: teaching the past coding is an Admin's (D-98) #}
   <div class="stack imp-pane">
   {{ imp.report(history_spec) }}
-  {{ imp.file_box("/learning/history/upload", ".csv,.xlsx,.xls,.txt", "The AP line history, a CSV or Excel file (.csv, .xlsx or .xls), or JD Edwards' Transaction Journal", "Reading…") }}
+  {{ imp.file_box("/learning/history/upload", ".csv,.xlsx,.xls,.txt", "The AP line history, a CSV or Excel file (.csv or .xlsx), or JD Edwards' Transaction Journal", "Reading…") }}
   <p class="muted">From JD Edwards: the Transaction Journal (report R09321) saved as CSV is read as it comes. Its
     summary is shown first; nothing is loaded until you say so.</p>
   </div>
