@@ -571,7 +571,7 @@ def _dated(*dates):
                                                  "printed both ways (25/03/2026 and 03/25/2026)."),
 ])  # fmt: skip
 def test_the_notes_say_which_way_the_dates_that_read_two_ways_were_read(dates, said):
-    """B-2631: a wrong guess (an extract with no day after the 12th, of a journal printed day first) can be seen."""
+    """B-2543: a wrong guess (an extract with no day after the 12th, of a journal printed day first) can be seen."""
     assert f"Dates that read two ways were {said}" in _dated(*dates).notes
 
 

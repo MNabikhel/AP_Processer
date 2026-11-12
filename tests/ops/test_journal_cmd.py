@@ -99,7 +99,7 @@ def test_the_same_file_again_adds_nothing_and_says_so(tmp_path, capsys, truth):
 
 
 def test_a_file_loaded_when_it_read_otherwise_says_so_and_reads_as_now_once_forgotten(tmp_path, truth):
-    """B-2631: a journal printed day first, loaded before its dates were read so, is the same file by its bytes;
+    """B-2543: a journal printed day first, loaded before its dates were read so, is the same file by its bytes;
     loading it again says it reads otherwise now (it was "nothing to add"), and how to keep it as it reads."""
     data, store = jde_exports.journal_csv(truth), _store(tmp_path)
     now = journal_cmd.look(store, data, "R09321.csv").journal

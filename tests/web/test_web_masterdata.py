@@ -515,7 +515,7 @@ def test_a_bank_code_typed_in_another_case_is_the_same_account(client, store):
 
 
 def test_an_exact_bank_code_is_its_own_account_when_a_database_holds_both_spellings(client, store):
-    """A database from before B-2661 can hold CAD-OP and cad-op: the code typed exactly is that account, in the
+    """A database from before B-2551 can hold CAD-OP and cad-op: the code typed exactly is that account, in the
     Store, the import (its unpicked columns) and the grid (a blank account number), whichever sorts last."""
     from ap_coder.coding import banks
 
@@ -983,7 +983,7 @@ def test_a_sheet_whose_first_row_is_its_column_names_is_read_as_before():
 
 
 def test_a_csv_whose_rows_end_with_a_delimiter_its_header_lacks_keeps_its_columns():
-    """B-2641: every data row ended with a comma the header line has not: pandas took the first column for the rows'
+    """B-2545: every data row ended with a comma the header line has not: pandas took the first column for the rows'
     index and dropped it, so "Invoice" held the dates and "Amount" nothing, under names that still matched."""
     from ap_coder.web.files import read_sheet
 
@@ -1005,7 +1005,7 @@ def test_a_csv_whose_rows_end_with_a_delimiter_its_header_lacks_keeps_its_column
     ],
 )  # fmt: skip
 def test_a_two_cell_line_above_the_column_names_is_not_taken_for_them(client, busy, url, preface, header, row):
-    """B-2642: a statement's "Statement date | 2026-09-30" (or "Vendor | Acme Ltd") under its title was taken for the
+    """B-2546: a statement's "Statement date | 2026-09-30" (or "Vendor | Acme Ltd") under its title was taken for the
     column names, the real ones a row of data: nothing was guessed and no column could be picked."""
     data = {"vendor": busy.vendor_summaries()[0]["vendor_key"]} if url.startswith("/statements") else {}
     content = xlsx([["Statement of account"], preface, [], header, row])
@@ -1016,7 +1016,7 @@ def test_a_two_cell_line_above_the_column_names_is_not_taken_for_them(client, bu
 
 
 def test_an_old_excel_file_is_refused_saying_so(client, busy):
-    """B-2643: the import pages said a .xls was read, but an old Excel file (no reader for it is installed) was
+    """B-2547: the import pages said a .xls was read, but an old Excel file (no reader for it is installed) was
     refused as "empty, damaged or another format"; it is named, and the pages ask for .csv or .xlsx."""
     from ap_coder.web.files import SheetError, read_sheet
     from ap_coder.web.pages import learning
@@ -1034,7 +1034,7 @@ def test_an_old_excel_file_is_refused_saying_so(client, busy):
 
 @pytest.mark.parametrize("sep", [",", "\t"])
 def test_a_utf16_csv_is_read_as_its_text(sep):
-    """B-2644: a CSV saved as UTF-16 (PowerShell's Out-File, Excel's "Unicode Text") was read as Windows-1252: its
+    """B-2548: a CSV saved as UTF-16 (PowerShell's Out-File, Excel's "Unicode Text") was read as Windows-1252: its
     byte-order mark and a NUL between every letter in each column name and cell, so no column matched."""
     from ap_coder.web.files import read_sheet
 
@@ -1139,7 +1139,7 @@ def test_with_a_chart_loaded_and_a_list_imported_too_the_page_counts_what_came_f
     ],
 )  # fmt: skip
 def test_a_data_cell_that_is_a_column_name_does_not_take_the_header(spec, rows):
-    """B-2642: with a page's spec given, a header none of whose names were known lost to the first data row when a
+    """B-2546: with a page's spec given, a header none of whose names were known lost to the first data row when a
     cell of it was a column's name ("Invoice" in a Type column): the real names and the first line were gone."""
     from ap_coder.erp import import_specs
     from ap_coder.web.files import read_sheet
@@ -1150,7 +1150,7 @@ def test_a_data_cell_that_is_a_column_name_does_not_take_the_header(spec, rows):
 
 
 def test_a_statement_whose_column_names_are_not_known_keeps_them_to_pick_from(client, busy):
-    """B-2642, on the page: the column picker offers the statement's own names and the preview shows both lines."""
+    """B-2546, on the page: the column picker offers the statement's own names and the preview shows both lines."""
     key = busy.vendor_summaries()[0]["vendor_key"]
     content = b"Txn No.,Posted On,Txn Type,Charge\n88231,2026-09-01,Invoice,100.00\n88232,2026-09-04,Credit,-20.00\n"
     page = follow(client, client.post("/statements/upload", data={"vendor": key},
@@ -1160,7 +1160,7 @@ def test_a_statement_whose_column_names_are_not_known_keeps_them_to_pick_from(cl
 
 
 def test_a_row_with_more_cells_than_the_header_is_refused_not_cut():
-    """B-2641: an unquoted comma in a cell ("Acme, Inc.") gave the row a cell more than the header; with the extra
+    """B-2545: an unquoted comma in a cell ("Acme, Inc.") gave the row a cell more than the header; with the extra
     cell dropped, its amount was lost silently. Only an empty extra cell (a trailing delimiter) is dropped."""
     from ap_coder.web.files import SheetError, read_sheet
 
@@ -1171,7 +1171,7 @@ def test_a_row_with_more_cells_than_the_header_is_refused_not_cut():
 
 @pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be"])
 def test_a_utf16_csv_without_its_mark_is_read_as_its_text(encoding):
-    """B-2644: UTF-16 with no byte-order mark decoded as UTF-8, a NUL between every letter, and no column matched."""
+    """B-2548: UTF-16 with no byte-order mark decoded as UTF-8, a NUL between every letter, and no column matched."""
     from ap_coder.web.files import read_sheet
 
     content = "Invoice,Date,Amount\r\nINV-1,2026-09-01,100.00\r\n".encode(encoding)

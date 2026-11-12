@@ -150,7 +150,7 @@ def test_a_web_page_saved_as_a_pdf_is_refused_in_plain_words(pipeline):
     ids=["browser comment", "xml declaration", "utf-16", "meta first"],
 )
 def test_a_web_page_starting_with_a_comment_or_declaration_is_refused_too(pipeline, head):
-    """B-2600: a sign-in page saved by a browser starts with its "saved from" comment, an XHTML one with <?xml?>."""
+    """B-2535: a sign-in page saved by a browser starts with its "saved from" comment, an XHTML one with <?xml?>."""
     store, pipe, folder = pipeline
     page = folder / "invoice.pdf"
     tail = "<head><title>Sign in</title></head><body>Please sign in</body></html>"
@@ -161,7 +161,7 @@ def test_a_web_page_starting_with_a_comment_or_declaration_is_refused_too(pipeli
 
 
 def test_a_file_starting_with_many_comments_is_told_apart_at_once(tmp_path):
-    """B-2600: a file whose head held many "<!-- -->" comments and was no web page took twice as long for each one
+    """B-2535: a file whose head held many "<!-- -->" comments and was no web page took twice as long for each one
     more (the comment pattern tried every way of grouping their ends): 140 of them never finished, the dashboard
     stalled. A web page after comments is still one."""
     other = tmp_path / "a.pdf"

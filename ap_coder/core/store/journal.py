@@ -337,7 +337,7 @@ class JournalMixin:
     def journal_read_otherwise(self, file_id: int, journal: Any) -> int:
         """How many vouchers of a journal as read (``voucher_identity``) are not as the loaded file ``file_id`` kept
         them, or the other way round: 0 when the same file reads as it was loaded; more when the reader reads it
-        better now (the G/L dates of a journal printed day first: B-2631). Nothing is written."""
+        better now (the G/L dates of a journal printed day first: B-2543). Nothing is written."""
         wanted = Counter(voucher_identity(voucher) for voucher in journal.vouchers)
         with self._conn() as conn:
             rows = conn.execute("SELECT identity FROM journal_vouchers WHERE file_id = ?", (file_id,))

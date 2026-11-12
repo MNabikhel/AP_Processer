@@ -302,7 +302,7 @@ def _bank_import(request: Request, form: Any) -> JSONResponse:
     keep = {code.upper(): r for code, r in exact.items()}  # (a code in any case: the same account)
     for r in records:  # a column not picked keeps what the account has
         code = str(r.get("code") or "").strip()
-        old = exact.get(code) or keep.get(code.upper())  # (the exact code first: B-2661's older duplicates)
+        old = exact.get(code) or keep.get(code.upper())  # (the exact code first: B-2551's older duplicates)
         if old:
             for f in banks.COLUMNS:
                 if f not in picked:

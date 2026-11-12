@@ -349,7 +349,7 @@ def test_a_number_that_starts_a_description_is_kept_where_no_row_number_is_print
 
 
 def test_an_item_whose_description_starts_with_a_totals_word_is_a_line():
-    """B-2603: "Total Station survey rental | 2 | 250.00 | 500.00" ended the table there (its first word a total's
+    """B-2538: "Total Station survey rental | 2 | 250.00 | 500.00" ended the table there (its first word a total's
     label), so its lines and those under it were dropped; a totals row under the lines still ends them. A row named
     "Subtotal ..." is still left out as a page's subtotal, but no longer drops the lines under it."""
     items = [("Widget", "1", "100.00", "100.00"), ("Gadget", "1", "50.00", "50.00"), ("Bracket", "2", "25.00", "50.00")]
@@ -365,7 +365,7 @@ def test_an_item_whose_description_starts_with_a_totals_word_is_a_line():
 
 
 def test_a_totals_row_with_a_quantity_or_three_figures_still_ends_the_lines():
-    """B-2603: a totals row named with more words and two figures or more beside it ("Total Units | 4 |
+    """B-2538: a totals row named with more words and two figures or more beside it ("Total Units | 4 |
     200.00", "Total Current Charges | 200.00 | 10.00 | 210.00") read as one more line, the table's total again. An
     item named with a total's word is priced as the lines are: its quantity times its price is its amount."""
     items = [("Widget", "1", "100.00", "100.00"), ("Gadget", "1", "50.00", "50.00"), ("Bracket", "2", "25.00", "50.00")]

@@ -514,7 +514,7 @@ def line_guessed(suggestion: dict[str, Any] | None, rule: dict[str, Any] | None 
     return bool(suggestion) and guessed((suggestion or {}).get("reasoning_justification"))
 
 
-_LIGATURES = str.maketrans({"œ": "oe", "æ": "ae"})  # one letter each that NFKD leaves whole (B-2664)
+_LIGATURES = str.maketrans({"œ": "oe", "æ": "ae"})  # one letter each that NFKD leaves whole (B-2554)
 
 
 def fold_text(value: Any) -> Any:

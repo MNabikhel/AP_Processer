@@ -57,7 +57,7 @@ from .rules import RULES_SCHEMA, rule_rows
 # What the summary works out, by version: a change to it (a new column, a report's facts read differently, the
 # vendor-matching or invoice-number rules) changes this, and every database builds its summary again once.
 SUMMARY_RULES = "5"  # 2: the review queue's facts (D-155); 3: the tax claimed as posted (D-238); 4: q_others (D-241);
-# 5: demo read as JSON (B-2671)
+# 5: demo read as JSON (B-2556)
 
 # The columns of ``invoices`` the summary keeps as they are, with their declared types (so they compare and sort as
 # the columns of ``invoices`` do).
@@ -87,7 +87,7 @@ _LINE_GLS = (
 
 DERIVED = (
     # the dashboard's demo invoices (``demo_count``): their metadata's ``demo``, read as JSON, not as the text Python
-    # wrote (SQLite's json_set writes it again with no spaces: a reopened demo invoice, B-2671)
+    # wrote (SQLite's json_set writes it again with no spaces: a reopened demo invoice, B-2556)
     ("demo", "INTEGER NOT NULL DEFAULT 0",
      f"COALESCE(CASE WHEN {json_valid('meta')} THEN {json_get('meta', '$.demo')} = 1 END, 0)"),
     ("gst_number", "", "CASE WHEN json_valid(final_output) THEN json_extract(final_output, "

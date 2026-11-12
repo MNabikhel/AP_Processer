@@ -110,7 +110,7 @@ def like(value: str) -> str:
 def like_folded(value: str) -> str:
     """``value LIKE ?`` blind to accents and the case of any letter, ``?`` folded by ``_base.fold_text`` ("quebec"
     finds "HYDRO-QUÉBEC"): text beyond plain ASCII goes through ``ap_fold``, the rest (most of it) is compared by
-    SQLite itself, as quickly as ``like`` (B-2670). PostgreSQL: ``lower(unaccent(value)) LIKE ?`` (``unaccent``)."""
+    SQLite itself, as quickly as ``like`` (B-2555). PostgreSQL: ``lower(unaccent(value)) LIKE ?`` (``unaccent``)."""
     plain = f"length(CAST({value} AS BLOB)) = length({value})"  # (one byte a character: ASCII)
     return f"(CASE WHEN {plain} THEN {value} ELSE ap_fold({value}) END) LIKE {PARAM}"
 

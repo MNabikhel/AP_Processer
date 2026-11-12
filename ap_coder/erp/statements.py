@@ -196,7 +196,7 @@ def reconcile(
             continue  # blank or subtotal row
         if date:
             dates.append(date)
-        # A date not read is shown as written ("1 sept. 2026"), not cut at its first word (B-2640)
+        # A date not read is shown as written ("1 sept. 2026"), not cut at its first word (B-2544)
         shown = date if _ISO.fullmatch(date) or _EITHER_WAY.fullmatch(date) else str(get(rec, "date") or "").strip()
         key = norm_invoice_number(raw_number)
         same_number = by_number.get(key, [])

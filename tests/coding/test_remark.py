@@ -157,7 +157,7 @@ def test_a_remark_written_with_a_hyphen_after_inv_gets_the_new_invoice_number():
 
 @pytest.mark.parametrize("written", ["INV–", "INV—", "INV‑", "INV_", "INV/", "INV.-", "INV: -", "INV-No-"])
 def test_a_remark_with_another_mark_after_inv_gets_the_new_invoice_number_too(written):
-    """An en or em dash, a non-breaking hyphen, an underscore or a slash, or two marks, after INV (B-2630)."""
+    """An en or em dash, a non-breaking hyphen, an underscore or a slash, or two marks, after INV (B-2542)."""
     assert with_period(f"{written}54001 cell Jan", Period(2026, 2, 1), "55123", 2026) == f"{written}55123 cell Feb"
     assert with_period(f"{written}54001 cell", None, "", 2026) in ("INV cell", "INV. cell", "INV: cell", "INV-No cell")
 

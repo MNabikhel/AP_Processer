@@ -212,7 +212,7 @@ def test_a_printed_tax_cell(cell, legend, charged, read):
 
 
 def test_a_rate_printed_with_one_decimal_is_not_zero_rated():
-    """B-2621: the "0%" at the end of "5.0%" or "13.0%" read as zero-rated, so a legend "G = GST 5.0%" gave every
+    """B-2541: the "0%" at the end of "5.0%" or "13.0%" read as zero-rated, so a legend "G = GST 5.0%" gave every
     line the code ZERO; a rate of 0% or 0.0% still is zero-rated."""
     assert parse_legend("Tax codes: G = GST 5.0%, P = PST 7.0%") == {"G": ("GST",), "P": ("PST",)}
     for cell in ("13.0%", "GST 5.0%", "TPS 5,0 %", "20.0%", "10%"):

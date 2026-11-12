@@ -1488,7 +1488,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{where} could not be opened or written: it is open in another program (Excel?) or the folder is "
               "read-only. Close it, then run the command again.", file=sys.stderr)  # fmt: skip
         return 1
-    except DatabaseTooNew as exc:  # (said in one line, as any other refusal: no traceback, B-2672)
+    except DatabaseTooNew as exc:  # (said in one line, as any other refusal: no traceback, B-2557)
         print(exc, file=sys.stderr)
         return 1
 

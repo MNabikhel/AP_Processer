@@ -1274,7 +1274,7 @@ vendorAdd?.querySelector("[data-new-go]")?.addEventListener("click", async (e) =
     toast({ text: answer.error || "That didn't work.", tone: "err" }, 9000);
     return;
   }
-  // its numbers as kept: a box left blank keeps the ones AP gave it on the Vendors page (B-2650)
+  // its numbers as kept: a box left blank keeps the ones AP gave it on the Vendors page (B-2549)
   const added = { name: answer.vendor, key: answer.key ?? vendorKey(answer.vendor), id: "", gst: answer.gst ?? "", qst: answer.qst ?? "", pst: answer.pst ?? "", added: true };
   vendors.list = vendors.list.filter((v) => v.key !== added.key).concat([added]); // the vendor field offers it now
   addedHere.push(added); // and still once the list comes

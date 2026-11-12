@@ -220,9 +220,9 @@ def read_excel(content: bytes, sheet_name: int | None = None) -> Any:
 def read_csv(content: bytes) -> pd.DataFrame:
     """An uploaded CSV as text cells, as every page reads one: UTF-8 (with or without its mark), Windows-1252
     (Excel's "CSV") or UTF-16 (PowerShell's Out-File, Excel's "Unicode Text": by its mark, or by the NUL beside each
-    letter of a file without it, B-2644), its delimiter found from several lines (``sniff_delimiter``: a semicolon
+    letter of a file without it, B-2548), its delimiter found from several lines (``sniff_delimiter``: a semicolon
     file whose header has a comma in a cell too, B-1400). Raises SheetError when it is no such encoding, or a row has
-    a cell more than the header that is not empty (B-2641); pandas' own error for a file that is no CSV."""
+    a cell more than the header that is not empty (B-2545); pandas' own error for a file that is no CSV."""
     for encoding in _encodings(content):
         try:
             text = content.decode(encoding)
@@ -233,7 +233,7 @@ def read_csv(content: bytes) -> pd.DataFrame:
         columns = _header_cells(text, sep)
         if columns > MAX_COLUMNS:
             raise SheetError(too_wide(columns))
-        # index_col=False: rows ending with a delimiter the header line lacks keep their first column (B-2641);
+        # index_col=False: rows ending with a delimiter the header line lacks keep their first column (B-2545);
         # pandas only warns when it drops an extra cell that is not empty ("Acme, Inc." unquoted), so it is refused
         with warnings.catch_warnings():
             warnings.simplefilter("error", pd.errors.ParserWarning)
@@ -368,7 +368,7 @@ def read_sheet(name: str, content: bytes, sheet: str | None = None,
 
 def cannot_read(content: bytes) -> str:
     """Why a file no reader could read was refused: an old Excel file (.xls) by name, as no reader of one is
-    installed (B-2643), else ``CANNOT_READ``."""
+    installed (B-2547), else ``CANNOT_READ``."""
     from ap_coder.core.chart_file import OLD_EXCEL
 
     return OLD_XLS if content.startswith(OLD_EXCEL) else CANNOT_READ
@@ -448,7 +448,7 @@ def _named_row(df: pd.DataFrame, specs: Sequence[ImportSpec]) -> pd.DataFrame:
 
 def _more_names(row: Sequence[Any], columns: Sequence[Any], specs: Sequence[ImportSpec]) -> bool:
     """Whether a row that is none of ``specs`` whole is still their column names rather than a line of data (whose
-    "Invoice" in a Type column is a column's name too, B-2642): two of their columns or more, more than the columns
+    "Invoice" in a Type column is a column's name too, B-2546): two of their columns or more, more than the columns
     named now, and no cell a number."""
     found = [max(len(import_specs.check(spec, cells).found) for spec in specs) for cells in (row, columns)]
     numbers = any(_NUMBER_LIKE.fullmatch(str(cell).strip()) for cell in row if str(cell).strip())

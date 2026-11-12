@@ -347,7 +347,7 @@ _WORDS = (
     (re.compile(r"(?i)\b(?:qst|tvq)\b"), "QST"),
 )
 _EXEMPT_WORDS = re.compile(r"(?i)\b(?:exempt|exon[ée]r[ée]e?|non[- ]?taxable|not\s+taxable|tax[- ]?free)\b")
-# A rate of 0%, 0.0% or 0,0 %, not the end of another one ("5.0%", B-2621)
+# A rate of 0%, 0.0% or 0,0 %, not the end of another one ("5.0%", B-2541)
 _ZERO_WORDS = re.compile(r"(?i)\bzero[- ]?rated?\b|\bdétaxée?\b|\bdetaxee?\b|(?<!\w)(?<!\d[.,])0(?:[.,]0+)?\s*%")
 _OUT_WORDS = re.compile(r"(?i)\bout\s+of\s+scope\b|\bnot\s+applicable\b|\bhors\s+champ\b")
 _TAXABLE_WORDS = re.compile(r"(?i)^(?:taxable|tax(?:ed)?|yes|oui|y|t|\*+)$")

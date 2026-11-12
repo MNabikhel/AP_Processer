@@ -869,7 +869,7 @@ MEALS_NOTE = "Meals: 50% of the {taxes} is claimable. Billed to a client or a st
 # A tip or gratuity line: a voluntary tip is not taxed, so none of the tax printed is on it. A tip word opens or ends
 # the description or a part of it ("Tip amount", "Pourboire inclus", "Credit card tip", "Server - thank you"), and a
 # thanks is followed only by courtesy ("Merci beaucoup"): "Excel tips workshop", "Thank you cards", "Merci Boutique"
-# or "Livraison gratuite" (free delivery) are not tips (B-2620).
+# or "Livraison gratuite" (free delivery) are not tips (B-2540).
 _TIP_WORDS = {"tip", "tips", "gratuity", "gratuities", "gratuité", "gratuités", "pourboire", "pourboires"}
 _THANKS = re.compile(r"(?i)^\s*(?:thank\s*you|merci)\b")
 _COURTESY = {"beaucoup", "for", "your", "business", "visit", "order", "so", "much", "very", "again", "pour", "votre",

@@ -851,7 +851,7 @@ def test_in_a_browser_a_vendor_added_before_the_vendor_list_came_is_kept_when_it
 
 
 def test_in_a_browser_add_new_vendor_fills_the_tax_numbers_ap_gave_the_vendor(browser, store):
-    """B-2650: Add new vendor keeps the GST/HST, QST and PST numbers AP gave the vendor on the Vendors page where the
+    """B-2549: Add new vendor keeps the GST/HST, QST and PST numbers AP gave the vendor on the Vendors page where the
     dialog's boxes are blank, but the screen took the dialog's blank boxes as the vendor's and, the vendor typed
     already, filled nothing: the numbers kept showed only once the invoice was opened again. They fill the blank
     boxes at once now."""

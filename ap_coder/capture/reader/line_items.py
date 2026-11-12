@@ -1105,7 +1105,7 @@ def read_line_items(layout: DocLayout, tables: dict[int, list[Box]] | None = Non
 
 def _totals_row(line: Line, lines: list[Line]) -> bool:
     """``line`` starts with a subtotal's, a total's or the tax's label: the line table ends at it. Not an item named
-    with one's word, priced as the lines are ("Total Station survey rental | 2 | 250.00 | 500.00", B-2603): words
+    with one's word, priced as the lines are ("Total Station survey rental | 2 | 250.00 | 500.00", B-2538): words
     that are no label after it, and beside it a quantity times a price that make an amount ("Total Units | 4 |
     200.00" and "Total Current Charges | 200.00 | 10.00 | 210.00" are totals)."""
     p = plain(line.text)

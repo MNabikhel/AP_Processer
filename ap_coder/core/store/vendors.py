@@ -397,7 +397,7 @@ class VendorsMixin:
         given = {"gst": gst.strip(), "qst": qst.strip(), "pst": pst.strip(), "province": province.strip().upper()}
         old = {k: str(before.get(c) or "") for k, c in (("gst", "expected_gst"), ("qst", "qst_number"),
                                                         ("pst", "pst_number"), ("province", "province"))}  # fmt: skip
-        numbers = {k: given[k] or old[k] for k in given}  # left blank, AP's own numbers stay (B-2650)
+        numbers = {k: given[k] or old[k] for k in given}  # left blank, AP's own numbers stay (B-2549)
         replaced = {k: old[k] for k in given if old[k] and numbers[k] != old[k]}
         with self._conn() as conn:
             conn.execute(

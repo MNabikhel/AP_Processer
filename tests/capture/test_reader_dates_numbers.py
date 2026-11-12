@@ -470,7 +470,7 @@ def test_an_iso_date_with_its_time_is_a_date():
 
 
 def test_a_french_printed_received_or_service_date_is_not_the_invoice_date_beside_a_bare_date(tmp_path):
-    """B-2601: beside a bare "Date 2026-10-05", "Date d'impression" (or reçue, de service, de paiement, de début...)
+    """B-2536: beside a bare "Date 2026-10-05", "Date d'impression" (or reçue, de service, de paiement, de début...)
     was the longer label, so its date became the invoice date, as "Date printed" never did."""
     for decoy in ("Date d'impression", "Date d’impression", "Date de réception", "Date reçue", "Date de service",
                   "Date de paiement", "Date de début", "Date de fin", "Date d'effet", "Date required",

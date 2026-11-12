@@ -335,7 +335,7 @@ def test_a_tip_written_another_way_carries_no_tax():
 
 
 def test_a_line_that_only_uses_a_tip_word_is_not_a_tip():
-    """B-2620: "Excel tips workshop", "Thank you cards" or a vendor named Merci, marked with the tax, take their
+    """B-2540: "Excel tips workshop", "Thank you cards" or a vendor named Merci, marked with the tax, take their
     share of it (the PST kept in the expense is posted to their account), and a "Thank you lunch" on the meals
     account has half its HST expensed; a line that is only a tip ("Gratuity 18%", "Driver tip") is still a tip."""
     from types import SimpleNamespace
@@ -360,7 +360,7 @@ def test_a_line_that_only_uses_a_tip_word_is_not_a_tip():
 
 
 def test_a_tip_line_with_more_words_is_still_a_tip():
-    """B-2620: "Tip amount", "Tip - Visa" or "Pourboire inclus" are tips: they carry none of the HST, so the claim
+    """B-2540: "Tip amount", "Tip - Visa" or "Pourboire inclus" are tips: they carry none of the HST, so the claim
     on the meal stays half of its HST, not more."""
     from types import SimpleNamespace
 
