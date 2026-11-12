@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from ap_coder.core.store import Store
 from ap_coder.web import files
 from ap_coder.web.app import create_app
-from ap_coder.web.pages import learning, settings_jde
+from ap_coder.web.pages import learning
 from tests.conftest import SAMPLE_STEM, SAMPLES
 from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
 from tests.webclient import PAGE, add_clean, client_for, follow, gt, post, web_settings
@@ -57,12 +57,13 @@ def test_past_coding_from_a_semicolon_csv_with_a_comma_in_a_header_keeps_its_col
 
 
 def test_the_jd_edwards_mapping_from_a_semicolon_csv_with_a_comma_in_a_header_is_imported(store):
-    rows = settings_jde.read_sheet("map.csv", SEMICOLON_GL_MAP.encode("utf-8"))
+    rows = files.read_sheet("map.csv", SEMICOLON_GL_MAP.encode("utf-8"))[0].to_dict("records")
     assert rows[0]["GL code"] == "6100" and rows[1]["BU"] == "200"
     client = client_for(store)
-    answer = client.post("/settings/jde/gl-map/import", files={"file": ("map.csv", SEMICOLON_GL_MAP.encode())},
+    answer = client.post("/settings/jde/gl-map/upload", files={"file": ("map.csv", SEMICOLON_GL_MAP.encode())},
                          headers=PAGE)  # fmt: skip
-    assert "2 mapping rows imported." in follow(client, answer)
+    token = answer.json()["redirect"].split("gl_map=")[1].split("#")[0]
+    assert "2 mapping rows imported." in follow(client, post(client, "/settings/jde/gl-map/import", {"token": token}))
 
 
 # --- B-1401: the past coding and the JD Edwards mapping were read whole, however large ------------------------------
@@ -72,7 +73,7 @@ def test_past_coding_and_the_jd_edwards_mapping_larger_than_an_upload_are_not_re
     monkeypatch.setattr(files, "_MAX_BYTES", 20)
     client = client_for(store)
     big = SEMICOLON_HISTORY.encode()
-    for url in ("/learning/history/upload", "/settings/jde/gl-map/import"):
+    for url in ("/learning/history/upload", "/settings/jde/gl-map/upload"):
         answer = client.post(url, files={"file": ("big.csv", big)}, headers=PAGE)
         assert answer.status_code == 400 and "larger than" in answer.json()["error"], (url, answer.text)
 

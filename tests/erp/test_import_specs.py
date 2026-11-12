@@ -96,9 +96,12 @@ def _statement_takes(spec, fields) -> bool:
 
 
 def _accounts_take(spec, fields) -> bool:
+    """The page refuses an import without a code column (``files.pick_refusal``); its choices start as its spec's."""
+    from ap_coder.web.files import pick_refusal
     from ap_coder.web.pages import accounts
 
-    return bool(accounts.guess([spec.column(f).header for f in fields], accounts._CODE_HINTS))
+    table = accounts.SPECS[spec.key]
+    return not pick_refusal(table, table.find([spec.column(f).header for f in fields]))
 
 
 def _bank_takes(spec, fields) -> bool:
@@ -185,13 +188,16 @@ def test_the_specs_are_the_readers_own_tables():
         assert {c.field: c.names for c in SPECS[key].columns} == {f: tuple(n) for f, n in aliases.items()}, key
 
 
-def test_the_accounts_pages_guess_is_the_specs():
-    """The Accounts tables pick their columns by hand, first guessed by a word in a header: the page's words are the
-    spec's until the page reads them from it."""
-    from ap_coder.web.pages import accounts
-
-    assert specs.ACCOUNT_HINTS == {"code": accounts._CODE_HINTS, "description": accounts._DESC_HINTS,
-                                   "category": accounts._CAT_HINTS}  # fmt: skip
+@pytest.mark.parametrize("headers, found", [
+    (["GL Code", "Account Name", "Group"], {"code": "GL Code", "description": "Account Name", "category": "Group"}),
+    (["Object Account", "Account Description", "Account Type", "Meals"],
+     {"code": "Object Account", "description": "Account Description", "category": "Account Type", "meals": "Meals"}),
+])  # fmt: skip
+def test_the_accounts_guess_is_the_same_whatever_the_order_of_the_columns(headers, found):
+    """("Account Name" came first: it was taken for the code, the description left to guess.)"""
+    for order in (headers, headers[::-1], [*headers[1:], headers[0]]):
+        assert SPECS["gl_accounts"].find(order) == found, order
+        assert SPECS["cost_centers"].find(order) == {f: h for f, h in found.items() if f != "meals"}, order
 
 
 def _sheet(path) -> list[list[str]]:

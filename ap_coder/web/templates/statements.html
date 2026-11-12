@@ -1,7 +1,9 @@
 {% extends "base.html" %}
-{% from "_sheet.html" import preview, columns %}
+{% from "_sheet.html" import sheets, columns, go %}
+{% import "_import.html" as imp with context %}
 {% from "_tiles.html" import tile_row %}
-{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">
+<link rel="stylesheet" href="{{ static_url('/static/imports.css') }}">{% endblock %}
 {% block content %}
 {% if emailed %}
 <section class="card" id="emailed">
@@ -29,29 +31,32 @@
 {% else %}
 <section class="card">
   <h4>Statement</h4>
+  <div class="stack imp-pane">
   {% if can("/statements/upload") %}{# server mode: Read-only compares no statements (D-98) #}
-  <form method="post" action="/statements/upload" enctype="multipart/form-data" class="row upload-row" data-busy="Reading…">
+  {% if not s %}
+  {{ imp.report(spec) }}
+  {% call imp.file_box("/statements/upload", spec.accept, "The statement, a CSV or Excel file (.csv, .xlsx or .xls): one row per invoice, credit or payment, as the vendor sent it. Nothing is stored.", "Reading…", then="Reconcile") %}
     <label class="field">Vendor
       <select name="vendor" data-picker data-picker-noun="vendor">{% for key, name in names.items() %}<option value="{{ key }}"{% if key == vendor %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
-    <label class="field">Statement (CSV or Excel)
-      <input type="file" name="file" accept=".csv,.xlsx,.xls" required></label>
-    <button class="btn{{ '' if s else ' primary' }}" type="submit"><span class="ms" aria-hidden="true">upload_file</span>Upload</button>
-  </form>
-  <p class="muted small">One row per invoice, credit or payment, as the vendor sent it. Nothing is stored.</p>
+  {% endcall %}
+  {% endif %}
   {% else %}
   <p class="muted">A Clerk uploads a vendor's statement here to compare it with the invoices.</p>
   {% endif %}
   {% if s %}
-  {{ preview(s, "/statements", {"vendor": vendor, "file": s.token}) }}
-  <form method="get" action="/statements" class="stack">
+  {{ sheets(s, "/statements", {"vendor": vendor, "file": s.token}) }}
+  {% call imp.preview(s.look, "statements") %}{% endcall %}
+  <form method="get" action="/statements" class="stack" id="pick-statements">
     {{ columns(s) }}
     <div class="row">
       <label class="field inline">Vendor
         <select name="vendor" data-picker data-picker-noun="vendor">{% for key, name in names.items() %}<option value="{{ key }}"{% if key == vendor %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
-      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">fact_check</span>Reconcile</button>
+      <button class="btn primary" type="submit"{{ go(s) }}><span class="ms" aria-hidden="true">fact_check</span>Reconcile</button>
+      <a class="btn" href="/statements?vendor={{ vendor | urlencode }}"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
     </div>
   </form>
   {% endif %}
+  </div>
   {% if error %}<div class="flash warn"><span class="ms" aria-hidden="true">warning</span><div>{{ error }}</div></div>{% endif %}
 </section>
 
@@ -102,3 +107,4 @@
 {% endif %}
 {% endif %}
 {% endblock %}
+{% block scripts %}<script type="module" src="{{ static_url('/static/js/imports.js') }}"></script>{% endblock %}

@@ -141,6 +141,7 @@ RULES: dict[tuple[str, str], str] = {
         "GET /accounts", "GET /accounts/{table}.csv", "GET /accounts/bank/template.csv",
         "GET /jde-files",  # what is loaded of JD Edwards' exports (loading them: an Admin's)
         "GET /jde-files/template/{key}",  # a blank template of a report's columns (D-234)
+        "GET /imports/template/{key}",  # the same, of any import of the app
         # The rows of what is loaded, and their CSV (D-221): whoever opens the page; changing a row is an Admin's.
         "GET /jde-files/loaded/{what}", "GET /jde-files/loaded/{what}.csv",
         "GET /purchase-orders", "GET /purchase-orders/template.csv",
@@ -198,8 +199,9 @@ RULES: dict[tuple[str, str], str] = {
         "POST /settings/reading/azure", "POST /settings/reading/azure-test", "POST /settings/automation/touchless",
         "POST /settings/reading/servers",  # the backup model servers (D-180)
         "POST /settings/automation/limit", "POST /settings/jde", "POST /settings/jde/gl-map",
-        "POST /settings/jde/gl-map/import", "POST /settings/jde/tax-map", "POST /settings/jde/terms",
-        "POST /settings/jde/an8", "GET /settings/jde/worksheet.xlsx", "POST /settings/jde/worksheet",
+        "POST /settings/jde/gl-map/upload", "POST /settings/jde/gl-map/import", "POST /settings/jde/tax-map",
+        "POST /settings/jde/terms", "POST /settings/jde/an8", "GET /settings/jde/worksheet.xlsx",
+        "POST /settings/jde/worksheet/upload", "POST /settings/jde/worksheet",
         "POST /settings/jde/api", "POST /settings/jde/api/test", "POST /settings/jde/api/sync",  # D-104
         "POST /settings/hub", "POST /settings/hub/run",  # the finance hub feed (D-103)
         "GET /admin/users", "POST /admin/users/add", "POST /admin/users/{user_id:int}/reset",

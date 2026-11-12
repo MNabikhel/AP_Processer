@@ -13,8 +13,7 @@ several reports a file is), ``header_row`` (the row the column names are on, und
 a printed report, not a table) and ``template`` (a blank file of a spec's columns).
 
 The Accounts tables (GL accounts, cost centers) have their columns picked on their page, guessed by words a header
-contains (``ACCOUNT_HINTS``): kept here, the page's own guess checked against them by the tests until it reads them
-from here.
+contains (``ACCOUNT_HINTS``, the page's own guess: ``_account_find``).
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ from ..coding.vendors import MASTER_ALIASES
 from ..core import chart
 from ..core.headers import header_key, match_columns
 from ..core.reference_data import MEALS_HEADERS, meals_column
-from . import journal, registers, statements
+from . import jde_worksheet, journal, registers, statements
 from .jde_accounts import GL_MAP_ALIASES
 
 XLSX, CSV, XLS, TXT = ".xlsx", ".csv", ".xls", ".txt"
@@ -286,7 +285,7 @@ VOUCHERS = ImportSpec(
 
 # --- The imports of any ERP's lists, on their own pages -----------------------------------------------------------
 
-# The Accounts tables' columns are picked on their page, first guessed by a word in the header (web/pages/accounts.py).
+# The Accounts tables' columns are picked on their page (web/pages/accounts.py), first guessed by a word in the header.
 ACCOUNT_HINTS = {
     "code": ("gl", "account", "code", "cost", "centre", "center", "saknr", "kostl"),
     "description": ("desc", "name", "title", "text"),
@@ -295,12 +294,22 @@ ACCOUNT_HINTS = {
 
 
 def _account_find(meals: bool) -> Callable[[list[str]], dict[str, str]]:
+    """The Accounts tables' guess: for each field in turn, the header not taken yet with one of its words, the one
+    with the fewest words of the other fields first, then the most of its own, then by its name: the same columns
+    whatever their order. The description and the category go first: a header with one of their words and one of the
+    code's ("Account Name", "Account Type") is theirs, the code's words being the commonest."""
+
+    def words(header: str, hints: Sequence[str]) -> int:
+        return sum(w in header.lower() for w in hints)
+
     def find(headers: list[str]) -> dict[str, str]:
         found: dict[str, str] = {}
-        for f, hints in ACCOUNT_HINTS.items():
-            column = next((h for h in headers if h not in found.values() and any(w in h.lower() for w in hints)), "")
-            if column:
-                found[f] = column
+        for f in ("description", "category", "code"):
+            hints = ACCOUNT_HINTS[f]
+            others = [w for g, more in ACCOUNT_HINTS.items() if g != f for w in more]
+            named = [h for h in headers if h not in found.values() and words(h, hints)]
+            if named:
+                found[f] = min(named, key=lambda h: (words(h, others), -words(h, hints), h.casefold(), h))
         if meals and (column := meals_column(headers)):
             found["meals"] = column
         return found
@@ -348,7 +357,9 @@ VENDOR_MASTER = ImportSpec(
     purpose="Your suppliers with their numbers, tax numbers, terms and holds.",
     source="The vendor or supplier list of any ERP, a row for each: its columns are picked on the page.",
     report="a vendor list",
-    columns=_columns(MASTER_ALIASES, ("vendor_name",), _SUPPLIER_LABELS, _SUPPLIER_ABOUT),
+    columns=_columns(MASTER_ALIASES, ("vendor_name",), {**_SUPPLIER_LABELS, "vendor_name": ("Vendor name",
+                     "Vendor Name"), "erp_id": ("Vendor ID", "Vendor ID")}, {**_SUPPLIER_ABOUT, "erp_id": "the "
+                     "ERP's number for the vendor: what tells two vendors of one name apart"}),
     find=_matcher(MASTER_ALIASES),
 )  # fmt: skip
 
@@ -365,7 +376,8 @@ PURCHASE_ORDERS = ImportSpec(
         "received_quantity": ("Quantity received", "Received Quantity"), "gl_code": ("GL account", "GL Code"),
         "cost_center": ("Cost center", "Cost Center"), "status": ("Status", "Status"),
     }, {"open_amount": "what is left to expense", "received_quantity": "what was received, for the match",
-        "gl_code": "the account the line is coded to", "cost_center": "the cost center the line is coded to"}),
+        "gl_code": "the account the line is coded to", "cost_center": "the cost center the line is coded to",
+        "status": "open or closed"}),
     find=_matcher(po.COLUMN_ALIASES),
 )  # fmt: skip
 
@@ -374,6 +386,7 @@ STATEMENTS = ImportSpec(
     purpose="A supplier's statement, compared line by line with the invoices AP has.",
     source="The statement the supplier sent, as a spreadsheet: a row for each invoice or credit.",
     report="a supplier statement", one_of=("amount", "credit", "balance"),
+    no_template="The supplier sends the statement: it is compared as it comes, its columns picked on the page.",
     columns=_columns(statements.COLUMN_ALIASES, ("number",), {
         "number": ("Invoice number", "Invoice Number"), "date": ("Date", "Date"), "amount": ("Amount", "Amount"),
         "credit": ("Credit", "Credit"), "balance": ("Open balance", "Balance"), "type": ("Type", "Type"),
@@ -420,7 +433,7 @@ GL_MAP = ImportSpec(
     find=_matcher(GL_MAP_ALIASES),
 )  # fmt: skip
 
-WORKSHEET_COLUMNS = {"id": ("ID", "ID"), "answer": ("Your answer", "Your answer")}  # (jde_worksheet.read's own)
+WORKSHEET_COLUMNS = {"id": ("ID", jde_worksheet.ID), "answer": ("Your answer", jde_worksheet.ANSWER)}
 
 
 def _worksheet_find(headers: list[str]) -> dict[str, str]:
@@ -434,6 +447,7 @@ JDE_WORKSHEET = ImportSpec(
     source="Download the worksheet on this page, have the JDE team fill in “Your answer”, and load it back.",
     report="AP Coder's JDE worksheet (its Questions sheet)",
     no_template="The worksheet itself is the template: download it on this page.",
+    fix=f"Download the worksheet again, fill in its “{jde_worksheet.ANSWER}” column and load that.",
     columns=_columns({f: (header,) for f, (_label, header) in WORKSHEET_COLUMNS.items()}, ("id", "answer"),
                      WORKSHEET_COLUMNS),
     find=_worksheet_find,
@@ -485,7 +499,7 @@ class HeaderCheck:
         load_it = f": load it under {where}" if where else ""
         if self.ok and other is not None:
             return f"Not loaded: this file is {other.report}, not {self.spec.report}{load_it}."
-        named = [f"“{c.header}” ({c.label.lower()})" for c in self.missing]
+        named = [f"“{c.header}” ({_lower(c.label)})" for c in self.missing]
         if self.none_of:
             named.append(" or ".join(f"“{c.header}”" for c in self.none_of))
         many = len(named) > 1
@@ -496,6 +510,12 @@ class HeaderCheck:
         else:
             said += " " + self.spec.fix.replace("the column", "the columns" if many else "the column")
         return said
+
+
+def _lower(label: str) -> str:
+    """A label inside a sentence: its first letter lower case, unless it starts a word in capitals ("GL code",
+    "G/L date")."""
+    return label if not label[1:2].islower() else label[:1].lower() + label[1:]
 
 
 def _and(items: list[str]) -> str:

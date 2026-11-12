@@ -763,7 +763,7 @@ def _price_decides(
 
 def template_csv() -> bytes:
     example = [
-        "PO-1001", "Example Supplier Ltd.", "1", "Example item or service", "10", "25.00", "250.00", "10",
+        "PO-1001", "Example Supplier Ltd.", "1", "Example item or service", "10", "25.00", "250.00", "", "10",
         "6000", "", "open",
     ]  # fmt: skip
     return ("\ufeff" + ",".join(TEMPLATE_COLUMNS) + "\r\n" + ",".join(example) + "\r\n").encode("utf-8")

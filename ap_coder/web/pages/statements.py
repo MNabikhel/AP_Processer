@@ -20,11 +20,11 @@ from ap_coder.coding import vendor_mail
 from ap_coder.core.store import Store
 from ap_coder.erp import jde_keying
 from ap_coder.erp import statements as stm
+from ap_coder.erp.import_specs import STATEMENTS
 from ap_coder.intake import inbox
 from ap_coder.web.core import done, get_store, invoice_dir, money, page_router, refuse, render, reviewer
 from ap_coder.web.files import (
     _MAX_BYTES,
-    NO_ROWS,
     TOO_BIG,
     SheetError,
     download,
@@ -33,7 +33,8 @@ from ap_coder.web.files import (
     read_sheet,
     read_upload,
     receive_sheet,
-    sheet_context,
+    spec_sheet,
+    unpicked,
 )
 
 router = page_router()  # each plain handler: one connection a request
@@ -44,14 +45,6 @@ TONES = {
     stm.NOT_RECEIVED: ("warn", "mail"),
     stm.NOT_ON_STATEMENT: ("info", "help"),
     stm.PAYMENT: ("gray", "payments"),
-}
-FIELD_LABELS = {
-    "number": "Invoice number",
-    "date": "Date",
-    "amount": "Amount (or Debit)",
-    "credit": "Credit (if separate)",
-    "balance": "Open balance per document",
-    "type": "Type",
 }
 
 
@@ -71,8 +64,8 @@ def ap_status(line: stm.Line, invoices: dict[int, dict[str, Any]], keying: Colle
 
 
 def mapping_ready(chosen: dict[str, str]) -> bool:
-    """The invoice number column and an amount or balance column are needed."""
-    return "number" in chosen and bool({"amount", "credit", "balance"} & set(chosen))
+    """The invoice number column and an amount, credit or balance column are needed (``import_specs.STATEMENTS``)."""
+    return not unpicked(STATEMENTS, chosen)
 
 
 def reconciliation(store: Store, vendor: str, records: list[dict[str, Any]], chosen: dict[str, str]) -> Any:
@@ -88,21 +81,19 @@ def statements_page(
     names = {v["vendor_key"]: v["vendor_name"] for v in vendors}
     vendor = vendor if vendor in names else (next(iter(names)) if names else "")
     context: dict[str, Any] = {"names": names, "vendor": vendor, "s": None, "error": "", "rec": None,
-                               "emailed": inbox.statements(store, invoice_dir(store))}  # fmt: skip
+                               "emailed": inbox.statements(store, invoice_dir(store)), "spec": STATEMENTS}  # fmt: skip
     if file and names:
         try:
             upload, df, sheets = read_upload(file, sheet or None)
         except SheetError as exc:
             context["error"] = str(exc)
         else:
-            columns = list(df.columns)
-            chosen = picked_columns(request.query_params, FIELD_LABELS, columns, stm.map_columns(columns))
-            context["s"] = sheet_context(file, upload, df, sheets, sheet, FIELD_LABELS, chosen, ("number",))
-            if df.empty:
-                context["error"] = NO_ROWS
-            elif not mapping_ready(chosen):
+            context["s"] = spec_sheet(file, upload, df, sheets, sheet, STATEMENTS, request.query_params)
+            context["s"]["look"] |= {"done": "compared", "go": "reconcile"}
+            chosen = {f["key"]: f["value"] for f in context["s"]["fields"] if f["value"]}
+            if not df.empty and not mapping_ready(chosen):  # (no rows: the file as shown says so, spec_sheet)
                 context["error"] = "Pick the invoice number column and an amount or balance column."
-            else:
+            elif not df.empty:
                 rec = reconciliation(store, vendor, df.to_dict("records"), chosen)
                 by_id = {i["id"]: i for i in store.vendor_invoices(vendor)}
                 keying = jde_keying.keying_batches(store)
@@ -173,7 +164,7 @@ def reconciliation_csv(request: Request, vendor: str = "", file: str = "", sheet
     except SheetError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     columns = list(df.columns)
-    chosen = picked_columns(request.query_params, FIELD_LABELS, columns, stm.map_columns(columns))
+    chosen = picked_columns(request.query_params, stm.COLUMN_ALIASES, columns, stm.map_columns(columns))
     if not mapping_ready(chosen):
         raise HTTPException(status_code=400, detail="Pick the invoice number column and an amount or balance column.")
     rec = reconciliation(store, vendor, df.to_dict("records"), chosen)

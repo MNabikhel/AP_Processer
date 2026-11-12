@@ -8,6 +8,10 @@ which column holds what before anything is imported. The uploaded file waits und
 and the column choices (``sheet_context``), and the import POST names the token. It waits in the dashboard's
 database (a restart of the server keeps it), never as a file of its own, and is deleted after the hour (D-99).
 Uploads larger than ``_MAX_BYTES`` are not read (``read_capped``); every page reads a CSV with ``read_csv``.
+
+The column choices are an import's spec (``erp/import_specs``): ``spec_sheet`` offers one for each of its columns,
+each first filled from the file's headers by the spec's reader, and says the needed ones still without a column
+(``unpicked``); each import refuses a file without them, naming them (``pick_refusal``).
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
 from ap_coder.core.csvio import sniff_delimiter
+from ap_coder.erp import import_specs
+from ap_coder.erp.import_specs import ImportSpec
 from ap_coder.intake import triage
 from ap_coder.web.core import current_store
 
@@ -312,3 +318,47 @@ def sheet_context(
             for f, label in fields.items()
         ],
     }
+
+
+# --- The column choices of an import's spec ---------------------------------------------------------------------
+
+
+def unpicked(spec: ImportSpec, chosen: Mapping[str, str]) -> list[str]:
+    """The fields ``spec`` needs that have no column in ``chosen``, by their labels: each required one, and its
+    ``one_of`` fields as one ("one of Amount, Credit or Open balance") when none of them has one."""
+    missing = [c.label for c in spec.required if c.field not in chosen]
+    if spec.one_of and not set(spec.one_of) & set(chosen):
+        labels = [spec.column(f).label for f in spec.one_of]
+        missing.append("one of " + ", ".join(labels[:-1]) + " or " + labels[-1])
+    return missing
+
+
+def pick_refusal(spec: ImportSpec, chosen: Mapping[str, str]) -> str:
+    """Why an import of ``spec`` with these columns is refused ("" when it is not): the needed fields still without a
+    column, named. There is no import without them."""
+    missing = unpicked(spec, chosen)
+    return f"Pick the column for: {', '.join(missing)}. Nothing was imported." if missing else ""
+
+
+def spec_sheet(token: str, upload: Upload, df: pd.DataFrame, sheets: list[str], sheet: str | None, spec: ImportSpec,
+               params: Mapping[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
+    """What a page shows of an uploaded sheet to import as ``spec`` (``_sheet.html``'s ``columns``, ``_import.html``'s
+    ``preview``): ``sheet_context`` with a choice for each of the spec's columns, filled from the file's headers by
+    the spec's reader (``ImportSpec.find``: their order never matters) until the person picks (``params``'
+    ``col_<field>``), the needed ones marked; ``missing``: the needed fields still without a column; ``look``: the
+    file's header check (each column found as which header, or missing; its other columns) and its first rows."""
+    columns = [str(c) for c in df.columns]
+    fields = {c.field: c.label for c in spec.columns}
+    found = import_specs.check(spec, columns)
+    chosen = picked_columns(params or {}, fields, columns, found.found)
+    context = sheet_context(token, upload, df, sheets, sheet, fields, chosen)
+    needed = {c.field for c in spec.required}
+    context["fields"] = [{**f, "label": fields[f["key"]], "need": f["key"] in needed, "one_of": f["key"] in spec.one_of}
+                         for f in context["fields"]]  # fmt: skip
+    rows = [columns, *df.head(import_specs.PREVIEW_ROWS).values.tolist()]
+    return {**context, "spec": spec, "missing": unpicked(spec, chosen),
+            "need": {c.field: c.label for c in spec.required},
+            "one_of": {"fields": list(spec.one_of), "label": unpicked(spec, {})[-1]} if spec.one_of else None,
+            "look": {"name": upload.name, "count": len(df), "spec": spec, "check": found, "pick": True,
+                     "unfound": unpicked(spec, found.found), "problem": "" if len(df) else NO_ROWS,
+                     "sample": import_specs.preview(rows, 0)}}  # fmt: skip

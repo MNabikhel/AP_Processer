@@ -5756,3 +5756,17 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     the page (a real button with `aria-expanded`; Esc, a click elsewhere or tabbing out closes it). The review
     screen's own menu button shares the code. A window under 400 px high does not keep the approve bar and the
     JD Edwards strip on screen (B-2398). `tests/web/test_narrow_windows.py` opens every menu page at 683 and 390.
+- **D-236** · **Every other import shows its columns and its file first too; the column picker stays where files come
+  from many places, but nothing is imported without every needed column** (GL accounts & tax, its bank accounts,
+  Vendors, purchase orders, statements, Exports' register, Learning's past coding, Settings → JD Edwards' GL map and
+  worksheet; 12 Nov 2026; follows D-234).
+  - **What:** each page says what file it wants and where it comes from, lists its needed and optional columns from
+    its spec (`erp/import_specs.py`) with a blank template (`/imports/template/<key>`; none for a statement: the
+    supplier sends it), and after the upload shows each column found as which header or missing, the file's other
+    columns and its first rows. The GL map and the worksheet are uploaded, shown, then imported (the worksheet's
+    answers listed before any is applied).
+  - **The picker kept:** a supplier's statement or another system's purchase orders have no fixed headers, so the
+    person may still say which column is which. Each choice starts from the headers (never from the order of the
+    columns), each needed field is marked, Import stays off with a line naming those still without a column, and
+    the server refuses the same. JD Edwards' own exports (the JD Edwards files page, the voucher list on Exports)
+    have no picker: the right report or nothing (D-234).

@@ -31,6 +31,7 @@ from ap_coder.erp import (
     dupaudit,
     export_layout,
     exports,
+    import_specs,
     jde,
     jde_ais,
     jde_keying,
@@ -41,6 +42,7 @@ from ap_coder.erp import (
     registers,
     stamp,
 )
+from ap_coder.erp.import_specs import ERP_REGISTER, VOUCHERS
 from ap_coder.web.core import (
     by_currency,
     done,
@@ -63,10 +65,11 @@ from ap_coder.web.files import (
     SheetError,
     download,
     drop_upload,
+    pick_refusal,
     picked_columns,
     read_upload,
     receive_sheet,
-    sheet_context,
+    spec_sheet,
 )
 from ap_coder.web.pages import downloads
 
@@ -102,12 +105,6 @@ def last_format(store: Store) -> str:
     return fmt if fmt in shown_formats(store) else "xlsx"
 
 
-REGISTER_LABELS = {
-    "vendor_name": "Vendor",
-    "invoice_number": "Invoice number",
-    "invoice_date": "Date",
-    "total": "Total",
-}
 BLANK_LAYOUT_ROWS = 3  # empty rows under the layout's columns, to add more
 AUDIT_SHOWN = 100
 
@@ -371,11 +368,14 @@ def exports_page(
     if register:
         try:
             upload, df, sheets = read_upload(register, sheet or None)
-            columns = list(df.columns)
-            chosen_cols = picked_columns({}, REGISTER_LABELS, columns, registers.map_columns(columns))
-            reg = sheet_context(register, upload, df, sheets, sheet, REGISTER_LABELS, chosen_cols, registers.REQUIRED)
+            reg = spec_sheet(register, upload, df, sheets, sheet, ERP_REGISTER)
             found = jde_vouchers(store, df)  # JD Edwards' voucher list: read as it comes, no column to pick
             reg["vouchers"] = registers.vouchers_said(found[1]) if found else ""
+            if found:  # (its columns checked as JD Edwards files checks them)
+                check = import_specs.check(VOUCHERS, reg["columns"])
+                head = [reg["columns"], *df.head(import_specs.PREVIEW_ROWS).values.tolist()]
+                reg["look"] |= {"spec": VOUCHERS, "check": check, "pick": False,
+                                "sample": import_specs.preview(head, 0, check.found.values())}  # fmt: skip
         except SheetError as exc:
             reg_error = str(exc)
 
@@ -421,6 +421,7 @@ def exports_page(
         register_count=store.erp_register_count(),
         reg=reg,
         reg_error=reg_error,
+        register_spec=ERP_REGISTER,
         pairs=pairs[:AUDIT_SHOWN] if pairs else pairs,
         pair_count=len(pairs or []),
         reasons=dupaudit.REASONS,
@@ -679,10 +680,9 @@ def _register_import(request: Request, form: Any) -> JSONResponse:
         return refuse(NO_ROWS)
     if found := jde_vouchers(store, df):
         return _vouchers_import(request, form, token, *found)
-    chosen = picked_columns(form, REGISTER_LABELS, list(df.columns), {})
-    missing = [REGISTER_LABELS[f] for f in registers.REQUIRED if f not in chosen]
-    if missing:
-        return refuse("Pick the column for: " + ", ".join(missing))
+    chosen = picked_columns(form, registers.COLUMN_ALIASES, list(df.columns), {})
+    if refusal := pick_refusal(ERP_REGISTER, chosen):
+        return refuse(refusal)
     rows, skipped = registers.rows_from_records(df.to_dict("records"), chosen)
     if not rows:  # "Replace" would empty the list the duplicate checks look in (B-1405)
         return refuse(f"No row has a vendor, an invoice number and an amount in the columns picked ({skipped} "

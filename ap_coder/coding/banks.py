@@ -40,11 +40,6 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "is_default": ("default", "isdefault", "defaultaccount", "defaultforcurrency", "pardefaut"),
     "active": ("active", "inuse", "enabled", "actif", "status"),
 }  # fmt: skip
-IMPORT_FIELDS = {
-    "code": "Code column", "name": "Name column", "currency": "Currency column", "institution": "Institution column",
-    "transit": "Transit column", "account_number": "Account number column", "gl_account": "Cash GL account column",
-    "is_default": "Default column (optional)", "active": "Active column (optional)",
-}  # fmt: skip
 _YES = {"yes", "y", "true", "1", "x", "oui", "o", "default", "active", "on"}
 _NO = {"no", "n", "false", "0", "non", "inactive", "closed", "off"}
 

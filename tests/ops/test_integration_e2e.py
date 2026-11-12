@@ -142,7 +142,10 @@ def test_a_folder_of_emails_becomes_a_checked_jde_batch(tmp_path, monkeypatch):
     bu[5].value = "HQ"  # the business unit of the tax accounts' G/L lines (the tax coded to G/L accounts: D-93)
     buf = io.BytesIO()
     wb.save(buf)
-    answer = post(client, "/settings/jde/worksheet", files={"file": ("answers.xlsx", buf.getvalue())})
+    shown = post(client, "/settings/jde/worksheet/upload", files={"file": ("answers.xlsx", buf.getvalue())})
+    assert shown.status_code == 200 and shown.json()["ok"], shown.text  # shown first, applied with its token
+    token = shown.json()["redirect"].split("worksheet=")[1].split("#")[0]
+    answer = post(client, "/settings/jde/worksheet", {"token": token})
     assert answer.status_code == 200 and answer.json()["ok"], answer.text
     assert jde_settings.load(store).company == "00042" and len(jde_settings.load(store).an8_overrides) == 4
 

@@ -6,11 +6,16 @@ connection, Sync now) is ``ap_coder.erp.jde_ais`` / ``jde_sync``; an Admin's, li
 
 The editable tables (GL mapping, address numbers) are rows of inputs posted as lists (``gl_code``, ``bu``... one value
 per row); a row without a GL code (or vendor) is dropped, which is how a row is removed without JavaScript.
+
+The GL map's file and the JDE team's worksheet are uploaded, then shown before anything is kept (``?gl_map=`` and
+``?worksheet=``: each column of its spec found as which header or missing, its first rows and, for the worksheet, the
+answers it would apply: ``erp/import_specs``, D-234), then imported; neither is imported without its needed columns.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import io
 import math
 from typing import Any
 
@@ -23,10 +28,23 @@ from ap_coder.coding.terms import terms_key
 from ap_coder.core import ui
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import Store
-from ap_coder.erp import jde_accounts, jde_ais, jde_settings, jde_sync, jde_voucher, jde_worksheet
+from ap_coder.erp import import_specs, jde_accounts, jde_ais, jde_settings, jde_sync, jde_voucher, jde_worksheet
+from ap_coder.erp.import_specs import GL_MAP, JDE_WORKSHEET
+from ap_coder.intake import triage
 from ap_coder.web import minimd
 from ap_coder.web.core import done, get_store, jobs, one_connection, page_router, posted_form, refuse, reviewer
-from ap_coder.web.files import TOO_BIG, XLSX, SheetError, download, read_capped, read_csv, read_excel
+from ap_coder.web.files import (
+    GONE,
+    NO_ROWS,
+    XLSX,
+    SheetError,
+    download,
+    drop_upload,
+    get_upload,
+    keep_upload,
+    read_upload,
+    receive_sheet,
+)
 
 router = page_router()  # each plain handler: one connection a request
 
@@ -88,8 +106,9 @@ GL_COLUMNS = [("gl_code", "GL code", 0), ("cost_center", "Cost center", 0), ("bu
 TAX_CODES = ["V", "C", "B", "E", ""]
 
 
-def jde_context(store: Store) -> dict[str, Any]:
+def jde_context(store: Store, query: Any = None) -> dict[str, Any]:
     js = jde_settings.load(store)
+    query = query or {}
     names = {v["vendor_key"]: v["display_name"] for v in store.master_vendors()}
     order = [*PROVINCES, OUTSIDE_CANADA]
     return {
@@ -126,6 +145,10 @@ def jde_context(store: Store) -> dict[str, Any]:
         "checklist": minimd.render(CHECKLIST),
         "worksheet_labels": {q.id: q.question for q in jde_worksheet.QUESTIONS},
         "api": api_context(store),
+        "gl_map_spec": GL_MAP,
+        "worksheet_spec": JDE_WORKSHEET,
+        "gl_map_look": _gl_map_look(query.get("gl_map")) if query.get("gl_map") else None,
+        "worksheet_look": _worksheet_look(js, query.get("worksheet")) if query.get("worksheet") else None,
     }
 
 
@@ -258,53 +281,63 @@ def _save_gl_map(request: Request, form: Any) -> JSONResponse:
                 f"{ui.plural(len(new.gl_map), 'mapping row')} saved." if changed else "Nothing changed.")  # fmt: skip
 
 
-def read_sheet(name: str, content: bytes) -> list[dict[str, Any]]:
-    """The rows of an uploaded CSV or Excel file (its first sheet), as text. Raises ValueError when it can't be
-    read."""
-    if not content:
-        raise ValueError("the file is empty")
-    try:  # a CSV as every page reads one: Windows-1252 and semicolon files too (B-1400)
-        frame = read_excel(content, 0) if name.lower().endswith((".xlsx", ".xls")) else read_csv(content)
-    except ValueError:
-        raise
-    except Exception as exc:  # noqa: BLE001 - empty, damaged or not a spreadsheet
-        raise ValueError("it may be empty, damaged or another format") from exc
-    frame.columns = [str(c) for c in frame.columns]
-    return frame.fillna("").to_dict("records")
+# --- The GL map's file: uploaded, shown, imported ------------------------------------------------------------------
+
+
+def _gl_map_read(token: str) -> tuple[dict[str, Any], list[jde_accounts.GlMap]]:
+    """The uploaded GL map as the page shows it, nothing kept (its name, rows, header check, first rows and why it is
+    not imported: "" when it can be) and the mapping rows it gives. ``SheetError`` when the upload is gone."""
+    upload, df, _sheets = read_upload(token)
+    columns = [str(c) for c in df.columns]
+    check = import_specs.check(GL_MAP, columns)
+    rows = jde_accounts.gl_map_from_records(df.to_dict("records")) if check.ok else []
+    problem = check.problem() or ("" if len(df) else NO_ROWS)
+    if not problem and not rows:
+        problem = "No row has a GL code: nothing would be imported."
+    head = [columns, *df.head(import_specs.PREVIEW_ROWS).values.tolist()]
+    look = {"token": token, "name": upload.name, "count": len(df), "spec": GL_MAP, "check": check, "kept": len(rows),
+            "problem": problem, "sample": import_specs.preview(head, 0, check.found.values())}  # fmt: skip
+    return look, rows
+
+
+def _gl_map_look(token: str) -> dict[str, Any]:
+    try:
+        return _gl_map_read(token)[0]
+    except SheetError as exc:
+        return {"problem": str(exc)}
+
+
+@router.post("/settings/jde/gl-map/upload")
+async def upload_gl_map(request: Request, file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
+    """Keep the uploaded mapping for the page to show (an hour, ``files.keep_upload``): nothing is imported yet."""
+    if not (file.filename or "").lower().endswith((".csv", ".xlsx", ".xls")):
+        return refuse("Upload a CSV or Excel file (GL code, Cost center, BU, Object, Subsidiary).")
+    token, problem = await receive_sheet(file)  # never read whole, however large (B-1401)
+    if problem:
+        return refuse(problem)
+    return done(request, f"{URL}?gl_map={token}#gl-map")
 
 
 @router.post("/settings/jde/gl-map/import")
-async def import_gl_map(
-    request: Request,
-    file: UploadFile = File(...),  # noqa: B008
-    replace: str = Form(""),
-) -> JSONResponse:
-    name = file.filename or ""
-    if not name.lower().endswith((".csv", ".xlsx", ".xls")):
-        return refuse("Upload a CSV or Excel file (GL code, Cost center, BU, Object, Subsidiary).")
-    content = await read_capped(file)  # never read whole, however large (B-1401)
-    if content is None:
-        return refuse(TOO_BIG)
-    return await run_in_threadpool(_import_gl_map, request, name, content, replace)
+async def import_gl_map(request: Request, token: str = Form(""), replace: str = Form("")) -> JSONResponse:
+    return await run_in_threadpool(_import_gl_map, request, token, replace)
 
 
 @one_connection
-def _import_gl_map(request: Request, name: str, content: bytes, replace: str) -> JSONResponse:
+def _import_gl_map(request: Request, token: str, replace: str) -> JSONResponse:
     store = get_store(request)
     try:
-        records = read_sheet(name, content)
+        look, rows = _gl_map_read(token)
     except SheetError as exc:  # already a whole sentence
         return refuse(str(exc))
-    except ValueError as exc:
-        return refuse(f"This file could not be read as a spreadsheet: {exc}.")
-    rows = jde_accounts.gl_map_from_records(records)
-    if not rows:
-        return refuse("No row with a GL code was found: the file needs a GL code column.")
+    if look["problem"]:  # (a file without its GL code column: never imported)
+        return refuse(look["problem"])
     new = copy(jde_settings.load(store))
     kept = [] if replace in ("1", "on", "true") else new.gl_map
     keys = {(r.gl_code.upper(), r.cost_center.upper()) for r in rows}
     new.gl_map = [m for m in kept if (m.gl_code.upper(), m.cost_center.upper()) not in keys] + rows
     jde_settings.save(store, new, actor=reviewer())
+    drop_upload(token)
     return done(request, URL + "#gl-map", f"{ui.plural(len(rows), 'mapping row')} imported.")
 
 
@@ -406,23 +439,82 @@ def jde_worksheet_download(request: Request) -> Response:
     return download(data, "AP Coder - questions for the JDE team.xlsx", XLSX)
 
 
-@router.post("/settings/jde/worksheet")
-async def jde_worksheet_import(request: Request, file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
-    """Apply the JDE team's answers; say what changed and what could not be used."""
-    content = await file.read(10_000_001)
-    if len(content) > 10_000_000:
+WORKSHEET_MOST = 10_000_000  # bytes: AP Coder's worksheet is some 30 KB
+
+
+def _worksheet_head(content: bytes) -> tuple[list[list[str]], str]:
+    """(the worksheet's Questions sheet, its rows as text; "") or ([], why it cannot be read): a workbook that unzips
+    to too much is not opened (W2-01), nor one that is not AP Coder's worksheet."""
+    import openpyxl
+
+    if triage.sheet_unzips_too_big(content):
+        return [], "This workbook unzips to far more than its size on disk, so it is not opened: it may be damaged."
+    try:
+        book = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
+    except Exception as exc:  # noqa: BLE001 - not an Excel file, or damaged
+        return [], f"The file could not be opened as an Excel workbook ({type(exc).__name__})."
+    try:
+        if "Questions" not in book.sheetnames:
+            return [], "This is not AP Coder's JDE worksheet (it has no Questions sheet)."
+        cells = book["Questions"].iter_rows(values_only=True)
+        rows = [["" if c is None else str(c).strip() for c in row] for row in cells]
+    finally:
+        book.close()
+    return rows, ""
+
+
+def _worksheet_read(js: jde_settings.JdeSettings, token: str) -> tuple[dict[str, Any], Any]:
+    """The uploaded worksheet as the page shows it, nothing applied (its header check, first rows, the answers it
+    would apply and the ones it cannot use; why it is not imported, "" when it can be), and ``jde_worksheet.read``'s
+    result (None when it is not read)."""
+    upload = get_upload(token)
+    if upload is None:
+        return {"problem": GONE}, None
+    rows, problem = _worksheet_head(upload.content)
+    check = import_specs.check(JDE_WORKSHEET, rows[0] if rows else [])
+    look = {"token": token, "name": upload.name, "count": max(len(rows) - 1, 0), "spec": JDE_WORKSHEET,
+            "check": check if rows else None, "problem": problem or check.problem(),
+            "sample": import_specs.preview(rows, 0, check.found.values()) if rows else None}  # fmt: skip
+    if look["problem"]:
+        return look, None
+    result = jde_worksheet.read(upload.content, js)
+    return {**look, "changes": result.changes, "unused": result.problems}, result
+
+
+def _worksheet_look(js: jde_settings.JdeSettings, token: str) -> dict[str, Any]:
+    return _worksheet_read(js, token)[0]
+
+
+@router.post("/settings/jde/worksheet/upload")
+async def jde_worksheet_upload(request: Request, file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
+    """Keep the JDE team's worksheet for the page to show what it would apply (an hour): nothing is applied yet."""
+    content = await file.read(WORKSHEET_MOST + 1)
+    if len(content) > WORKSHEET_MOST:
         return refuse("This file is larger than 10 MB: it is not AP Coder's worksheet.")
-    return await run_in_threadpool(_jde_worksheet_import, request, content)
+    problem = (await run_in_threadpool(_worksheet_head, content))[1]
+    if problem:
+        return refuse(problem)
+    token = keep_upload(file.filename or "worksheet.xlsx", content)
+    return done(request, f"{URL}?worksheet={token}#worksheet")
+
+
+@router.post("/settings/jde/worksheet")
+async def jde_worksheet_import(request: Request, token: str = Form("")) -> JSONResponse:
+    """Apply the JDE team's answers; say what changed and what could not be used."""
+    return await run_in_threadpool(_jde_worksheet_import, request, token)
 
 
 @one_connection
-def _jde_worksheet_import(request: Request, content: bytes) -> JSONResponse:
+def _jde_worksheet_import(request: Request, token: str) -> JSONResponse:
     store = get_store(request)
-    result = jde_worksheet.read(content, jde_settings.load(store))
+    look, result = _worksheet_read(jde_settings.load(store), token)
+    if result is None:  # (gone, or without its ID or answer column: never applied)
+        return refuse(look["problem"])
     if not result.changes and result.problems:
         return refuse(" ".join(result.problems[:5]))
     if result.changes:
         jde_settings.save(store, result.settings, reviewer())
+    drop_upload(token)
     from ap_coder.web.core import flash_message
 
     head = (f"{ui.plural(len(result.changes), 'answer')} applied from the JDE team's worksheet." if result.changes

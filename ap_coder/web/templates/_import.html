@@ -30,9 +30,24 @@
 </div>
 {% endmacro %}
 
-{# The file box: a drop zone with the chosen file's name (imports.js), and the button that shows the file first. #}
-{% macro file_box(action, accept, what, busy, button="Check the file") %}
+{# Where a report comes from, its columns and its blank template (``template``: its address, ``/imports/template/``
+   by default; none for a spec with ``no_template``). ``named``: its title and purpose above. #}
+{% macro report(spec, named=false, template="/imports/template/") %}
+<div class="imp-report">
+  {% if named %}<h5 class="imp-sub">{{ spec.title }} <span class="muted">· {{ spec.purpose }}</span></h5>{% endif %}
+  <p class="imp-source"><span class="ms" aria-hidden="true">ios_share</span><span><b>How to get it:</b> {{ spec.source }}</span></p>
+  {% if spec.more %}<details class="imp-more"><summary>More</summary><p class="muted">{{ spec.more }}</p></details>{% endif %}
+  {{ columns(spec) }}
+  {% if not spec.no_template %}<p class="imp-template"><a href="{{ template }}{{ spec.key }}" download><span class="ms" aria-hidden="true">download</span>Download a blank template ({{ ".csv" if spec.key == "journal" else ".xlsx" }})</a>
+    <span class="muted">· its column names, to compare with your export</span></p>{% endif %}
+</div>
+{% endmacro %}
+
+{# The file box: a drop zone with the chosen file's name (imports.js), and the button that shows the file first. A
+   caller's fields (a vendor to compare a statement with) go above the drop zone; ``then``: the button that keeps it. #}
+{% macro file_box(action, accept, what, busy, button="Check the file", then="Load") %}
 <form method="post" action="{{ action }}" enctype="multipart/form-data" class="imp-upload" data-busy="{{ busy }}" data-long>
+  {% if caller %}{{ caller() }}{% endif %}
   <label class="dropzone imp-drop" data-imp-drop>
     <input type="file" name="file" accept="{{ accept }}" required data-imp-file>
     <span class="ms" aria-hidden="true">upload_file</span>
@@ -41,19 +56,26 @@
   </label>
   <div class="row">
     <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">fact_check</span>{{ button }}</button>
-    <span class="muted">Nothing is loaded until you have seen it and click Load.</span>
+    <span class="muted">Nothing is {{ "loaded" if then == "Load" else "kept" }} until you have seen it and click {{ then }}.</span>
   </div>
 </form>
 {% endmacro %}
 
 {# An uploaded file as the import sees it, nothing kept yet: its name and rows, which report it is, each column found
-   as which header or missing, its other columns and its first rows. The caller draws the Load and Cancel buttons. #}
+   as which header or missing, its other columns and its first rows. The caller draws the Load and Cancel buttons.
+   ``look.pick``: its columns are picked on the page (files.spec_sheet): what was not found by its name is to pick
+   (``look.unfound``), and its first rows are shown in every column, to pick from. ``look.done`` and ``look.go``: what
+   the page does with it, when it is not imported ("compared", "reconcile"). #}
 {% macro preview(look, card_id) %}
 <div class="imp-preview stack" id="{{ card_id }}-summary">
-  <p class="imp-file"><span class="ms" aria-hidden="true">description</span><b>{{ look.name }}</b>{% if look.count is number %} · {{ look.count | plural("row") }}{% endif %} · nothing is loaded yet.
+  <p class="imp-file"><span class="ms" aria-hidden="true">description</span><b>{{ look.name }}</b>{% if look.count is number %} · {{ look.count | plural("row") }}{% endif %} · nothing is {{ look.done or ("imported" if look.pick else "loaded") }} yet.
     {% if look.spec and not look.belongs and look.check and look.check.found %}<span class="imp-is">{{ ui.pill(look.spec.title, "info") }}</span>{% endif %}</p>
   {% if look.problem %}
   <div class="flash err imp-verdict" role="alert"><span class="ms" aria-hidden="true">block</span><div>{{ look.problem }}</div></div>
+  {% elif look.pick and look.unfound %}
+  <div class="flash warn imp-verdict" role="status"><span class="ms" aria-hidden="true">touch_app</span><div>Not found by {{ "its name" if look.unfound | length == 1 else "their names" }}: {{ look.unfound | join("; ") }}. Pick {{ "its column" if look.unfound | length == 1 else "their columns" }} below: nothing is imported without {{ "it" if look.unfound | length == 1 else "them" }}.</div></div>
+  {% elif look.pick %}
+  <div class="flash ok imp-verdict" role="status"><span class="ms" aria-hidden="true">check_circle</span><div>Every column {{ look.spec.report }} needs was found by its name: the choices below start with them. Check them, then {{ look.go or "import" }}.</div></div>
   {% elif look.check %}
   <div class="flash ok imp-verdict" role="status"><span class="ms" aria-hidden="true">check_circle</span><div>This is {{ look.spec.report }}: every column it needs is here.</div></div>
   {% endif %}
@@ -68,12 +90,12 @@
     {% endfor %}
   </ul>
   {% if look.check.unused %}
-  <p class="muted imp-unused">{{ look.check.unused | length | plural("other column") }} of the file {{ "is" if look.check.unused | length == 1 else "are" }} not used:
+  <p class="muted imp-unused">{{ look.check.unused | length | plural("other column") }} of the file {{ "is" if look.check.unused | length == 1 else "are" }} {{ "not matched by name" if look.pick else "not used" }}:
     {{ look.check.unused[:12] | join(", ") }}{% if look.check.unused | length > 12 %} and {{ look.check.unused | length - 12 }} more{% endif %}.</p>
   {% endif %}
   {% endif %}
   {% if look.sample and look.sample.rows %}
-  <h5 class="imp-sub">Its first {{ look.sample.rows | length | plural("row") }}{% if look.check and look.check.unused %}, in the columns used{% endif %}</h5>
+  <h5 class="imp-sub">Its first {{ "row" if look.sample.rows | length == 1 else look.sample.rows | length | plural("row") }}{% if look.check and look.check.unused and not look.pick %}, in the columns used{% endif %}</h5>
   <div class="table-wrap imp-rows"><table class="apc-table">
     <thead><tr>{% for h in look.sample.headers %}<th scope="col">{{ h }}</th>{% endfor %}</tr></thead>
     <tbody>{% for row in look.sample.rows %}<tr>{% for cell in row %}<td>{{ cell }}</td>{% endfor %}</tr>{% endfor %}</tbody>

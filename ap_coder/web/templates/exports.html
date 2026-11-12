@@ -1,6 +1,8 @@
 {% extends "base.html" %}
-{% from "_sheet.html" import upload_form, preview, columns %}
-{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
+{% from "_sheet.html" import sheets, columns, go %}
+{% import "_import.html" as imp with context %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">
+<link rel="stylesheet" href="{{ static_url('/static/imports.css') }}">{% endblock %}
 {% block content %}
 {{ ui.tiles([
   ui.tile("Ready to export", ready | length, "outbox", "blue", (ready_total ~ " total") if ready else "nothing waiting"),
@@ -145,10 +147,13 @@
   <p class="muted">Import the ERP's AP invoice list (vendor, invoice number, date, total), e.g. the last 18 months.
     Invoices processed in AP Coder are then also checked against bills already entered or paid in the ERP.
     JD Edwards' voucher list (Supplier Ledger Inquiry, exported to Excel) is read as it comes.</p>
+  <div class="stack imp-pane">
+  {{ imp.report(register_spec) }}
   {% if reg_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ reg_error }}</div></div>{% endif %}
   {% if reg %}
-  {{ preview(reg, "/exports", {"register": reg.token}) }}
-  <form method="post" action="/exports/register/import" class="stack" data-busy="Importing…" data-long>
+  {{ sheets(reg, "/exports", {"register": reg.token}) }}
+  {% call imp.preview(reg.look, "erp_register") %}{% endcall %}
+  <form method="post" action="/exports/register/import" class="stack" data-busy="Importing…" data-long id="pick-erp_register">
     {% if reg.vouchers %}{# JD Edwards' voucher list (one row per pay item): read as it comes, no column to pick #}
     <input type="hidden" name="file" value="{{ reg.token }}">
     <input type="hidden" name="sheet" value="{{ reg.sheet }}">
@@ -157,18 +162,19 @@
     {% else %}{{ columns(reg) }}{% endif %}
     <label class="check"><input type="checkbox" name="replace" value="1"> Replace the invoices already imported</label>
     <div class="row">
-      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import</button>
-      <a class="link" href="/exports#register">Cancel</a>
+      <button class="btn primary" type="submit"{% if not reg.vouchers %}{{ go(reg) }}{% endif %}><span class="ms" aria-hidden="true">upload</span>Import</button>
+      <a class="btn" href="/exports#register"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
     </div>
   </form>
   {% else %}
-  {{ upload_form("/exports/register/upload", "ERP invoice list (CSV or Excel)", "Upload the ERP invoice list") }}
+  {{ imp.file_box("/exports/register/upload", register_spec.accept, "The ERP's invoice list, a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…", then="Import") }}
   {% endif %}
   {% if register_count %}
   <form method="post" action="/exports/register/clear" data-confirm="Clear the list of {{ register_count | num }} ERP invoices? Invoices are then no longer checked against it.">
     <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Clear the list</button>
   </form>
   {% endif %}
+  </div>
 </details>
 {% endif %}
 
@@ -356,4 +362,5 @@
   {% endif %}
 </section>
 {% endblock %}
-{% block scripts %}<script type="module" src="{{ static_url('/static/js/exports.js') }}"></script>{% endblock %}
+{% block scripts %}<script type="module" src="{{ static_url('/static/js/exports.js') }}"></script>
+<script type="module" src="{{ static_url('/static/js/imports.js') }}"></script>{% endblock %}

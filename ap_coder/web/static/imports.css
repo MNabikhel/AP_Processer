@@ -93,6 +93,20 @@
 .imp-secondary > form {margin-top: 12px;}
 .imp-secondary input[type="text"] {width: min(100%, 520px);}
 
+/* An import whose columns are picked (templates/_sheet.html): the pane under the import's title, a choice for each
+   column, the line naming what is still to pick */
+.imp-pane {gap: 12px; min-width: 0; align-items: stretch;}
+.imp-pane > * {min-width: 0;}
+.imp-map {display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr)); gap: 10px 14px;
+  align-items: end; align-self: stretch;}
+.imp-map .field {display: block; min-width: 0;}  /* the name and "needed" on one line, the choice under them */
+.imp-map select {display: block; width: 100%; min-width: 0; margin-top: 4px;}
+.imp-map .imp-tag {margin-left: 4px;}
+.imp-wait {display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 0; font-size: 13px; color: var(--lg-warning);}
+.imp-wait > .ms {font-size: 16px;}
+.imp-wait[hidden] {display: none;}
+.btn[data-imp-go]:disabled {cursor: not-allowed;}
+
 @media (max-width: 600px) {
   .imp-extra {grid-template-columns: minmax(0, 1fr);}
   .imp-head {flex-wrap: wrap;}

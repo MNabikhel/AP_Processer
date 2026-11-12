@@ -2,9 +2,10 @@
 (the account an invoice is paid from, D-66). The fixed coding rules have a page of their own (``pages/rules.py``,
 D-217): ``?tab=rules`` goes there.
 
-``GET /accounts?tab=gl|cc|tax|policy|bank``. GL accounts and cost centers are imported from a spreadsheet (upload,
-then pick the code / description / category columns: ``?file=``), edited in place and downloaded as CSV
-(``GET /accounts/<table>.csv``). Before any GL account exists, the sample setup can be loaded instead.
+``GET /accounts?tab=gl|cc|tax|policy|bank``. GL accounts, cost centers and bank accounts are imported from a
+spreadsheet (upload, then see it and pick the columns: ``?file=``; their specs, ``SPECS``: ``erp/import_specs``, the
+column choices ``files.spec_sheet``), edited in place and downloaded as CSV (``GET /accounts/<table>.csv``). Before
+any GL account exists, the sample setup can be loaded instead.
 """
 
 from __future__ import annotations
@@ -20,9 +21,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from ap_coder.coding import banks
 from ap_coder.coding.tax import DEFAULT_RATES_PATH, RATES_FILE, TAX_TYPES, TREATMENTS, TaxRateTable, rates_path
 from ap_coder.core import ui
-from ap_coder.core.reference_data import meals_column, short_name
+from ap_coder.core.reference_data import short_name
 from ap_coder.core.safe import csv_cell
 from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.erp.import_specs import BANK_ACCOUNTS, COST_CENTERS, GL_ACCOUNTS
 from ap_coder.web.core import (
     STALE_PAGE,
     done,
@@ -38,12 +40,23 @@ from ap_coder.web.core import (
     short_path,
     stale_page,
 )
-from ap_coder.web.files import NO_ROWS, SheetError, download, drop_upload, read_upload, receive_sheet, sheet_context
+from ap_coder.web.files import (
+    NO_ROWS,
+    SheetError,
+    download,
+    drop_upload,
+    pick_refusal,
+    picked_columns,
+    read_upload,
+    receive_sheet,
+    spec_sheet,
+)
 from ap_coder.web.pages.process import tax_types_mapped
 
 router = page_router()  # each plain handler: one connection a request
 
 TABLES = {"gl_accounts": ("gl", "GL account"), "cost_centers": ("cc", "cost center")}
+SPECS = {"gl_accounts": GL_ACCOUNTS, "cost_centers": COST_CENTERS}  # what each list's file takes (D-234)
 TABS = {
     "gl": "GL accounts",
     "cc": "Cost centers",
@@ -61,22 +74,7 @@ WHERE = {
     "OTHER": "Outside Canada",
 }
 
-_CODE_HINTS = ("gl", "account", "code", "cost", "centre", "center", "saknr", "kostl")
-_DESC_HINTS = ("desc", "name", "title", "text")
-_CAT_HINTS = ("categ", "group", "type", "class")
-IMPORT_FIELDS = {"code": "Code column", "description": "Description column", "category": "Category column (optional)"}
-# GL accounts only: the column marking the meals and entertainment accounts (D-90).
-MEALS_FIELD = {"meals": "Meals & entertainment column (optional: yes, x or M&E marks the 50% tax credit)"}
 MEALS_LABEL = "Meals & entertainment (50% tax credit)"
-
-
-def import_fields(table: str) -> dict[str, str]:
-    return {**IMPORT_FIELDS, **MEALS_FIELD} if table == "gl_accounts" else IMPORT_FIELDS
-
-
-def guess(columns: list[str], hints: tuple[str, ...]) -> str:
-    """The first column whose name contains one of ``hints`` ("" when none does)."""
-    return next((c for c in columns if any(h in c.lower() for h in hints)), "")
 
 
 def table_for(table: str) -> tuple[str, str]:
@@ -99,17 +97,7 @@ def account_context(store: Store, table: str, file: str, sheet: str) -> dict[str
     if file:
         try:
             upload, df, sheets = read_upload(file, sheet or None)
-            if df.empty:
-                imp_error = NO_ROWS
-            columns = list(df.columns)
-            guessed = {
-                "code": guess(columns, _CODE_HINTS) or (columns[0] if columns else ""),
-                "description": guess(columns, _DESC_HINTS),
-                "category": guess(columns, _CAT_HINTS),
-            }
-            if table == "gl_accounts":
-                guessed["meals"] = meals_column([str(c) for c in columns])
-            imp = sheet_context(file, upload, df, sheets, sheet, import_fields(table), guessed, ("code",))
+            imp = spec_sheet(file, upload, df, sheets, sheet, SPECS[table])
         except SheetError as exc:
             imp_error = str(exc)
     counts = Counter(r["category"] or "Uncategorised" for r in rows)
@@ -124,6 +112,7 @@ def account_context(store: Store, table: str, file: str, sheet: str) -> dict[str
         "meals_label": MEALS_LABEL,
         "imp": imp,
         "imp_error": imp_error,
+        "spec": SPECS[table],
     }
 
 
@@ -241,10 +230,7 @@ def bank_context(store: Store, gl: list[dict[str, Any]], file: str, sheet: str) 
     if file:
         try:
             upload, df, sheets = read_upload(file, sheet or None)
-            if df.empty:
-                imp_error = NO_ROWS
-            guessed = banks.columns_for([str(c) for c in df.columns])
-            imp = sheet_context(file, upload, df, sheets, sheet, banks.IMPORT_FIELDS, guessed, ("code", "currency"))
+            imp = spec_sheet(file, upload, df, sheets, sheet, BANK_ACCOUNTS)  # (only the code is needed: B-2402)
         except SheetError as exc:
             imp_error = str(exc)
     return {
@@ -254,6 +240,7 @@ def bank_context(store: Store, gl: list[dict[str, Any]], file: str, sheet: str) 
         "gl_options": [(a["code"], f"{a['code']} · {short_name(a['description'])}") for a in gl],
         "imp": imp,
         "imp_error": imp_error,
+        "spec": BANK_ACCOUNTS,
     }
 
 
@@ -287,11 +274,9 @@ def _bank_import(request: Request, form: Any) -> JSONResponse:
         return refuse(str(exc))
     if df.empty:
         return refuse(NO_ROWS)
-    columns = list(df.columns)
-    picked = {f: str(form.get(f"col_{f}") or "") for f in banks.IMPORT_FIELDS}
-    picked = {f: c for f, c in picked.items() if c in columns}
-    if "code" not in picked:
-        return refuse("Pick the column with each account's code (e.g. CAD-OP).")
+    picked = picked_columns(form, banks.ALIASES, list(df.columns), {})
+    if refusal := pick_refusal(BANK_ACCOUNTS, picked):
+        return refuse(refusal)
     records = [{f: rec.get(c) for f, c in picked.items()} for rec in df.to_dict("records")]
     keep = {r["code"]: r for r in store.bank_accounts()}
     for r in records:  # a column not picked keeps what the account has
@@ -382,7 +367,7 @@ async def accounts_import(request: Request, table: str) -> JSONResponse:
 
 @one_connection
 def _accounts_import(request: Request, table: str, form: Any) -> JSONResponse:
-    tab, noun = table_for(table)
+    tab, _noun = table_for(table)
     store = get_store(request)
     token, sheet = str(form.get("file") or ""), str(form.get("sheet") or "")
     try:
@@ -391,18 +376,16 @@ def _accounts_import(request: Request, table: str, form: Any) -> JSONResponse:
         return refuse(str(exc))
     if df.empty:
         return refuse(NO_ROWS)
-    columns = list(df.columns)
-    picked = {f: str(form.get(f"col_{f}") or "") for f in import_fields(table)}
-    picked = {f: c if c in columns else "" for f, c in picked.items()}
-    if not picked["code"]:
-        return refuse(f"Pick the column with the {noun} code.")
+    picked = picked_columns(form, {c.field: c.label for c in SPECS[table].columns}, list(df.columns), {})
+    if refusal := pick_refusal(SPECS[table], picked):
+        return refuse(refusal)
     try:
         result = store.import_accounts(
             table,
             df.to_dict("records"),
             picked["code"],
-            picked["description"] or None,
-            picked["category"] or None,
+            picked.get("description"),
+            picked.get("category"),
             replace_all=bool(form.get("replace")),
             actor=reviewer(),
             meals_column=picked.get("meals") or None,

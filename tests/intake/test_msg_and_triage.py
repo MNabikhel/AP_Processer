@@ -448,9 +448,9 @@ def test_every_reader_of_an_uploaded_sheet_checks_its_unzipped_sizes(tmp_path, m
     answers = [
         post(client, f"/statements/emailed/{st['id']}/{st['n']}", {"vendor": ""}),
         client.post("/statements/upload", data={"vendor": ""}, files={"file": ("s.xlsx", bomb)}, headers=page),
-        client.post("/settings/jde/gl-map/import", files={"file": ("map.xlsx", bomb)}, headers=page),
+        client.post("/settings/jde/gl-map/upload", files={"file": ("map.xlsx", bomb)}, headers=page),
         client.post("/learning/history/upload", files={"file": ("ap.xlsx", bomb)}, headers=page),
-        client.post("/settings/jde/worksheet", files={"file": ("answers.xlsx", bomb)}, headers=page),
+        client.post("/settings/jde/worksheet/upload", files={"file": ("answers.xlsx", bomb)}, headers=page),
     ]
     assert opened == []
     assert [a.status_code for a in answers] == [400] * 5, [a.text for a in answers]

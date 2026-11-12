@@ -326,7 +326,7 @@ def test_the_vendor_master_is_uploaded_checked_and_imported(client, busy):
     assert '<option value="Vendor Name" selected>' in page.text  # the column is guessed
     token = page.url.params["file"]
     missing = client.post("/vendors/master/import", data={"file": token}, headers=PAGE)
-    assert missing.status_code == 400 and "vendor name" in missing.json()["error"]
+    assert missing.status_code == 400 and "Vendor name" in missing.json()["error"]
     page = follow(
         client,
         client.post(
@@ -381,8 +381,9 @@ def test_jd_edwards_supplier_master_is_imported_as_the_page_offers_it(client, st
         return page, offered
 
     page, offered = imported()
-    assert offered == {"vendor_name": "Alpha Name", "erp_id": "Address Number", "gst": "", "terms": "",
-                       "status": "Status", "hold": "Hold Payment Code", "default_gl": ""}  # fmt: skip
+    assert offered == {"vendor_name": "Alpha Name", "erp_id": "Address Number", "gst": "", "qst": "", "pst": "",
+                       "province": "", "terms": "", "status": "Status", "hold": "Hold Payment Code",
+                       "default_gl": ""}  # fmt: skip
     assert 'name="hold_codes" value="Y, 1, 2"' in page.text
     vendors = {v["erp_id"]: v for v in store.master_vendors()}
     assert {i: v["erp_hold"] for i, v in vendors.items()} == {"410001": "", "410002": "", "410005": "2", "410006": "",
@@ -445,6 +446,33 @@ def test_a_supplier_marked_do_not_use_in_the_export_is_on_hold_and_the_words_are
     assert store.chart_settings().skip_words == ()
 
 
+def test_a_vendor_lists_qst_and_pst_numbers_and_province_are_imported_by_the_page(client, store):
+    """B-2400: the vendor master's reader reads a QST number, a PST number and a province, but the Vendors page offered
+    no column choice for them: imported with the columns it offered, a list's QST and PST numbers and provinces were
+    dropped."""
+    rows = [["Vendor Name", "Vendor ID", "QST Number", "PST Number", "Province"],
+            ["Erable Fournitures", "V9", "1234567890TQ0001", "PST-1234-5678", "QC"]]  # fmt: skip
+    page = upload(client, "/vendors/master/upload", "vendors.xlsx", xlsx(rows))
+    offered = guessed(page.text)
+    assert {offered.get(f) for f in ("qst", "pst", "province")} == {"QST Number", "PST Number", "Province"}
+    data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in offered.items()}}
+    follow(client, client.post("/vendors/master/import", data=data, headers=PAGE))
+    (vendor,) = store.master_vendors()
+    held = (vendor["qst_number"], vendor["pst_number"], vendor["province"])
+    assert held == ("1234567890TQ0001", "PST-1234-5678", "QC")
+
+
+def test_the_bank_accounts_import_needs_only_the_code_as_its_reader_does(client, store):
+    """B-2402: the Bank accounts import marked its currency column as needed (*), though a blank currency is CAD and
+    a file without the column is imported: only the code is needed."""
+    page = upload(client, "/accounts/bank/upload", "b.csv", b"Code,Name\nCAD-2,Second operating\n")
+    marked = r'<label class="field">{}[^<]*(?:\*|<span class="imp-tag">needed)'
+    assert re.search(marked.format("Code"), page.text) and not re.search(marked.format("Currency"), page.text)
+    data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in guessed(page.text).items()}}
+    follow(client, client.post("/accounts/bank/import", data=data, headers=PAGE))
+    assert [(a["code"], a["currency"]) for a in store.bank_accounts()] == [("CAD-2", "CAD")]
+
+
 def test_the_sample_vendor_master_is_imported_by_the_page_as_the_sample_loader_does(client, store, tmp_path):
     """The repo's ``data/vendor_master.csv`` through the Vendors page, with the columns it offers: the same vendors,
     field for field, as ``load_sample_vendor_master`` makes, none on hold in JD Edwards."""
@@ -455,7 +483,8 @@ def test_the_sample_vendor_master_is_imported_by_the_page_as_the_sample_loader_d
                   (SAMPLE_DATA_DIR / "vendor_master.csv").read_bytes())  # fmt: skip
     offered = guessed(page.text)
     assert offered == {"vendor_name": "vendor_name", "erp_id": "vendor_id", "gst": "gst_hst_number", "hold": "",
-                       "terms": "payment_terms", "status": "status", "default_gl": "default_gl"}  # fmt: skip
+                       "qst": "", "pst": "", "province": "", "terms": "payment_terms", "status": "status",
+                       "default_gl": "default_gl"}  # fmt: skip
     data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in offered.items()}}
     follow(client, client.post("/vendors/master/import", data=data, headers=PAGE))
     loaded = Store(tmp_path / "loaded.db")
@@ -804,7 +833,7 @@ def test_an_excel_cell_reading_na_is_kept_as_typed():
     """W2-04: the Excel readers dropped cells that read "NA", "NULL", "None", "N/A" (a cost center "NA" for North
     America vanished), while the same file as CSV kept them: every reader keeps a cell as it was typed."""
     from ap_coder.web.files import read_sheet
-    from ap_coder.web.pages import learning, settings_jde
+    from ap_coder.web.pages import learning
 
     book = openpyxl.Workbook()
     book.active.append(["Cost center", "Name"])
@@ -814,8 +843,7 @@ def test_an_excel_cell_reading_na_is_kept_as_typed():
     book.save(raw)
     codes = ["EU", "NA", "NULL", "N/A", "None"]
     df, _names = read_sheet("cc.xlsx", raw.getvalue())
-    assert list(df["Cost center"]) == codes
-    assert [r["Cost center"] for r in settings_jde.read_sheet("cc.xlsx", raw.getvalue())] == codes
+    assert list(df["Cost center"]) == codes  # (Settings → JD Edwards' GL map is read by it too)
     ((_columns, rows),) = learning.read_sheets("cc.xlsx", raw.getvalue()).values()
     assert [r["Cost center"] for r in rows] == codes
 

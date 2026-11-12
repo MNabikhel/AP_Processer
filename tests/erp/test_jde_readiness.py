@@ -119,6 +119,21 @@ def test_a_file_that_is_not_the_worksheet_is_refused(content):
     )
 
 
+@pytest.mark.parametrize("left_out", ["ID", "Your answer"])
+def test_a_worksheet_without_its_id_or_answer_column_is_refused_naming_it(left_out):
+    """B-2399: a worksheet whose "Your answer" (or "ID") column was renamed or deleted read as "Nothing new in the
+    worksheet.": every answer in it was dropped in silence. It is refused, the column named."""
+    book = openpyxl.Workbook()
+    book.active.title = "Questions"
+    header = [h for h in ("ID", "Topic", "Question", "Your answer") if h != left_out]
+    book.active.append(header)
+    book.active.append(["company" if h == "ID" else "00042" if h == "Your answer" else "x" for h in header])
+    buf = io.BytesIO()
+    book.save(buf)
+    result = jde_worksheet.read(buf.getvalue(), jde_settings.JdeSettings())
+    assert result.changes == [] and len(result.problems) == 1 and f"“{left_out}”" in result.problems[0]
+
+
 def test_the_dry_run_says_what_loads_and_why_anything_is_held_back():
     invoices = [_invoice(ON, 1), _invoice(BC, 2), _invoice(QC, 3), _invoice(CREDIT, 4), _invoice(USD, 5)]
     unknown_usd = lambda final: "" if "cascade" in (final.get("vendor_name") or "").lower() else "10023"  # noqa: E731

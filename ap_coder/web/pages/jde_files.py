@@ -416,7 +416,17 @@ async def _workbook(file: UploadFile) -> tuple[bytes | None, str]:
 def template_download(key: str) -> Response:
     """A blank template of one of the page's reports: its columns' names, as JD Edwards writes them."""
     spec = SPECS.get(key)
-    if spec is None or not spec.jde or spec.no_template:
+    if spec is None or not spec.jde:
+        raise HTTPException(status_code=404, detail="No such template.")
+    return any_template(key)
+
+
+@router.get("/imports/template/{key}")
+def any_template(key: str) -> Response:
+    """A blank template of any import of the app (``import_specs.SPECS``) that has one: its columns' names, as the
+    page that imports it reads them first."""
+    spec = SPECS.get(key)
+    if spec is None or spec.no_template:
         raise HTTPException(status_code=404, detail="No such template.")
     return download(*import_specs.template(spec))
 

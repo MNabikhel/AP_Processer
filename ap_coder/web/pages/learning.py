@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
+import pandas as pd
 from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
@@ -38,6 +39,7 @@ from ap_coder.core import ui
 from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.store import Store, reports
 from ap_coder.erp import insights
+from ap_coder.erp.import_specs import PAST_CODING
 from ap_coder.erp.journal import looks_like_journal
 from ap_coder.ops import journal_cmd
 from ap_coder.web.charts import SERIES, Series, line_chart, percent
@@ -58,14 +60,23 @@ from ap_coder.web.core import (
     reviewer,
     shown_count,
 )
-from ap_coder.web.files import TOO_BIG, SheetError, read_capped, read_csv, read_excel
+from ap_coder.web.files import (
+    PREVIEW_ROWS,
+    TOO_BIG,
+    SheetError,
+    Upload,
+    pick_refusal,
+    picked_columns,
+    read_capped,
+    read_csv,
+    read_excel,
+    spec_sheet,
+)
 from ap_coder.web.invoice_grid import gl_name
 
 router = page_router()  # each plain handler: one connection a request
 
 TABS = {"coding": "Coding accuracy", "suppliers": "Supplier learning", "lessons": "Lessons", "readers": "Readers"}
-HISTORY_LABELS = {"vendor_name": "Vendor *", "description": "Line description *", "gl_code": "GL account *",
-                  "cost_center": "Cost center", "amount": "Amount", "date": "Date"}  # fmt: skip
 FIELD_LABELS = {
     "vendor_name": "Vendor", "invoice_number": "Invoice #", "invoice_date": "Invoice date", "due_date": "Due date",
     "po_number": "PO #", "currency": "Currency", "gst_hst_registration_number": "GST/HST #",
@@ -270,16 +281,19 @@ def _journal_context(store: Store, token: str | None, q: Any) -> dict[str, Any]:
 
 def _history_context(store: Store, token: str | None, sheet: str | None) -> dict[str, Any]:
     upload = get_upload(token)
-    context: dict[str, Any] = {"history_count": store.history_count(), "history_labels": HISTORY_LABELS,
-                               "upload": None}  # fmt: skip
+    context: dict[str, Any] = {"history_count": store.history_count(), "upload": None, "history_spec": PAST_CODING}
     if token and upload is None:
         context["upload_gone"] = True
     if upload:
         name, sheets = upload
         sheet = sheet if sheet in sheets else next(iter(sheets))
         columns, rows = sheets[sheet]
-        context["upload"] = {"token": token, "name": name, "sheets": list(sheets), "sheet": sheet, "columns": columns,
-                             "rows": len(rows), "guessed": history.map_columns(columns)}  # fmt: skip
+        head = pd.DataFrame(rows[:PREVIEW_ROWS], columns=columns)  # (the choices and the first rows: spec_sheet)
+        picked = spec_sheet(token, Upload(name, b""), head, list(sheets), sheet, PAST_CODING)
+        picked["count"] = picked["look"]["count"] = len(rows)
+        picked["look"] |= {"done": "taught", "go": "teach"}
+        context["upload"] = {"token": token, "name": name, "sheets": list(sheets), "sheet": sheet, "rows": len(rows),
+                             "s": picked}  # fmt: skip
     return context
 
 
@@ -808,14 +822,9 @@ def _history_teach(request: Request, form: Any) -> JSONResponse:
     _, sheets = upload
     sheet = str(form.get("sheet") or "")
     columns, records = sheets[sheet] if sheet in sheets else next(iter(sheets.values()))
-    chosen = {}
-    for field in HISTORY_LABELS:
-        pick = str(form.get(f"col_{field}") or "")
-        if pick and pick in columns:
-            chosen[field] = pick
-    missing = [HISTORY_LABELS[f].rstrip(" *") for f in history.REQUIRED if f not in chosen]
-    if missing:
-        return refuse("Pick the column for: " + ", ".join(missing))
+    chosen = picked_columns(form, history.COLUMN_ALIASES, columns, {})
+    if refusal := pick_refusal(PAST_CODING, chosen):
+        return refuse(refusal)
     store = get_store(request)
     rows, skipped = history.rows_from_records(records, chosen)
     result = store.import_history(rows, actor=reviewer())

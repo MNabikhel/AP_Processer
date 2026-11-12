@@ -405,11 +405,13 @@ def test_jde_gl_mapping_tax_areas_and_address_numbers(client, store):
         ("6200", "OPS", "200"),
     ]
     csv = b"GL code,Cost center,BU,Object\n6100,,999,6100\n7000,,300,7000\n"
-    response = client.post("/settings/jde/gl-map/import", files={"file": ("map.csv", io.BytesIO(csv), "text/csv")},
+    response = client.post("/settings/jde/gl-map/upload", files={"file": ("map.csv", io.BytesIO(csv), "text/csv")},
                            headers=PAGE)  # fmt: skip
-    assert "2 mapping rows imported." in follow(client, response)
+    assert "2 mapping rows to import." in follow(client, response)  # shown first, nothing imported yet (D-234)
+    token = response.json()["redirect"].split("gl_map=")[1].split("#")[0]
+    assert "2 mapping rows imported." in follow(client, post(client, "/settings/jde/gl-map/import", {"token": token}))
     assert {m.gl_code: m.bu for m in jde_settings.load(store).gl_map} == {"6100": "999", "6200": "200", "7000": "300"}
-    bad = client.post("/settings/jde/gl-map/import", files={"file": ("map.txt", io.BytesIO(b"x"), "text/plain")},
+    bad = client.post("/settings/jde/gl-map/upload", files={"file": ("map.txt", io.BytesIO(b"x"), "text/plain")},
                       headers=PAGE)  # fmt: skip
     assert bad.status_code == 400
 

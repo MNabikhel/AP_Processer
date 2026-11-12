@@ -5,7 +5,8 @@
   used, GST/HST numbers and bank accounts its invoices carried (the history, masked), recent invoices, the terms and
   ERP ID from the vendor master, the controls (hold, expected GST/HST number, notes) and the emails asking the vendor
   for what its invoices in the queue are missing (``&lang=``).
-* The ERP's vendor master: upload (``POST /vendors/master/upload``), check the columns (``?file=``), import.
+* The ERP's vendor master: upload (``POST /vendors/master/upload``), see it and check the columns (``?file=``: its spec,
+  ``import_specs.VENDOR_MASTER``), import.
 """
 
 from __future__ import annotations
@@ -23,10 +24,10 @@ from ap_coder.coding import vendor_mail
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
 from ap_coder.coding.vendors import (
     ACTIVE,
+    MASTER_ALIASES,
     ON_HOLD,
     bank_branch,
     mask_account,
-    master_columns,
     master_rows,
     norm_tax_number,
     same_bank_account,
@@ -37,6 +38,7 @@ from ap_coder.core.store import PARKED, REVIEW, Store, reports
 from ap_coder.core.store.vendor_master import PAYMENTS_ONLY, stops_vouchers
 from ap_coder.core.store.vendors import HOLD_CODES_SETTING, SKIP_WORDS_SETTING, listed
 from ap_coder.erp import recurring
+from ap_coder.erp.import_specs import VENDOR_MASTER
 from ap_coder.erp.insights import vendor_workload
 from ap_coder.ops.help import help_for
 from ap_coder.web.access import may_lift_hold
@@ -57,10 +59,11 @@ from ap_coder.web.files import (
     NO_ROWS,
     SheetError,
     drop_upload,
+    pick_refusal,
     picked_columns,
     read_upload,
     receive_sheet,
-    sheet_context,
+    spec_sheet,
 )
 from ap_coder.web.invoice_grid import gl_name
 
@@ -77,15 +80,6 @@ SORTS = {
 }
 VIEWS = {"all": "All", "hold": "On hold", "new": "New"}
 VENDORS_SHOWN = 200  # the vendors listed at first, and how many more each time ("Show more")
-MASTER_LABELS = {
-    "vendor_name": "Vendor name",
-    "erp_id": "Vendor ID",
-    "gst": "GST/HST number",
-    "terms": "Payment terms",
-    "status": "Status",
-    "hold": "Hold payment code (JD Edwards)",
-    "default_gl": "Default GL account",
-}
 TARGET = 0.9  # the AI accuracy shown in green from here
 
 
@@ -257,16 +251,12 @@ def vendors_page(
             ),
         ]
 
-    # The vendor master waiting for its columns
+    # The vendor master waiting for its columns (each of its reader's: B-2400)
     master, master_error = None, ""
     if file:
         try:
             upload, df, sheets = read_upload(file, sheet or None)
-            columns = list(df.columns)
-            if df.empty:
-                master_error = NO_ROWS
-            chosen = picked_columns({}, MASTER_LABELS, columns, master_columns(columns))
-            master = sheet_context(file, upload, df, sheets, sheet, MASTER_LABELS, chosen, ("vendor_name",))
+            master = spec_sheet(file, upload, df, sheets, sheet, VENDOR_MASTER)
             master |= {
                 "hold_codes": ", ".join(store.hold_codes()),
                 "skip_words": ", ".join(store.supplier_markers()),
@@ -307,6 +297,7 @@ def vendors_page(
         master=master,
         setup=bool(setup),  # from Getting started: the vendor master's import open
         master_error=master_error,
+        vendor_spec=VENDOR_MASTER,
         detail=vendor_detail(store, chosen_vendor, lang) if chosen_vendor else None,
         statuses={ACTIVE: "Active", ON_HOLD: "On hold"},
         provinces={**PROVINCE_NAMES, OUTSIDE_CANADA: "Outside Canada"},
@@ -405,9 +396,9 @@ def _master_import(request: Request, form: Any) -> JSONResponse:
         return refuse(str(exc))
     if df.empty:
         return refuse(NO_ROWS)
-    chosen = picked_columns(form, MASTER_LABELS, list(df.columns), {})
-    if "vendor_name" not in chosen:
-        return refuse("Pick the column with the vendor name.")
+    chosen = picked_columns(form, MASTER_ALIASES, list(df.columns), {})
+    if refusal := pick_refusal(VENDOR_MASTER, chosen):
+        return refuse(refusal)
     save_import_rules(store, form)
     result = store.import_vendor_master(master_rows(df.to_dict("records"), chosen), actor=reviewer())
     drop_upload(token)

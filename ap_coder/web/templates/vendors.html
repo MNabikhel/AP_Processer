@@ -1,7 +1,9 @@
 {% extends "base.html" %}
-{% from "_sheet.html" import upload_form, preview, columns %}
+{% from "_sheet.html" import sheets, columns, go %}
+{% import "_import.html" as imp with context %}
 {% from "_tiles.html" import tile_row %}
-{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">
+<link rel="stylesheet" href="{{ static_url('/static/imports.css') }}">{% endblock %}
 {% macro spend(v) %}{% for cur, t in spend_items(v) %}{{ t | money }} <span class="muted">{{ cur }}</span>{% if not loop.last %} · {% endif %}{% else %}<span class="muted">—</span>{% endfor %}{% endmacro %}
 {% macro accuracy(value) %}{% if value is none %}<span class="muted">—</span>{% else %}<b class="{{ 'ok' if value >= target else 'warn-text' }}">{{ value | pct }}</b>{% endif %}{% endmacro %}
 {% macro status_pills(v) %}{{ ui.pill("On hold", "warn", "front_hand") if v.status == on_hold else ui.pill("On hold in JD Edwards", "warn", "front_hand") if v.erp_hold and v.erp_hold not in payments_only else ui.pill("Payments held in JD Edwards", "warn", "payments") if v.erp_hold else ui.pill("Active", "ok") }}{% if number_problems(v) %} {{ ui.pill("Tax number to check", "warn", "warning") }}{% endif %}{% if v.added_here %} {{ ui.pill("Added here: set up in JD Edwards", "warn", "person_add") }}{% elif has_master and not v.in_master %} {{ ui.pill("Not in master", "warn", "gpp_maybe") }}{% endif %}{% endmacro %}
@@ -11,10 +13,13 @@
   <p class="muted">Import the ERP's vendor list (CSV or Excel). Exports then carry each vendor's ERP ID, invoices from a
     vendor that is not in the list are flagged, the vendor's payment terms set the due date when the invoice shows none,
     and its default GL account is offered for uncoded lines. Import again any time: vendors are matched by name.</p>
+  <div class="stack imp-pane">
+  {% if can("/vendors/master/upload") %}{{ imp.report(vendor_spec) }}{% endif %}
   {% if master_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ master_error }}</div></div>{% endif %}
   {% if master %}
-  {{ preview(master, "/vendors", {"file": master.token}) }}
-  <form method="post" action="/vendors/master/import" class="stack" data-busy="Importing…" data-long>
+  {{ sheets(master, "/vendors", {"file": master.token}) }}
+  {% call imp.preview(master.look, "vendor_master") %}{% endcall %}
+  <form method="post" action="/vendors/master/import" class="stack" data-busy="Importing…" data-long id="pick-vendor_master">
     {{ columns(master) }}
     <div class="map-grid">
       <label class="field">{{ master.hold_codes_label }}
@@ -27,15 +32,16 @@
       synced; a code taken off stops holding every supplier at this import. The words are also the ones a business
       unit of the chart is left out for (the star, before or after a name, is for suppliers only).</p>
     <div class="row">
-      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import vendors</button>
-      <a class="link" href="/vendors">Cancel</a>
+      <button class="btn primary" type="submit"{{ go(master) }}><span class="ms" aria-hidden="true">upload</span>Import vendors</button>
+      <a class="btn" href="/vendors"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
     </div>
   </form>
   {% elif can("/vendors/master/upload") %}{# server mode: the vendor master is an Admin's (D-98) #}
-  {{ upload_form("/vendors/master/upload", "Vendor list (CSV or Excel)", "Upload the vendor list") }}
+  {{ imp.file_box("/vendors/master/upload", vendor_spec.accept, "The vendor list, a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…", then="Import") }}
   {% else %}
   <p class="muted">An Admin imports the vendor master.</p>
   {% endif %}
+  </div>
 </details>
 
 {% if not vendors %}
@@ -265,3 +271,4 @@
 {% endif %}
 {% endif %}
 {% endblock %}
+{% block scripts %}<script type="module" src="{{ static_url('/static/js/imports.js') }}"></script>{% endblock %}

@@ -1,46 +1,31 @@
-{# Importing from a spreadsheet (ap_coder/web/files.py): upload it, see its first rows, pick which column is what.
-   ``s`` is files.sheet_context(...). #}
+{# Importing a spreadsheet whose columns are picked (ap_coder/web/files.py): the sheet of a workbook with several, a
+   "which column" choice for each column of the import's spec (``s`` is files.spec_sheet(...)), each filled from the
+   file's headers, the needed ones marked, and the import's button, closed with a line naming the needed fields still
+   without a column until each has one (imports.js keeps both up to date as the choices change). The file itself is
+   shown by _import.html's ``preview`` (``s.look``). #}
 
-{# The file input: posts the file to ``action``, which answers with the page showing the columns. #}
-{% macro upload_form(action, label, button="Upload") %}
-<form method="post" action="{{ action }}" enctype="multipart/form-data" class="row upload-row" data-busy="Reading…">
-  <input type="file" name="file" accept=".csv,.xlsx,.xls" required aria-label="{{ label }}">
-  <button class="btn" type="submit"><span class="ms" aria-hidden="true">upload_file</span>{{ button }}</button>
+{# The sheet to read, for a workbook with several. ``keep``: query values to keep when another is picked. #}
+{% macro sheets(s, here, keep={}) %}
+{% if s.sheets | length > 1 %}
+<form method="get" action="{{ here }}" class="row sheet-file">
+  {% for k, v in keep.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+  <label class="field inline">Sheet
+    <select name="sheet" data-autosubmit>
+      {% for name in s.sheets %}<option value="{{ name }}"{% if name == s.sheet %} selected{% endif %}>{{ name }}</option>{% endfor %}
+    </select></label>
+  <noscript><button class="btn sm" type="submit">Show</button></noscript>
 </form>
+{% endif %}
 {% endmacro %}
 
-{# The uploaded file's name, its sheet (a workbook with several) and its first rows. ``keep``: query values to
-   keep when another sheet is picked. #}
-{% macro preview(s, here, keep={}) %}
-<div class="sheet-file row">
-  <span class="ms" aria-hidden="true">table_view</span><b>{{ s.name }}</b>
-  <span class="muted">· {{ s.count | plural("row") }} found. First rows:</span>
-  {% if s.sheets | length > 1 %}
-  <form method="get" action="{{ here }}" class="row">
-    {% for k, v in keep.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
-    <label class="field inline">Sheet
-      <select name="sheet" data-autosubmit>
-        {% for name in s.sheets %}<option value="{{ name }}"{% if name == s.sheet %} selected{% endif %}>{{ name }}</option>{% endfor %}
-      </select></label>
-    <noscript><button class="btn sm" type="submit">Show</button></noscript>
-  </form>
-  {% endif %}
-</div>
-<div class="table-wrap sheet-preview">
-  <table class="apc-table">
-    <thead><tr>{% for c in s.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
-    <tbody>{% for row in s.preview %}<tr>{% for v in row %}<td>{{ v }}</td>{% endfor %}</tr>{% endfor %}</tbody>
-  </table>
-</div>
-{% endmacro %}
-
-{# One "which column" choice per field (inside the caller's form), and the upload's token. #}
-{% macro columns(s) %}
-<input type="hidden" name="file" value="{{ s.token }}">
+{# One "which column" choice per field (inside the caller's form), and the upload's token (``token``: its name). #}
+{% macro columns(s, token="file") %}
+<input type="hidden" name="{{ token }}" value="{{ s.token }}">
 <input type="hidden" name="sheet" value="{{ s.sheet }}">
-<div class="map-grid">
+<h5 class="imp-sub">Which column is which</h5>
+<div class="imp-map" data-imp-picker data-need='{{ s.need | tojson }}' data-one-of='{{ s.one_of | tojson }}'>
   {% for f in s.fields %}
-  <label class="field">{{ f.label }}
+  <label class="field">{{ f.label }}{% if f.need %} <span class="imp-tag">needed</span>{% elif f.one_of %} <span class="imp-tag" title="Needed: {{ s.one_of.label }}">one of {{ s.one_of.fields | length }} needed</span>{% endif %}
     <select name="col_{{ f.key }}">
       <option value="">(none)</option>
       {% for c in s.columns %}<option value="{{ c }}"{% if c == f.value %} selected{% endif %}>{{ c }}</option>{% endfor %}
@@ -48,4 +33,13 @@
   </label>
   {% endfor %}
 </div>
+{{ wait(s) }}
 {% endmacro %}
+
+{# The line naming the needed fields still without a column (hidden once each has one). #}
+{% macro wait(s) %}
+<p class="imp-wait" data-imp-wait role="status"{% if not s.missing %} hidden{% endif %}><span class="ms" aria-hidden="true">touch_app</span><span data-imp-missing>Pick the column for: {{ s.missing | join(", ") }}.</span> <span class="muted">The button waits until each has one.</span></p>
+{% endmacro %}
+
+{# The import's button attributes: closed while a needed field has no column. #}
+{% macro go(s) %} data-imp-go{% if s.missing %} disabled{% endif %}{% endmacro %}

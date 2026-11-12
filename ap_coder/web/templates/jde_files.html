@@ -25,17 +25,8 @@
   <span class="muted">· last loaded {{ last.when }}{% if last.by %} by {{ last.by }}{% endif %}</span>{% endif %}
   · <a href="/jde-files/loaded/{{ card }}">See what is loaded</a></span></p>{% endif %}
 {% endmacro %}
-{# Where a report comes from, its columns and its template. #}
-{% macro report(spec, named=false) %}
-<div class="imp-report">
-  {% if named %}<h5 class="imp-sub">{{ spec.title }} <span class="muted">· {{ spec.purpose }}</span></h5>{% endif %}
-  <p class="imp-source"><span class="ms" aria-hidden="true">ios_share</span><span><b>How to get it:</b> {{ spec.source }}</span></p>
-  {% if spec.more %}<details class="imp-more"><summary>More</summary><p class="muted">{{ spec.more }}</p></details>{% endif %}
-  {{ imp.columns(spec) }}
-  {% if not spec.no_template %}<p class="imp-template"><a href="/jde-files/template/{{ spec.key }}" download><span class="ms" aria-hidden="true">download</span>Download a blank template ({{ ".csv" if spec.key == "journal" else ".xlsx" }})</a>
-    <span class="muted">· its column names, to compare with your export</span></p>{% endif %}
-</div>
-{% endmacro %}
+{# Where a report comes from, its columns and its template (_import.html). #}
+{% macro report(spec, named=false) %}{{ imp.report(spec, named, "/jde-files/template/") }}{% endmacro %}
 {# Cancel: back to the card, the file forgotten. #}
 {% macro cancel(card) %}<a class="btn" href="/jde-files#{{ card }}"><span class="ms" aria-hidden="true">close</span>Choose another file</a>{% endmacro %}
 {% block content %}

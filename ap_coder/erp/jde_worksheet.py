@@ -258,6 +258,7 @@ BY_ID = {q.id: q for q in QUESTIONS}
 UPPER = {"document_type", "credit_document_type", "po_document_type", "domestic_currency", "self_assessed_code",
          "exempt_code"}  # fmt: skip
 YES, NO = {"yes", "y", "true", "1", "oui", "o", "x"}, {"no", "n", "false", "0", "non"}
+ID, ANSWER = "ID", "Your answer"  # the Questions sheet's columns its answers are read from
 
 
 def _current(q: Question, settings: jde_settings.JdeSettings) -> str:
@@ -327,9 +328,7 @@ def build(settings: jde_settings.JdeSettings, gl_accounts: list[dict[str, Any]],
     readme.column_dimensions["A"].width = 110
 
     ws = wb.create_sheet("Questions")
-    ws.append(
-        ["ID", "Topic", "Question for the JDE team", "JDE field", "AP Coder uses now", "Your answer", "Allowed answers"]
-    )
+    ws.append([ID, "Topic", "Question for the JDE team", "JDE field", "AP Coder uses now", ANSWER, "Allowed answers"])
     choice_dv: dict[str, DataValidation] = {}
     for q in QUESTIONS:
         allowed = {BOOL: "yes or no", CHOICE: " / ".join(q.choices.values()), LIST: "codes separated by commas",
@@ -425,8 +424,13 @@ def read(content: bytes, settings: jde_settings.JdeSettings) -> Result:
     if "Questions" not in wb.sheetnames:
         out.problems.append("This is not AP Coder's JDE worksheet (it has no Questions sheet).")
         return out
+    header = {str(h or "").strip() for h in next(wb["Questions"].iter_rows(max_row=1, values_only=True), ())}
+    if lost := [f"“{name}”" for name in (ID, ANSWER) if name not in header]:  # (renamed or deleted: B-2399)
+        out.problems.append(f"The worksheet's Questions sheet has no {' or '.join(lost)} column: nothing was read. "
+                            f"Download the worksheet again and fill in its “{ANSWER}” column.")  # fmt: skip
+        return out
     for row in _rows(wb, "Questions"):
-        q, answer = BY_ID.get(row.get("ID", "")), row.get("Your answer", "")
+        q, answer = BY_ID.get(row.get(ID, "")), row.get(ANSWER, "")
         if q is None or not answer:
             continue
         label = f'"{q.question[:60]}"'

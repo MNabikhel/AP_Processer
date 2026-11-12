@@ -120,6 +120,19 @@ def test_template_has_every_column():
     assert set(map_columns(header)) == set(header)
 
 
+def test_the_templates_example_row_is_under_its_own_columns():
+    """B-2401: the open amount column was added to the template's header but not to its example row: the received
+    quantity read 6000 (the GL account), the cost center "open" and the status nothing."""
+    import csv
+    import io
+
+    (row,) = list(csv.DictReader(io.StringIO(template_csv().decode("utf-8-sig"))))
+    assert None not in row and list(row) == list(po_mod.TEMPLATE_COLUMNS)
+    (line,), _ = rows_from_records([row], map_columns(list(row)))
+    assert (line["received_quantity"], line["gl_code"], line["cost_center"]) == (10.0, "6000", "")
+    assert row["status"] == "open"
+
+
 def test_reimport_replaces_the_lines_of_that_po_only(store):
     before = {p["po_number"]: p for p in store.purchase_orders()}
     assert set(before) == {"PO-88213", "PO-89904", "PO-90155", "PO-90377"}

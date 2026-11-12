@@ -156,7 +156,8 @@ def settings_tab(request: Request, tab: str) -> HTMLResponse:
     if tab == "jde":
         from ap_coder.web.pages.settings_jde import jde_context
 
-        return render_tab(request, tab, jde_hidden=not jde_shown(get_store(request)), **jde_context(get_store(request)))
+        return render_tab(request, tab, jde_hidden=not jde_shown(get_store(request)),
+                          **jde_context(get_store(request), request.query_params))  # fmt: skip
     if tab == "review":
         return render_tab(request, tab, **review_context(request))
     if tab == "hub":

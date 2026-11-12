@@ -1,5 +1,8 @@
 {% extends "base.html" %}
-{% block head %}<link rel="stylesheet" href="{{ static_url('/static/analytics.css') }}">{% endblock %}
+{% from "_sheet.html" import columns, go %}
+{% import "_import.html" as imp with context %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/analytics.css') }}">
+<link rel="stylesheet" href="{{ static_url('/static/imports.css') }}">{% endblock %}
 {% block content %}
 <nav class="tabs" aria-label="Learning">
   {% for key, label in tabs.items() %}
@@ -76,7 +79,6 @@
   </form>
   {% endif %}
   {% elif upload %}
-  <p><b>{{ upload.name }}</b> · {{ upload.rows | plural("line") }}</p>
   {% if upload.sheets | length > 1 %}
   <form class="row" method="get" action="/learning#history">
     <input type="hidden" name="history" value="{{ upload.token }}">
@@ -85,34 +87,24 @@
     </select></label>
   </form>
   {% endif %}
-  <form method="post" action="/learning/history/teach" data-busy="Teaching…" data-long>
-    <input type="hidden" name="token" value="{{ upload.token }}">
-    <input type="hidden" name="sheet" value="{{ upload.sheet }}">
-    <div class="an-form-grid three">
-      {% for field, label in history_labels.items() %}
-      <label class="field">{{ label }}
-        <select name="col_{{ field }}">
-          <option value="">(none)</option>
-          {% for c in upload.columns %}<option value="{{ c }}"{% if upload.guessed.get(field) == c %} selected{% endif %}>{{ c }}</option>{% endfor %}
-        </select></label>
-      {% endfor %}
-    </div>
-    <p class="muted">* needed. Lines without a vendor, a description or a GL account are skipped.</p>
+  {% call imp.preview(upload.s.look, "past_coding") %}{% endcall %}
+  <form method="post" action="/learning/history/teach" class="stack" data-busy="Teaching…" data-long id="pick-past_coding">
+    {{ columns(upload.s, token="token") }}
+    <p class="muted">Lines without a vendor, a description or a GL account are skipped.</p>
     <div class="row">
-      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">school</span>Teach {{ upload.rows | plural("line") }}</button>
+      <button class="btn primary" type="submit"{{ go(upload.s) }}><span class="ms" aria-hidden="true">school</span>Teach {{ upload.rows | plural("line") }}</button>
       <a class="btn" href="/learning#history">Cancel</a>
     </div>
   </form>
   {% else %}
   {% if upload_gone %}{{ ui.empty_note("That upload has expired", " Upload the file again.", "schedule") }}{% endif %}
   {% if can("/learning/history/upload") %}{# server mode: teaching the past coding is an Admin's (D-98) #}
-  <form class="row" method="post" action="/learning/history/upload" enctype="multipart/form-data" data-busy="Reading…">
-    <label class="field">AP line history (CSV or Excel)
-      <input type="file" name="file" accept=".csv,.xlsx,.xls,.txt" required></label>
-    <button class="btn" type="submit"><span class="ms" aria-hidden="true">upload</span>Read the file</button>
-  </form>
+  <div class="stack imp-pane">
+  {{ imp.report(history_spec) }}
+  {{ imp.file_box("/learning/history/upload", ".csv,.xlsx,.xls,.txt", "The AP line history, a CSV or Excel file (.csv, .xlsx or .xls), or JD Edwards' Transaction Journal", "Reading…", then="Teach") }}
   <p class="muted">From JD Edwards: the Transaction Journal (report R09321) saved as CSV is read as it comes. Its
     summary is shown first; nothing is loaded until you say so.</p>
+  </div>
   {% else %}
   <p class="muted">An Admin imports the past coding.</p>
   {% endif %}
@@ -404,3 +396,4 @@
 </section>
 {% endif %}
 {% endblock %}
+{% block scripts %}<script type="module" src="{{ static_url('/static/js/imports.js') }}"></script>{% endblock %}
