@@ -766,7 +766,8 @@ CHECKS: dict[str, CheckHelp] = {
     "GST_HST_NUMBER_MISSING": CheckHelp(
         TAX, "No GST/HST number",
         "GST/HST is charged but the vendor's registration number was not found. Without it the input tax "
-        "credit can be denied in an audit.",
+        "credit can be denied in an audit. Said from $100 ($30 before 21 April 2021): under that, no number is "
+        "needed.",
         "Type the number from the document, or ask the vendor for it.",
     ),
     "GST_HST_NUMBER_FORMAT": CheckHelp(
@@ -783,7 +784,8 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "QST_NUMBER_MISSING": CheckHelp(
         TAX, "No QST number",
-        "QST is charged but the vendor's QST number was not found (needed to claim the refund).",
+        "QST is charged but the vendor's QST number was not found (needed to claim the refund). Said from $100 "
+        "($30 before 21 April 2021): under that, no number is needed.",
         "Type the number from the document, or ask the vendor for it.",
     ),
     "QST_NUMBER_FORMAT": CheckHelp(

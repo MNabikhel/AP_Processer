@@ -287,6 +287,27 @@ def test_one_pay_item_per_line_takes_the_tax_of_the_distribution():
     assert gross == [98.80, 113.00]
 
 
+def test_a_meal_with_the_hst_of_another_province_keeps_half_of_its_own_tax():
+    """B-2500: Ontario HST 13% on 1,000.00 of paper and Nova Scotia HST 14% on a 500.00 dinner: each HST line was
+    spread by amount over both lines, so the dinner took 66.66 of HST and 33.34 was expensed, the ITC over-claimed by
+    1.66. The lines' amounts tell which HST is on which line: the dinner's 70.00, half of it (35.00) expensed with
+    it, and the pay items take the same."""
+    doc = _on([(1000.0, "6000", "Paper"), (500.0, MEALS, "Client dinner")], 0.0)
+    doc.update(tax_total=200.0, grand_total=1700.0, tax_lines=[
+        {"tax_type": "HST", "province": "ON", "rate": 0.13, "taxable_amount": 1000.0, "tax_amount": 130.0},
+        {"tax_type": "HST", "province": "NS", "rate": 0.14, "taxable_amount": 500.0, "tax_amount": 70.0},
+    ])  # fmt: skip
+    dist = _dist(doc)
+    assert _split(dist) == ([("6000", 0.0, 1000.0), (MEALS, 35.0, 535.0)], [("2310", 130.0), ("2310", 35.0)])
+    inv = {"id": 1, "final_output": {**doc, "gl_distribution": dist}}
+    settings = jde_settings.JdeSettings(
+        amount_mode=jde_settings.AMOUNT_TAX, decimals=jde_settings.POINT, line_numbering=jde_settings.MATCH_HEADER
+    )
+    headers, dists, _ = jde_zfiles.voucher_rows(inv, "10023", settings)
+    assert [h["VLSTAM"] for h in headers] == ["130.00", "35.00"]
+    assert [d["VNAA"] for d in dists] == ["1000.00", "535.00"]
+
+
 def test_a_meal_sharing_the_tax_with_unmarked_lines_is_to_confirm():
     """B-868: a 100.00 catered lunch and 100.00 of groceries (zero-rated), HST 13.00, no line marked: the tax was
     spread over both, so only 3.25 was expensed instead of 6.50. A finding asks which lines carry the tax."""
