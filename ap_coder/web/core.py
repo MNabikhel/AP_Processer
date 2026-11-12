@@ -753,18 +753,21 @@ def use_simple(store: Store, actor: str | None = None) -> bool:
 PILOT_SETUP = "pilot_setup"  # an older laptop data folder set up at a start (D-232): "done", or "declined"
 ASK_SIMPLE = ("Use the short menu and set up JD Edwards keying (the keying sheet)? Your invoices are kept; QST "
               "is then added to each expense line, as JD Edwards posts it. [Y/n] ")  # fmt: skip
+# The question when JD Edwards was set up already (``keying_to_set_up`` False): only the screens change (B-2531).
+ASK_SCREENS = "Use the short menu? Your invoices and your JD Edwards settings are kept as they are. [Y/n] "
 
 
 def older_folder_start(db: Path, ask: Callable[[str], bool] | None = None) -> str:
     """A laptop's data folder an earlier AP Coder made, set up the department's way at a start, once (D-232; the
     launcher, before it serves; never the company server's). Holding no invoices but the demo's (or none): as a new
     folder, the demo invoices removed (``_demo_removed``), the Simple screens and JD Edwards keying (``use_simple``),
-    no question. Holding invoices of its own, or GL accounts or a tax setup of its own (``setup_of_its_own``, B-2531):
-    ``ask`` (the question ``ASK_SIMPLE``, True for yes) decides; yes does what the queue's card's "Use the simple
-    screens" does, no is recorded (the card still asks); no ``ask`` (nobody at the window), nothing more is done or
-    recorded. A folder whose screens were chosen
-    already is left as it is, but one: Simple chosen with JD Edwards keying never set up (chosen before that set it
-    up, B-2382) is set up as one whose screens were never chosen. Returns what to say ("" for nothing)."""
+    no question. Holding invoices of its own, or, with JD Edwards keying to set up, GL accounts or a tax setup of its
+    own (``setup_of_its_own``, B-2531): ``ask`` (the question ``ASK_SIMPLE``, or ``ASK_SCREENS`` when JD Edwards was
+    set up already; True for yes) decides; yes does what the queue's card's "Use the simple screens" does, no is
+    recorded (the card still asks); no ``ask`` (nobody at the window), nothing more is done or recorded. A folder
+    whose screens were chosen already is left as it is, but one: Simple chosen with JD Edwards keying never set up
+    (chosen before that set it up, B-2382) is set up as one whose screens were never chosen. Returns what to say ("" for
+    nothing)."""
     if not db.is_file():
         return ""  # a new data folder: ``first_run`` sets it up
     store = Store(db)
@@ -773,8 +776,9 @@ def older_folder_start(db: Path, ask: Callable[[str], bool] | None = None) -> st
         return ""
     own = sum(store.status_counts().values()) > store.demo_count()  # invoices of its own
     removed = 0 if own else _demo_removed(store)
-    if own or setup_of_its_own(store):  # (the keying changes how its QST is coded: B-2531)
-        if ask is None or not ask(ASK_SIMPLE):
+    keying = keying_to_set_up(store)
+    if own or (keying and setup_of_its_own(store)):  # (the keying changes how its QST is coded: B-2531)
+        if ask is None or not ask(ASK_SIMPLE if keying else ASK_SCREENS):
             if ask is not None:
                 store.set_setting(PILOT_SETUP, "declined")
             return "The demo invoices were removed." if removed else ""

@@ -814,7 +814,7 @@ what pauses them, their address too; the *Users* page lists paused addresses and
 
 Passwords: at least 12 characters, not the username or the name, not a common password, not one character or a short
 pattern repeated. A temporary password (a new account, a reset) works for 3 days: after that, reset it again (the
-first Admin's, while the only Admin, works until its first sign-in). Every
+first Admin's, made at the console, works while it is the only Admin and nobody has signed in yet). Every
 sign-in, code that didn't match, lockout, authenticator set up or reset, change to a user and download is in
 *Activity*, shown to Admins only.
 
