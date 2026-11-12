@@ -19,7 +19,7 @@ from typing import Any
 
 from ..chart import SEPARATOR as DOT
 from . import by_hand, dialect
-from ._base import _in_list
+from ._base import _in_list, fold_text
 from .chart import _settings
 
 CHART, UNITS, SUPPLIERS, JOURNAL, VOUCHERS = "chart", "units", "suppliers", "journal", "vouchers"
@@ -168,12 +168,15 @@ def _view(conn: sqlite3.Connection, what: str) -> View:
 
 def _where(view: View, q: Any, filters: Mapping[str, Any], kept: Mapping[str, Any]) -> tuple[str, list[Any]]:
     """The SQL condition (and its values) of the rows of ``view`` a search for ``q`` and ``filters`` keep: each
-    word of the search somewhere in the row's searched columns (A to Z in any case), each filter's column its value
-    exactly (``BLANK``: empty), and, for ``BY_HAND``, the rows ``kept`` names."""
+    word of the search somewhere in the row's searched columns (accents and the case of any letter aside), each
+    filter's column its value exactly (``BLANK``: empty), and, for ``BY_HAND``, the rows ``kept`` names."""
     parts, args = [view.where], []
     for word in str(q or "").split()[:WORDS_MOST]:
-        found = "%" + word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        parts.append("(" + " OR ".join(f"{dialect.like(column)} ESCAPE '\\'" for column in view.search) + ")")
+        folded = fold_text(word).strip()  # (a lone accent mark folds to "" or " ": left out, as a space is)
+        if not folded:
+            continue
+        found = "%" + folded.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        parts.append("(" + " OR ".join(f"{dialect.like_folded(column)} ESCAPE '\\'" for column in view.search) + ")")
         args += [found] * len(view.search)
     for column in view.filters:
         value = str(filters.get(column.key) or "")
