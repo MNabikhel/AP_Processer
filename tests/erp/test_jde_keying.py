@@ -211,6 +211,19 @@ def test_a_line_with_a_remark_of_its_own_is_on_the_sheet_with_it():
     assert [r["VNEXR"] for r in dist] == [row[3] for row in lines_and_check(block)[:3]]
 
 
+def test_a_remark_the_person_cleared_is_keyed_empty_on_the_sheet_and_in_the_files():
+    """B-2512: a remark the person emptied on purpose (D-229) was keyed as the line's description cut at 30 (the
+    sheet's Explanation -Remark-, VNEXA and VNEXR): the line's remark was copied to its G/L line only when it had
+    text, so ``line_remark`` never saw it was cleared."""
+    invoice = one_line()
+    invoice["final_output"]["line_items"][0].update(remark="", remark_from="person")
+    (block,) = blocks(workbook([invoice])[jde_keying.SHEET])
+    assert lines_and_check(block)[0][3] in ("", None)
+    files = jde_zfiles.export_batch([invoice], settings(remarks=jde_settings.REMARKS_TYPED), lookup, batch=7, on=ON_DAY)
+    (dist,) = csv.DictReader(io.StringIO(files[jde_zfiles.DIST_FILE].decode()))
+    assert (dist["VNEXA"], dist["VNEXR"]) == ("", "")
+
+
 def test_quebec_with_the_qst_in_the_expense_shows_the_gst_on_the_pay_item_and_the_qst_in_the_line():
     (block,) = blocks(workbook([quebec()])[jde_keying.SHEET])
     assert (field(block, "Gross amount").value, field(block, "Taxable amount").value) == (1425.69, 1240)

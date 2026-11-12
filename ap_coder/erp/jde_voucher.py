@@ -553,6 +553,8 @@ def _check_distribution(v: _Voucher, final: dict[str, Any], settings: JdeSetting
     for e, li in zip(v.entries, entry_lines(v.entries, final.get("line_items") or []), strict=True):
         if li is not None and li.get("remark"):  # the invoice line's own remark (``line_remark``, D-213)
             e["remark"] = li["remark"]
+        elif li is not None and li.get("remark_from") == "person":  # emptied on purpose: keyed empty (D-229, B-2512)
+            e["remark"], e["remark_from"] = "", "person"
     expected = v.gross - v.recoverable
     kept = sum(e["cents"] for e in v.entries)
     kept_cents = sum(_units(e.get("amount")) for e in v.entries)
