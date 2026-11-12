@@ -25,8 +25,8 @@ what's next.
    the welcome page, or **Settings** → **Reading**). Without it every invoice waits for you.
 1. Your name and province: **Settings** → **Review** → type your name, choose your province (where invoices are
    delivered to you) → **Save**. Approvals carry your name.
-2. Your GL accounts and sales tax: **GL accounts & tax** → open **Import GL accounts from CSV or Excel** → choose
-   your file → **Upload a CSV or Excel file** → check the preview → **Import GL accounts**. To try AP Coder first, click **Use the sample GL accounts** instead
+2. Your GL accounts and sales tax: **GL accounts & tax** → open **Load GL accounts from CSV or Excel** → choose
+   your file → **Check the file** → check the columns and rows shown → **Load GL accounts**. To try AP Coder first, click **Use the sample GL accounts** instead
    (no cost centers). On the **Sales tax accounts** tab, pick a GL account for GST, HST and QST (PST needs
    none) → **Save tax setup**. Optional: **Bank accounts**. Then the vendor
    master (*Vendors*), the JD Edwards settings and *Teach from past coding*.

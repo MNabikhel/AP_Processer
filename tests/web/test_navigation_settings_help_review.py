@@ -157,7 +157,7 @@ def test_help_and_the_quick_start_number_the_same_steps(client):
     assert [title for title, _, _ in QUICK_START] == [t for _, t in numbered]
     assert "Start LM Studio" in quick.split("## Start (every day)", 1)[1].split("##", 1)[0]
     help_page = client.get("/help").text
-    assert "Import GL accounts" in quick and 'same steps as the <a href="/help/quick-start">Quick start' in help_page
+    assert "Load GL accounts" in quick and 'same steps as the <a href="/help/quick-start">Quick start' in help_page
 
 
 # --- B-532: the coding memory is one number ------------------------------------------------------------------------
