@@ -890,8 +890,14 @@ def _shown_rail(request: Request, store: Store) -> dict[str, list[dict[str, Any]
     return {group: [i for i in items if can(request, i["page"].path, "GET")] for group, items in found.items()}
 
 
+def signs_in(request: Request) -> bool:
+    """Whether people sign in to this dashboard: the company's server, or a laptop's Admin (D-243)."""
+    return bool(getattr(request.app.state, "sign_in", False))
+
+
 def account(request: Request) -> dict[str, Any] | None:
-    """The person logged in, for the rail's foot (server mode only): their name, username and role."""
+    """The person logged in, for the rail's foot (server mode only): their name, username and role. (A laptop's Admin
+    signed in is this computer's own person, D-243: the pages speak to them as before, ``laptop_signed_in``.)"""
     found = identity.person()
     if not server_mode(request) or found is None or not found.user_id:
         return None
@@ -951,6 +957,7 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
         "is_admin": is_admin(request),  # may see the server's own details, such as its folders (web/access.py)
         "admin_notice": admin_notice(request),  # the server's HTTPS certificate near its end, or past it (D-187)
         "account": account(request),
+        "laptop_signed_in": identity.LAPTOP_ACCOUNT.get() is not None,  # its Log out and password (D-243)
         "can": functools.partial(can, request),
     }
     base.update(context)

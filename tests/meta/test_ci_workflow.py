@@ -191,6 +191,23 @@ def test_the_update_check_finds_the_schema_the_new_version_writes():
     assert old_versions.schema_of(Path(__file__).resolve().parents[2]) == str(SCHEMA_VERSION)
 
 
+def test_the_update_check_works_out_the_authenticators_code_as_ap_coder_does():
+    """old_versions.py signs in after the update (D-243) with the standard library alone: its code is AP Coder's."""
+    scripts = Path(__file__).resolve().parents[2] / "scripts" / "ci"
+    if not (scripts / "old_versions.py").is_file():
+        pytest.skip("scripts/ci is not in this copy (an offline bundle)")
+    sys.path.insert(0, str(scripts))
+    try:
+        import old_versions
+    finally:
+        sys.path.pop(0)
+    from ap_coder.core import authenticator
+
+    secret = authenticator.new_secret()
+    for now in (0.0, 59.0, 1_800_000_000.0, 1_800_000_029.9):
+        assert old_versions._totp(secret, now) == authenticator.code(secret, now)
+
+
 @needs_ci
 def test_every_cells_parts_are_all_there_and_the_test_windows_leaves_out_runs_on_main():
     """D-233: each cell of the test matrix (an OS, a Python, the whole suite or the fast tier) is split into parts

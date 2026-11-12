@@ -11,7 +11,8 @@ that did not match.
   for that username from that address for 15 minutes; 30 from one address, whatever the usernames, pause that
   address (a shared NAT, RDS or proxy address is not paused by five people mistyping); from the 10th within an hour
   from anywhere, a username's logins pause for 1 minute, then longer, from every address but those it logged in from
-  lately (D-109). Someone elsewhere can't lock a person out; the server's own console is never paused by address. An
+  lately (D-109). Someone elsewhere can't lock a person out; the server's own console is never paused by address,
+  and account-wide only by its own tries (D-243). An
   unknown username is counted the same way (by a hash: the text typed is never kept), and every refusal says the same
   words, so nothing tells whether a username exists. A try is recorded before its password is checked, in one
   transaction with the check of the pause, so guesses sent in parallel get no more checks than guesses sent one by one.
@@ -96,9 +97,15 @@ LOCKED = (
     "Too many tries that didn't match: logging in from this computer is paused for 15 minutes. Wait, then try "
     "again, or ask an Admin to reset your password."
 )
+# An account's logins paused from anywhere (D-109), in words of its own; at the console from its own tries (D-243).
+ACCOUNT_PAUSED = (
+    "Too many tries that didn't match for this username: logging in with it is paused for a few minutes, except where "
+    "it logged in lately. Wait, then try again, or ask an Admin."
+)
 LAST_ADMIN = "AP Coder needs at least one active Admin: make another person an Admin first."
 WRONG_CODE = ("That code doesn't match, or it was used already. Type the 6 digits your authenticator app shows now "
-              "(a new code every 30 seconds).")  # fmt: skip
+              "(a new code every 30 seconds). Refused again? Check that this computer's clock and your phone's show "
+              "the right time: a minute off and the codes don't match.")  # fmt: skip
 CODE_WHY = "authenticator code"  # login_failed's why: the code didn't match (D-146)
 KEY_WHY = "authenticator key missing"
 KEY_MISSING = (
@@ -109,6 +116,23 @@ KEY_MISSING = (
 ALREADY_SET_UP = "This account's authenticator app is set up already: an Admin resets it to set it up again."
 PENDING_KIND = "login-pending"  # a login half way, in the short-lived table (D-146)
 PENDING_SECONDS = 15 * 60  # time to change a password and set an app up; the code's step takes seconds
+# The first sign-in (D-243): while the database has no account at all, admin / admin, typed in a browser on the computer
+# running AP Coder (web/pages/login.py), starts it; the account is made only once its own password is chosen.
+FIRST_USERNAME, FIRST_PASSWORD = "admin", "admin"
+FIRST_KIND = "first-sign-in"  # in the short-lived table, as a login half way is (never a session)
+FIRST_ACTOR = "the first sign-in on this computer"
+# The server's first sign-in also needs a setup code (D-243; ``sign_in.py`` ``first_setup_code`` says why and how).
+SETUP_CODE_FILE = "first_sign_in.code"
+SETUP_CODE_WRONG = ("That setup code doesn't match. On the server it is in AP Coder's window and in its service log "
+                    "(logs\\service.log in the data folder), and python -m ap_coder doctor shows it.")  # fmt: skip
+SETUP_CODE_WHY = "setup code"  # login_failed's why: the first sign-in's setup code didn't match
+SETUP_CODE_UNREADABLE = ("The setup code's file {path} can't be read by the account AP Coder runs as: another account "
+                         "made it (a command run as an administrator before the service's first start). Delete the "
+                         "file: AP Coder makes a new one, said in its window and its service log.")  # fmt: skip
+FIRST_HERE_ONLY = ("No one can sign in yet: the first sign-in is made in a browser on the computer running AP Coder "
+                   "(not through another computer or a proxy).")  # fmt: skip
+FIRST_DONE = ("The first sign-in was just finished in another browser: log in with that account (or ask the person "
+              "who made it).")  # fmt: skip
 EASY_PASSWORD = (
     "That password is too easy to guess: choose one that is not your username or your name, not a common password, "
     "and not one character or a short pattern repeated. A few unrelated words make a good one."
@@ -345,7 +369,7 @@ def carry_accounts(conn: Any, saved: dict[str, tuple[list[str], list[str], list[
     if "sessions" in tables or "sessions" in saved:
         conn.execute("DELETE FROM sessions")
     if "ephemeral" in tables:  # and no login half way (D-146)
-        conn.execute("DELETE FROM ephemeral WHERE kind = ?", (PENDING_KIND,))
+        conn.execute("DELETE FROM ephemeral WHERE kind IN (?, ?)", (PENDING_KIND, FIRST_KIND))  # nor a first sign-in
 
 
 class UsersMixin:
@@ -357,10 +381,12 @@ class UsersMixin:
     # --- Accounts ---------------------------------------------------------------------------------------------------
 
     def add_user(self, username: str, password: str, role: str = CLERK, display_name: str = "", *,
-                 actor: str = "", must_change: bool = True, by_user: int | None = None) -> int:  # fmt: skip
+                 actor: str = "", must_change: bool = True, by_user: int | None = None,
+                 only_first: bool = False) -> int:  # fmt: skip
         """A new account; ValueError (in words) for a username taken or not allowed, a role that is not one of
         ``ROLES`` or a password the policy refuses. ``by_user``: the account of the Admin adding it (recorded, for
-        ``vouched_for``)."""
+        ``vouched_for``). ``only_first``: only while the database has no account (``FIRST_DONE``), checked in the
+        transaction that adds it, so two browsers can't both make the first one."""
         name = fold_username(username)
         if not USERNAME.fullmatch(name):
             raise ValueError(
@@ -376,6 +402,8 @@ class UsersMixin:
         hashed = hash_password(password)
         with self._conn() as conn:
             begin_write(conn)
+            if only_first and conn.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+                raise ValueError(FIRST_DONE)
             if conn.execute("SELECT 1 FROM users WHERE username = ?", (name,)).fetchone():
                 raise ValueError(f"There is already an account {name}.")
             cur = conn.execute(
@@ -674,13 +702,16 @@ class UsersMixin:
         return found is not None
 
     @staticmethod
-    def _account_paused_until(conn: Any, key: str, now: float) -> float:
+    def _account_paused_until(conn: Any, key: str, now: float, only: str | None = None) -> float:
         """Until when ``key``'s logins are paused from anywhere (0 = they are not): its tries that didn't match within
         ``ACCOUNT_WINDOW`` (since its last login), from the ``ACCOUNT_FAILURES``-th on, pause it for a minute,
-        doubling each time up to ``LOCK_SECONDS`` after the last one (D-109)."""
+        doubling each time up to ``LOCK_SECONDS`` after the last one (D-109). ``only``: counting the tries from that
+        address alone (the server's console: the network's tries never pause it, its own do, D-243)."""
         last_ok = conn.execute("SELECT MAX(at) FROM login_attempts WHERE username = ? AND ok = 1", (key,)).fetchone()[0]
-        count, last = conn.execute("SELECT COUNT(*), MAX(at) FROM login_attempts WHERE username = ? AND ok = 0 AND "
-                                   "at > ?", (key, max(now - ACCOUNT_WINDOW, last_ok or 0))).fetchone()  # fmt: skip
+        where, params = ("AND ip = ? ", (key, only)) if only is not None else ("", (key,))
+        since = max(now - ACCOUNT_WINDOW, last_ok or 0)
+        count, last = conn.execute(f"SELECT COUNT(*), MAX(at) FROM login_attempts WHERE username = ? {where}AND ok = 0 "
+                                   "AND at > ?", (*params, since)).fetchone()  # fmt: skip
         if count < ACCOUNT_FAILURES:
             return 0.0
         return float(last) + min(60.0 * 2 ** min(count - ACCOUNT_FAILURES, 10), LOCK_SECONDS)
@@ -702,24 +733,25 @@ class UsersMixin:
             return False
         return not first and time.time() - when > TEMPORARY_SECONDS  # (the events' own clock)
 
-    def _locked(self, conn: Any, key: str, ip: str, now: float, console: bool) -> bool:
-        """Whether logins are paused for ``key`` (a username, or ``UNKNOWN`` and its hash) from ``ip``, or from
-        ``ip`` whatever the username (never for the server's own console), or for ``key`` from anywhere. An address
-        ``key`` logged in from lately is paused for it by its own tries only: neither a shared address paused by
-        others' tries nor an account-wide pause by tries elsewhere keeps a person out of their own office (D-109)."""
+    def _locked(self, conn: Any, key: str, ip: str, now: float, console: bool) -> str:
+        """Why logins are paused for ``key`` (a username, or ``UNKNOWN`` and its hash) now ("" when they are not):
+        from ``ip`` (``LOCKED``), or from ``ip`` whatever the username (``LOCKED``), or for ``key`` from anywhere
+        (``ACCOUNT_PAUSED``); the console never by address, account-wide by its own tries only (D-243: a forwarder
+        comes in from there). An address ``key`` logged in from lately is paused by its own tries only: others'
+        tries never keep a person out of their own office (D-109)."""
         found = conn.execute("SELECT MAX(user_locked_until) FROM login_attempts WHERE username = ? AND ip = ?",
                              (key, ip))  # fmt: skip
         if (found.fetchone()[0] or 0) > now:
-            return True
+            return LOCKED
         if self._known(conn, key, ip, now):
-            return False
-        if self._account_paused_until(conn, key, now) > now:
-            return True
+            return ""
+        if self._account_paused_until(conn, key, now, ip if console else None) > now:
+            return ACCOUNT_PAUSED
         if ip and not console:
             found = conn.execute("SELECT MAX(ip_locked_until) FROM login_attempts WHERE ip = ?", (ip,))
             if (found.fetchone()[0] or 0) > now:
-                return True
-        return False
+                return LOCKED
+        return ""
 
     def _count_try(self, conn: Any, key: str, ip: str, now: float, console: bool) -> tuple[int, tuple[bool, ...]]:
         """A try recorded as one that did not match before what was typed is checked, in the transaction that checked
@@ -748,7 +780,8 @@ class UsersMixin:
             "VALUES (?, ?, ?, 0, ?, ?)",
             (key, ip, now, now + LOCK_SECONDS if lock_pair else None, now + LOCK_SECONDS if lock_ip else None),
         ).lastrowid
-        lock_account = not self._known(conn, key, ip, now) and self._account_paused_until(conn, key, now) > now
+        lock_account = (not self._known(conn, key, ip, now)
+                        and self._account_paused_until(conn, key, now, ip if console else None) > now)  # fmt: skip
         return int(attempt), (lock_pair, lock_ip, lock_account)
 
     def _refused(self, conn: Any, who: dict[str, Any], ip: str, locks: tuple[bool, ...], why: str = "") -> str:
@@ -760,7 +793,7 @@ class UsersMixin:
             return ""
         by = "username" if lock_pair else "address" if lock_ip else "account"
         self._log(conn, "login_locked", None, None, {**who, "by": by, "address": ip})
-        return LOCKED
+        return ACCOUNT_PAUSED if by == "account" else LOCKED
 
     def authenticate(self, username: str, password: str, ip: str = "", *, console: bool = False) -> dict[str, Any]:
         """The first step of a login: the account whose username and password these are; ``LoginRefused`` otherwise,
@@ -778,8 +811,9 @@ class UsersMixin:
             self._begin_alone(conn, "authenticate")
             row = conn.execute("SELECT * FROM users WHERE username = ?", (name,)).fetchone()
             key = name if row is not None else UNKNOWN + token_hash(name)[:32]  # the text typed is not kept
-            if self._locked(conn, key, ip, now, console):
-                raise LoginRefused(LOCKED)
+            paused = self._locked(conn, key, ip, now, console)
+            if paused:
+                raise LoginRefused(paused)
             attempt, locks = self._count_try(conn, key, ip, now, console)
         matches = verify_password(password, row["pw_hash"] if row is not None else _dummy_hash())
         if row is not None and row["active"] and matches and row["must_change"] and self._temporary_expired(row):
@@ -834,8 +868,9 @@ class UsersMixin:
             self._begin_alone(conn, "check_code")
             row = self._account(conn, user_id)
             name = row["username"]
-            if self._locked(conn, name, ip, now, console):
-                raise LoginRefused(LOCKED)
+            paused = self._locked(conn, name, ip, now, console)
+            if paused:
+                raise LoginRefused(paused)
             secret = authenticator.open_secret(key, row["totp_secret"])
             if secret is None and row["totp_on"]:
                 self._log(conn, "login_failed", None, None, {"username": name, "why": KEY_WHY})
@@ -869,41 +904,6 @@ class UsersMixin:
             conn.execute("UPDATE users SET totp_secret = '', totp_on = 0, totp_step = 0 WHERE id = ?", (row["id"],))
             self._log(conn, "authenticator_reset", None, actor or None, {"username": row["username"]})
         return temporary
-
-    # --- A login half way: the password right, the code still to come (D-146) ----------------------------------------
-
-    def start_pending(self, user_id: int) -> str:
-        """A login half way for ``user_id``: its token, which only the browser keeps (the database its SHA-256), for
-        ``PENDING_SECONDS``. Not a session: it opens only the next steps (``web/pages/login.py``)."""
-        token, now = secrets.token_urlsafe(TOKEN_BYTES), _clock()
-        with self._conn() as conn:
-            conn.execute("DELETE FROM ephemeral WHERE kind = ? AND expires_at < ?", (PENDING_KIND, now))
-            conn.execute("INSERT INTO ephemeral (kind, token, value, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
-                         (PENDING_KIND, token_hash(token), str(int(user_id)).encode("ascii"), now,
-                          now + PENDING_SECONDS))  # fmt: skip
-        return token
-
-    def pending_user(self, token: str | None) -> dict[str, Any] | None:
-        """The active account a login half way stands for; None when there is none, or past its time."""
-        if not token:
-            return None
-        with self._conn() as conn:
-            row = conn.execute("SELECT value, expires_at FROM ephemeral WHERE kind = ? AND token = ?",
-                               (PENDING_KIND, token_hash(token))).fetchone()  # fmt: skip
-            if row is None or row["expires_at"] < _clock():
-                return None
-            found = conn.execute(f"SELECT {_USER_COLUMNS} FROM users WHERE id = ? AND active = 1",
-                                 (int(bytes(row["value"])),)).fetchone()  # fmt: skip
-        return _public(found)
-
-    def end_pending(self, token: str | None) -> None:
-        with self._conn() as conn:
-            conn.execute("DELETE FROM ephemeral WHERE kind = ? AND token = ?", (PENDING_KIND, token_hash(token or "")))
-
-    @staticmethod
-    def _end_pending(conn: Any, user_id: int) -> None:
-        """Every login half way of ``user_id`` ends (its password reset, its authenticator reset)."""
-        conn.execute("DELETE FROM ephemeral WHERE kind = ? AND CAST(value AS TEXT) = ?", (PENDING_KIND, str(user_id)))
 
     # --- Sessions ---------------------------------------------------------------------------------------------------
 

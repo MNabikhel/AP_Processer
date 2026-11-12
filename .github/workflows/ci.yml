@@ -468,7 +468,8 @@ jobs:
 
             # The newer ZIP, unzipped over the older one while its dashboard runs, and double-clicked.
             Unzip 'new'
-            $new = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'APProcessor.bat', '--port', '8595' -PassThru `
+            # (--without-sign-in: the data folder now opens on Log in, D-243; this job looks at its pages)
+            $new = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'APProcessor.bat', '--port', '8595', '--without-sign-in' -PassThru `
               -WorkingDirectory $folder -RedirectStandardOutput "$env:RUNNER_TEMP\new.out" -RedirectStandardError "$env:RUNNER_TEMP\new.err"
             $health = $null
             foreach ($i in 1..120) {
@@ -555,7 +556,8 @@ jobs:
             } catch { }
           }
           if (-not $lmsUp) { throw 'the stand-in for LM Studio did not start' }
-          $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','APProcessor.bat','--port','8596' -PassThru `
+          # (--without-sign-in: a new data folder opens on Log in, D-243; the check below reads its pages)
+          $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','APProcessor.bat','--port','8596','--without-sign-in' -PassThru `
             -RedirectStandardOutput launch.out -RedirectStandardError launch.err
           $ok = $false
           foreach ($i in 1..180) {
@@ -917,7 +919,8 @@ jobs:
           # The double-click of $2 in home $1 on port $3, its dashboard used, a second double-click, then a later start.
           works() {
             local home="$1" folder="$2" port="$3" installed="${4:-}" up="" page code pid answer
-            HOME="$home" offline "$folder/APProcessor.command" --port "$port" > "$home/launch.out" 2>&1 &
+            # (--without-sign-in: a new data folder opens on Log in, D-243; the pages below are looked at)
+            HOME="$home" offline "$folder/APProcessor.command" --port "$port" --without-sign-in > "$home/launch.out" 2>&1 &
             pid=$!
             for _ in $(seq 1 150); do
               sleep 5

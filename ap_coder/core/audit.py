@@ -569,7 +569,7 @@ def _learning_text(action: str, d: dict[str, Any]) -> str | None:
 def _account_text(action: str, d: dict[str, Any]) -> str | None:
     """Server mode's accounts: logins, passwords, roles (D-97). None for another action."""
     if action in _ACCOUNT_WORDS:
-        from .store.users import CODE_WHY, ROLE_LABELS
+        from .store.users import CODE_WHY, ROLE_LABELS, SETUP_CODE_WHY
 
         def role(key: Any) -> str:
             return ROLE_LABELS.get(str(key or ""), str(key or "?"))
@@ -585,6 +585,8 @@ def _account_text(action: str, d: dict[str, Any]) -> str | None:
             return words.format(user="an unknown account", name="", by=by, address="?", **roles)
         if action == "login_failed" and d.get("why") == CODE_WHY:  # the second step (D-146)
             return f"a login as {d.get('username') or '?'}: the authenticator code didn't match"
+        if action == "login_failed" and d.get("why") == SETUP_CODE_WHY:  # the server's first sign-in (D-243)
+            return "the first sign-in: the setup code didn't match"
         if action == "address_unlocked" and d.get("username"):  # a username's pause there (B-1208)
             return f"logins as {d['username']} from {d.get('unpaused') or 'this server'} are no longer paused"
         return _ACCOUNT_WORDS[action].format(user=d.get("username") or "?", name=d.get("name") or "", by=by,

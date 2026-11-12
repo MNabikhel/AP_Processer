@@ -148,6 +148,7 @@ def test_what_each_role_may_do(setup):
             "/login/new-password",  # a login's own steps before its session (D-146)
             "/login/authenticator",
             "/login/code",
+            "/login/first",  # the first sign-in's own password (D-243)
             "/who",
             "/shutdown",
         ):

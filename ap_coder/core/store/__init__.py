@@ -21,9 +21,10 @@ D-171), ``lessons`` (lessons and the AI reviewer's queue), ``vendors`` (the vend
 ERP's vendor master: its import, hold codes, retired names, people), ``backups`` (and ``backup_files``: the
 invoice files and others a backup holds, D-143; the copies server-update makes of a database file without opening a
 Store on it, D-189), ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages and uploads kept for a short
-while), ``samples``, ``users`` (server mode's accounts, sessions and login attempts, D-97), ``hub`` (what the finance
-hub feed reads, D-103, and its own SQLite files: what it sent, the gateway's copy, D-189), ``postings`` (the JD
-Edwards postings: the table's reads and writes, D-189, and their ledger kept across a restore, D-105), ``summary``
+while), ``samples``, ``users`` (server mode's accounts, sessions and login attempts, D-97) and ``sign_in`` (a login's
+steps before its session, D-146; the first sign-in, D-243), ``hub`` (what the finance hub feed reads, D-103, and
+its own SQLite files: what it sent, the gateway's copy, D-189), ``postings`` (the JD Edwards postings: the table's
+reads and writes, D-189, and their ledger kept across a restore, D-105), ``summary``
 (the invoices' summary the lists, the search and the reports read, D-110), ``review_queue`` (the review queue's
 lists and facts, kept in each process and followed by the summary's log of the queue's changes, D-193), ``managers``
 (a manager confirming an invoice's cost allocation, D-138), ``suppliers`` (every supplier's record at once, for the
@@ -144,6 +145,7 @@ from .register import RegisterMixin
 from .reports import ReportsMixin
 from .review_queue import ReviewQueueMixin
 from .rules import RulesMixin
+from .sign_in import SignInMixin
 from .summary import SummaryMixin
 from .suppliers import SuppliersMixin
 from .transaction import TransactionMixin
@@ -170,6 +172,7 @@ class Store(
     LearningMixin,
     EphemeralMixin,
     UsersMixin,
+    SignInMixin,
     HubMixin,
     ManagersMixin,
     FolderMixin,

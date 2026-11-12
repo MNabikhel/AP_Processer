@@ -24,6 +24,12 @@ record ``user:<id>`` as their login, and what each request may do is the role's 
 session, the login page (a page) or a 401 (an action); a password to change first, the password page; a role that
 may not, a 403 page (or JSON for an action). A login half way (the password right, the authenticator's code still to
 come, D-146) is no session: its own cookie (``pending_cookie``) is read only by the login's next steps.
+
+**Sign-in on a laptop** (D-243, its database's ``sign_in`` setting): its Admin signs in as on the server, and only
+from this computer's own browser; another computer gets neither the "Who are you?" page nor the login (sharing with
+colleagues is ``share``). Signing in only guards the door: ``PERSON`` stays None, so the person is this computer's
+own as before (their saved name, the computer's login, their drafts); the account is ``LAPTOP_ACCOUNT``
+(``signed_in``), for the login's own pages and the rail's foot.
 """
 
 from __future__ import annotations
@@ -66,13 +72,19 @@ HTTP_PENDING_COOKIE = "ap_pending"  # over --insecure-http
 NEW_PASSWORD_PATH = "/login/new-password"
 SET_UP_PATH = "/login/authenticator"
 CODE_PATH = "/login/code"
-LOGIN_FORMS = (LOGIN_PATH, NEW_PASSWORD_PATH, SET_UP_PATH, CODE_PATH)  # the forms sent before a session
+FIRST_PATH = "/login/first"  # the first sign-in's own password, after admin / admin (D-243)
+LOGIN_FORMS = (LOGIN_PATH, NEW_PASSWORD_PATH, SET_UP_PATH, CODE_PATH, FIRST_PATH)  # the forms sent before a session
 # What a page asks by itself while it waits (a job's progress, OvisOCR2 reading the invoice, the self-test, a download
 # being made, a bulk approval): no one using it, so these don't keep a session from ending after its idle minutes
 # (D-109, B-1580, B-1927).
 POLLS = re.compile(r"/(process/status|jobs/[^/]+|review/\d+/reader|settings/reading/self-test|downloads/\d+|"
                    r"review/bulk/status)")  # fmt: skip
 SESSION_ENDED = "You are not logged in (or your session ended): log in again."
+LAPTOP_HERE_ONLY = (
+    "AP Coder on this laptop is used at the laptop itself: its Admin signs in there. To let colleagues in from their "
+    "computers, its owner runs python -m ap_coder share (docs/SERVER.md, section 16)."
+)
+LAPTOP_OPEN = ("/healthz", "/readyz")  # answered to another computer all the same (the launcher, a monitor)
 CHANGE_FIRST = "Choose a new password first (Your password), then carry on."
 THIS_COMPUTER = {"127.0.0.1", "localhost", "::1"}
 # Settings (all of it: the approval limit and rates, Data's backups and restore, the Azure check) are changed only on
@@ -112,11 +124,19 @@ class Person:
 
 
 PERSON: contextvars.ContextVar[Person | None] = contextvars.ContextVar("ap_coder_person", default=None)
+# The Admin signed in on a laptop (D-243): never ``PERSON``, which would make them a colleague.
+LAPTOP_ACCOUNT: contextvars.ContextVar[Person | None] = contextvars.ContextVar("ap_coder_laptop", default=None)
 
 
 def person() -> Person | None:
     """The colleague behind the request being answered; None on this computer (or outside a request)."""
     return PERSON.get()
+
+
+def signed_in() -> Person | None:
+    """The account signed in for the request being answered: the server's person, or a laptop's Admin (D-243)."""
+    found = person()
+    return found if found is not None and found.user_id else LAPTOP_ACCOUNT.get()
 
 
 def kept_person() -> dict[str, Any]:
@@ -300,15 +320,20 @@ class Identity:
     """ASGI middleware: puts the colleague of each request in ``PERSON`` (and their address in the store's
     ``EVENT_ORIGIN``); a browser on another computer that has not said who it is goes to the "Who are you?" page."""
 
-    def __init__(self, app: Any, secret: bytes, address: str = "127.0.0.1", server: bool = False) -> None:
+    def __init__(self, app: Any, secret: bytes, address: str = "127.0.0.1", server: bool = False,
+                 laptop: bool = False) -> None:  # fmt: skip
         self.app = app
         self.secret = secret
         self.network = str(address or "").strip().strip("[]").lower() not in THIS_COMPUTER
         self.server = bool(server)
+        self.laptop = bool(laptop) and not self.server  # its Admin signs in (D-243)
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if self.server and scope["type"] == "http":
             await self._server(scope, receive, send)
+            return
+        if self.laptop and scope["type"] == "http":
+            await self._laptop(scope, receive, send)
             return
         client = (scope.get("client") or ("", 0))[0] or ""
         if scope["type"] != "http" or not self.network or from_this_computer(scope):
@@ -348,6 +373,41 @@ class Identity:
             PERSON.reset(tokens[0])
             EVENT_ORIGIN.reset(tokens[1])
 
+    async def _laptop(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        """A laptop whose Admin signs in (D-243): another computer gets nothing but the styles and the health checks;
+        this computer's browser needs the Admin's session for all but the login's own pages (``roles.OPEN``)."""
+        from ap_coder.core.store.users import ADMIN
+        from ap_coder.web import roles
+
+        path, method = scope.get("path") or "", str(scope.get("method") or "GET").upper()
+        page = method in ("GET", "HEAD")
+        if path.startswith(OPEN_PREFIXES) or path in LAPTOP_OPEN:
+            await self.app(scope, receive, send)
+            return
+        refusal: Any = None
+        user = None
+        if self.network and not from_this_computer(scope):
+            refusal = _here_only_page() if page else JSONResponse({"ok": False, "error": LAPTOP_HERE_ONLY}, 403)
+        else:
+            store = getattr(getattr(scope.get("app"), "state", None), "store", None)
+            token = session_token(scope.get("headers") or [], session_cookie(scope.get("scheme") == "https"))
+            if token and store is not None:
+                polled = page and POLLS.fullmatch(path) is not None
+                user = await run_in_threadpool(store.session_user, token, renew=not polled)
+            user = user if user is not None and user["role"] == ADMIN else None
+            if user is None and roles.need_for(scope.get("app"), scope) != roles.OPEN:
+                refusal = _to_login(scope, page)
+        if refusal is not None:
+            refusal.headers["Cache-Control"] = "no-store"
+            await refusal(scope, receive, send)
+            return
+        client = (scope.get("client") or ("", 0))[0] or ""
+        token = LAPTOP_ACCOUNT.set(_account_person(user, client) if user is not None else None)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            LAPTOP_ACCOUNT.reset(token)
+
     async def _server(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         """Server mode: the account behind the session cookie, and what its role may do (web/roles.py)."""
         from ap_coder.web import roles
@@ -367,17 +427,12 @@ class Identity:
                 user = await run_in_threadpool(store.session_user, token, renew=not polled)
         refusal: Any = None
         if user is None and need != roles.OPEN:
-            if page:
-                refusal = RedirectResponse(f"{LOGIN_PATH}?next={quote(_wanted(scope), safe='')}", status_code=303)
-            else:
-                # (``session_ended``: the page's script stays on the page and says so, its edits kept, D-185)
-                refusal = JSONResponse({"ok": False, "error": SESSION_ENDED, "redirect": LOGIN_PATH,
-                                        "session_ended": True}, status_code=401)  # fmt: skip
-                if path == "/logout":  # (two cookies, say): the sessions they name end, and the cookie is cleared
-                    for named in session_tokens(scope.get("headers") or [], cookie):
-                        if named and store is not None:
-                            await run_in_threadpool(store.end_session, named)
-                    refusal.delete_cookie(cookie, path="/", httponly=True, samesite="strict", secure=secure)
+            refusal = _to_login(scope, page)
+            if not page and path == "/logout":  # (two cookies, say): the sessions they name end, the cookie cleared
+                for named in session_tokens(scope.get("headers") or [], cookie):
+                    if named and store is not None:
+                        await run_in_threadpool(store.end_session, named)
+                refusal.delete_cookie(cookie, path="/", httponly=True, samesite="strict", secure=secure)
         elif user is not None and user["must_change"] and need not in (roles.OPEN, roles.SIGNED_IN):
             if page:
                 refusal = RedirectResponse(f"{PASSWORD_PATH}?next={quote(_wanted(scope), safe='')}", status_code=303)
@@ -408,6 +463,19 @@ class Identity:
             PERSON.reset(tokens[0])
             EVENT_ORIGIN.reset(tokens[1])
             EVENT_ACTOR.reset(tokens[2])
+
+
+def _to_login(scope: dict[str, Any], page: bool) -> Any:
+    """No session: a page goes to the login, coming back after it; an action is refused (``session_ended``: the
+    page's script stays on the page and says so, its edits kept, D-185)."""
+    if page:
+        return RedirectResponse(f"{LOGIN_PATH}?next={quote(_wanted(scope), safe='')}", status_code=303)
+    return JSONResponse({"ok": False, "error": SESSION_ENDED, "redirect": LOGIN_PATH, "session_ended": True},
+                        status_code=401)  # fmt: skip
+
+
+def _here_only_page() -> HTMLResponse:
+    return HTMLResponse(f"<!doctype html><meta charset=utf-8><title>AP Coder</title><p>{LAPTOP_HERE_ONLY}</p>", 403)
 
 
 def _wanted(scope: dict[str, Any]) -> str:

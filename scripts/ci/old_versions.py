@@ -34,15 +34,20 @@ taught (a note, a coding rule), an export batch, a setting, and ``.env`` values.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
+import hmac
+import html
 import json
 import os
 import re
 import socket
 import sqlite3
+import struct
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -403,15 +408,78 @@ class Checks:
         return ok
 
 
-def _get(port: int, path: str, timeout: float = 60) -> tuple[int, str, bytes]:
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_COOKIES: dict[str, str] = {}  # this check's browser: its session once signed in (D-243)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):  # a page that sends to the login is seen as such
+        return None
+
+
+def _get(port: int, path: str, timeout: float = 60, form: dict[str, str] | None = None,
+         follow: bool = True) -> tuple[int, str, bytes]:  # fmt: skip
+    """A GET (or, with ``form``, a page's POST) from this computer's browser, its cookies kept; a GET's redirect
+    followed, unless ``follow`` is False."""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+    headers = {"Cookie": "; ".join(f"{k}={v}" for k, v in _COOKIES.items())} if _COOKIES else {}
+    data = None
+    if form is not None:
+        data = urllib.parse.urlencode(form).encode()
+        headers.update({"X-AP-Coder": "1", "Content-Type": "application/x-www-form-urlencoded"})
+    request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=data, headers=headers)
     try:
-        with opener.open(f"http://127.0.0.1:{port}{path}", timeout=timeout) as response:
-            return response.status, response.headers.get("Content-Type", ""), response.read()
+        with opener.open(request, timeout=timeout) as response:
+            status, kind, body, sent = (
+                response.status,
+                response.headers.get("Content-Type", ""),
+                response.read(),
+                response.headers,
+            )
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.headers.get("Content-Type", ""), exc.read()
+        status, kind, body, sent = exc.code, exc.headers.get("Content-Type", ""), exc.read(), exc.headers
     except OSError as exc:
         return 0, "", str(exc).encode()
+    for line in sent.get_all("Set-Cookie") or []:
+        name, _, rest = line.partition("=")
+        _COOKIES[name.strip()] = rest.split(";", 1)[0]
+    if follow and form is None and status in (301, 302, 303, 307, 308) and sent.get("Location", "").startswith("/"):
+        return _get(port, sent["Location"], timeout)
+    return status, kind, body
+
+
+def _totp(secret: str, now: float) -> str:
+    """The authenticator app's code (RFC 6238: HMAC-SHA1, 30 seconds, 6 digits), standard library only."""
+    key = base64.b32decode(secret + "=" * (-len(secret) % 8))
+    digest = hmac.new(key, struct.pack(">Q", int(now // 30)), hashlib.sha1).digest()
+    at = digest[-1] & 15
+    return f"{(struct.unpack('>I', digest[at : at + 4])[0] & 0x7FFFFFFF) % 1_000_000:06d}"
+
+
+def sign_in(c: Checks, port: int, reviewer: str = "") -> None:
+    """The first sign-in after the update (D-243): every page waits for it; admin / admin, the name offered (the
+    laptop's own, ``reviewer`` when the old version saved one), a password, then the authenticator's code."""
+    say("The first sign-in:")
+    status, _type, _body = _get(port, "/review", follow=False)
+    c.that(status == 303, f"the review queue waits for the sign-in ({status})")
+    status, _type, body = _get(port, "/login", form={"username": "admin", "password": "admin", "next": "/review"})
+    first = json.loads(body).get("redirect", "") if status == 200 else ""
+    if not c.that(
+        first.startswith("/login/first"), f"admin / admin leads to the first sign-in: {status} {body[:200]!r}"
+    ):
+        return
+    offered = re.search(r'name="name" value="([^"]*)"', _get(port, first)[2].decode("utf-8", errors="replace"))
+    name = html.unescape(offered.group(1)) if offered else ""
+    c.that(bool(name) and (not reviewer or name == reviewer), f"the name on the approvals is offered: {name!r}")
+    chosen = "the update kept everything"
+    status, _type, body = _get(port, "/login/first", form={"name": name or reviewer or "Reviewer", "new": chosen,
+                                                          "again": chosen, "next": "/review"})  # fmt: skip
+    setup = json.loads(body).get("redirect", "") if status == 200 else ""
+    found = re.search(r'data-secret="([A-Z2-7 ]+)"', _get(port, setup)[2].decode("utf-8", errors="replace"))
+    if not c.that(found is not None, "the authenticator's key is shown"):
+        return
+    code = _totp("".join(found.group(1).split()), time.time())
+    status, _type, body = _get(port, "/login/authenticator", form={"code": code, "next": "/review"})
+    c.that(status == 200 and json.loads(body).get("ok"), f"signed in: {status} {body[:200]!r}")
 
 
 def listening(port: int) -> bool:
@@ -482,6 +550,7 @@ def check(before: dict, new: Path, port: int, old_ports: list[int], old_pids: li
             c.that((old / ".env").is_file() and (old / "output").is_dir(), "the old folder is left as it was")
         status, _type, body = _get(port, "/healthz")
         c.that(status == 200, "the new version runs")
+        sign_in(c, port)
         for page in PAGES:
             c.that(_get(port, page)[0] == 200, f"GET {page}")
         return c.failed
@@ -538,6 +607,7 @@ def check(before: dict, new: Path, port: int, old_ports: list[int], old_pids: li
     health = json.loads(body) if status == 200 else {}
     c.that(health.get("app") == "ap-coder" and Path(health.get("folder", "")).resolve() == new.resolve(),
            f"/healthz is the new version from {new}: {health}")  # fmt: skip
+    sign_in(c, port, REVIEWER)  # the old version's name (its .env's AP_REVIEWER), offered for the account
     for page in PAGES:
         status, _type, body = _get(port, page)
         c.that(status == 200, f"GET {page}: {status}")

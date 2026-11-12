@@ -397,8 +397,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   server. A key lost while its accounts are kept: each code refused in words, an Admin resets each app. **The QR
   code**: Project Nayuki's QR Code generator (MIT, one pure-Python file, standard library only), vendored unchanged
   as `web/qrcodegen.py` (1.8.0, the wheel's SHA-256 of it checked; left out of ruff), drawn as an SVG on the server:
-  no new dependency to bundle, no JavaScript. The laptop is unchanged. Entra ID sign-in remains a possible later
-  option (HANDOFF.md 6.10). (`core/authenticator.py`, `core/store/users.py`, `core/store/backup_files.py`,
+  no new dependency to bundle, no JavaScript. The laptop is unchanged (replaced by D-243). Entra ID sign-in remains a
+  possible later option (HANDOFF.md 6.10). (`core/authenticator.py`, `core/store/users.py`,
+  `core/store/backup_files.py`,
   `web/pages/login.py`, `web/templates/login_step.html`, `web/identity.py`, `web/roles.py`, `web/pages/users.py`,
   `ops/cli.py`; `tests/core/test_authenticator.py`, `tests/core/test_users.py`, `tests/core/test_backups.py`,
   `tests/web/test_server_two_step.py`, `tests/web/test_server_browser.py`, `tests/ops/test_users_cli.py`)
@@ -5848,3 +5849,60 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     not the upload box's tick. Not remembered per vendor: the Statements page keeps nothing per vendor today
     (the statement itself is held an hour, never stored), and a table for one tick box would be more than it is
     worth. An exported invoice an undone batch released counts as not exported (its batch is cleared).
+- **D-243** · **The first sign-in is admin / admin, typed on the computer running AP Coder, and the laptop signs in
+  too** (`web/pages/login.py` `first_sign_in_here`, `/login/first`; `core/store/sign_in.py`; `web/identity.py`
+  `Identity._laptop`; `ops/safety.py` `laptop_sign_in`, `team_server`; 12 Nov 2026). The user asked for it ("for
+  the first user make the user admin and pass admin, and have it set up 2FA right when logging in for the first
+  time"), on the server and on the laptop. Changes D-146's "The laptop is unchanged" and D-97's "nobody can sign up
+  from a browser".
+  - **The first sign-in:** while the database has no account at all, the username admin and the password admin
+    lead to `/login/first`: the person's name (on a laptop, the one on its approvals so far) and their own password
+    (the usual rules: 12 characters, not "admin" nor holding it, not the name) make the first Admin, `admin`; then
+    the authenticator app is set up as for anyone (D-146), and only then is there a session. admin / admin is never
+    kept as a password: it opens nothing once an account exists, which is from the moment the password is saved
+    (a browser closed before the app is set up signs in with that password, straight to the app's step). No
+    recovery codes (D-146): the set-up page tells the only Admin the console's `users reset-2fa admin`.
+  - **Only from that computer:** the connection's own address is loopback, no `--proxy` is set, the request carries
+    nothing a reverse proxy adds (X-Forwarded-For, Forwarded, X-Real-IP, Via, X-Original-URL, X-ARR-...), and its
+    Host is a loopback name (or, on a laptop listening on its own network address only, its own browser at that
+    address). Anything else is refused before the password is read or the try counted, so no one on the network
+    can pause the first sign-in. On the server that is not enough (the security review): any forwarder on it
+    (`netsh portproxy`, `ssh -L`, socat, nginx's default `proxy_pass`) brings anyone in from 127.0.0.1 with a Host
+    they write. So the server's first sign-in also needs a one-time setup code, made while there is no account in
+    `first_sign_in.code` in the data folder (made 0600; on Windows it takes the folder's permissions, so the
+    service's account, the administrators and SYSTEM as SERVER.md step 5 sets them, and the doctor warns when
+    Users, Authenticated Users or Everyone may read the folder), said in the server's window and so its service
+    log, and by the doctor (which also says when the service can't read the file: made by another account); each
+    wrong code is a `login_failed` of the audit trail; removed with the first account. The laptop needs none, as
+    the user asked: it listens on 127.0.0.1, and a forwarder there is a program on the laptop, which can read the
+    database anyway. `users add --admin` at the console stays, beside it; a server or shared laptop with accounts is
+    unchanged. The account-wide pause (D-109), with words of its own, counts at the console the console's own tries
+    only: the first Admin is `admin` for anyone on the network to guess at, and their tries never pause the console,
+    while a forwarder's guesses, which come from the console, still back off (one every 20 seconds for a day: 8
+    passwords checked).
+  - **The laptop:** the database's `sign_in` setting. `laptop` is set at the first start of a data folder that
+    never decided and shows nothing of a team (no account, no codes' key, no server.json): new folders and older
+    laptop ones alike; a team's opened with `--without-sign-in` keeps its accounts as a team's. Then every page
+    waits for the Admin's sign-in (an Admin only), from this computer only: another computer gets neither the "Who
+    are you?" page nor the login (D-34 is off; colleagues come in with `share`). Signing in only guards the door:
+    `PERSON` stays None, so the saved name, the computer's login, the drafts and the full folders are as before. A
+    session ends after 8 hours unused (the server's 30 minutes and 12 hours stay). The way out at the console:
+    `--without-sign-in` for one start, `users sign-in off` (and `on`) for good; `demo --company` is off (made-up
+    data). D-211 reads the setting and counts the accounts without a Store (`core/store/peek.py`, also in the
+    launcher's first phase): the laptop's own account and key no longer mark a team's folder, nor does a codes' key
+    alone (no account, no server.json, no `team`: the laptop's, left by a backup from before its sign-in restored),
+    and a database that can't be read beside the key is said so, with the restore's steps; a start in server mode
+    sets `team`, and `share` takes the laptop's Admin as its first. A laptop's
+    restore keeps its account and the setting, as the server keeps its accounts (D-101); a new name in Settings
+    renames the account (so `share` later knows for the owner's the approvals made under the account's name: those
+    made under an older name, before a rename, keep that name). A new demo folder (`scripts/demo.bat`, AP_DEMO=1 and
+    a data folder other than the laptop's own, said in one line) and `demo --company` are off; `demo --company` is
+    refused on a folder with accounts, a codes' key, server.json or a sign-in set. CI's Windows update job starts
+    the new version with `--without-sign-in` to read its pages: the signed-in start of an older folder is covered by
+    the unit tests and `scripts/ci/old_versions.py`. A session
+    still ends after 12 hours in all. Not stopped (SERVER.md section 16): another program on the laptop pausing the
+    owner's logins from 127.0.0.1 with wrong passwords (the pause for one address and username stays, or guesses
+    there would be unlimited), and the browser sending `ap_session` to every port of localhost. The older version
+    refuses a signed-in laptop folder (its D-211 doesn't know the setting): `--without-sign-in` at every start.
+  - **Left out:** more than one account and a Users page on the laptop, a Settings switch, choosing another
+    username than admin, admin / admin through `share` (its console still asks), the browser path behind `--proxy`.

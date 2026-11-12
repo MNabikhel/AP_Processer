@@ -48,6 +48,7 @@ from ap_coder import __version__
 from ap_coder.core import envfile, paths
 from ap_coder.core.config import Settings, process_var
 from ap_coder.core.store import Store, default_db_path, reports
+from ap_coder.core.store.sign_in import LAPTOP, LAPTOP_IDLE_SECONDS, SIGN_IN
 from ap_coder.ops import health, offline
 from ap_coder.web import core, identity, roles
 from ap_coder.web.errors import FriendlyErrors
@@ -372,7 +373,8 @@ def start_background_work(settings_factory: Callable[[], Settings], store: Store
 
 def create_app(settings: Settings | None = None, store: Store | None = None, *, address: str = "127.0.0.1",
                start_reader: bool = True, server: bool | None = None, insecure_http: bool = False,
-               background: bool = True, processes: int = 1, secret: bytes | None = None) -> FastAPI:  # fmt: skip
+               background: bool = True, processes: int = 1, secret: bytes | None = None,
+               sign_in: bool | None = None) -> FastAPI:  # fmt: skip
     """The dashboard. ``settings``: fixed settings (tests); by default the .env is read again for every page, so a
     change on the Settings page applies at once. ``store``: the database (default: ``default_store``). ``address``:
     what the server listens on (the Host check allows it). ``start_reader``: start the page reader's background
@@ -382,7 +384,8 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     sends no HSTS; otherwise both, whatever scheme a request reports (D-101). ``background``: this process does the
     background work (the reader, the daily backup, the hub's schedule...); ``processes``: how many web workers serve
     this database (the company server, D-111), which then share their jobs and the rest through the database;
-    ``secret``: the key those workers share (else one made at this start)."""
+    ``secret``: the key those workers share (else one made at this start). ``sign_in``: on a laptop, whether its Admin
+    signs in (D-243): by default as its database's setting says; False, not at this start (``--without-sign-in``)."""
     if sys.platform != "win32":
         sys.setswitchinterval(SWITCH_INTERVAL)
     store = store or default_store()
@@ -391,13 +394,17 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         from ap_coder.ops.service import session_limits
 
         store.session_idle, store.session_absolute = session_limits(paths.private_dir())
+    laptop = not server and sign_in is not False and store.get_setting(SIGN_IN) == LAPTOP
+    if laptop:  # its owner's working day, not the server's 30 minutes
+        store.session_idle = LAPTOP_IDLE_SECONDS
     settings_factory: Callable[[], Settings] = (lambda: settings) if settings is not None else EnvSettings()
     lifespan = _lifespan(store, settings_factory, server=server, background=background, start_reader=start_reader)
     app = FastAPI(title="AP Coder", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     _set_state(app, store, settings_factory, server=server, processes=processes, insecure_http=insecure_http,
                secret=secret)  # fmt: skip
+    app.state.sign_in = server or laptop  # people sign in (pages/login.py): the server, or a laptop's Admin
     _add_middleware(app, store, address=address, server=server, background=background,
-                    insecure_http=insecure_http)  # fmt: skip
+                    insecure_http=insecure_http, laptop=laptop)  # fmt: skip
     _add_pages(app)
     _add_status_routes(app, address=address, server=server)
     _add_error_pages(app)
@@ -499,12 +506,12 @@ def _set_state(app: FastAPI, store: Store, settings_factory: Callable[[], Settin
 
 
 def _add_middleware(app: FastAPI, store: Store, *, address: str, server: bool, background: bool,
-                    insecure_http: bool) -> None:  # fmt: skip
+                    insecure_http: bool, laptop: bool = False) -> None:  # fmt: skip
     """The checks every request goes through, the last added running first."""
     if background:  # after the security checks: only for pages served (else the background process does it)
         app.add_middleware(BackupCheck, backup=app.state.daily_backup, also=(app.state.hub_schedule,))
     app.add_middleware(FriendlyErrors)  # an error no page expected is drawn as a page, with the menu
-    app.add_middleware(Identity, secret=app.state.identity_secret, address=address, server=server)
+    app.add_middleware(Identity, secret=app.state.identity_secret, address=address, server=server, laptop=laptop)
     app.add_middleware(core.StoreContext, store=store)  # messages and uploads kept in this database (D-99)
     app.add_middleware(StaticFromMemory)  # after the Host check, before the session (D-161)
     if server:  # a restore under way: everyone else is told so, before anything reads the database (D-188)

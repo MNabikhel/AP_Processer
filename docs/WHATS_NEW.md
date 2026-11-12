@@ -10,6 +10,28 @@ Your existing data is safe. On first start the database upgrades itself (schema 
 backup of AP Coder (the database and the invoice files) is made automatically once a day (the newest 14 are
 kept).
 
+## Sign-in on the laptop too, and the first sign-in with admin / admin (D-243)
+
+- **The laptop asks for a sign-in** (D-243): at its first start after this update, AP Coder opens on *Log in*. The
+  first time, type the username **admin** and the password **admin** in a browser on the laptop itself: AP Coder
+  asks for your name (filled in with the one on your approvals) and your own password, then sets up an
+  authenticator app on your phone (a QR code, then a 6-digit code). After that: admin, your password and a code;
+  left unused for 8 hours, or after 12 hours in all, it asks again. Your invoices, approvals, drafts and settings are all kept, and your
+  approvals keep your name. Other computers can no longer open the laptop's AP Coder by giving a name ("Who are
+  you?"): to let colleagues in, use `python -m ap_coder share`.
+- **Forgot your password, or no phone at hand?** Close AP Coder's black window first, then in
+  `scripts\terminal.bat`: `python -m ap_coder users reset-2fa admin` (a temporary password to log in with, then
+  your own password and the app set up again), or `python -m ap_coder users sign-in off` to open without signing in
+  (`users sign-in on` turns it back on); then start AP Coder again. `APProcessor.bat --without-sign-in` skips it for
+  one start.
+- **Going back to the older version**: it refuses this data folder at each start, as a team's; it opens it only with
+  `APProcessor.bat --without-sign-in`, at every start.
+- **A new company server's first Admin** may sign in the same way, with admin / admin in a browser on the server
+  itself (never from another computer, nor through a proxy), and the one-time setup code the server's window, its
+  service log and `python -m ap_coder doctor` show; `users add --admin` at the console still works. A
+  server or shared laptop that already has accounts is unchanged.
+- The made-up company (`demo --company`) opens without signing in.
+
 ## Controls on held vendors, whole-state backups, Phase 0 then a live pilot, sign-in codes (D-142 to D-146)
 
 - **Only an Approver lifts a hold** (D-142): on a company server a Clerk can put a vendor on hold but not take it

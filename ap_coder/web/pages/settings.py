@@ -42,6 +42,7 @@ from ap_coder.core.store.backups import (
     backup_time,
     backup_window,
 )
+from ap_coder.core.store.sign_in import LAPTOPS, SIGN_IN
 from ap_coder.web import identity
 from ap_coder.web.core import (
     DEVELOPER_TOOLS,
@@ -318,6 +319,9 @@ def _review_part(request: Request, reviewer_name: str | None, threshold: str | N
             rename = {"from": saved, "to": reviewer()}
             store.log_event("settings_changed", actor=saved, detail={"keys": ["reviewer"], "reviewer": rename})
             changed.append("reviewer")
+        found = identity.signed_in()
+        if "reviewer" in changed and found is not None and identity.person() is None:  # a laptop's Admin (D-243)
+            store.rename_user(found.user_id, reviewer())  # the account keeps the name on the approvals
         # Only what differs from the values in effect: a default is not written to the .env as a "change". The
         # GL list rule is a checkbox: with the threshold posted (the form), unticked means off.
         updates = {}
@@ -670,7 +674,8 @@ def restore_backup(request: Request, name: str = Form(""), confirm: str = Form("
         return refuse("That backup is not in the backups folder any more.", status=404)
     had_copy_dir = bool(store.get_setting("backup_copy_dir").strip())
     try:
-        restored = store.restore_state(path, keep_accounts=server_mode(request))  # (D-101)
+        keep = server_mode(request) or store.get_setting(SIGN_IN) in LAPTOPS  # the server's, a laptop's own (D-243)
+        restored = store.restore_state(path, keep_accounts=keep)  # (D-101)
     except ValueError as exc:  # not an AP Coder backup: nothing was changed
         return refuse(f"Not restored: {exc}.")
     except OSError as exc:  # the safety copy of the current state could not be made (a full disk): nothing changed

@@ -81,6 +81,12 @@
           {{ ui.avatar(reviewer, "sm") }}
           <div><div class="name">{{ reviewer }}</div><div class="role">{{ approved_today | num }} approved today</div></div>
         </div>
+        {% if laptop_signed_in %}{# a laptop whose Admin signs in (D-243) #}
+        <div class="apc-me-links">
+          <a href="/account/password">Your password</a>
+          <form method="post" action="/logout" class="apc-me-logout"><button type="submit">Log out</button></form>
+        </div>
+        {% endif %}
         {% endif %}
       </div>
     </aside>

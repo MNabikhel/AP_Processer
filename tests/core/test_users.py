@@ -496,3 +496,38 @@ def test_without_the_key_file_a_code_is_refused_in_words_that_say_what_to_do(sto
     (store.path.parent / authenticator.KEY_FILE).unlink()
     with pytest.raises(LoginRefused, match="reset your authenticator"):
         store.check_code(uid, _code(secret, clock), "10.0.0.5")
+
+
+# --- The first sign-in: admin / admin while there is no account (D-243) ----------------------------------------------
+
+
+def test_the_first_sign_in_is_kept_by_a_hash_ends_in_15_minutes_and_is_no_login_half_way(store, clock):
+    token = store.start_first_sign_in()
+    assert store.first_sign_in_open(token) and store.pending_user(token) is None and store.session_user(token) is None
+    with sqlite3.connect(store.path) as conn:
+        assert token not in "\n".join(conn.iterdump())
+    clock.now += users.PENDING_SECONDS + 1
+    assert not store.first_sign_in_open(token)
+    token = store.start_first_sign_in()
+    store.end_first_sign_in(token)
+    assert not any(store.first_sign_in_open(t) for t in (token, "", None))
+    assert not store.first_sign_in_open(store.start_pending(store.add_user("ann", GOOD)))  # another kind: not this
+
+
+def test_the_first_admin_is_made_only_while_there_is_no_account(store):
+    uid = store.add_first_admin(GOOD, "Pat Lee")
+    made = store.user(uid)
+    assert (made["username"], made["role"], made["name"]) == (users.FIRST_USERNAME, users.ADMIN, "Pat Lee")
+    assert not made["must_change"] and not made["totp_on"]  # the password is their own; the app still to set up
+    assert store.authenticate("admin", GOOD)["id"] == uid
+    assert store.events(actions=["user_added"])[0]["actor"] == users.FIRST_ACTOR
+    with pytest.raises(ValueError, match="first sign-in was just finished"):
+        store.add_first_admin("another good long one", "Someone Else")
+    assert store.user_count() == 1
+
+
+def test_the_first_admins_password_follows_the_policy_and_admin_is_never_it(store):
+    for password in (users.FIRST_PASSWORD, "admin admin admin", "my admin password", "Pat Lee"):
+        with pytest.raises(ValueError):
+            store.add_first_admin(password, "Pat Lee")
+    assert store.user_count() == 0

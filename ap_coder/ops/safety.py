@@ -16,7 +16,8 @@
   serve (``team_server``: one answers on it now; its database has sign-in accounts; the sign-in codes' key or its
   server.json is there), is not started in laptop mode, by the launcher's double-click or ``serve`` by hand: stopped
   for the night or not. Laptop mode again on the same data is ``serve --without-sign-in``, on purpose, and only while
-  the server is stopped.
+  the server is stopped. A laptop's own sign-in (D-243: its database's setting says ``laptop``, or ``off``) is not a
+  team's: its Admin's account and codes' key tell nothing then (``laptop_sign_in``, ``mark_team``).
 * **One laptop-mode AP Coder a data folder** (B-2351). ``serve`` typed by hand while the shortcut's AP Coder runs on
   the same data folder (``open_here``: its server file names a live process, which answers on its port) is refused,
   with where it is open: it would overwrite that one's server file, and ``backup restore`` then go ahead under it.
@@ -28,6 +29,7 @@ network (the dashboard of this computer is asked whether it runs).
 from __future__ import annotations
 
 import dataclasses
+import importlib.util
 import json
 import os
 import re
@@ -36,6 +38,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path, PurePath
+from typing import Any
 
 WINDOWS = os.name == "nt"
 DRIVE_REMOTE = 4  # GetDriveTypeW
@@ -261,8 +264,29 @@ def serve_refusal(db: Path, server: bool, new_database: bool = False) -> str:
     return ""
 
 
-def doctor_checks(data: Path, db: Path, server: bool) -> list[tuple[str, str, str]]:
-    """(area, status, detail) for the doctor: the data folder's place, and on the server its database."""
+# Who else may read a server's data folder, as Windows' icacls names them (English Windows; D-243).
+OPEN_TO = ("Everyone", "BUILTIN\\Users", "NT AUTHORITY\\Authenticated Users")
+
+
+def folder_open_to(data: Path, run: Callable[..., Any] | None = None, windows: bool | None = None) -> list[str]:
+    """The groups beside the service and the administrators that Windows lets read ``data`` ([] elsewhere, or when
+    icacls can't say): a file made there inherits the folder's permissions, whatever mode it is made with."""
+    if not (WINDOWS if windows is None else windows):
+        return []
+    from . import service
+
+    try:
+        found = (run or service.run_command)(["icacls", str(data)], capture_output=True)
+    except OSError:
+        return []
+    listed = str(getattr(found, "stdout", "") or "").lower()
+    return [name for name in OPEN_TO if name.lower() + ":" in listed]
+
+
+def doctor_checks(data: Path, db: Path, server: bool, *, run: Callable[..., Any] | None = None,
+                  windows: bool | None = None) -> list[tuple[str, str, str]]:  # fmt: skip
+    """(area, status, detail) for the doctor: the data folder's place, and on the server its database and, on
+    Windows, who else may read it."""
     out = []
     status, words = share_problem(data, server)
     if status or server:  # (a laptop's doctor says it only when it is on a share)
@@ -273,6 +297,14 @@ def doctor_checks(data: Path, db: Path, server: bool) -> list[tuple[str, str, st
             out.append(("server database", "FAIL", missing))
         else:
             out.append(("server database", "PASS", f"{db}" if db.exists() else "none yet: the first start makes it"))
+        if WINDOWS if windows is None else windows:
+            others = folder_open_to(data, run, windows)
+            fix = (f"{', '.join(others)} may read {data}: its database, the sign-in codes' key and the first sign-in's "
+                   "setup code. Give it only the service's account, the administrators and SYSTEM (docs/SERVER.md "
+                   f'section 2, step 5): icacls "{data}" /inheritance:r /grant:r "APCoderService:(OI)(CI)F" '
+                   '"Administrators:(OI)(CI)F" "SYSTEM:(OI)(CI)F"')  # fmt: skip
+            kept = "only the service's account, the administrators and SYSTEM, as far as icacls says"
+            out.append(("data folder permissions", "WARN" if others else "PASS", fix if others else kept))
     return out
 
 
@@ -282,14 +314,74 @@ WITHOUT_SIGN_IN = "--without-sign-in"  # serve's option (the launcher passes it 
 
 
 def sign_in_accounts(db: Path) -> int:
-    """How many sign-in accounts (server mode's, D-97) the database ``db`` holds (``core/store/users.py``: only read,
-    no Store opened on it). 0 also where the store can't be loaded: the launcher's first phase in a new AP Coder
-    folder runs before the packages are installed, and is told by the sign-in codes' key instead."""
-    try:
-        from ..core.store.users import sign_in_accounts as count
-    except ImportError:
-        return 0
-    return count(db)
+    """How many sign-in accounts (server mode's, D-97; a laptop's, D-243) the database ``db`` holds: only read, no
+    Store opened on it (``core/store/peek.py``, loaded by its path, so also in the launcher's first phase in a new AP
+    Coder folder, before the packages are installed)."""
+    return _peek_module().accounts(db)
+
+
+# A laptop's own sign-in (D-243): the database's setting, by core/store/sign_in.py's words (SIGN_IN, LAPTOP, OFF),
+# read without a Store (``sign_in_setting``). With it, the laptop's own account and codes' key are not
+# a team's; a start in server mode sets it to "team" (``mark_team``), and D-211 holds again.
+SIGN_IN_SETTING = "sign_in"
+LAPTOP_SIGN_IN = ("laptop", "off")
+
+
+def sign_in_setting(db: Path) -> str:
+    """The database ``db``'s sign-in setting ("" when it has none, is not there, or can't be read), read without a
+    Store (``core/store/peek.py``, loaded by its path: the launcher's first phase can't import the store package)."""
+    return _peek_module().setting(db, SIGN_IN_SETTING)
+
+
+def _peek_module() -> Any:
+    """``core/store/peek.py``, loaded by its path: the launcher's first phase can't import the store package."""
+    path = Path(__file__).resolve().parents[1] / "core" / "store" / "peek.py"
+    spec = importlib.util.spec_from_file_location("ap_coder_store_peek", path)
+    assert spec is not None and spec.loader is not None  # (a file of this package)
+    peek = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(peek)
+    return peek
+
+
+def laptop_sign_in(store: Any, data: Path) -> bool:
+    """Whether a laptop-mode start's Admin signs in (D-243). A data folder that never decided is given sign-in now,
+    but only one that shows nothing of a team (no account, no codes' key, no server.json): a team's data opened on
+    purpose without sign-in (``--without-sign-in``) is never made a laptop's, which would undo D-211."""
+    from ..core.store.sign_in import LAPTOP, OFF, SIGN_IN
+    from . import service
+
+    said = store.get_setting(SIGN_IN)
+    # (a codes' key alone, no account: the laptop's own, left by a backup from before its sign-in restored)
+    team = store.user_count() or service.config_path(data).is_file()
+    if not said and not team:
+        # scripts/demo.bat's folder (AP_DEMO=1, a folder of its own): a presenter's demo, opened without signing in, as
+        # the made-up company is; never the laptop's own folder, should AP_DEMO be left set
+        said = OFF if _demo_folder(data) else LAPTOP
+        store.set_setting(SIGN_IN, said)
+        if said == OFF:
+            print(f"This demo's data folder ({data}) opens without signing in (scripts/demo.bat, AP_DEMO=1).",
+                  file=sys.stderr)  # fmt: skip
+    return said == LAPTOP
+
+
+def _demo_folder(data: Path) -> bool:
+    """Whether ``data`` is a demo's own data folder: AP_DEMO=1 and AP_PRIVATE_DIR naming a folder other than the
+    laptop's own (the default one, or the one the installer recorded), as scripts/demo.bat sets them."""
+    from ..core import paths
+
+    if os.environ.get("AP_DEMO", "").strip() != "1" or not paths.env_path("AP_PRIVATE_DIR"):
+        return False
+    recorded = paths.user_path(str(paths.read_user_settings().get("data_dir") or ""))
+    own = {Path(f).resolve() for f in (paths.default_data_dir(), recorded) if f}
+    return Path(data).resolve() not in own
+
+
+def mark_team(store: Any) -> None:
+    """A start in server mode: the data folder serves a team from now on (its accounts are D-211's again)."""
+    from ..core.store.sign_in import SIGN_IN, TEAM
+
+    if store.get_setting(SIGN_IN) != TEAM:
+        store.set_setting(SIGN_IN, TEAM)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -302,6 +394,7 @@ class TeamServer:
     settings: str  # its server.json ("": none)
     key: bool = False  # the sign-in codes' key is in the data folder: someone set up their authenticator app
     service: bool = True  # this computer's service is installed (False: a laptop shared with ``share``, D-218)
+    unreadable: str = ""  # the key alone tells, and the database can't be read (missing, damaged): its path
 
     @property
     def signs(self) -> str:
@@ -324,6 +417,14 @@ class TeamServer:
                     "started a second time.",
                     f"Use it in your browser, at {self.address}. Two AP Coders never use the same data at once"
                     + (f": {WITHOUT_SIGN_IN} works only once the server is stopped" if on_purpose else ""))  # fmt: skip
+        # A database that can't be read beside the codes' key: a laptop signed into (D-243), or a team's. Refused even
+        # on purpose while its file is there (damaged: nothing could open it); a missing one is begun again then.
+        if self.unreadable and not (on_purpose and not Path(self.unreadable).exists()):
+            return (f"AP Coder can't read this computer's database ({self.unreadable}): it is missing or damaged, "
+                    "though the data folder holds the sign-in codes' key (authenticator.key), so people signed in "
+                    "here. It was not started.",
+                    "Copy the database back if it was moved, or restore the newest backup: python -m ap_coder backup "
+                    "list, then python -m ap_coder backup restore <name>; then start AP Coder again")  # fmt: skip
         if on_purpose:
             return "", ""
         at = f", then sign in at {self.address}" if self.address else ""
@@ -337,6 +438,10 @@ class TeamServer:
 
     def on_purpose(self) -> str:
         """What a laptop-mode start says once ``--without-sign-in`` let it open this data."""
+        if self.unreadable:  # (missing: a damaged one is refused even on purpose)
+            return (f"WARNING: opened on purpose ({WITHOUT_SIGN_IN}) though its database was missing: AP Coder begins "
+                    "a new, empty one. To get the invoices back: Settings → Data & backups, Restore this "
+                    "state.")  # fmt: skip
         return (f"WARNING: opened in laptop mode on purpose ({WITHOUT_SIGN_IN}): this data folder is set up to serve "
                 f"a team ({self.signs}), and there is no sign-in on this computer now. The accounts stay in the "
                 "database, unused, until AP Coder runs as the server again.")  # fmt: skip
@@ -366,7 +471,12 @@ def team_server(data: Path, db: Path) -> TeamServer | None:
     if port and listening(port):  # (a closed port is told in 0.3 s; nothing names one on a laptop that is not running)
         answer = service.dashboard_answer(data, settings or service.ServerSettings(port=port))
     scheme = answer[0] if answer and answer[1].get("server_mode") else ""
-    accounts, key = sign_in_accounts(db), (data / "authenticator.key").is_file()
+    accounts, key, said = sign_in_accounts(db), (data / "authenticator.key").is_file(), sign_in_setting(db)
+    if (accounts or key) and said in LAPTOP_SIGN_IN:  # the laptop's own (D-243)
+        accounts, key = 0, False
+    readable = bool(_peek_module().setting(db, "schema_version"))
+    if key and not accounts and readable and said != "team" and not marker.is_file():
+        key = False  # a key alone, no account: the laptop's own, left by a backup from before its sign-in restored
     if not (scheme or accounts or key or marker.is_file()):
         return None
     running = bool(scheme)
@@ -375,7 +485,9 @@ def team_server(data: Path, db: Path) -> TeamServer | None:
     name = settings.allowed_hosts[0] if settings and settings.allowed_hosts else socket.gethostname()
     address = f"{scheme}://{name or '127.0.0.1'}:{port}" if scheme else ""
     installed = running or service.installed(settings or service.ServerSettings())  # (asked only once stopped)
-    return TeamServer(running, address, accounts, str(marker) if marker.is_file() else "", key, installed)
+    unreadable = key and not accounts and not running and not marker.is_file() and not readable
+    return TeamServer(running, address, accounts, str(marker) if marker.is_file() else "", key, installed,
+                      str(db) if unreadable else "")  # fmt: skip
 
 
 def open_here(data: Path) -> str:

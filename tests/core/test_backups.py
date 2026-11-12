@@ -1387,3 +1387,25 @@ def test_a_page_asked_while_a_backup_from_before_d197_is_restored_reads_its_answ
     monkeypatch.setattr(backup_files, "restore_files", files_meanwhile)
     store.restore_from(made)
     assert seen == [0]
+
+
+def test_a_laptops_restore_keeps_its_own_admin_and_sign_in_when_asked(tmp_path, ground_truth):
+    """D-243: a backup from before the laptop's sign-in (or before a new password) brings neither back: its account,
+    password and the setting stay as they are now, as the server's do."""
+    store, data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now()
+    store.set_setting("sign_in", "laptop")
+    uid = store.add_first_admin("correct horse battery", "Pat Lee")
+    store.restore_state(backup, keep_accounts=True)
+    assert store.get_setting("sign_in") == "laptop" and store.user(uid)["name"] == "Pat Lee"
+    store.restore_state(backup)  # (the default: the backup's, nothing kept)
+    assert store.get_setting("sign_in") == "" and store.user_count() == 0
+
+
+def test_a_restore_ends_a_first_sign_in_under_way(tmp_path, ground_truth):
+    """As a login half way does (D-146): a first sign-in begun before a restore opens nothing after it (D-243)."""
+    store, _data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now()
+    token = store.start_first_sign_in()
+    store.restore_state(backup, keep_accounts=True)
+    assert not store.first_sign_in_open(token)

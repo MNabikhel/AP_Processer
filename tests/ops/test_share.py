@@ -202,6 +202,23 @@ def test_the_second_backup_folder_chosen_in_laptop_mode_stays_usable(laptop, tmp
     assert service.folder_refusal(str(other), data, server=True) == ""
 
 
+def test_a_laptop_whose_admin_signs_in_already_is_shared_with_that_account(laptop, tmp_path):
+    """D-243: the laptop's own Admin (its sign-in on) is the shared laptop's first Admin: nothing asked, and the backup
+    folder chosen on the laptop is allowed as for a first share."""
+    data, db = laptop
+    store = Store(db)
+    store.set_setting("sign_in", "laptop")
+    store.add_first_admin(GOOD, "Pat Lee")
+    copies = tmp_path / "second copies"
+    copies.mkdir()
+    store.set_setting("backup_copy_dir", str(copies))
+    said = Said()
+    assert share.prepare(data, db, said, openssl="openssl", run=openssl_stand_in([]), ask=answers()) is not None
+    assert "Added" not in said.all and [u["username"] for u in Store(db).list_users()] == ["admin"]
+    assert service.folder_refusal(str(copies), data, server=True) == ""
+    assert safety.team_server(data, db) is not None  # its server.json: a team's from now on (D-211)
+
+
 def test_the_firewall_rule_is_said_with_its_command_never_made(laptop):
     ran = []
 

@@ -86,3 +86,35 @@ def test_reset_2fa_at_the_console_lets_a_last_admin_who_lost_their_phone_set_it_
     assert cli.main(["--db", db, "users", "list"]) == 0
     assert "codes not set up" in capsys.readouterr().out
     assert cli.main(["--db", db, "users", "reset-2fa", "nobody"]) == 1
+
+
+def test_sign_in_on_a_laptop_is_turned_off_and_on_at_the_console(db, capsys):
+    """D-243: the way out for a laptop's owner who can't sign in (no phone at hand), and back."""
+    from ap_coder.core.store.sign_in import LAPTOP, OFF, SIGN_IN
+
+    Store(db).set_setting(SIGN_IN, LAPTOP)
+    assert cli.main(["--db", db, "users", "sign-in", "off"]) == 0
+    assert Store(db).get_setting(SIGN_IN) == OFF and "without signing in" in capsys.readouterr().out
+    assert Store(db).events(actions=["settings_changed"])[0]["actor"] == "the server console"
+    assert cli.main(["--db", db, "users", "sign-in", "on"]) == 0
+    assert Store(db).get_setting(SIGN_IN) == LAPTOP and "admin" in capsys.readouterr().out
+
+
+def test_a_teams_sign_in_is_never_turned_off(db, capsys):
+    from ap_coder.core.store.sign_in import SIGN_IN, TEAM
+
+    Store(db).add_user("boss", GOOD, role="admin")  # an older team's folder: accounts, nothing decided
+    assert cli.main(["--db", db, "users", "sign-in", "off"]) == 1
+    assert Store(db).get_setting(SIGN_IN) == "" and "serves a team" in capsys.readouterr().err
+    Store(db).set_setting(SIGN_IN, TEAM)
+    assert cli.main(["--db", db, "users", "sign-in", "off"]) == 1 and Store(db).get_setting(SIGN_IN) == TEAM
+
+
+def test_sign_in_on_names_admin_admin_only_before_the_first_account(db, capsys):
+    from ap_coder.core.store.sign_in import OFF, SIGN_IN
+
+    Store(db).set_setting(SIGN_IN, OFF)
+    Store(db).add_first_admin(GOOD, "Pat Lee")
+    assert cli.main(["--db", db, "users", "sign-in", "on"]) == 0
+    said = capsys.readouterr().out
+    assert "password admin" not in said and "your own password" in said

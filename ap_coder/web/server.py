@@ -318,12 +318,13 @@ def memory_mb() -> float | None:
 
 def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, store: Store | None = None, *,
           certfile: str | None = None, keyfile: str | None = None, proxy: str | None = None,
-          insecure_http: bool = False, workers: int = 1) -> int:  # fmt: skip
+          insecure_http: bool = False, workers: int = 1, sign_in: bool | None = None) -> int:  # fmt: skip
     """Run the dashboard until Ctrl+C or ``POST /shutdown`` (on the server, until its service is stopped). 1 when it
     could not start (the port is in use), 2 when it may not start so (the server without HTTPS: ``tls_refusal``).
     ``certfile``/``keyfile``: HTTPS (PEM); ``proxy``: the reverse proxy's address, whose X-Forwarded-For is believed.
     ``workers``: on the company server, that many web worker processes and one background process (D-111); the
-    laptop always runs everything in this one process."""
+    laptop always runs everything in this one process. ``sign_in``: a laptop's (``create_app``; False: not at this
+    start, ``--without-sign-in``)."""
     import uvicorn
 
     refusal = tls_refusal(server_mode(), certfile, keyfile, insecure_http)
@@ -346,7 +347,7 @@ def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, 
         fewer_malloc_arenas()
     if server_mode() and workers > 1:
         return _serve_workers(host, port, store, certfile, keyfile, proxy, insecure_http, workers)
-    app = create_app(store=store, address=host, insecure_http=insecure_http)
+    app = create_app(store=store, address=host, insecure_http=insecure_http, sign_in=sign_in)
     app.state.proxy = proxy or None  # behind a proxy, a loopback address is not the console (pages/login.py)
     app.state.certfile = certfile if https else None
     health.watch_certificate(app.state.certfile)  # its end told to the system's log on the server (D-187)

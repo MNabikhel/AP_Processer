@@ -254,11 +254,16 @@ def test_the_headers_to_fix_count_is_the_blocking_items_listed(client, store):
 
 def test_shared_on_the_network_the_dashboard_says_colleagues_give_their_name(monkeypatch, capsys):
     """B-1191: shared on the office network, ``serve`` said "There is no login", though each colleague gives their
-    name first (web/identity.py) and the company server has logins."""
-    from ap_coder.ops import offline
+    name first (web/identity.py) and the company server has logins. With the laptop's sign-in on (D-243, its
+    default), colleagues are refused instead, and ``share`` named; turned off, they give their name as before."""
+    from ap_coder.ops import cli, offline
     from tests.offline.test_offline import _serve_call
 
     monkeypatch.setenv(offline.ADDRESS_ENV, "0.0.0.0")
+    _serve_call(monkeypatch)
+    said = capsys.readouterr().err
+    assert "are refused" in said and "python -m ap_coder share" in said and "give their name" not in said
+    assert cli.main(["users", "sign-in", "off"]) == 0
     _serve_call(monkeypatch)
     said = capsys.readouterr().err
     assert "There is no login" not in said and "give their name" in said and "server mode" in said

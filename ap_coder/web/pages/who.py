@@ -8,7 +8,7 @@ from fastapi import Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from ap_coder.web import identity
-from ap_coder.web.core import done, local_url, page_router, refuse, render, reviewer, server_mode
+from ap_coder.web.core import done, local_url, page_router, refuse, render, reviewer, server_mode, signs_in
 from ap_coder.web.pages.invoice_drafts import rename_drafts
 
 router = page_router()  # each plain handler: one connection a request
@@ -18,7 +18,7 @@ COOKIE_DAYS = 365  # kept by the browser; a restart of AP Coder asks again (the 
 
 @router.get(identity.WHO_PATH, response_class=HTMLResponse)
 def who(request: Request, next: str = "/review") -> Response:  # noqa: A002 - the address's own word
-    if server_mode(request):  # people log in with their own account instead (D-97)
+    if signs_in(request):  # people log in with their own account instead (D-97; a laptop's Admin, D-243)
         return RedirectResponse(identity.LOGIN_PATH, status_code=303)
     found = identity.person()
     here = request.client is None or identity.from_this_computer(request.scope)
@@ -31,6 +31,8 @@ def who(request: Request, next: str = "/review") -> Response:  # noqa: A002 - th
 def who_save(request: Request, name: str = Form(""), next: str = Form("/review")) -> JSONResponse:  # noqa: A002
     if server_mode(request):
         return refuse("Your name is your account's: an Admin changes it on the Users page.", 403)
+    if signs_in(request):  # a laptop's Admin signs in (D-243): no names given
+        return refuse("On this computer, your name is set in Settings → Review.", 403)
     if request.client is None or identity.from_this_computer(request.scope):
         return refuse("On this computer, your name is set in Settings → Review.")
     cleaned = identity.clean_name(name)
