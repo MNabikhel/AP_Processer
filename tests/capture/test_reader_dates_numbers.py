@@ -129,6 +129,23 @@ def test_months_of_other_languages_are_read():
     assert parse_date("1 set 2500") is None
 
 
+def test_a_month_name_with_a_two_digit_year_or_between_slashes_or_after_the_year_is_read(tmp_path):
+    for printed, iso in [("Dec 31/26", "2026-12-31"), ("Oct 30/26", "2026-10-30"), ("Dec. 31/26", "2026-12-31"),
+                         ("DEC 31 26", "2026-12-31"), ("31/Dec/2026", "2026-12-31"), ("31/Dec/26", "2026-12-31"),
+                         ("2026-Dec-31", "2026-12-31"), ("2026/Dec/31", "2026-12-31")]:  # fmt: skip
+        assert parse_date(printed) == iso, printed
+    # Not inside an invoice number, nor a date and a time run together.
+    for printed in ["INV-12MAR26", "INV-DEC-31-26", "PO 2026-DEC-31A", "Dec 31 26:00"]:
+        assert parse_date(printed) is None, printed
+    path = _pdf(tmp_path, [
+        (50, 60, "Northwind Supply Ltd.", 14), (50, 76, "500 Dock Road, Calgary, AB T2P 1J9"), (400, 60, "INVOICE"),
+        (330, 90, "Invoice No:"), (430, 90, "NW-1004"), (330, 106, "Invoice Date:"), (430, 106, "Oct 15/26"),
+        (330, 122, "Due Date:"), (430, 122, "Nov 14/26"), (380, 200, "Total"), (500, 200, "131.25"),
+    ])  # fmt: skip
+    f = _read(path).fields
+    assert (f["invoice_date"].value, f["due_date"].value) == ("2026-10-15", "2026-11-14")
+
+
 def test_a_page_number_run_into_the_label_still_reads_the_date():
     # OCR ran "Page 1/2" into the next words: "Page1/2 Invoice date(Y-M-D) 2025-06-21".
     layout = _scan([(0.06, 0.07, "POSTES CANADA"), (0.61, 0.07, "Page1/2 Invoice date(Y-M-D) 2025-06-21")])
