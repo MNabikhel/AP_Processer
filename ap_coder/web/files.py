@@ -449,15 +449,16 @@ def _named_row(df: pd.DataFrame, specs: Sequence[ImportSpec]) -> pd.DataFrame:
 def _more_names(row: Sequence[Any], columns: Sequence[Any], specs: Sequence[ImportSpec]) -> bool:
     """Whether a row that is none of ``specs`` whole is still their column names rather than a line of data (whose
     "Invoice" in a Type column is a column's name too, B-2546): more of their columns than the columns named now;
-    under names that fill every cell, two or more and no cell a number. Names of two cells or fewer, fewer than the
-    row's, are a line under a title ("Statement date | 2026-09-30"): one of their columns is enough, and a number
-    may be a name ("Invoice | Date | 2025")."""
+    otherwise two or more and no cell a number. Names of one cell, or of two whose second holds a figure (a label and
+    its value: "Statement date | 2026-09-30"), fewer than the row's, are a line under a title: one of their columns is
+    enough, and a number may be a name ("Invoice | Date | 2025"); "Ref | Memo" are names."""
     found = [max(len(import_specs.check(spec, cells).found) for spec in specs) for cells in (row, columns)]
-    filled = [sum(1 for cell in cells if str(cell).strip() and not str(cell).startswith("Unnamed:")) for cells in
-              (row, columns)]  # fmt: skip
+    filled = [[str(cell).strip() for cell in cells if str(cell).strip() and not str(cell).startswith("Unnamed:")]
+              for cells in (row, columns)]  # fmt: skip
     if found[0] <= found[1]:
         return False
-    if filled[1] <= 2 and filled[1] < filled[0]:
+    label = len(filled[1]) <= 1 or len(filled[1]) == 2 and any(ch.isdigit() for ch in filled[1][1])
+    if label and len(filled[1]) < len(filled[0]):
         return True
     numbers = any(_NUMBER_LIKE.fullmatch(str(cell).strip()) for cell in row if str(cell).strip())
     return found[0] >= 2 and not numbers

@@ -867,12 +867,18 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
 MEALS_RESTRICTED = ("GST", "HST", "QST")
 MEALS_NOTE = "Meals: 50% of the {taxes} is claimable. Billed to a client or a staff event? Use the other account."
 # A tip or gratuity line: a voluntary tip is not taxed, so none of the tax printed is on it. A tip word opens or ends
-# the description or a part of it ("Tip amount", "Pourboire inclus", "Credit card tip", "Server - thank you"), or is
-# followed by who or what it is for ("Cash tip for Maria", "Included gratuity at 15%"), and a thanks is followed only
-# by courtesy ("Merci beaucoup"): "Excel tips workshop", "Thank you cards", "Merci Boutique" or "Livraison gratuite"
-# (free delivery) are not tips (B-2540).
+# the description or a part of it ("Tip amount", "Pourboire inclus", "Credit card tip", "Server - thank you"), or
+# follows who gives or gets it ("Cash tip for Maria", "Le pourboire pour Marie"), or is said included or paid ("The tip
+# is included") or at a rate ("Dinner gratuity at 18%"), and a thanks is followed only by courtesy ("Merci beaucoup"):
+# "Excel tips workshop", "Pipette tips for lab", "Thank you cards", "Merci Boutique" or "Livraison gratuite" (free
+# delivery) are not tips (B-2540).
 _TIP_WORDS = {"tip", "tips", "gratuity", "gratuities", "gratuité", "gratuités", "pourboire", "pourboires"}
-_TIP_FOR = {"for", "at", "to", "of", "per", "de", "du", "des", "pour", "à", "included", "inclus", "incluse", "added"}
+_TIP_BY = {"the", "a", "le", "la", "les", "un", "your", "votre", "cash", "card", "staff", "employee", "employees",
+           "server", "servers", "driver", "drivers", "delivery", "waiter", "waitress", "bartender", "valet",
+           "porter", "included", "mandatory", "suggested", "optional", "added", "serveur", "serveuse", "livreur",
+           "personnel"}  # fmt: skip
+_TIP_TOLD = {"included", "inclus", "incluse", "added", "ajouté", "paid", "payé"}
+_TIP_RATE = re.compile(r"(?i)\b(?:tips?|gratuit(?:y|ies|és?)|pourboires?)\s+(?:at|of|de|à)\s+\$?\d")
 _THANKS = re.compile(r"(?i)^\s*(?:thank\s*you|merci)\b")
 _COURTESY = {"beaucoup", "for", "your", "business", "visit", "order", "so", "much", "very", "again", "pour", "votre",
              "visite", "commande", "de", "encore", "bien", "à", "la", "prochaine", "bientôt"}  # fmt: skip
@@ -940,7 +946,11 @@ def is_tip(line: Any) -> bool:
 
     for part in re.split(r"[-–—:()\[\]/,;|+!]+", str(getattr(line, "description", "") or "")):
         named = words(part)
-        if any(w in _TIP_WORDS and (i in (0, len(named) - 1) or named[i + 1] in _TIP_FOR) for i, w in enumerate(named)):
+        for i, word in enumerate(named[1:-1], 1):
+            told = named[i + 2 : i + 3] if named[i + 1] in ("is", "are", "est", "sont") else named[i + 1 : i + 2]
+            if word in _TIP_WORDS and (named[i - 1] in _TIP_BY or bool(set(told) & _TIP_TOLD)):
+                return True
+        if named and (named[0] in _TIP_WORDS or named[-1] in _TIP_WORDS) or _TIP_RATE.search(part):
             return True
         thanks = _THANKS.match(part)
         if thanks and set(words(part[thanks.end() :])) <= _COURTESY:

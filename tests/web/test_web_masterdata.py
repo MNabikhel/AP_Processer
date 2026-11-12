@@ -1163,6 +1163,25 @@ def test_column_names_under_a_two_cell_line_are_taken_with_one_known_or_a_number
     assert list(df.columns) == header and df.values.tolist() == [["A1", "x", "y"]]
 
 
+@pytest.mark.parametrize(
+    ("spec", "rows"),
+    [
+        ("ERP_REGISTER", [["Ref", "Memo", "", ""], ["Invoice", "A1", "100", "50"], ["Credit", "A2", "-20", "0"]]),
+        ("PURCHASE_ORDERS", [["Ref", "Memo", "", ""], ["PO-1", "Service", "2000", "Open"],
+                             ["PO-2", "Laptops", "900", "Open"]]),
+    ],
+)  # fmt: skip
+def test_names_of_two_cells_with_no_value_beside_them_keep_a_data_row_with_a_column_name(spec, rows):
+    """B-2546: names that fill two cells of a wider sheet ("Ref | Memo") are not a label and its value ("Statement
+    date | 2026-09-30"): a first data row holding one of the page's column names ("Invoice", "Service") and numbers was
+    taken for the names, and lost."""
+    from ap_coder.erp import import_specs
+    from ap_coder.web.files import read_sheet
+
+    df, _ = read_sheet("s.xlsx", xlsx(rows), specs=[getattr(import_specs, spec)])
+    assert list(df.columns) == ["Ref", "Memo", "Unnamed: 2", "Unnamed: 3"] and df.values.tolist() == rows[1:]
+
+
 def test_a_statement_whose_column_names_are_not_known_keeps_them_to_pick_from(client, busy):
     """B-2546, on the page: the column picker offers the statement's own names and the preview shows both lines."""
     key = busy.vendor_summaries()[0]["vendor_key"]

@@ -334,6 +334,14 @@ class JournalMixin:
                                 f"{_in_list('identity')} GROUP BY identity", (json.dumps(list(wanted)),))  # fmt: skip
             return sum(min(wanted[r["identity"]], r["n"]) for r in rows)
 
+    def journal_holding(self, identities: Iterable[str]) -> dict[str, int]:
+        """The loaded file each of these voucher identities (``voucher_identity``) is counted in, by identity; those
+        no file holds are left out. Nothing is written."""
+        with self._conn() as conn:
+            rows = conn.execute(f"SELECT identity, file_id FROM journal_vouchers WHERE counted = 1 AND "
+                                f"{_in_list('identity')}", (json.dumps(list(set(identities))),))  # fmt: skip
+            return {r["identity"]: r["file_id"] for r in rows}
+
     def journal_read_otherwise(self, file_id: int, journal: Any) -> int:
         """How many vouchers of a journal as read (``voucher_identity``) are not as the loaded file ``file_id`` kept
         them, or the other way round: 0 when the same file reads as it was loaded; more when the reader reads it
