@@ -100,6 +100,12 @@ def _url(card: str, **query: str) -> str:
     return f"{HERE}{'?' + asked if asked else ''}#{card}"
 
 
+def _shown(card: str, token: str) -> str:
+    """The page on the file just checked on ``card``: at its summary (``#<card>-summary``), so its verdict and its
+    Load are in view, not the card's top above them (B-2483)."""
+    return f"{HERE}?{card}={token}#{card}-summary"
+
+
 def _said(request: Request, card: str, lines: list[str]) -> JSONResponse:
     """Go back to ``card`` showing what its load said, a line each."""
     kept = json.dumps({"card": card, "lines": lines}).encode("utf-8")
@@ -647,7 +653,7 @@ def _keep_export(request: Request, card: str, name: str, content: bytes) -> JSON
     head["upload"] = keep_upload(name, content)
     kept = json.dumps(head, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     token = current_store().keep_ephemeral(LOOK_KIND, kept, SAID_TTL, keep=4)
-    return done(request, _url(card, **{card: token}))
+    return done(request, _shown(card, token))
 
 
 @router.post(HERE + "/chart/load")
@@ -754,12 +760,12 @@ async def suppliers_upload(request: Request, file: UploadFile = File(...)) -> JS
             return refuse(EMPTY)
         token, problem = await run_in_threadpool(_keep_vendor_info, name, content)
         if token or problem:
-            return refuse(problem) if problem else done(request, _url("suppliers", suppliers=token))
+            return refuse(problem) if problem else done(request, _shown("suppliers", token))
         await file.seek(0)
     token, problem = await receive_sheet(file, accept=None)
     if problem:
         return refuse(problem)
-    return done(request, _url("suppliers", suppliers=token))
+    return done(request, _shown("suppliers", token))
 
 
 @router.post(HERE + "/suppliers/load")
@@ -824,7 +830,7 @@ async def journal_upload(request: Request, file: UploadFile = File(...)) -> JSON
             return refuse(JOURNAL_XLSX)
         return refuse(journal_cmd.NOT_A_JOURNAL + (f" It looks like {known.report}: load it under {_where(known)}."
                                                    if known else ""))  # fmt: skip
-    return done(request, _url("journal", journal=learning.keep_journal(name, content)))
+    return done(request, _shown("journal", learning.keep_journal(name, content)))
 
 
 @router.post(HERE + "/journal/load")
@@ -864,7 +870,7 @@ async def vouchers_upload(request: Request, file: UploadFile = File(...)) -> JSO
     token, problem = await receive_sheet(file, accept=None, keep=_keep_vouchers)
     if problem:
         return refuse(problem)
-    return done(request, _url("vouchers", vouchers=token))
+    return done(request, _shown("vouchers", token))
 
 
 @router.post(HERE + "/vouchers/load")

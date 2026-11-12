@@ -1285,3 +1285,52 @@ def test_getting_started_never_ticks_the_company_a_new_installation_starts_with(
                                      for unit in store.business_units()])  # fmt: skip
         jde_settings.save(store, jde_prototype.prototype_settings())
     assert step()[0] == "ok"
+
+
+# Each card's file of the made-up company, in the order they are loaded.
+EVERY_FILE = (
+    ("chart", made.CHART_FILE),
+    ("units", made.UNITS_FILE),
+    ("suppliers", made.SUPPLIERS_FILE),
+    ("suppliers", made.VENDOR_INFO_FILE),
+    ("journal", made.JOURNAL_FILE),
+    ("vouchers", made.HEADERS_FILE),
+)
+
+
+def test_each_cards_check_lands_on_the_file_shown_so_its_load_is_in_view(client, exports):
+    """B-2483: after Check, the page landed on the card's top, so on a laptop (1366 x 768, 911 x 600) the vendor
+    information list's Load (card 3) and the voucher list's (card 5) were below the fold. Every card's Check lands on
+    the file it shows (``#<card>-summary``): its verdict and its Load."""
+    for card, name in EVERY_FILE:
+        answer = _send(client, f"/jde-files/{card}/upload", exports, name)
+        assert answer.status_code == 200, answer.text
+        address = answer.json()["redirect"]
+        assert address.endswith(f"#{card}-summary"), (name, address)
+        assert f'id="{card}-summary"' in client.get(address).text, name
+        follow(client, client.post(f"/jde-files/{card}/load", data={"token": _token(answer)}, headers=PAGE))
+
+
+def test_in_a_browser_each_cards_load_is_in_view_after_check_on_a_laptop(chromium, store, exports, tmp_path):
+    """B-2483, in a browser: at 1366 x 768 and 911 x 600, after each card's Check the Load button is on screen."""
+    from ap_coder.core.store import Store
+    from tests.browser import browser_on
+
+    for width, height in ((1366, 768), (911, 600)):  # (each on a database of its own: nothing loaded yet)
+        empty = Store(tmp_path / f"{width}.db")
+        with browser_on(chromium, create_app(web_settings(), empty, start_reader=False)) as (browser, base):
+            page = browser.new_page(viewport={"width": width, "height": height})
+            page.goto(base + "/jde-files")
+            for card, name in EVERY_FILE:
+                page.locator(f"#{card} input[type=file]").set_input_files(str(exports / name))
+                page.locator(f"#{card} .imp-upload button[type=submit]").click()
+                page.wait_for_selector(f"#{card}-summary")
+                page.wait_for_load_state("load")
+                page.wait_for_timeout(300)  # (the page takes the focus to what it shows: imports.js)
+                load = page.locator(f"#{card}-summary button[data-load]")
+                assert load.count() == 1, page.locator(f"#{card}-summary").inner_text()
+                box = load.bounding_box()
+                assert box and 0 <= box["y"] and box["y"] + box["height"] <= height, (width, name, box)
+                load.click()
+                page.wait_for_selector(f"#{card}-said")
+            page.close()
