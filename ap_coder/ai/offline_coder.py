@@ -267,7 +267,9 @@ def addresses(text: str) -> tuple[str, str, str]:
             elif n < ADDRESS_BLOCK_LINES and not table:
                 named_supplier = named_supplier or named
             continue
-        where = where or named
+        where = where or ("" if table else named)  # a line item's place is no labelled address (B-2493)
+        if not where:
+            continue
         if pending and n > remit_until:  # a remit-to is the vendor's, never ours
             if pending.pop(0)[0] == "ship":
                 ship_to = ship_to or where  # the place of supply: where the goods or services go

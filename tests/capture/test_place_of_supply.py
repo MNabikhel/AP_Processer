@@ -110,6 +110,18 @@ def test_a_word_or_a_tagline_or_a_line_item_naming_a_province_is_no_address():
     assert addresses("Coastal Supply Ltd.\n77 Marine Dr, Burnaby, British Columbia\nINVOICE\n")[0] == "BC"
 
 
+def test_a_line_item_naming_a_province_under_a_ship_to_label_is_not_the_ship_to():
+    """B-2493: a province only named on a line item ("Hotel stay - Montreal, Quebec") under a "Ship to" label whose
+    own address gave none was taken as the ship-to, so the place of supply; a ship-to only named still is."""
+    from ap_coder.ai.offline_coder import addresses
+
+    text = "Acme Supply Ltd.\n123 Bank St, Ottawa, ON K1P 1J9\nShip to:\nAcme site\nDescription\nHotel stay - Montreal, Quebec\n"
+    assert addresses(text)[1] == ""
+    assert (
+        addresses("Acme Supply Ltd.\n123 Bank St, Ottawa, ON K1P 1J9\nShip to:\nSite 4\nMontreal, Quebec\n")[1] == "QC"
+    )
+
+
 def test_an_inferred_tax_line_follows_the_place_of_supply_changed():
     from ap_coder.web.invoice_form import Draft
 
