@@ -69,6 +69,20 @@ def test_line_math_and_numbering(reference, ground_truth):
     assert {"LINE_MATH", "LINE_NUMBERING"} <= _codes(report)
 
 
+def test_a_currency_code_not_in_use_is_an_error_of_the_coding_itself(reference, ground_truth):
+    """B-2534: "XYZ" or "CDN" (no currency in use, D-75) was said only on the review screen, so bulk approval, the
+    queue's Ready and touchless approval passed it. The coding's own checks say it, once."""
+    for code in ("XYZ", "CDN"):
+        report = validate_coding(InvoiceCoding.model_validate({**ground_truth, "currency": code}), reference)
+        found = [(i.severity, i.message) for i in report.issues if i.code == "CURRENCY_UNKNOWN"]
+        assert found == [("error", f"“{code}” is not a currency code in use: type it as on the page, e.g. CAD, USD or "
+                                   "EUR")]  # fmt: skip
+        assert report.requires_review
+    for code in ("CAD", "USD", "EUR", "JPY"):
+        report = validate_coding(InvoiceCoding.model_validate({**ground_truth, "currency": code}), reference)
+        assert "CURRENCY_UNKNOWN" not in _codes(report)
+
+
 def test_a_credit_line_printed_as_a_positive_quantity_and_price_is_no_line_math(reference):
     """B-1484: a credit note's line printed 4 × 150.00 = -600.00 raised LINE_MATH: the sign is where the credit note
     puts it, not a misread. A real difference is still caught."""

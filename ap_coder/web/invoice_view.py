@@ -54,7 +54,6 @@ from ap_coder.web.invoice_coding import ai_changes, differs_from_stored, learn_t
 from ap_coder.web.invoice_fields import (
     DateCheck,
     code_flags,
-    currency_issues,
     field_flags,
     field_help,
     flag_errors,
@@ -217,9 +216,10 @@ def _findings(store: Store, inv: dict[str, Any], draft: Draft, coding: InvoiceCo
     found = identity.person()
     if found is not None and found.user_id:  # the company server: a held vendor's invoice moved (D-142); not a laptop
         report.issues += [Issue(*f) for f in moved_off_hold(store, ai, coding)]
-    typed = dates.issues + currency_issues(coding.currency)  # the dates and the currency as typed (D-75)
+    # The dates and the currency as typed (D-75), said first
+    typed = dates.issues + [i for i in report.issues if i.code == "CURRENCY_UNKNOWN"]
     if typed:
-        report.issues = typed + report.issues
+        report.issues = typed + [i for i in report.issues if i.code != "CURRENCY_UNKNOWN"]
         report.requires_review = True
     if from_list:
         output[FROM_VENDOR_LIST] = from_list  # kept with the coding: the tax return's claims at risk read it

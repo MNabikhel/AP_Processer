@@ -58,6 +58,17 @@ GUESS_SURE = 0.5
 # model, the words of an account's name, other vendors' lines. An invoice whose every account is one is not approved
 # in one click (ACCOUNTS_ALL_GUESSED, B-2218).
 GUESS_SOURCES = ("model", "words", "others")
+# The currency codes in use (ISO 4217, active): a code not in it is a typo, never a voucher (D-75).
+ISO_CURRENCIES = frozenset(
+    """
+AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BRL BSD BTN BWP BYN BZD CAD CDF CHF CLP
+CNY COP CRC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL HTG HUF IDR
+ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT
+MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD
+SCR SDG SEK SGD SHP SLE SOS SRD SSP STN SVC SYP SZL THB TJS TMT TND TOP TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND
+VUV WST XAF XCD XOF XPF YER ZAR ZMW ZWL
+""".split()
+)
 _LOW_OCR_CONFIDENCE = 0.90
 
 
@@ -226,6 +237,9 @@ def _header_issues(coding: InvoiceCoding, add: Any) -> None:
         add(ERROR, "MISSING_INVOICE_NUMBER", "No invoice number: type it from the page")
     if not re.fullmatch(r"[A-Z]{3}", coding.currency):
         add(WARNING, "CURRENCY_FORMAT", f"The currency “{coding.currency}” is not a 3-letter code such as CAD or USD")
+    elif coding.currency not in ISO_CURRENCIES:  # (XYZ): never a voucher, on every path to approval (B-2534)
+        add(ERROR, "CURRENCY_UNKNOWN", f"“{coding.currency}” is not a currency code in use: type it as on the page, "
+            "e.g. CAD, USD or EUR")  # fmt: skip
     if not coding.line_items:
         add(ERROR, "NO_LINE_ITEMS", "No line items were read: add a line for what the invoice charges")
 
