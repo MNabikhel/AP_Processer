@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.store import Store, backup_files
+from ..core.store.sign_in import LAPTOPS, SIGN_IN
 from ..core.store.users import sign_in_accounts
 from . import service
 from .offline import listening
@@ -160,7 +161,7 @@ def _restore(backup: Path, db: Path, yes: bool) -> int:
             print(f"The database here could not be opened ({damaged}): it was moved to {aside}, and the restore goes "
                   "on as onto a data folder with no database.")  # fmt: skip
             store = Store(db)
-        done = store.restore_state(backup, keep_accounts=server)
+        done = store.restore_state(backup, keep_accounts=server or store.get_setting(SIGN_IN) in LAPTOPS)  # (D-243)
     except (ValueError, OSError) as exc:
         print(f"Not restored: {exc}.", file=sys.stderr)
         return 1

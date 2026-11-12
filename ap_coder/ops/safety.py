@@ -16,7 +16,8 @@
   serve (``team_server``: one answers on it now; its database has sign-in accounts; the sign-in codes' key or its
   server.json is there), is not started in laptop mode, by the launcher's double-click or ``serve`` by hand: stopped
   for the night or not. Laptop mode again on the same data is ``serve --without-sign-in``, on purpose, and only while
-  the server is stopped.
+  the server is stopped. A laptop's own sign-in (D-243: its database's setting says ``laptop``, or ``off``) is not a
+  team's: its Admin's account and codes' key tell nothing then (``laptop_sign_in``, ``mark_team``).
 * **One laptop-mode AP Coder a data folder** (B-2351). ``serve`` typed by hand while the shortcut's AP Coder runs on
   the same data folder (``open_here``: its server file names a live process, which answers on its port) is refused,
   with where it is open: it would overwrite that one's server file, and ``backup restore`` then go ahead under it.
@@ -32,10 +33,12 @@ import json
 import os
 import re
 import socket
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path, PurePath
+from typing import Any
 
 WINDOWS = os.name == "nt"
 DRIVE_REMOTE = 4  # GetDriveTypeW
@@ -292,6 +295,51 @@ def sign_in_accounts(db: Path) -> int:
     return count(db)
 
 
+# A laptop's own sign-in (D-243): the database's setting, by core/store/sign_in.py's words (SIGN_IN, LAPTOP, OFF),
+# read here without a Store, as ``sign_in_accounts`` counts. With it, the laptop's own account and codes' key are not
+# a team's; a start in server mode sets it to "team" (``mark_team``), and D-211 holds again.
+SIGN_IN_SETTING = "sign_in"
+LAPTOP_SIGN_IN = ("laptop", "off")
+
+
+def sign_in_setting(db: Path) -> str:
+    """The database ``db``'s sign-in setting ("" when it has none, is not there, or can't be read): read-only, no Store
+    opened on it, and no ``-wal`` file left beside one closed cleanly (as ``users.sign_in_accounts``)."""
+    how = "mode=ro" if db.with_name(db.name + "-wal").exists() else "mode=ro&immutable=1"
+    try:
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?{how}", uri=True, timeout=5)
+        try:
+            row = conn.execute("SELECT value FROM settings WHERE key = ?", (SIGN_IN_SETTING,)).fetchone()
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError, ValueError):
+        return ""
+    return str(row[0]) if row else ""
+
+
+def laptop_sign_in(store: Any, data: Path) -> bool:
+    """Whether a laptop-mode start's Admin signs in (D-243). A data folder that never decided is given sign-in now,
+    but only one that shows nothing of a team (no account, no codes' key, no server.json): a team's data opened on
+    purpose without sign-in (``--without-sign-in``) is never made a laptop's, which would undo D-211."""
+    from ..core.store.sign_in import LAPTOP, SIGN_IN
+    from . import service
+
+    said = store.get_setting(SIGN_IN)
+    team = store.user_count() or (data / "authenticator.key").is_file() or service.config_path(data).is_file()
+    if not said and not team:
+        store.set_setting(SIGN_IN, LAPTOP)
+        said = LAPTOP
+    return said == LAPTOP
+
+
+def mark_team(store: Any) -> None:
+    """A start in server mode: the data folder serves a team from now on (its accounts are D-211's again)."""
+    from ..core.store.sign_in import SIGN_IN, TEAM
+
+    if store.get_setting(SIGN_IN) != TEAM:
+        store.set_setting(SIGN_IN, TEAM)
+
+
 @dataclasses.dataclass(frozen=True)
 class TeamServer:
     """A data folder a server-mode AP Coder serves, or was set up to serve (:func:`team_server`)."""
@@ -367,6 +415,8 @@ def team_server(data: Path, db: Path) -> TeamServer | None:
         answer = service.dashboard_answer(data, settings or service.ServerSettings(port=port))
     scheme = answer[0] if answer and answer[1].get("server_mode") else ""
     accounts, key = sign_in_accounts(db), (data / "authenticator.key").is_file()
+    if (accounts or key) and sign_in_setting(db) in LAPTOP_SIGN_IN:  # the laptop's own (D-243)
+        accounts, key = 0, False
     if not (scheme or accounts or key or marker.is_file()):
         return None
     running = bool(scheme)

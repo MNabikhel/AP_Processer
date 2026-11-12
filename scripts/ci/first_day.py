@@ -9,7 +9,9 @@ in their order:
 
 1. the start: what the *AP Coder* shortcut runs (``APProcessor.bat`` -> ``scripts/launch.py``: ``--start launcher``,
    the default where this folder has its .venv), or the server it starts (``--start serve``: ``python -m ap_coder
-   serve``, for a developer's checkout without one); the short menu ("Simple screens") the guide lists;
+   serve``, for a developer's checkout without one); the first sign-in (D-243: admin / admin, the tester's own
+   password, the authenticator app set up with the key the page shows); the short menu ("Simple screens") the
+   guide lists;
 2. the made-up company in a second data folder (``set AP_PRIVATE_DIR=...``, ``demo --company``, ``serve``), deleted
    after, the first data folder untouched;
 3. the five JD Edwards files loaded on Setup -> JD Edwards files (each shown before it is kept), each
@@ -52,6 +54,7 @@ sys.path.insert(0, str(ROOT))
 from ap_coder.bench import jde_exports, jde_invoices  # noqa: E402 - (after the path: run from a checkout)
 from ap_coder.bench.day import PAGE, Client, _json  # noqa: E402
 from ap_coder.bench.load import Forms, Screen, export_form, form_data, multipart  # noqa: E402
+from ap_coder.core import authenticator  # noqa: E402
 
 WINDOWS = os.name == "nt"
 UP_WAIT = 300.0  # seconds a start has to answer (a first start works the reports out first)
@@ -69,6 +72,8 @@ USUAL_TAX = {"GST": "recoverable", "HST": "recoverable", "PST": "expense_to_line
 INVOICE_LINK = re.compile(r'href="/review/(\d+)[?"]')
 RUNNING_AT = re.compile(r"AP Coder is running at (http://127\.0\.0\.1:\d+)")
 EXIT_MARK = "FIRST-DAY-EXIT="  # what the terminal is asked to echo after a command: its exit code
+CHOSEN = "pilot tester first day"  # the tester's own password at the first sign-in
+SECRET = re.compile(r'data-secret="([A-Z2-7 ]+)"')  # the authenticator's key, as the page shows it to type
 
 
 class Failed(Exception):
@@ -282,7 +287,29 @@ def company(work: Path) -> tuple[Path, Path, Path, Any, dict[str, Any]]:
 # --- The guide, section by section ------------------------------------------------------------------------------------
 
 
+def first_sign_in(client: Client) -> None:
+    """The first sign-in, as the guide has it (D-243): admin / admin, the tester's own password and name, the
+    authenticator app set up with the key shown (its code worked out here, as the phone does)."""
+    step("1. the first sign-in: admin / admin, a password of one's own, the authenticator app")
+    status, _body, _ = client.request("GET", "/review")
+    check(status == 303, f"the review queue opened before any sign-in ({status})")
+    says(page(client, "/login"), "username admin and the password admin")
+    answer = post(client, "/login", {"username": "admin", "password": "admin", "next": "/review"})
+    check(str(answer.get("redirect", "")).startswith("/login/first"), f"admin / admin led elsewhere: {answer}")
+    name = re.search(r'name="name" value="([^"]*)"', page(client, answer["redirect"]))
+    check(name and name.group(1), "the first sign-in offers no name for the approvals")
+    answer = post(client, "/login/first", {"name": html.unescape(name.group(1)), "new": CHOSEN, "again": CHOSEN,
+                                           "next": "/review"})  # fmt: skip
+    found = SECRET.search(page(client, answer["redirect"]))
+    check(found, "the authenticator's page shows no key to type")
+    secret = "".join(found.group(1).split())
+    post(client, "/login/authenticator", {"code": authenticator.code(secret, time.time()), "next": "/review"})
+    check(any("session" in cookie for cookie in client.cookies), "no session after the authenticator's code")
+    seen(f"signed in as admin ({html.unescape(name.group(1))}), the authenticator app set up")
+
+
 def section_1(client: Client) -> None:
+    first_sign_in(client)
     step("1. the dashboard opens with the short menu (Simple screens)")
     rail = page(client, "/review").split('<aside class="rail"', 1)[-1].split("</aside>", 1)[0]
     labels = [html.unescape(x) for x in re.findall(r'<span class="label">([^<]+)</span>', rail)]

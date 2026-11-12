@@ -20,7 +20,9 @@
 * ``/account/password``: a person's own new password; required before anything else while their password is a
   temporary one (a new account, a reset). Their other sessions end, and this one gets a new token.
 
-On a laptop (server mode off) there are no logins: these pages send to the review queue.
+On a laptop whose Admin signs in (D-243, ``core.signs_in``) the same pages serve them, from this computer only
+(web/identity.py), and only an Admin's account; on any other laptop there are no logins: these pages send to the
+review queue.
 """
 
 from __future__ import annotations
@@ -57,6 +59,7 @@ from ap_coder.web.core import (
     render,
     reviewer,
     server_mode,
+    signs_in,
     take_flash,
     templates,
     with_flash,
@@ -78,6 +81,8 @@ QUIET = 4  # modules of white around a QR code, as the standard asks
 FORWARDING = ("x-forwarded-for", "forwarded", "x-real-ip", "x-forwarded-host", "x-forwarded-proto", "via",
               "x-original-url", "x-original-host")  # fmt: skip
 X_ARR = "x-arr-"
+LAPTOP_ADMIN_ONLY = ("On this laptop AP Coder opens for its Admin only. To let colleagues in with their own accounts, "
+                     "its owner runs python -m ap_coder share (docs/SERVER.md, section 16).")  # fmt: skip
 NAME_FIRST = "Type your name, as it is written on your approvals: AP Coder shows it on each one."
 
 
@@ -163,9 +168,9 @@ def set_session_cookie(request: Request, response: Response, token: str) -> None
 
 @router.api_route(identity.LOGIN_PATH, methods=["GET", "HEAD"], response_class=HTMLResponse)  # HEAD: monitors
 def login_page(request: Request, next: str = HOME) -> Response:  # noqa: A002 - the address's own word
-    if not server_mode(request):
+    if not signs_in(request):
         return RedirectResponse(HOME, status_code=303)
-    if identity.person() is not None:  # logged in already
+    if identity.signed_in() is not None:  # logged in already
         return RedirectResponse(_next(next), status_code=303)
     store = get_store(request)
     first = store.user_count() == 0
@@ -179,7 +184,7 @@ def login_page(request: Request, next: str = HOME) -> Response:  # noqa: A002 - 
 @router.post(identity.LOGIN_PATH)
 def login_save(request: Request, username: str = Form(""), password: str = Form(""),
                next: str = Form(HOME)) -> JSONResponse:  # noqa: A002  # fmt: skip
-    if not server_mode(request):
+    if not signs_in(request):
         return refuse(NO_LOGINS)
     if not username.strip() or not password:
         return refuse("Type your username and your password.")
@@ -193,6 +198,8 @@ def login_save(request: Request, username: str = Form(""), password: str = Form(
         user = store.authenticate(username, password, ip, console=from_console(request))
     except LoginRefused as exc:
         return refuse(_refusal(store, str(exc), username), 401)
+    if not server_mode(request) and user["role"] != ADMIN:  # a laptop opens for its Admin (D-243)
+        return refuse(LAPTOP_ADMIN_ONLY, 403)
     store.end_session(_token(request))  # whatever session this browser had before: never carried over
     store.end_pending(_pending(request))  # nor a login half way
     pending = store.start_pending(user["id"])  # the password alone is no session (D-146)
@@ -254,7 +261,7 @@ def qr_svg(text: str) -> str:
 
 def _step_page(request: Request, step: str, next: str) -> Response:  # noqa: A002
     """A step's page, for the login half way at that step; any other goes to its own step, or to the login page."""
-    if not server_mode(request):
+    if not signs_in(request):
         return RedirectResponse(HOME, status_code=303)
     store, wanted = get_store(request), _next(next)
     user = store.pending_user(_pending(request))
@@ -290,7 +297,7 @@ def _again(wanted: str) -> str:
 def _pending_at(request: Request, step: str, wanted: str) -> tuple[dict | None, Response | None]:
     """The account of the login half way at ``step``; else the refusal to send (one that ended: to the login page,
     coming back to ``wanted`` after it)."""
-    if not server_mode(request):
+    if not signs_in(request):
         return None, refuse(NO_LOGINS)
     user = get_store(request).pending_user(_pending(request))
     if user is None:
@@ -357,12 +364,13 @@ def code_save(request: Request, code: str = Form(""), next: str = Form(HOME)) ->
 @router.get(identity.FIRST_PATH, response_class=HTMLResponse)
 def first_page(request: Request, next: str = HOME) -> Response:  # noqa: A002
     """The first sign-in's page (D-243): the first Admin's name and own password, after admin / admin."""
-    if not server_mode(request):
+    if not signs_in(request):
         return RedirectResponse(HOME, status_code=303)
     store, wanted = get_store(request), _next(next)
     if not (first_sign_in_here(request) and store.user_count() == 0 and store.first_sign_in_open(_pending(request))):
         return RedirectResponse(_again(wanted), status_code=303)
-    context = {"step": identity.FIRST_PATH, "next": wanted, "username": FIRST_USERNAME, "name": "", "error": "",
+    name = "" if server_mode(request) else reviewer()  # a laptop's: the name on its approvals so far
+    context = {"step": identity.FIRST_PATH, "next": wanted, "username": FIRST_USERNAME, "name": name, "error": "",
                "flashes": take_flash(request.query_params.get("flash")),
                "title": "Make this account yours"}  # fmt: skip
     response = templates.TemplateResponse(request, "login_step.html", context)
@@ -375,7 +383,7 @@ def first_save(request: Request, name: str = Form(""), new: str = Form(""), agai
                next: str = Form(HOME)) -> JSONResponse:  # noqa: A002  # fmt: skip
     """The first Admin made, with the name and password typed (``add_first_admin``: only while there is no account);
     the first sign-in goes on as a login half way, to the authenticator app's set-up."""
-    if not server_mode(request):
+    if not signs_in(request):
         return refuse(NO_LOGINS)
     if not first_sign_in_here(request):
         return refuse(FIRST_HERE_ONLY, 403)
@@ -429,14 +437,14 @@ def _second_step(request: Request, step: str, code: str, next: str) -> Response:
 
 @router.get("/logout", response_class=HTMLResponse)
 def logout_page(request: Request) -> Response:
-    if not server_mode(request):
+    if not signs_in(request):
         return RedirectResponse(HOME, status_code=303)
     return render(request, "logout.html", "", title="Log out")
 
 
 @router.post("/logout")
 def logout(request: Request) -> JSONResponse:
-    if not server_mode(request):
+    if not signs_in(request):
         return refuse(NO_LOGINS)
     get_store(request).end_session(_token(request), actor=reviewer())
     answer = done(request, identity.LOGIN_PATH, flash_message("You are logged out.", "ok", icon="logout"))
@@ -450,8 +458,8 @@ SESSIONS_PATH = "/account/sessions/end-others"
 
 @router.get(identity.PASSWORD_PATH, response_class=HTMLResponse)
 def password_page(request: Request, next: str = HOME) -> Response:  # noqa: A002
-    found = identity.person()
-    if not server_mode(request) or found is None:
+    found = identity.signed_in()
+    if not signs_in(request) or found is None:
         return RedirectResponse(HOME, status_code=303)
     store = get_store(request)
     user = store.user(found.user_id) or {}
@@ -463,8 +471,8 @@ def password_page(request: Request, next: str = HOME) -> Response:  # noqa: A002
 @router.post(identity.PASSWORD_PATH)
 def password_save(request: Request, current: str = Form(""), new: str = Form(""), again: str = Form(""),
                   next: str = Form(HOME)) -> JSONResponse:  # noqa: A002  # fmt: skip
-    found = identity.person()
-    if not server_mode(request) or found is None:
+    found = identity.signed_in()
+    if not signs_in(request) or found is None:
         return refuse(NO_LOGINS)
     if new != again:
         return refuse("The two new passwords are not the same: type it twice the same way.")
@@ -488,8 +496,8 @@ def password_save(request: Request, current: str = Form(""), new: str = Form("")
 @router.post(SESSIONS_PATH)
 def end_other_sessions(request: Request) -> JSONResponse:
     """Log out everywhere else: every other session of this account ends; this browser's goes on (D-109)."""
-    found = identity.person()
-    if not server_mode(request) or found is None:
+    found = identity.signed_in()
+    if not signs_in(request) or found is None:
         return refuse(NO_LOGINS)
     ended = get_store(request).end_sessions(found.user_id, keep=_token(request))
     said = f"Logged out on {ended} other computer{'s' if ended != 1 else ''} or browser{'s' if ended != 1 else ''}."

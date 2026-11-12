@@ -11,6 +11,15 @@ from typing import Any
 from . import users
 from .users import _USER_COLUMNS, FIRST_KIND, PENDING_KIND, PENDING_SECONDS, TOKEN_BYTES, _public, token_hash
 
+# Sign-in on the laptop (D-243): the database's setting ``SIGN_IN``. ``LAPTOP``: its Admin signs in on this computer,
+# set when a laptop's data folder first starts with no sign-in decided (ops/safety.py ``laptop_sign_in``); ``OFF``:
+# turned off at the console (``users sign-in off``); ``TEAM``: the folder serves a team (server mode started on it).
+# None: an older folder not started since, or a team's (D-211 tells it by its accounts). ops/safety.py reads it
+# without a Store, by these same words.
+SIGN_IN, LAPTOP, OFF, TEAM = "sign_in", "laptop", "off", "team"
+LAPTOPS = (LAPTOP, OFF)  # the accounts are the laptop's own: kept across a restore, as the server's (D-101)
+LAPTOP_IDLE_SECONDS = 8 * 3600  # a laptop's session unused this long ends (its owner's working day; the server: 30 min)
+
 
 class SignInMixin:
     """A login half way and the first sign-in (D-146, D-243)."""

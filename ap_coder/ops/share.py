@@ -226,8 +226,9 @@ def allow_folder(data: Path, folder: str, say: Say, now: bool = False) -> None:
 
 def backup_folder(data: Path, db: Path, first: bool, say: Say, allow: str = "") -> None:
     """The backups' second folder in server mode, where Admins may name only the folders server.json allows (D-109):
-    ``allow`` (``--allow-folder``) is added to them, and so is, the first time (``first``: no account yet, the data
-    is still one person's), the folder that person had chosen in laptop mode. Later one that is not allowed is said."""
+    ``allow`` (``--allow-folder``) is added to them, and so is, the first time (``first``: no account yet, or only the
+    laptop's own Admin, D-243: the data is still one person's), the folder that person had chosen in laptop mode.
+    Later one that is not allowed is said."""
     from ..core.store.backups import setting_in
 
     chosen = (setting_in(db, "backup_copy_dir") or "").strip() if db.is_file() else ""
@@ -321,12 +322,15 @@ def prepare(data: Path, db: Path, say: Say, *, allow: str = "", ask: Callable[[s
     something is still missing (said, with its next step). From the first Admin on, the data folder is a team's (its
     account, then its server.json): a plain start of AP Coder no longer opens it without sign-in (D-211)."""
     from ..core.store.users import sign_in_accounts
+    from .safety import LAPTOP_SIGN_IN, sign_in_setting
 
     s = service.settings(data)
     files = certificate(data, s, say, run, openssl)
     if files is None:
         return None
-    first = not sign_in_accounts(db)
+    # Still one person's: no account yet, or only the laptop's own Admin (D-243), never shared before.
+    laptops = sign_in_setting(db) in LAPTOP_SIGN_IN and not service.config_path(data).is_file()
+    first = not sign_in_accounts(db) or laptops
     if not first_admin(db, say, ask, password):
         return None
     kept = service.read_config(data)

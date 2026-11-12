@@ -177,3 +177,13 @@ def test_help_names_a_backup_as_the_list_shows_it(tmp_path, ground_truth, capsys
     out = " ".join(capsys.readouterr().out.split())
     assert "as backup list shows it" in out
     assert "<date>-<time>.db" not in out and made.name.endswith("-manual.db")
+
+
+def test_restore_on_a_laptop_with_sign_in_keeps_its_admin(tmp_path, ground_truth):
+    """D-243: the laptop's own Admin and its sign-in survive a restore at the console, as a server's accounts do."""
+    store, _data_dir = _data(tmp_path, ground_truth)
+    made = store.backup_now()
+    store.set_setting("sign_in", "laptop")
+    store.add_first_admin("correct horse battery", "Pat Lee")
+    assert cli.main(["--db", str(store.path), "backup", "restore", made.name, "--yes"]) == 0
+    assert Store(store.path).get_setting("sign_in") == "laptop" and Store(store.path).user_count() == 1

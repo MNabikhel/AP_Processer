@@ -34,6 +34,7 @@ from ._base import (
 from .backup_files import Retention
 from .migrations import _answer_work
 from .postings import carry_postings, saved_postings
+from .sign_in import SIGN_IN
 from .summary import SUMMARY_TRIGGERS, make_triggers
 from .users import add_columns, carry_accounts, saved_accounts
 
@@ -832,8 +833,9 @@ class BackupsMixin:
                 _RESTORING.discard(key)
 
     @staticmethod
-    def _rules_first(copy: Path, accounts: dict, keep_accounts: bool) -> str:
-        """A restore's rules for the accounts, the sessions and the second backup folder (``_restore_from``) applied
+    def _rules_first(copy: Path, accounts: dict, keep_accounts: bool, sign_in: str = "") -> str:
+        """A restore's rules for the accounts (and with them ``sign_in``, the setting that says whose they are: a
+        laptop's or a team's, D-243), the sessions and the second backup folder (``_restore_from``) applied
         to its own copy of the backup, before the copy becomes the database: the files are copied for minutes after
         that, and a restore stopped meanwhile (the power, a kill) must not leave an account turned off since the
         backup on again, a session the backup knew, or its folder. The second backup folder the backup named."""
@@ -849,6 +851,9 @@ class BackupsMixin:
                     conn.execute("DELETE FROM sessions")
                 if "settings" not in tables:
                     return ""
+                if sign_in:
+                    conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET "
+                                 "value = excluded.value", (SIGN_IN, sign_in))  # fmt: skip
                 named = conn.execute("SELECT value FROM settings WHERE key = 'backup_copy_dir'").fetchone()
                 conn.execute(
                     "DELETE FROM settings WHERE key IN ('backup_copy_dir', 'backup_copy_status', ?)", (BACKUP_STATUS,)
@@ -877,7 +882,8 @@ class BackupsMixin:
             with self._conn() as conn:
                 accounts = saved_accounts(conn) if keep_accounts else {}
                 postings = saved_postings(conn)  # the JD Edwards vouchers: never forgotten by a restore (D-105)
-            restored_dir = self._rules_first(copy, accounts, keep_accounts)
+            sign_in = self.get_setting(SIGN_IN) if keep_accounts else ""  # its accounts' (D-243)
+            restored_dir = self._rules_first(copy, accounts, keep_accounts, sign_in)
             source = sqlite3.connect(copy)
             target = sqlite3.connect(self.path)
             try:

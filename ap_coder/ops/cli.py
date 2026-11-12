@@ -341,7 +341,8 @@ def _add_report_commands(sub: Any, private: Path, out_dir: Path) -> None:
 
 
 def _add_users_command(sub: Any) -> None:
-    """``users``: server mode's accounts (add, list, reset, reset-2fa, deactivate, activate, role)."""
+    """``users``: server mode's accounts (add, list, reset, reset-2fa, deactivate, activate, role); a laptop's sign-in
+    (``sign-in on|off``, D-243)."""
     from ..core.store.users import ROLES
 
     p = sub.add_parser("users", help="Server mode: the people who log in (add, list, reset, reset-2fa, deactivate, "
@@ -366,6 +367,9 @@ def _add_users_command(sub: Any) -> None:
     u = users.add_parser("role", help="Change a person's role")
     u.add_argument("username")
     u.add_argument("role", choices=ROLES)
+    u = users.add_parser("sign-in", help="A laptop: turn its Admin's sign-in off (no one signs in on this computer) "
+                         "or on again, from its next start (D-243); never on a team's data folder")  # fmt: skip
+    u.add_argument("state", choices=("on", "off"))
 
 
 def _add_hub_command(sub: Any) -> None:
@@ -448,7 +452,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         os.environ["AP_ENV_FILE"] = str(Path(args.env_file).resolve())
     from ..core.store import Store
     from ..web import server
-    from .offline import DEFAULT_PORT, SERVER_ENV, free_port, is_loopback, server_mode
+    from .offline import DEFAULT_PORT, SERVER_ENV, free_port, server_mode
 
     if args.server:
         os.environ[SERVER_ENV] = "1"  # (the pages ask server_mode())
@@ -503,10 +507,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
     else:
         opens = "" if args.no_browser else "it opens in your browser; "  # (the launcher opens it, and says so itself)
         print(f"Dashboard: {url}  ({opens}Ctrl+C here to stop)", file=sys.stderr)
-        if not is_loopback(host if host not in ("", "localhost") else "127.0.0.1"):
-            print(f"Listening on {host}: other computers on the network can open the dashboard. Colleagues give their "
-                  "name first, with no password: anyone who can reach this address can see the invoices. For logins, "
-                  "run it as the company server (server mode).", file=sys.stderr)  # fmt: skip
     network = {"certfile": certfile, "keyfile": keyfile, "proxy": args.proxy, "insecure_http": args.insecure_http}
     try:
         workers = args.workers or int((os.environ.get(server.WORKERS_ENV) or "1").strip())
@@ -518,7 +518,35 @@ def cmd_serve(args: argparse.Namespace) -> int:
     from ..web.core import first_run
 
     store = first_run(Path(args.db), server=server_mode())  # a laptop's new data folder starts with Simple screens
+    if server_mode():
+        from .safety import mark_team
+
+        mark_team(store)  # its accounts are a team's from now on (D-211, D-243)
+    else:
+        extra |= _laptop_sign_in(args, store, host)
     return server.serve(host, port, open_browser=not args.no_browser, store=store, **extra)
+
+
+def _laptop_sign_in(args: argparse.Namespace, store: Store, host: str) -> dict[str, Any]:
+    """A laptop-mode start's sign-in (D-243), said: on for a laptop's data folder (``safety.laptop_sign_in``), off this
+    once with ``--without-sign-in`` (``serve``'s ``sign_in=False``). And who else on the network may open it."""
+    from .offline import is_loopback
+    from .safety import laptop_sign_in
+
+    on = laptop_sign_in(store, private_dir())
+    if on and args.without_sign_in:
+        print("WARNING: opened without signing in, on purpose (--without-sign-in): whoever uses this computer opens AP "
+              "Coder now. Its sign-in is on again at the next start.", file=sys.stderr)  # fmt: skip
+    if not is_loopback(host if host not in ("", "localhost") else "127.0.0.1"):
+        if on and not args.without_sign_in:
+            print(f"Listening on {host}: other computers on the network are refused, as sign-in on this laptop is for "
+                  "this computer only. To let colleagues in with their own accounts: python -m ap_coder share.",
+                  file=sys.stderr)  # fmt: skip
+        else:
+            print(f"Listening on {host}: other computers on the network can open the dashboard. Colleagues give their "
+                  "name first, with no password: anyone who can reach this address can see the invoices. For logins, "
+                  "run it as the company server (server mode).", file=sys.stderr)  # fmt: skip
+    return {"sign_in": False} if on and args.without_sign_in else {}
 
 
 def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Any], bool, int] | None:
@@ -1191,13 +1219,15 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
         except ValueError as exc:
             print(f"Not loaded: {exc}", file=sys.stderr)
             return 1
+        from ..core.store.sign_in import OFF, SIGN_IN
         from ..web.core import SCREENS, SIMPLE
 
         store.set_setting(SCREENS, SIMPLE)  # as a new laptop installation starts: the short menu
+        store.set_setting(SIGN_IN, OFF)  # made-up data: opened without signing in (D-243)
         print(f"The made-up company is loaded: {made['truth'].company.name}, {len(made['invoices'])} invoices to "
               f"review. Its JD Edwards exports and its invoices are in {store.path.parent / COMPANY_FOLDER}. Start "
-              "the dashboard on this data folder to look at it; delete the folder when you are done.",
-              file=sys.stderr)  # fmt: skip
+              "the dashboard on this data folder to look at it (without signing in: the data is made up); delete "
+              "the folder when you are done.", file=sys.stderr)  # fmt: skip
         return 0
     result = load_demo(store, settings)
     print(
@@ -1241,6 +1271,8 @@ def cmd_users(args: argparse.Namespace) -> int:
             codes = "codes set up" if u["totp_on"] else "codes not set up"  # the authenticator app (D-146)
             print(f"{u['username']:<24} {ROLE_LABELS[u['role']]:<10} {u['display_name']:<30} {state}, {codes}")
         return 0
+    if action == "sign-in":
+        return _sign_in_command(store, args.state == "on", actor)
     username = fold_username(args.username)
     if action == "add":
         if not USERNAME.fullmatch(username) or store.find_user(username) is not None:
@@ -1288,6 +1320,29 @@ def cmd_users(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(exc, file=sys.stderr)
         return 1
+    return 0
+
+
+def _sign_in_command(store: Store, on: bool, actor: str) -> int:
+    """``users sign-in on|off``: a laptop's sign-in (D-243), from its next start; refused on a team's data folder (its
+    setting says so, or, never decided, it has accounts or server.json: D-211)."""
+    from ..core.store.sign_in import LAPTOP, OFF, SIGN_IN, TEAM
+    from .service import config_path
+
+    said = store.get_setting(SIGN_IN)
+    if said == TEAM or (not said and (store.user_count() or config_path(store.path.parent).is_file())):
+        print("This data folder serves a team (server mode): its sign-in is never turned off. Laptop mode on it, on "
+              "purpose: python -m ap_coder serve --without-sign-in", file=sys.stderr)  # fmt: skip
+        return 1
+    store.set_setting(SIGN_IN, LAPTOP if on else OFF)
+    change = {"from": said, "to": LAPTOP if on else OFF}  # in the Activity log: "Sign in (laptop → off)"
+    store.log_event("settings_changed", actor=actor, detail={"keys": [SIGN_IN], "changes": {SIGN_IN: change}})
+    if on:
+        print("Sign-in on this laptop is on from its next start: its Admin signs in (the first time: username admin, "
+              "password admin, in a browser on this computer).")  # fmt: skip
+    else:
+        print("Sign-in on this laptop is off from its next start: whoever uses this computer opens AP Coder without "
+              "signing in. The account stays; python -m ap_coder users sign-in on turns it on again.")  # fmt: skip
     return 0
 
 

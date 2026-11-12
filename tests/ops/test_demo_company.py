@@ -90,6 +90,8 @@ def test_demo_company_command(tmp_path, capsys):
     assert len(store.list_invoices(REVIEW)) == 7 and store.account_pairs() is not None
     assert store.chart_settings().home_business_unit == jde_company.MAIN_UNIT
     assert simple_screens(store)  # as a new laptop installation starts: the short menu
+    assert store.get_setting("sign_in") == "off"  # made-up data: no sign-in to try it (D-243)
+    assert "without signing in" in said
     assert cli.main(["--db", str(db), "demo", "--company"]) == 1
     assert "Not loaded: The made-up company is loaded into a new database only" in capsys.readouterr().err
     assert len(Store(db).list_invoices()) == 7

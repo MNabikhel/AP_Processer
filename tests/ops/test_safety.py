@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from ap_coder.core.store import Store
+from ap_coder.core.store.sign_in import LAPTOP, OFF, SIGN_IN, TEAM
 from ap_coder.ops import cli, offline, safety, service
 
 REMOTE = {"Z:\\": safety.DRIVE_REMOTE, "D:\\": 3}  # GetDriveTypeW: a mapped share, a fixed disk
@@ -380,6 +381,87 @@ def test_looking_for_a_team_server_on_a_new_data_folder_makes_no_database(tmp_pa
     assert not db.exists()
     store = first_run(db, server=False)
     assert store.get_setting(SCREENS, EVERYTHING) == SIMPLE
+
+
+# --- A laptop's own sign-in is not a team's (D-243) ----------------------------------------------------------------
+
+
+def serve(db: Path, *more: str) -> int:
+    return cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser", *more])
+
+
+def test_a_laptops_first_start_turns_its_sign_in_on(laptop, started, capsys):
+    data, db = laptop
+    assert serve(db) == 0 and started[0].get("sign_in") is None  # its setting decides (create_app)
+    assert Store(db).get_setting(SIGN_IN) == LAPTOP and "sign-in" not in capsys.readouterr().err
+
+
+def test_an_older_laptop_folder_gets_sign_in_at_its_next_start(laptop, started):
+    data, db = laptop
+    Store(db).set_setting("reviewer_seen", "1")  # a database from before, never decided
+    assert serve(db) == 0 and Store(db).get_setting(SIGN_IN) == LAPTOP
+
+
+def test_the_laptops_own_account_and_key_never_make_it_a_team_server(laptop, started, monkeypatch):
+    import sys
+
+    from ap_coder.core import authenticator
+
+    data, db = laptop
+    assert serve(db) == 0
+    Store(db).add_first_admin(GOOD, "Pat Lee")
+    assert authenticator.load_key(data, create=True)
+    assert safety.team_server(data, db) is None and serve(db) == 0 and len(started) == 2
+    monkeypatch.setitem(sys.modules, "ap_coder.core.store.users", None)  # the launcher's first phase: no store
+    assert safety.team_server(data, db) is None
+    Store(db).set_setting(SIGN_IN, OFF)  # turned off at the console: its account stays the laptop's
+    assert safety.team_server(data, db) is None
+
+
+def test_a_teams_folder_opened_without_sign_in_on_purpose_stays_a_teams(laptop, started, capsys):
+    """Never decided, and with accounts (or the codes' key, or server.json): a team's, whatever the start."""
+    from ap_coder.core import authenticator
+
+    data, db = laptop
+    Store(db).add_user("jsmith", GOOD, role="admin")
+    assert serve(db, "--without-sign-in") == 0
+    assert Store(db).get_setting(SIGN_IN) == "" and safety.team_server(data, db) is not None
+    other = data / "other"
+    other.mkdir()
+    authenticator.load_key(other, create=True)
+    assert not safety.laptop_sign_in(Store(other / "ap_coder.db"), other)
+    assert Store(other / "ap_coder.db").get_setting(SIGN_IN) == ""
+
+
+def test_server_mode_makes_a_laptops_folder_a_teams(laptop, started, capsys):
+    data, db = laptop
+    serve(db)
+    Store(db).add_first_admin(GOOD, "Pat Lee")
+    service.write_config(data, port=8599)
+    assert serve(db, "--server", "--insecure-http") == 0 and Store(db).get_setting(SIGN_IN) == TEAM
+    service.config_path(data).unlink()
+    assert safety.team_server(data, db) is not None  # its accounts are a team's again (D-211)
+    assert serve(db) == 2
+
+
+def test_without_sign_in_on_a_laptops_folder_opens_it_this_once(laptop, started, capsys):
+    data, db = laptop
+    serve(db)
+    assert serve(db, "--without-sign-in") == 0 and started[-1]["sign_in"] is False
+    said = capsys.readouterr().err
+    assert "WARNING" in said and "without signing in" in said
+    assert Store(db).get_setting(SIGN_IN) == LAPTOP
+
+
+def test_a_laptop_with_sign_in_listening_on_the_network_says_colleagues_are_refused(laptop, started, capsys):
+    data, db = laptop
+    assert serve(db, "--host", "0.0.0.0") == 0
+    said = capsys.readouterr().err
+    assert "python -m ap_coder share" in said and "give their name" not in said
+
+
+def test_the_setting_is_read_by_the_same_words_without_a_store():
+    assert (safety.SIGN_IN_SETTING, safety.LAPTOP_SIGN_IN) == (SIGN_IN, (LAPTOP, OFF))
 
 
 # --- One laptop-mode AP Coder a data folder (B-2351) ------------------------------------------------------------------

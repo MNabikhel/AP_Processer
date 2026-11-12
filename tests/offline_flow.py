@@ -472,8 +472,9 @@ class Server:
         }
         self.output: list[str] = []
         self.announced = threading.Event()
+        serve = [python, "-m", "ap_coder", "serve"]  # without the laptop's sign-in (D-243): this run looks at the pages
         self.proc = subprocess.Popen(
-            [python, "-m", "ap_coder", "serve", "--host", "127.0.0.1", "--port", str(self.port), "--no-browser"],
+            [*serve, "--host", "127.0.0.1", "--port", str(self.port), "--no-browser", "--without-sign-in"],
             cwd=ROOT,
             env=env,
             stdout=subprocess.PIPE,

@@ -452,6 +452,13 @@ class UsersMixin:
             self._log(conn, "role_changed", None, actor or None,
                       {"username": row["username"], "from": row["role"], "to": role})  # fmt: skip
 
+    def rename_user(self, user_id: int, display_name: str) -> None:
+        """The name an account shows (a laptop's Admin renamed in Settings, D-243: the name on their approvals)."""
+        shown = _clean_display(display_name)
+        if shown:
+            with self._conn() as conn:
+                conn.execute("UPDATE users SET display_name = ? WHERE id = ?", (shown, int(user_id)))
+
     def set_user_cost_centers(self, user_id: int, codes: str, *, actor: str = "") -> str:
         """The cost centers a Manager account answers for (D-138), as typed ("CC-200, CC-300"): kept cleaned, comma
         separated. Returns what is kept."""
