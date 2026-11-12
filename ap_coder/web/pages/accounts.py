@@ -298,9 +298,9 @@ def _bank_import(request: Request, form: Any) -> JSONResponse:
     if refusal := pick_refusal(BANK_ACCOUNTS, picked):
         return refuse(refusal)
     records = [{f: rec.get(c) for f, c in picked.items()} for rec in df.to_dict("records")]
-    keep = {r["code"]: r for r in store.bank_accounts()}
+    keep = {r["code"].upper(): r for r in store.bank_accounts()}  # (a code in any case: the same account)
     for r in records:  # a column not picked keeps what the account has
-        old = keep.get(str(r.get("code") or "").strip())
+        old = keep.get(str(r.get("code") or "").strip().upper())
         if old:
             for f in banks.COLUMNS:
                 if f not in picked:
@@ -330,14 +330,14 @@ def _bank_save(request: Request, form: Any) -> JSONResponse:
     posted = form.get("version")  # an account imported meanwhile would be overwritten (B-655)
     if posted is not None and str(posted) != bank_version(store, bank_shown(store)):
         return refuse(STALE_PAGE, 409)
-    stored = {r["code"]: r for r in store.bank_accounts()}
+    stored = {r["code"].upper(): r for r in store.bank_accounts()}
     cols = {f: form.getlist(f) for f in ("code", "name", "currency", "institution", "transit", "account_number",
                                          "gl_account")}  # fmt: skip
     defaults, active = {str(v) for v in form.getlist("is_default")}, {str(v) for v in form.getlist("active")}
     records = []
     for n in range(len(cols["code"])):
         row = {f: str(values[n] if n < len(values) else "").strip() for f, values in cols.items()}
-        old = stored.get(row["code"])
+        old = stored.get(row["code"].upper())
         if old and not row["account_number"]:
             row["account_number"] = old["account_number"]  # left blank: unchanged (it is never shown in full)
         row["is_default"] = "yes" if str(n) in defaults else "no"

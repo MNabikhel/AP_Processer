@@ -471,6 +471,8 @@ class AccountsMixin:
         """Add or change accounts (``banks.clean_rows`` output), by code; an account not in ``rows`` is kept. An
         account made the default of its currency is the only one. Returns {"added", "updated"}."""
         before = {r["code"]: r for r in self.bank_accounts()}
+        spelled = {code.upper(): code for code in before}  # "cad-op" is CAD-OP, as banks.clean_rows has it
+        rows = [{**row, "code": spelled.get(row["code"].upper(), row["code"])} for row in rows]
         added = updated = 0
         now = _now()
         upsert = (

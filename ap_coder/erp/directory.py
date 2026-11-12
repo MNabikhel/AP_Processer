@@ -478,7 +478,8 @@ def save_preset(store: Any, name: str, query_string: str, make_default: bool = F
         raise ValueError(f"At most {MAX_PRESETS} saved layouts: delete one first.")
     kept.append({"name": name, "query": _clean(query_string)})
     store.set_setting(_keys(owner)[0], json.dumps(kept))
-    if make_default:
+    default = store.get_setting(_keys(owner)[1]) or ""
+    if make_default or default.lower() == name.lower():  # (the default retyped in another case stays the default)
         store.set_setting(_keys(owner)[1], name)
     return name
 

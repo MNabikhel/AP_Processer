@@ -20,7 +20,7 @@ from ap_coder.coding.vendors import ON_HOLD
 from ap_coder.core.safe import csv_cell
 from ap_coder.core.store import Store, load_sample_setup
 from tests.conftest import fill_from
-from tests.webclient import PAGE
+from tests.webclient import PAGE, add_clean, client_for
 
 MASTER_PAGES = [
     "/vendors",
@@ -110,6 +110,18 @@ def test_the_vendor_list_filters_and_opens_a_vendor(client, busy):
     assert f'name="key" value="{one["vendor_key"]}"' in detail
     if one["terms"]:
         assert f"terms {one['terms']}" in detail
+
+
+def test_the_vendor_search_and_name_sort_ignore_accents(store):
+    """A search for "quebec" finds Hydro-Québec, as the queue's search does, and Éclair sorts before Zed."""
+    from ap_coder.web.pages.vendors import sort_vendors
+
+    add_clean(store, vendor_name="Hydro-Québec")
+    client = client_for(store)
+    for q in ("quebec", "QUEBEC", "hydro-quebec"):
+        assert "Hydro-Québec" in client.get("/vendors", params={"q": q}).text.split("<main", 1)[-1]
+    rows = [{"vendor_name": n} for n in ("Zed Inc", "Éclair Ltée", "Alpha", "Énergir")]
+    assert [r["vendor_name"] for r in sort_vendors(rows, "name")] == ["Alpha", "Éclair Ltée", "Énergir", "Zed Inc"]
 
 
 def test_a_vendor_is_put_on_hold_and_given_its_gst_number(client, busy):
@@ -471,6 +483,21 @@ def test_the_bank_accounts_import_needs_only_the_code_as_its_reader_does(client,
     data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in guessed(page.text).items()}}
     follow(client, client.post("/accounts/bank/import", data=data, headers=PAGE))
     assert [(a["code"], a["currency"]) for a in store.bank_accounts()] == [("CAD-2", "CAD")]
+
+
+def test_a_bank_code_typed_in_another_case_is_the_same_account(client, store):
+    """As the import's own check and JD Edwards' pay-from match codes whatever their case, "cad-op" in a file is
+    the account CAD-OP: changed in place, its spelling, default and unpicked columns kept, not a second account."""
+
+    def load(content: bytes) -> None:
+        page = upload(client, "/accounts/bank/upload", "b.csv", content)
+        data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in guessed(page.text).items()}}
+        follow(client, client.post("/accounts/bank/import", data=data, headers=PAGE))
+
+    load(b"Code,Name,Account number,Default\nCAD-OP,Operating,1234567,yes\n")
+    load(b"Code,Name\ncad-op,Operating again\n")
+    accounts = [(a["code"], a["name"], a["is_default"], a["account_number"]) for a in store.bank_accounts()]
+    assert accounts == [("CAD-OP", "Operating again", True, "1234567")]
 
 
 def test_the_sample_vendor_master_is_imported_by_the_page_as_the_sample_loader_does(client, store, tmp_path):
