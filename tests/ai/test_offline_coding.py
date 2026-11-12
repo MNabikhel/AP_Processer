@@ -177,3 +177,56 @@ def test_an_hst_where_none_is_levied_is_the_hst_of_the_lines_that_make_it():
     assert (hst.rate, hst.province, hst.taxable_amount, hst.tax_amount) == (0.13, "ON", 500.0, 65.0)
     (odd,) = _tax_lines({"hst_amount": 64.0}, 1700.0, "AB", on, amounts)
     assert (odd.rate, odd.province, odd.taxable_amount) == (0.03765, "AB", 1700.0)
+
+
+def _plain_line(store, reference, number, text, vendor="Brightway Janitorial Ltd."):
+    import datetime as dt
+    from types import SimpleNamespace
+
+    from ap_coder.ai.offline_coder import code_from_capture
+    from ap_coder.bench.coding import _capture
+
+    capture = _capture(vendor, number, dt.date(2026, 1, 20),
+                       [SimpleNamespace(text=text, quantity=1.0, unit_price=100.0, amount=100.0)])  # fmt: skip
+    return code_from_capture(capture, reference, store.feedback_rows(), store).coding
+
+
+def test_the_vendors_usual_account_does_not_code_a_line_of_another_kind(tmp_path, reference):
+    """B-2520: on plain lists, a vendor whose four different lines AP all coded to one account (its usual) had every
+    new line coded there alone: a laptop on a cleaning company's invoice went to Cleaning. The usual account's guard
+    of the chart's path (B-2228, B-2251) now holds it for a person; a line of its kind is still coded."""
+    store = Store(tmp_path / "s.db")
+    for n, text in enumerate(["Nightly janitorial service", "Window washing exterior", "Carpet shampoo boardroom",
+                              "Waste bin liners replacement"]):  # fmt: skip
+        out = _plain_line(store, reference, f"B-{n}", text).model_dump(mode="json")
+        out["line_items"][0].update(predicted_gl_code="6230", predicted_cost_center="CC100")
+        store.approve_invoice(store.add_invoice(tmp_path / f"{n}.pdf", out, None), out, "pat")
+    line = _plain_line(store, reference, "B-9", "Dell Latitude 5540 laptop").line_items[0]
+    assert line.predicted_gl_code == UNASSIGNED, f"a laptop coded alone to {line.predicted_gl_code} (cleaning)"
+    assert line.reasoning_justification == (
+        "This supplier's lines usually go to 6230, but this line reads like Computer Equipment (1500): check it."
+    )
+    assert [c["code"] for c in line.candidates[:2]] == ["1500", "6230"]
+    assert _plain_line(store, reference, "B-10", "Floor stripping and waxing").line_items[0].predicted_gl_code == "6230"
+
+
+def test_a_cost_center_no_longer_in_the_list_is_not_proposed(tmp_path, reference):
+    """B-2522: on plain lists, a cost center taken out of the cost center list was still proposed with the line, from
+    the vendor's past approvals (then CC_UNKNOWN), where a GL account taken out of the list never is."""
+    from ap_coder.core.reference_data import load_reference_data
+    from tests.conftest import DATA
+
+    store = Store(tmp_path / "s.db")
+    for n in range(3):
+        out = _plain_line(store, reference, f"N-{n}", "Copy paper case of 10", "Northwind Supply Ltd.").model_dump(
+            mode="json")  # fmt: skip
+        out["line_items"][0].update(predicted_gl_code="6000", predicted_cost_center="CC200")
+        store.approve_invoice(store.add_invoice(tmp_path / f"{n}.pdf", out, None), out, "pat")
+    line = _plain_line(store, reference, "N-8", "Copy paper case of 10", "Northwind Supply Ltd.").line_items[0]
+    assert (line.predicted_gl_code, line.predicted_cost_center) == ("6000", "CC200")
+    centers = (DATA / "cost_centers.csv").read_text().splitlines()
+    (tmp_path / "cc.csv").write_text("\n".join(r for r in centers if not r.startswith("CC200")) + "\n")
+    retired = load_reference_data(DATA / "chart_of_accounts.csv", tmp_path / "cc.csv", DATA / "tax_gl_mapping.csv",
+                                  DATA / "coding_policy.md")  # fmt: skip
+    line = _plain_line(store, retired, "N-9", "Copy paper case of 10", "Northwind Supply Ltd.").line_items[0]
+    assert (line.predicted_gl_code, line.predicted_cost_center) == ("6000", UNASSIGNED)

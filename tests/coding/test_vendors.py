@@ -5,10 +5,11 @@ import copy
 import pytest
 
 from ap_coder.ai.pipeline import finalise_coding
-from ap_coder.coding.vendors import norm_invoice_number
+from ap_coder.coding.vendors import norm_invoice_number, vendor_findings
 from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store
+from tests.webclient import gt
 
 
 def _codes(store, doc, reference, exclude=None):
@@ -599,3 +600,51 @@ def test_without_a_vendor_master_the_vendor_list_keeps_the_numbers_ap_gave_a_ven
         "1234567890 TQ0001",
         "PST-1234-5678",
     )
+
+
+RENAMED_GST = "123456789RT0001"
+
+
+def _renamed_doc(name, number, bank=""):
+    return InvoiceCoding.model_validate(
+        gt(vendor_name=name, invoice_number=number, gst_hst_registration_number=RENAMED_GST, remit_bank_account=bank)
+    )
+
+
+def test_a_renamed_supplier_still_has_its_bank_history(tmp_path):
+    """B-2517: JD Edwards renames supplier 100 (same number, new legal name): the first invoice under the new name with
+    other bank details is still compared with the bank details supplier 100's approved invoices carried."""
+    old_bank = "Transit 12345 Institution 004 Account 1234567"
+    new_bank = "Transit 67890 Institution 010 Account 7654321"
+    store = Store(tmp_path / "s.db")
+    store.import_vendor_master([{"vendor_name": "Acme Fasteners Ltd", "erp_id": "100", "gst": RENAMED_GST}],
+                               by_erp_id=True)  # fmt: skip
+    for n in range(3):
+        doc = _renamed_doc("Acme Fasteners Ltd", f"A-{n}", old_bank).model_dump(mode="json")
+        store.approve_invoice(store.add_invoice(tmp_path / f"a{n}.pdf", doc, None), doc, "pat")
+    assert "VENDOR_BANK_CHANGED" in {c for _, c, _ in vendor_findings(_renamed_doc("Acme Fasteners Ltd", "A-9",
+                                                                                   new_bank), store)}  # fmt: skip
+    store.import_vendor_master([{"vendor_name": "Acme Industrial Holdings Inc", "erp_id": "100",
+                                 "gst": RENAMED_GST}], by_erp_id=True)  # fmt: skip
+    assert store.supplier_key_for("Acme Industrial Holdings Inc", RENAMED_GST) == store.supplier_key_for(
+        "Acme Fasteners Ltd", RENAMED_GST
+    )  # one supplier
+    found = vendor_findings(_renamed_doc("Acme Industrial Holdings Inc", "A-10", new_bank), store)
+    assert "VENDOR_BANK_CHANGED" in {c for _, c, _ in found}, "supplier 100's bank history is lost with its new name"
+    same = vendor_findings(_renamed_doc("Acme Industrial Holdings Inc", "A-11", old_bank), store)
+    assert "VENDOR_BANK_CHANGED" not in {c for _, c, _ in same}
+
+
+def test_a_hold_put_on_a_supplier_holds_it_under_its_new_name(tmp_path):
+    """B-2517: AP holds supplier 100 in AP Coder; JD Edwards then renames it (same number): still on hold."""
+    store = Store(tmp_path / "s.db")
+    store.import_vendor_master([{"vendor_name": "Acme Fasteners Ltd", "erp_id": "100", "gst": RENAMED_GST}],
+                               by_erp_id=True)  # fmt: skip
+    old = store.get_vendor("acme fasteners")
+    store.save_vendor("acme fasteners", old["display_name"], status="on_hold", expected_gst=RENAMED_GST,
+                      notes="bank letter not verified", actor="Mia")  # fmt: skip
+    assert "VENDOR_ON_HOLD" in {c for _, c, _ in vendor_findings(_renamed_doc("Acme Fasteners Ltd", "A-1"), store)}
+    store.import_vendor_master([{"vendor_name": "Acme Industrial Holdings Inc", "erp_id": "100",
+                                 "gst": RENAMED_GST}], by_erp_id=True)  # fmt: skip
+    found = vendor_findings(_renamed_doc("Acme Industrial Holdings Inc", "A-2"), store)
+    assert ("error", "VENDOR_ON_HOLD", "this vendor is on hold in the vendor list: bank letter not verified") in found

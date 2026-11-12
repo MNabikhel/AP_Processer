@@ -6,6 +6,8 @@ import sqlite3
 
 import pytest
 
+from ap_coder.ai.offline_coder import code_from_capture
+from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.capture.supplier import (
     ALWAYS_A_PERSON,
     AUTONOMOUS,
@@ -33,7 +35,9 @@ from ap_coder.capture.workflow import (
     taught_message,
 )
 from ap_coder.coding.validation import ERROR, WARNING, Issue, ValidationReport
+from ap_coder.core.config import Settings
 from ap_coder.core.store import DEFAULT_TOUCHLESS_LIMIT, Store
+from tests import books
 
 KEY = "id:V1"
 
@@ -672,3 +676,38 @@ def test_tax_problems_found_by_the_checks_are_never_touchless(tmp_path, province
     ok, why = should_auto_approve(AUTONOMOUS, capture, checks_ok=not report.errors, issues=issues,
                                   requires_review=report.requires_review)  # fmt: skip
     assert not ok, why
+
+
+def test_a_renamed_touchless_supplier_with_new_bank_details_goes_to_a_person(store, tmp_path):
+    """B-2517: JD Edwards renames a touchless supplier (same supplier number): its record and journal follow the
+    number, so an invoice under the new name paying a new bank account was approved with nobody looking."""
+    old, new, gst = "Brightway Janitorial Ltd.", "Brightway Facility Services Inc.", "123456789RT0001"
+    account = f"{books.MAIN}.7340.3307"
+
+    def coded(name, number, bank):
+        capture = books.captured(name, "Nightly janitorial service", number=number)
+        capture.checks = [{"code": "TOTALS_ADD_UP", "ok": True, "detail": ""}]
+        coding = code_from_capture(capture, reference, store.feedback_rows(), store).coding
+        coding.remit_bank_account, coding.gst_hst_registration_number = bank, gst
+        return capture, coding
+
+    reference = books.load_chart(store)
+    store.import_vendor_master([{"vendor_name": old, "erp_id": "740075", "gst": gst}], by_erp_id=True)
+    books.load_journal(store, books.monthly(740075, "BRIGHTWAY JANITORIAL LTD.", account, "janitorial", 12))
+    for n in range(3):  # paid to the old account, approved by a person
+        books.approve(store, tmp_path, coded(old, f"B-{n}", "Transit 12345 Institution 004 Account 1234567")[1],
+                      [account])  # fmt: skip
+    key = store.supplier_key_for(old, gst)
+    for i in range(30):  # its record meets the bar
+        store.record_outcomes(key, 9000 + i, _outcomes(), display_name=old, at=_at(i))
+    store.set_touchless(True, "Mia")
+    store.import_vendor_master([{"vendor_name": new, "erp_id": "740075", "gst": gst}], by_erp_id=True)
+    reference = store.reference_data()
+    capture, coding = coded(new, "B-99", "Transit 67890 Institution 010 Account 7654321")
+    assert store.supplier_key_for(new, gst) == key
+    output, report = finalise_coding(coding, reference, Settings(), store=store)
+    assert "VENDOR_BANK_CHANGED" in {i.code for i in report.issues}
+    path = next(p for n in range(100) if not audit_pick(p := tmp_path / f"inv{n}.pdf", 0.05))
+    decision = autonomy_decision(store, key, store.get_supplier_profile(key), capture, report, path, output=output,
+                                 pages_read=1)  # fmt: skip
+    assert not decision["auto"], "approved touchless: a new name and new bank details, nobody looked"

@@ -5790,3 +5790,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Fallback:** an invoice coded by an older version, with no distribution kept, is claimed by today's setup, as
     its posting lines are built with it (`exports.distribution`). A setup change still shows on the report as the
     taxes not recoverable today.
+- **D-239** · **A supplier JD Edwards renamed keeps its vendor checks' history and AP's hold** (`coding/vendors.py`
+  `_same_number`; 12 Nov 2026).
+  - **Why:** the touchless record and last year's journal follow the supplier number, but the vendor checks read the
+    invoices and the hold of the vendor row of the name: under its new name a touchless supplier paying a new bank
+    account raised no VENDOR_BANK_CHANGED, and AP's hold stayed on the old name (B-2517).
+  - **What:** D-222's amendment stands (a renamed supplier is a second vendor row, its lessons under the new name);
+    the vendor checks read the invoices of every vendor master row with the same supplier number, and a hold AP put
+    on any of them holds the others (not a hold for the retired marker of an old name). VENDOR_NEW still skips a
+    vendor in the master: the master vouches for the name, and the old name's approvals are the supplier's.

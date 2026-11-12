@@ -130,7 +130,7 @@ def _get(thing: Any, name: str) -> Any:
     return thing.get(name) if isinstance(thing, Mapping) else getattr(thing, name, None)
 
 
-def _described(line: Any) -> str:
+def described(line: Any) -> str:
     """A line's description as the invoice prints it: a part of a split line without the split's mark."""
     text = one_line(_get(line, "description"))
     part = _SPLIT.match(str(_get(line, "reasoning_justification") or ""))
@@ -335,9 +335,9 @@ def suggested(line: Any, invoice: Any, prior: Prior | None, account: str,
         if text:
             return Suggestion(text, why + (f", shortened to {REMARK_MOST} characters" if cut else ""), SUPPLIER)
     cut = f", shortened to {REMARK_MOST} characters"
-    text = shortened(_described(line))
+    text = shortened(described(line))
     if text:
-        return Suggestion(text, "from the invoice's line" + (cut if text != _described(line) else ""), INVOICE)
+        return Suggestion(text, "from the invoice's line" + (cut if text != described(line) else ""), INVOICE)
     name = ""
     if reference is not None and account:  # (a GL code alone, or a business unit and its code)
         name = account_name(reference, "", account) or account_name(reference, *split_account(account))

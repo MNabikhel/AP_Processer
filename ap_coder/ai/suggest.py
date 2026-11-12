@@ -579,7 +579,17 @@ def _from_memory(description: str, vendor_name: str, feedback: list[dict[str, An
             memory.said[asked] = kept
             while len(memory.said) > SAID_KEPT:
                 del memory.said[next(iter(memory.said))]
-    return [replace(s, reasons=list(s.reasons)) for s in kept[1]]
+    centers = _listed_centers(reference)
+    return [replace(s, reasons=list(s.reasons), cost_center=s.cost_center if centers is None or s.cost_center in centers
+                    else "") for s in kept[1]]  # fmt: skip
+
+
+def _listed_centers(reference: ReferenceData) -> frozenset[str] | None:
+    """The cost centers a suggestion may carry from the past line it came from, on plain lists: those still listed,
+    not one taken out of the list since (B-2522); None for any (no cost centers, or a chart's business units:
+    ``complete_pair`` places them)."""
+    listed = reference.line_cost_centers() if reference.pairs is None else None
+    return None if listed is None else frozenset([*listed, UNASSIGNED])
 
 
 def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory, reference: ReferenceData,
@@ -777,13 +787,15 @@ def complete_pair(reference: ReferenceData, code: str, unit: str = "",
 def _placed(reference: ReferenceData, code: str, unit: str, units: list[str], source: str, score: float,
             reasons: list[str], **more: Any) -> Candidate | None:  # fmt: skip
     """A candidate for ``code``, completed as a pair that may be offered (None when there is none). When the
-    business unit is not the one the evidence had, the reason says so."""
+    business unit is not the one the evidence had, the reason says so, and a person picks: nobody chose that business
+    unit for these lines (B-2518)."""
     found = complete_pair(reference, code, unit, units)
     if found is None:
         return None
     placed, guess = found
     reasons = list(reasons)
     if unit and placed != unit:
+        guess = True
         reasons.append(f"{status_said(reference, unit, code)}: offered on {placed}")
     elif guess:
         reasons.append(f"nothing says which business unit: {placed} is a guess")
@@ -812,10 +824,19 @@ def candidates(description: str, vendor_name: str, feedback: list[dict[str, Any]
     line's cost center."""
     found = _from_memory(description, vendor_name, feedback, reference, 0, default_gl, key)
     if not by_pairs(reference, prior):
-        return [Candidate(account=chart.join_account(_unit(s.cost_center), s.gl_code),
-                          business_unit=_unit(s.cost_center), code=s.gl_code, score=s.score,
-                          reason="; ".join(s.reasons), source=s.source, auto=s.auto, check=s.check,
-                          reasons=list(s.reasons)) for s in found][:limit]  # fmt: skip
+        plain = [Candidate(account=chart.join_account(_unit(s.cost_center), s.gl_code),
+                           business_unit=_unit(s.cost_center), code=s.gl_code, score=s.score,
+                           reason="; ".join(s.reasons), source=s.source, auto=s.auto, check=s.check,
+                           reasons=list(s.reasons)) for s in found][:limit]  # fmt: skip
+        if plain and plain[0].auto and plain[0].source == "usual":
+            # A line of another kind is no usual one, as on the chart's path (B-2520). The list's descriptions are
+            # long ("IT Hardware - Non-Capital - monitors; ... laptops below threshold"): a telling word of one is
+            # enough, and the name before the dash says which.
+            for c in plain:
+                c.name = account_name(reference, c.business_unit, c.code).partition(" - ")[0]
+            usual = _usual_prior(plain[0], feedback, reference, key or vendor_key(vendor_name))
+            plain = _unless_another_kind(description, plain, usual, reference, [], least=0.0)[:limit]
+        return plain
     valid = frozenset(reference.line_accounts())
     ranked = [c for c in rank_prior(prior, description, reference) if c.code in valid] if prior else []
     used = [u.business_unit for u in prior.accounts] if prior else []
@@ -959,8 +980,20 @@ def _sure(top: Candidate, offered: dict[str, tuple[int, Candidate]], found: list
     return not any(tier == TIER["vendor"] and c.account != sure.account for tier, c in offered.values())
 
 
+def _usual_prior(top: Candidate, feedback: list[dict[str, Any]], reference: ReferenceData, key: str) -> Prior:
+    """A vendor's usual account of the plain lists (``top``, every different line AP coded for it went there) as a
+    supplier's one account, with the words of those lines: what ``_unless_another_kind`` asks of it."""
+    valid = frozenset(c for c in reference.line_accounts() if c != UNASSIGNED)
+    lines = tuple(dict.fromkeys(p.keys for p in _memory(feedback, valid).patterns
+                                if p.vendor_key == key and p.gl_code == top.code))  # fmt: skip
+    use = AccountUse(account=top.account, business_unit=top.business_unit, code=top.code, lines=len(lines),
+                     vouchers=len(lines), journal_lines=0, approved=len(lines), weight=1.0, share=1.0, last_date="",
+                     line_keys=lines)  # fmt: skip
+    return Prior(accounts=(use,), lines=len(lines), approved=len(lines), weight=1.0)
+
+
 def _unless_another_kind(description: str, ordered: list[Candidate], prior: Prior, reference: ReferenceData,
-                         units: list[str]) -> list[Candidate]:  # fmt: skip
+                         units: list[str], least: float = KIND_ALIKE) -> list[Candidate]:  # fmt: skip
     """``ordered``, whose first is the supplier's one account about to code the line with no one picking: as it is,
     unless the line plainly says another kind of thing (a lunch on a courier's invoice, B-2228). Then the first is
     left for a person, its ``check`` saying why, and the accounts of that other kind come next.
@@ -989,7 +1022,7 @@ def _unless_another_kind(description: str, ordered: list[Candidate], prior: Prio
         if other is None or similarity(line, name_words(reference, other.business_unit, other.code)) < ANOTHER_ALIKE:
             other = _named_account(description, top, rest, reference, units)
         if other is None:
-            other = kind = _another_kind(line, likeness, top, usual, rest, reference)
+            other = kind = _another_kind(line, likeness, top, usual, rest, reference, least)
         if other is not None:
             said, others = f"{other.name or 'account'} ({other.account})", [other]
     if not said:
@@ -1003,7 +1036,7 @@ def _unless_another_kind(description: str, ordered: list[Candidate], prior: Prio
 
 
 def _another_kind(line: frozenset[str], likeness: float, top: Candidate, usual: AccountUse, offered: list[Candidate],
-                  reference: ReferenceData) -> Candidate | None:  # fmt: skip
+                  reference: ReferenceData, least: float = KIND_ALIKE) -> Candidate | None:  # fmt: skip
     """The account ``offered`` whose kind a line not alike to the supplier's account names (``likeness``: how alike
     it is to that account), or None: the line says a word of its name or category that neither the name of the
     supplier's account nor AP's remarks or the lines approved to it have, a word at most ``KIND_NAMES`` accounts'
@@ -1017,7 +1050,7 @@ def _another_kind(line: frozenset[str], likeness: float, top: Candidate, usual: 
         words = name_words(reference, c.business_unit, c.code)
         telling = [counts.get(w, 0) for w in line & words - have if counts.get(w, 0) <= KIND_NAMES]
         score = similarity(line, words)
-        if c.code == top.code or not telling or score < KIND_ALIKE or score <= likeness:
+        if c.code == top.code or not telling or score < least or score <= likeness:
             continue
         if (score, -min(telling)) > most:
             best, most = c, (score, -min(telling))
