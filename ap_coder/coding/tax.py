@@ -868,20 +868,26 @@ MEALS_RESTRICTED = ("GST", "HST", "QST")
 MEALS_NOTE = "Meals: 50% of the {taxes} is claimable. Billed to a client or a staff event? Use the other account."
 # A tip or gratuity line: a voluntary tip is not taxed, so none of the tax printed is on it. A tip word opens or ends
 # the description or a part of it ("Tip amount", "Pourboire inclus", "Credit card tip", "Server - thank you"), or
-# follows who gives or gets it ("Cash tip for Maria", "Le pourboire pour Marie"), or is said included or paid ("The tip
-# is included") or at a rate ("Dinner gratuity at 18%"), and a thanks is followed only by courtesy ("Merci beaucoup"):
+# follows who gives or gets it, the service or "and" ("Cash tip for Maria", "Taxi tip at airport", "Lunch and tip"), is
+# given to a person ("Holiday tip for the driver"), is said included or paid ("The tip is included") or at a rate
+# ("Dinner gratuity at 18%"), and a thanks is followed only by courtesy ("Merci beaucoup", "Thank you for dining"):
 # "Excel tips workshop", "Pipette tips for lab", "Thank you cards", "Merci Boutique" or "Livraison gratuite" (free
 # delivery) are not tips (B-2540).
 _TIP_WORDS = {"tip", "tips", "gratuity", "gratuities", "gratuité", "gratuités", "pourboire", "pourboires"}
 _TIP_BY = {"the", "a", "le", "la", "les", "un", "your", "votre", "cash", "card", "staff", "employee", "employees",
            "server", "servers", "driver", "drivers", "delivery", "waiter", "waitress", "bartender", "valet",
            "porter", "included", "mandatory", "suggested", "optional", "added", "serveur", "serveuse", "livreur",
-           "personnel"}  # fmt: skip
+           "personnel", "taxi", "uber", "lyft", "cab", "service", "bellhop", "housekeeping"}  # fmt: skip
+_TIP_TO = {"for", "to", "pour", "à", "au", "aux"}
+_TIP_FOR = {"server", "servers", "driver", "drivers", "waiter", "waitress", "bartender", "valet", "porter", "bellhop",
+            "housekeeper", "housekeeping", "staff", "team", "crew", "serveur", "serveuse", "livreur", "personnel",
+            "équipe", "chauffeur"}  # fmt: skip
 _TIP_TOLD = {"included", "inclus", "incluse", "added", "ajouté", "paid", "payé"}
 _TIP_RATE = re.compile(r"(?i)\b(?:tips?|gratuit(?:y|ies|és?)|pourboires?)\s+(?:at|of|de|à)\s+\$?\d")
 _THANKS = re.compile(r"(?i)^\s*(?:thank\s*you|merci)\b")
 _COURTESY = {"beaucoup", "for", "your", "business", "visit", "order", "so", "much", "very", "again", "pour", "votre",
-             "visite", "commande", "de", "encore", "bien", "à", "la", "prochaine", "bientôt"}  # fmt: skip
+             "visite", "commande", "de", "encore", "bien", "à", "la", "prochaine", "bientôt", "dining", "with",
+             "us"}  # fmt: skip
 
 
 def meals_note(province: str) -> str:
@@ -948,7 +954,9 @@ def is_tip(line: Any) -> bool:
         named = words(part)
         for i, word in enumerate(named[1:-1], 1):
             told = named[i + 2 : i + 3] if named[i + 1] in ("is", "are", "est", "sont") else named[i + 1 : i + 2]
-            if word in _TIP_WORDS and (named[i - 1] in _TIP_BY or bool(set(told) & _TIP_TOLD)):
+            to = named[i + 2 : i + 4]  # (a person after "the")
+            given = named[i + 1] in _TIP_TO and (named[i - 1] in ("and", "et") or bool(set(to) & _TIP_FOR))
+            if word in _TIP_WORDS and (named[i - 1] in _TIP_BY or bool(set(told) & _TIP_TOLD) or given):
                 return True
         if named and (named[0] in _TIP_WORDS or named[-1] in _TIP_WORDS) or _TIP_RATE.search(part):
             return True

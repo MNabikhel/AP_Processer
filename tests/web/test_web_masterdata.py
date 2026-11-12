@@ -1182,6 +1182,18 @@ def test_names_of_two_cells_with_no_value_beside_them_keep_a_data_row_with_a_col
     assert list(df.columns) == ["Ref", "Memo", "Unnamed: 2", "Unnamed: 3"] and df.values.tolist() == rows[1:]
 
 
+def test_one_column_name_under_a_title_of_one_cell_is_taken_for_the_names():
+    """B-2546: under a title of one cell ("Acme Ltd statement"), a line holding only "Reference", one of the
+    statements page's column names, was taken for them before, and was left a row of data under the title."""
+    from ap_coder.erp import import_specs
+    from ap_coder.web.files import read_sheet
+
+    rows = [["Acme Ltd statement"], ["Reference"], ["Invoice", "A1", 100, 50]]
+    df, _ = read_sheet("s.xlsx", xlsx(rows), specs=[import_specs.STATEMENTS])
+    assert list(df.columns) == ["Reference", "Unnamed: 1", "Unnamed: 2", "Unnamed: 3"]
+    assert df.values.tolist() == [["Invoice", "A1", "100", "50"]]
+
+
 def test_a_statement_whose_column_names_are_not_known_keeps_them_to_pick_from(client, busy):
     """B-2546, on the page: the column picker offers the statement's own names and the preview shows both lines."""
     key = busy.vendor_summaries()[0]["vendor_key"]

@@ -166,6 +166,25 @@ def test_a_voucher_recurring_on_the_swapped_date_of_one_loaded_now_is_not_said_r
     assert not any("this version" in line for line in (*seen.said, *seen.brief))
 
 
+def test_a_journal_loaded_by_this_version_is_never_said_to_read_its_dates_otherwise(tmp_path, truth):
+    """B-2543: a day-first journal loaded by this version with a voucher on 4 March, and another file with the same
+    supplier, lines and amounts on 3 April only, was said to overlap a journal loaded before this version, which read
+    its dates otherwise: each loaded file now keeps how its dates were read, and only one that does not say is."""
+    import datetime as dt
+
+    at = next(i for i in range(40, 80) if truth.vouchers[i].gl_date.day <= 12
+              and truth.vouchers[i].gl_date.day != truth.vouchers[i].gl_date.month)  # fmt: skip
+    date = truth.vouchers[at].gl_date
+    again = replace(truth.vouchers[at], gl_date=dt.date(date.year, date.day, date.month))
+    first = _day_first(jde_exports.journal_csv(replace(truth, vouchers=truth.vouchers[:80])))
+    second = _day_first(jde_exports.journal_csv(replace(truth, vouchers=(*truth.vouchers[80:90], again))))
+    store = _store(tmp_path)
+    assert journal_cmd.load(store, first, "to August.csv")[0] == journal_cmd.DONE
+    assert store.journal_files()[0]["dates_read"] == "day first"
+    seen = journal_cmd.look(store, second, "from May.csv")
+    assert not any("this version" in line for line in (*seen.said, *seen.brief))
+
+
 def test_two_files_that_overlap_say_how_many_vouchers_were_there(tmp_path, capsys, truth):
     first = _file(tmp_path, replace(truth, vouchers=truth.vouchers[:80]), "to August.csv")
     second = _file(tmp_path, replace(truth, vouchers=truth.vouchers[40:]), "from May.csv")

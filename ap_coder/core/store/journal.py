@@ -176,11 +176,13 @@ class JournalMixin:
         )
 
     def import_journal(self, journal: Any, *, source_name: str, source_hash: str, actor: str | None = None,
-                       objects: Mapping[str, Sequence[str]] | None = None) -> dict[str, Any]:  # fmt: skip
+                       objects: Mapping[str, Sequence[str]] | None = None,
+                       dates_read: str = "") -> dict[str, Any]:  # fmt: skip
         """Keep a journal as read (``erp/journal.read_journal``'s ``Journal``): every voucher and every line, marked
         as the reader marked them. ``source_name``: the file's name; ``source_hash``: the SHA-256 of its bytes, by
         which the same file again is known; ``objects``: the payable and tax objects it was read with ({"trade",
-        "intercompany", "tax"}), kept with the file for the record.
+        "intercompany", "tax"}), kept with the file for the record; ``dates_read``: how its G/L dates that read two
+        ways were read ("day first", "month first"); '' not said, as for a file loaded before it was kept (B-2543).
 
         Returns {"file_id", "name", "loaded" (False: this very file is loaded already and nothing was written),
         "first_date", "last_date" (the G/L dates covered, YYYY-MM-DD), "vouchers", "lines", "coding_lines",
@@ -213,9 +215,9 @@ class JournalMixin:
                 detail["control_total_differs"] = bool(journal.totals.differ)
                 file_id = int(conn.execute(
                     "INSERT INTO journal_files (name, hash, loaded_at, loaded_by, first_date, last_date, vouchers, "
-                    "lines, coding_lines, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "lines, coding_lines, detail, dates_read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (source_name, source_hash, _now(), actor or "", result["first_date"], result["last_date"],
-                     result["vouchers"], result["lines"], result["coding_lines"], json.dumps(detail)),
+                     result["vouchers"], result["lines"], result["coding_lines"], json.dumps(detail), dates_read),
                 ).lastrowid)  # fmt: skip
             for start in range(0, len(vouchers), VOUCHERS_A_WRITE):
                 with self._conn() as conn:
@@ -316,12 +318,13 @@ class JournalMixin:
         was read), "counted" (its vouchers counted now: fewer than ``vouchers`` when another file has some of them
         too), "payable_lines", "tax_lines", "affiliates", "unbalanced", "credits", "learned_vouchers",
         "learned_lines", "objects" ({"trade", "intercompany", "tax"}: the objects it was read with),
-        "control_total_differs"}."""
+        "control_total_differs", "dates_read" (as ``import_journal`` was told: '' for a file loaded before)}."""
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT f.id, f.name, f.hash, f.loaded_at, f.loaded_by, f.first_date, f.last_date, f.vouchers, "
-                "f.lines, f.coding_lines, f.detail, (SELECT COUNT(*) FROM journal_vouchers v WHERE v.file_id = f.id "
-                "AND v.counted = 1) AS counted FROM journal_files f WHERE f.done = 1 ORDER BY f.id DESC"
+                "f.lines, f.coding_lines, f.detail, f.dates_read, (SELECT COUNT(*) FROM journal_vouchers v WHERE "
+                "v.file_id = f.id AND v.counted = 1) AS counted FROM journal_files f WHERE f.done = 1 "
+                "ORDER BY f.id DESC"
             ).fetchall()
         return [_file(row) for row in rows]
 

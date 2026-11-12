@@ -35,7 +35,7 @@ from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unre
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104) and
 # vendor_aliases (by _SCHEMA: a vendor name read wrong, as AP corrected it, D-119), line_texts (by _SCHEMA: a
 # supplier's line descriptions as AP approved them, D-120)
-SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
+SCHEMA_VERSION = 28  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
 # (B-1581), 22: the ERP register's vendor names and invoice numbers as the quick search compares them (D-157), 24: the
 # events' indexes by day and by person, the register's by number (D-156), 25: the lessons' approvals counted off an
 # index (B-1714), 26: the import queue (import_batches, import_files, import_turns by _SCHEMA, its indexes; D-168),
@@ -51,7 +51,8 @@ SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, `
 # JD Edwards' Transaction Journal has it, journal.py), and coding_rule_history (by _SCHEMA) and summary_rules (with the
 # summary's tables), no version of their own either: the history of the fixed coding rules and the lines each coded,
 # rules.py, D-217; and why_questions (by _SCHEMA: the question asked after an approval, lessons.py, D-218); and
-# vendor_info (by _SCHEMA: what JD Edwards' vendor information list says of each supplier, vendor_master.py, D-219)
+# vendor_info (by _SCHEMA: what JD Edwards' vendor information list says of each supplier, vendor_master.py, D-219);
+# 28: journal_files.dates_read, how the G/L dates of a journal loaded were read ('' for one loaded before, B-2543)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -378,7 +379,8 @@ CREATE INDEX IF NOT EXISTS bulk_jobs_owner ON bulk_jobs (owner, id);
 CREATE TABLE IF NOT EXISTS journal_files (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, hash TEXT NOT NULL,
     loaded_at TEXT NOT NULL, loaded_by TEXT NOT NULL DEFAULT '', first_date TEXT NOT NULL DEFAULT '', last_date TEXT
     NOT NULL DEFAULT '', vouchers INTEGER NOT NULL DEFAULT 0, lines INTEGER NOT NULL DEFAULT 0, coding_lines INTEGER
-    NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '{}', done INTEGER NOT NULL DEFAULT 0);
+    NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '{}', done INTEGER NOT NULL DEFAULT 0, dates_read TEXT NOT NULL
+    DEFAULT '');
 CREATE INDEX IF NOT EXISTS journal_files_hash ON journal_files (hash);
 CREATE TABLE IF NOT EXISTS journal_vouchers (id INTEGER PRIMARY KEY, file_id INTEGER NOT NULL, row INTEGER NOT NULL,
     doc_type TEXT NOT NULL DEFAULT '', company TEXT NOT NULL DEFAULT '', gl_date TEXT NOT NULL DEFAULT '',

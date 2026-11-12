@@ -416,6 +416,27 @@ def test_a_tip_word_for_what_a_product_is_used_on_is_not_a_tip():
         assert _split(dist) == ([(MEALS, 6.50, 106.50), ("6900", 0.0, 15.0)], [("2310", 8.45)]), text
 
 
+def test_a_tip_after_the_service_it_is_for_or_given_to_a_person_is_a_tip():
+    """B-2540: "Taxi tip at airport", "Service tip to server", "Lunch and tip for team" or a "Thank you for dining"
+    line were tips before a tip word had to open or end the line, and then were not: they took a share of the tax.
+    A tip word after the service it is for, after "and", or followed by the person it is for, is a tip again; a tip
+    word for what a product is used on still is not ("Pipette tips for lab", "Excel tips for beginners")."""
+    from types import SimpleNamespace
+
+    from ap_coder.coding.tax import is_tip
+
+    tips = ("Taxi tip at airport", "Taxi tip to airport", "Uber tip for driver", "Service tip to server",
+            "Bellhop tip for bags", "Hotel housekeeping tips for stay", "Lunch and tip for team",
+            "Thank you for dining", "Thank you for dining with us", "Holiday tip for the driver",
+            "Repas et pourboire pour le serveur")  # fmt: skip
+    assert [text for text in tips if not is_tip(SimpleNamespace(description=text))] == []
+    words = ("Excel tips for beginners", "Pipette tips to fit P200", "Thank you cards", "Thank you lunch",
+             "Repair and tip replacement", "Landfill tip for load")  # fmt: skip
+    assert [text for text in words if is_tip(SimpleNamespace(description=text))] == []
+    dist = _dist(_on([(100.0, MEALS, "Dinner for 4"), (15.0, "6900", "Lunch and tip for team")], 13.0))
+    assert _split(dist) == ([(MEALS, 6.50, 106.50), ("6900", 0.0, 15.0)], [("2310", 6.50)])
+
+
 def test_the_excel_and_csv_lines_carry_the_meals_half():
     inv = _jde_invoice()
     rows = exports.line_rows([inv])

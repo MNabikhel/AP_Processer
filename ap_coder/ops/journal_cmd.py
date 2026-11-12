@@ -189,10 +189,12 @@ def _kept_said(
 
 def _dated_otherwise(store: Store, journal: jr.Journal) -> tuple[int, list[str]] | None:
     """(how many, the files: '"name" (journal id)') of a journal's vouchers read day first that are there already,
-    counted, with their G/L date read month first (03/04/2024 as 4 March), from a journal printed day first loaded
-    before its dates were read so (B-2543): these would be counted twice. A voucher there under its own date too is
-    not one (the same voucher on 4 March and on 3 April). None when there is none."""
-    if not journal.day_first:
+    counted, with their G/L date read month first (03/04/2024 as 4 March), from a journal loaded before a file kept
+    how its dates were read (``dates_read``, B-2543), when every date was read month first: these would be counted
+    twice. A voucher there under its own date too is not one (the same voucher on 4 March and on 3 April). None when
+    there is none."""
+    names = {f["id"]: f["name"] for f in store.journal_files() if not f["dates_read"]}
+    if not journal.day_first or not names:
         return None
     pairs = []
     for voucher in journal.vouchers:
@@ -201,10 +203,9 @@ def _dated_otherwise(store: Store, journal: jr.Journal) -> tuple[int, list[str]]
             swapped = replace(voucher, gl_date=f"{year}-{day}-{month}")
             pairs.append((voucher_identity(voucher), voucher_identity(swapped)))
     held = store.journal_holding(identity for pair in pairs for identity in pair) if pairs else {}
-    found = [held[swapped] for own, swapped in pairs if own not in held and swapped in held]
+    found = [held[swapped] for own, swapped in pairs if own not in held and held.get(swapped) in names]
     if not found:
         return None
-    names = {f["id"]: f["name"] for f in store.journal_files()}
     return len(found), [f'"{names[file_id]}" (journal {file_id})' for file_id in sorted(set(found))]
 
 
@@ -325,7 +326,8 @@ def load(store: Store, data: bytes, name: str, *, trade: Any = None, intercompan
         return seen.state, [*said, f"Not loaded: {seen.problem}"]
     try:
         result = store.import_journal(seen.journal, source_name=name, source_hash=seen.hash, actor=actor,
-                                      objects=seen.objects)  # fmt: skip
+                                      objects=seen.objects,
+                                      dates_read="day first" if seen.journal.day_first else "month first")  # fmt: skip
     except ValueError as exc:
         return REFUSED, [*said, f"Not loaded: {exc}"]
     store.save_journal_objects(**seen.objects, actor=actor)
