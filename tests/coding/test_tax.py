@@ -148,6 +148,18 @@ def test_qst_is_held_to_every_gst_line_not_only_the_first(reference):
     assert ("QST_ON_GST_INCLUSIVE", "error") in _findings(on_gst, reference)
 
 
+@pytest.mark.parametrize(("pst_10", "said"), [(4.04, False), (4.02, False), (4.06, True)])
+def test_a_tax_at_two_rates_may_be_rounded_line_by_line_on_each_rates_lines(reference, pst_10, said):
+    """B-2502: tax rounded on each line was allowed only when a tax has one tax line. Eight lines of 10.05 in BC, four
+    at PST 7% (40.20 → 2.80) and four at PST 10% (40.20 → 1.01 a line, 4.04): TAX_CALC_MISMATCH said the 10% PST of
+    4.04 was wrong (40.20 x 10% = 4.02). Each tax line's own lines, rounded line by line, are a way too; a tax neither
+    way gives is still said."""
+    lines = [line(n, 10.05, "5100", ["GST", "PST"]) for n in range(1, 9)]
+    d = doc(lines, [tl("GST", "", 0.05, 80.4, 4.02), tl("PST", "BC", 0.07, 40.2, 2.8),
+                    tl("PST", "BC", 0.10, 40.2, pst_10)], prov="BC")  # fmt: skip
+    assert ("TAX_CALC_MISMATCH" in {c for c, _ in _findings(d, reference)}) is said
+
+
 def test_missing_pst_suggests_self_assessment(reference):
     gt = _gt(BC)
     gt["tax_lines"] = gt["tax_lines"][:1]

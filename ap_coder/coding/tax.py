@@ -47,7 +47,7 @@ from ..core.tax_setup import (  # noqa: F401  (the names this module had: import
     load_tax_mapping,
     rates_path,
 )
-from .money import CENT, add_up, half_up, nil, per_line, split, tax_band, tax_right, times, within
+from .money import CENT, add_up, half_up, in_cents, nil, per_line, split, tax_band, tax_right, times, within
 
 
 def province_label(code: str, unknown: str = "Province unknown") -> str:
@@ -303,14 +303,32 @@ def _each_tax_line(check: _TaxCheck) -> None:
 
 
 def tax_line_ways(coding: Any, tl: Any, places: int) -> list[float]:
-    """The ways a tax line's tax is worked out: once on its taxable amount, and, when it is the only line of its tax,
-    line by line on the lines marked with it, each rounded (``money.tax_right`` holds the tax to them)."""
+    """The ways a tax line's tax is worked out: once on its taxable amount, and line by line, each line rounded
+    (``money.tax_right`` holds the tax to them): on the lines marked with its tax when it is the only line of its
+    tax, else on its own lines (``_line_by_line_on_its_lines``, B-2502)."""
     ways = [times(tl.taxable_amount, tl.rate, places)]
+    flagged = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
     if sum(1 for t in coding.tax_lines if t.tax_type == tl.tax_type) == 1:
-        flagged = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
         if flagged:
             ways.append(add_up((times(li.amount, tl.rate, places) for li in flagged), places))
+    elif (by_line := _line_by_line_on_its_lines(flagged, tl, places)) is not None:
+        ways.append(by_line)
     return ways
+
+
+def _line_by_line_on_its_lines(flagged: list[Any], tl: Any, places: int) -> float | None:
+    """A tax line's tax rounded line by line on the lines marked with its tax whose amounts make its taxable amount
+    (to the cent, as the Tax check tells the lines of each rate apart), when every such set of lines gives the same
+    tax (eight lines of 10.05, four at each rate); None when no set does, the sets differ, or there are too many to
+    count."""
+    from .line_tax import subset_solutions
+    from .taxmath import MAX_RATE_LINES
+
+    if not flagged or len(flagged) > MAX_RATE_LINES:
+        return None
+    found, total = subset_solutions([in_cents(li.amount) for li in flagged], in_cents(tl.taxable_amount), 1, cap=500)
+    sums = {add_up((times(flagged[k].amount, tl.rate, places) for k in s.lines), places) for s in found if s.lines}
+    return sums.pop() if len(sums) == 1 and total == len(found) else None
 
 
 def _tax_line_amount(check: _TaxCheck, tl: Any, places: int) -> None:
