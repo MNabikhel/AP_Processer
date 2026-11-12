@@ -176,19 +176,21 @@ def save_upload(folder: Path, name: str, content: bytes) -> Path:
     return target
 
 
-def email_line(mail: Unpacked, already: list[Path] | None = None) -> tuple[str, str]:
+def email_line(mail: Unpacked, already: int = 0, repeated: int = 0) -> tuple[str, str]:
     """(text, tone) about a saved email: what it was, where its attachments went, what was left out and why.
-    ``already``: the files of this run skipped as already in AP Coder (not sent to the review queue)."""
+    ``already``: how many of its files were skipped as already in AP Coder, ``repeated``: as the same as another file
+    of this run (neither sent to the review queue)."""
     if mail.error:
         return (f"{mail.email} {mail.error}. It was moved to the emails/could not read subfolder; ask the sender to "
                 "send the invoice again."), "err"  # fmt: skip
     t = mail.triage
     went = []
-    seen = [p for p in mail.saved if p in (already or [])]
-    if len(mail.saved) > len(seen):
-        went.append(f"{ui.plural(len(mail.saved) - len(seen), 'invoice')} to the review queue")
-    if seen:
-        went.append(f"{ui.plural(len(seen), 'attachment')} already in AP Coder")
+    if len(mail.saved) > already + repeated:
+        went.append(f"{ui.plural(len(mail.saved) - already - repeated, 'invoice')} to the review queue")
+    if repeated:
+        went.append(f"{repeated} repeated")
+    if already:
+        went.append(f"{ui.plural(already, 'attachment')} already in AP Coder")
     if mail.statements:
         went.append(f"{ui.plural(len(mail.statements), 'statement')} to Statements")
     if mail.held:
@@ -960,16 +962,18 @@ def _email_lines(store: Store, mails: list[Unpacked], read: list[Any], include_f
     """Each email's line on the card (``email_line``), its attachments already in AP Coder said (``read``: what was
     read of them); each logged as sorted."""
     shas = {r[0]: r[3] for r in read}
-    saved = [(p, shas.get(str(p.parent.resolve() / p.name))) for m in mails for p in m.saved]
-    known = store.known_files([sha for _, sha in saved if sha], include_failed) if saved else set()
-    already, seen = [], set()
-    for path, sha in saved:
-        if sha in known or sha in seen:
-            already.append(path)
-        seen.add(sha)
+    saved = [shas.get(str(p.parent.resolve() / p.name)) for m in mails for p in m.saved]
+    known = store.known_files([sha for sha in saved if sha], include_failed) if saved else set()
+    seen: set[str | None] = set()
     lines = []
     for mail in mails:
-        text, tone = email_line(mail, already)
+        already = repeated = 0
+        for path in mail.saved:
+            sha = shas.get(str(path.parent.resolve() / path.name))
+            already += sha in known
+            repeated += sha not in known and sha in seen
+            seen.add(sha)
+        text, tone = email_line(mail, already, repeated)
         lines.append({"text": text, "tone": tone, "icon": "gpp_maybe" if tone == "err" and mail.triage else "mail"})
         inbox.log_sorted(store, mail)
     return lines

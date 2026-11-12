@@ -787,3 +787,14 @@ def test_a_file_left_out_of_an_upload_is_counted_and_said_with_why(app, client, 
     only = client.post("/process/upload", files=files[1:2], headers=PAGE)
     assert only.status_code == 200
     assert finished(app, client)["result"]["label"] == "Nothing new to read: 1 left out"
+
+
+def test_an_emails_attachment_repeating_another_is_said_repeated_not_sent_to_the_queue(store, tmp_path):
+    from ap_coder.intake.mailbox import unpack
+    from ap_coder.web.pages.process import _email_lines, _read_saved
+    from tests.ops.test_cli_exports_and_data import _repeating_email
+
+    _repeating_email(tmp_path / "mail.eml")
+    mail = unpack(tmp_path / "mail.eml")
+    lines = _email_lines(store, [mail], _read_saved([mail], []), include_failed=False)
+    assert lines[0]["text"] == "mail.eml: Invoice; 2 invoices to the review queue, 1 repeated"
