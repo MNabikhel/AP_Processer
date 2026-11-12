@@ -191,6 +191,14 @@ class ChartMixin:
         with self._conn() as conn:
             return _chart(conn)
 
+    def chart_counts(self) -> tuple[int, int]:
+        """(the chart's accounts, the business units they are on), counted in one query: a page that only says how
+        many reads no row (B-2436: 20,000 rows read one at a time gave way, each, to a load reading its workbook)."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT COUNT(CASE WHEN object != '' THEN 1 END), COUNT(DISTINCT bu) FROM "
+                               "chart_accounts").fetchone()  # fmt: skip
+        return int(row[0]), int(row[1])
+
     def business_units(self) -> list[BuRow]:
         """Every business unit of the business unit master as imported."""
         with self._conn() as conn:
@@ -276,7 +284,7 @@ class ChartMixin:
             if missing:
                 result["without"] = missing
             _put(conn, WITHOUT_KEY, ",".join(missing))
-            self._chart_changed(conn, "chart_accounts", result, actor)
+            self._chart_changed(conn, "chart_accounts", result, actor, loaded=True)
         return result
 
     def import_business_units(self, rows: Iterable[BuRow], actor: str | None = None) -> dict[str, Any]:
@@ -303,7 +311,7 @@ class ChartMixin:
                     [(r.code, r.name, r.company, r.type, r.status) for r in after.values()],
                 )
             result.update(self._rebuild_account_lists(conn, was))
-            self._chart_changed(conn, "business_units", result, actor)
+            self._chart_changed(conn, "business_units", result, actor, loaded=True)
         return result
 
     def rebuild_account_lists(self, actor: str | None = None) -> dict[str, Any]:
@@ -335,11 +343,16 @@ class ChartMixin:
         result = self._rebuild_account_lists(conn, was)
         self._chart_changed(conn, "chart_accounts", {"rows": len(_chart(conn)), **result}, actor)
 
-    def _chart_changed(self, conn: sqlite3.Connection, table: str, result: dict[str, Any], actor: str | None) -> None:
+    def _chart_changed(self, conn: sqlite3.Connection, table: str, result: dict[str, Any], actor: str | None,
+                       loaded: bool = False) -> None:  # fmt: skip
         """When an import or a rebuild changed a table or a list: one more change to the chart (``chart_version``),
         what the tables now hold (``chart_hash``), so the reference data and the checks are worked out again, and
-        its event with everything the result says."""
+        its event with everything the result says. ``loaded``: a file loaded, recorded even when it changed nothing
+        (``unchanged``: "last loaded" and Activity say it, B-2439), with nothing worked out again."""
         if not _moved(result):
+            if loaded:
+                self._log(conn, "accounts_imported", actor=actor,
+                          detail={"table": table, **result, "replace_all": True, "unchanged": True})  # fmt: skip
             return
         self._chart_stamped(conn)
         self._log(conn, "accounts_imported", actor=actor, detail={"table": table, **result, "replace_all": True})

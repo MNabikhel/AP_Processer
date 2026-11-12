@@ -351,7 +351,7 @@ def test_the_erp_register_is_uploaded_checked_imported_and_cleared(client, busy)
             headers=PAGE,
         ),
     )
-    assert "2 ERP invoices known" in page.text and busy.erp_register_count() == 2
+    assert ": 2 invoices on the list now" in page.text and busy.erp_register_count() == 2
     assert 'action="/exports/register/clear" data-confirm=' in page.text
     follow(client, client.post("/exports/register/clear", headers=PAGE))
     assert busy.erp_register_count() == 0
@@ -368,7 +368,7 @@ def test_a_bill_entered_twice_in_the_erp_is_named_when_the_register_is_imported(
     data = {"file": page.url.params["register"], "col_vendor_name": "Supplier", "col_invoice_number": "Invoice",
             "col_invoice_date": "Date", "col_total": "Amount"}  # fmt: skip
     page = follow(client, client.post("/exports/register/import", data=data, headers=PAGE))
-    assert "1 ERP invoice known" in page.text
+    assert ": 1 invoice on the list now" in page.text
     assert "1 bill entered more than once in the ERP: see the duplicate payment audit." in page.text
 
 
@@ -388,7 +388,7 @@ def test_jd_edwards_voucher_list_is_imported_as_it_comes_and_says_what_was_read(
     assert read in page.text and 'name="col_vendor_name"' not in page.text
     page = follow(client, client.post("/exports/register/import", data={"file": page.url.params["register"]},
                                       headers=PAGE))  # fmt: skip
-    assert "5 ERP invoices known." in page.text and read in page.text and store.erp_register_count() == 5
+    assert ": 5 invoices on the list now." in page.text and read in page.text and store.erp_register_count() == 5
     found = store.erp_vouchers_of("Quickship Courier Canada Ltd.", "7-100-20001", 700.00)
     assert [(v["document"], v["batch"]) for v in found] == [("700102", "5550002")]
     assert store.in_erp("Maple Leaf Coffee Services Inc.", "ML-3318", 642.90)
@@ -397,7 +397,7 @@ def test_jd_edwards_voucher_list_is_imported_as_it_comes_and_says_what_was_read(
     page = follow(client, client.post("/exports/register/upload", files={"file": empty}, headers=PAGE))
     refused = client.post("/exports/register/import", data={"file": page.url.params["register"], "replace": "1"},
                           headers=PAGE)  # fmt: skip
-    assert refused.status_code == 400 and "nothing was imported" in refused.json()["error"]
+    assert refused.status_code == 400 and "nothing was loaded" in refused.json()["error"]
     assert "Left out: the totals row; 1 voucher with no invoice number" in refused.json()["error"]
     assert store.erp_register_count() == 5
     # B-2164: a later list that shows a voucher at 0.00 (voided in JD Edwards since) takes it off the list; what a
@@ -412,7 +412,7 @@ def test_jd_edwards_voucher_list_is_imported_as_it_comes_and_says_what_was_read(
     token = page.url.params["register"]
     page = follow(client, client.post("/exports/register/import", data={"file": token}, headers=PAGE))
     assert (
-        "4 ERP invoices known." in page.text
+        ": 4 invoices on the list now." in page.text
         and store.in_erp("Maple Leaf Coffee Services Inc.", "INV-0042", 214.2) == []
     )
     assert (
@@ -424,7 +424,7 @@ def test_jd_edwards_voucher_list_is_imported_as_it_comes_and_says_what_was_read(
     ticked = {"file": page.url.params["register"], "whole": "1"}
     page = follow(client, client.post("/exports/register/import", data=ticked, headers=PAGE))
     assert (
-        "3 ERP invoices known." in page.text
+        ": 3 invoices on the list now." in page.text
         and store.in_erp("Maple Leaf Coffee Services Inc.", "ML-3318", 642.90) == []
     )
     assert store.in_erp("Quickship Courier Canada Ltd.", "Q-9", 61.00)  # another company's: not this list's period

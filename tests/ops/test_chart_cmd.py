@@ -90,7 +90,7 @@ def test_both_files_are_imported_and_what_was_read_is_said(tmp_path, capsys):
     assert "Business units: 9 added, 0 changed, 0 removed." in out
     assert "Read 41 rows of the chart: 32 accounts on 9 business units; 19 may be posted to." in out
     assert "Not for posting, by posting edit code: 1 with B, 1 with I, 1 with L, 1 with M, 9 with N." in out
-    assert "Chart of accounts: 41 added, 0 changed, 0 removed." in out
+    assert "Chart of accounts: 41 rows added, 0 changed, 0 removed." in out
     assert "GL accounts: 13 now (13 added, 0 changed, 0 removed)." in out
     assert "Cost centers: 8 now (8 added, 0 changed, 0 removed)." in out
     assert "Accounts a line may be coded to: 16" in out
@@ -106,13 +106,14 @@ def test_the_same_files_again_change_nothing_and_say_so(tmp_path, capsys):
     chart, units = cf.write_chart(tmp_path / "chart.xlsx"), cf.write_business_units(tmp_path / "bu.xlsx")
     assert _run(tmp_path, capsys, "--chart", str(chart), "--business-units", str(units))[0] == 0
     store = Store(tmp_path / "ap_coder.db")
-    before = (store.chart_version(), store.events_stamp(), store.list_accounts("gl_accounts"))
+    before = (store.chart_version(), store.list_accounts("gl_accounts"))
     code, out, _ = _run(tmp_path, capsys, "--chart", str(chart), "--business-units", str(units))
     assert code == 0
     assert "Business units: the same as already imported." in out
     assert "Chart of accounts: the same as already imported." in out
     assert "GL accounts: 13 now (0 added, 0 changed, 0 removed)." in out
-    assert (store.chart_version(), store.events_stamp(), store.list_accounts("gl_accounts")) == before
+    assert (store.chart_version(), store.list_accounts("gl_accounts")) == before
+    assert all(e["detail"]["unchanged"] for e in store.events(actions=["accounts_imported"])[:2])  # (B-2439)
 
 
 def test_rows_left_out_and_never_offered_accounts_are_said_with_the_reason(tmp_path, capsys):

@@ -326,7 +326,7 @@ def test_the_vendor_master_is_uploaded_checked_and_imported(client, busy):
     assert '<option value="Vendor Name" selected>' in page.text  # the column is guessed
     token = page.url.params["file"]
     missing = client.post("/vendors/master/import", data={"file": token}, headers=PAGE)
-    assert missing.status_code == 400 and "vendor name" in missing.json()["error"]
+    assert missing.status_code == 400 and "Vendor name" in missing.json()["error"]
     page = follow(
         client,
         client.post(
@@ -343,7 +343,7 @@ def test_the_vendor_master_is_uploaded_checked_and_imported(client, busy):
     )
     # two supplier numbers under one name are two vendors, named with their numbers (B-2161); two rows of one name
     # with no number to tell them apart are one, as before
-    assert "Vendor master: 4 added" in page.text and "1 name is shared by more than one supplier number" in page.text
+    assert "Loaded: 4 added" in page.text and "1 name is shared by more than one supplier number" in page.text
     assert "V2 Beta Supply / V3 BETA SUPPLY." in page.text
     assert "more than once" in page.text and "Gamma Signs / GAMMA SIGNS INC" in page.text
     assert {v["erp_id"] for v in busy.master_vendors()} >= {"V1", "V2", "V3"}
@@ -381,8 +381,9 @@ def test_jd_edwards_supplier_master_is_imported_as_the_page_offers_it(client, st
         return page, offered
 
     page, offered = imported()
-    assert offered == {"vendor_name": "Alpha Name", "erp_id": "Address Number", "gst": "", "terms": "",
-                       "status": "Status", "hold": "Hold Payment Code", "default_gl": ""}  # fmt: skip
+    assert offered == {"vendor_name": "Alpha Name", "erp_id": "Address Number", "gst": "", "qst": "", "pst": "",
+                       "province": "", "terms": "", "status": "Status", "hold": "Hold Payment Code",
+                       "default_gl": ""}  # fmt: skip
     assert 'name="hold_codes" value="Y, 1, 2"' in page.text
     vendors = {v["erp_id"]: v for v in store.master_vendors()}
     assert {i: v["erp_hold"] for i, v in vendors.items()} == {"410001": "", "410002": "", "410005": "2", "410006": "",
@@ -445,6 +446,33 @@ def test_a_supplier_marked_do_not_use_in_the_export_is_on_hold_and_the_words_are
     assert store.chart_settings().skip_words == ()
 
 
+def test_a_vendor_lists_qst_and_pst_numbers_and_province_are_imported_by_the_page(client, store):
+    """B-2400: the vendor master's reader reads a QST number, a PST number and a province, but the Vendors page offered
+    no column choice for them: imported with the columns it offered, a list's QST and PST numbers and provinces were
+    dropped."""
+    rows = [["Vendor Name", "Vendor ID", "QST Number", "PST Number", "Province"],
+            ["Erable Fournitures", "V9", "1234567890TQ0001", "PST-1234-5678", "QC"]]  # fmt: skip
+    page = upload(client, "/vendors/master/upload", "vendors.xlsx", xlsx(rows))
+    offered = guessed(page.text)
+    assert {offered.get(f) for f in ("qst", "pst", "province")} == {"QST Number", "PST Number", "Province"}
+    data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in offered.items()}}
+    follow(client, client.post("/vendors/master/import", data=data, headers=PAGE))
+    (vendor,) = store.master_vendors()
+    held = (vendor["qst_number"], vendor["pst_number"], vendor["province"])
+    assert held == ("1234567890TQ0001", "PST-1234-5678", "QC")
+
+
+def test_the_bank_accounts_import_needs_only_the_code_as_its_reader_does(client, store):
+    """B-2402: the Bank accounts import marked its currency column as needed (*), though a blank currency is CAD and
+    a file without the column is imported: only the code is needed."""
+    page = upload(client, "/accounts/bank/upload", "b.csv", b"Code,Name\nCAD-2,Second operating\n")
+    marked = r'<label class="field">{}[^<]*(?:\*|<span class="imp-tag">needed)'
+    assert re.search(marked.format("Code"), page.text) and not re.search(marked.format("Currency"), page.text)
+    data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in guessed(page.text).items()}}
+    follow(client, client.post("/accounts/bank/import", data=data, headers=PAGE))
+    assert [(a["code"], a["currency"]) for a in store.bank_accounts()] == [("CAD-2", "CAD")]
+
+
 def test_the_sample_vendor_master_is_imported_by_the_page_as_the_sample_loader_does(client, store, tmp_path):
     """The repo's ``data/vendor_master.csv`` through the Vendors page, with the columns it offers: the same vendors,
     field for field, as ``load_sample_vendor_master`` makes, none on hold in JD Edwards."""
@@ -455,7 +483,8 @@ def test_the_sample_vendor_master_is_imported_by_the_page_as_the_sample_loader_d
                   (SAMPLE_DATA_DIR / "vendor_master.csv").read_bytes())  # fmt: skip
     offered = guessed(page.text)
     assert offered == {"vendor_name": "vendor_name", "erp_id": "vendor_id", "gst": "gst_hst_number", "hold": "",
-                       "terms": "payment_terms", "status": "status", "default_gl": "default_gl"}  # fmt: skip
+                       "qst": "", "pst": "", "province": "", "terms": "payment_terms", "status": "status",
+                       "default_gl": "default_gl"}  # fmt: skip
     data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in offered.items()}}
     follow(client, client.post("/vendors/master/import", data=data, headers=PAGE))
     loaded = Store(tmp_path / "loaded.db")
@@ -592,7 +621,7 @@ def test_pos_are_uploaded_checked_and_imported(client, busy):
             headers=PAGE,
         ),
     )
-    assert "Imported 2 POs with 3 lines" in page.text
+    assert "(2 POs with 3 lines)" in page.text
     assert store_po(busy, "PO-9001")["total"] == 2300
     text = client.get("/purchase-orders?q=9001").text
     assert "PO-9001" in text and "PO-9002" not in text
@@ -646,7 +675,7 @@ def test_gl_accounts_are_imported_from_excel_edited_and_downloaded(client, store
             headers=PAGE,
         ),
     )
-    assert "Imported: 3 added, 0 updated, 0 skipped" in page.text
+    assert "Loaded: 3 added, 0 updated, 0 skipped" in page.text
     assert "Software &lt;b&gt;" in page.text and "Opex · 2" in page.text
     # download: the CSV the earlier dashboard gave
     data = client.get("/accounts/gl_accounts.csv")
@@ -691,7 +720,7 @@ def test_bank_accounts_are_imported_edited_and_never_shown_in_full(client, store
               ("institution", "institution"), ("transit", "transit"), ("account_number", "account_number"),
               ("gl_account", "gl_account"), ("is_default", "default"), ("active", "active"))}  # fmt: skip
     page = follow(client, client.post("/accounts/bank/import", data={"file": token, **picked}, headers=PAGE))
-    assert "Imported: 2 added, 0 updated." in page.text
+    assert "Loaded: 2 added, 0 updated." in page.text
     accounts = {a["code"]: a for a in store.bank_accounts()}
     assert accounts["CAD-OP"]["account_number"] == "0000001234" and accounts["CAD-OP"]["is_default"]
     assert "0000001234" not in page.text and "••••1234" in page.text  # the last 4 digits only
@@ -804,7 +833,7 @@ def test_an_excel_cell_reading_na_is_kept_as_typed():
     """W2-04: the Excel readers dropped cells that read "NA", "NULL", "None", "N/A" (a cost center "NA" for North
     America vanished), while the same file as CSV kept them: every reader keeps a cell as it was typed."""
     from ap_coder.web.files import read_sheet
-    from ap_coder.web.pages import learning, settings_jde
+    from ap_coder.web.pages import learning
 
     book = openpyxl.Workbook()
     book.active.append(["Cost center", "Name"])
@@ -814,8 +843,7 @@ def test_an_excel_cell_reading_na_is_kept_as_typed():
     book.save(raw)
     codes = ["EU", "NA", "NULL", "N/A", "None"]
     df, _names = read_sheet("cc.xlsx", raw.getvalue())
-    assert list(df["Cost center"]) == codes
-    assert [r["Cost center"] for r in settings_jde.read_sheet("cc.xlsx", raw.getvalue())] == codes
+    assert list(df["Cost center"]) == codes  # (Settings → JD Edwards' GL map is read by it too)
     ((_columns, rows),) = learning.read_sheets("cc.xlsx", raw.getvalue()).values()
     assert [r["Cost center"] for r in rows] == codes
 
@@ -878,7 +906,7 @@ def test_gl_accounts_under_a_report_title_are_guessed_and_imported(client, store
     token = page.url.params["file"]
     data = {"file": token, "col_code": "Object Account", "col_description": "Account Description"}
     page = follow(client, client.post("/accounts/gl_accounts/import", data=data, headers=PAGE))
-    assert "Imported: 2 added, 0 updated, 0 skipped" in page.text
+    assert "Loaded: 2 added, 0 updated, 0 skipped" in page.text
     assert sorted(a["code"] for a in store.list_accounts("gl_accounts")) == ["1500", "6010"]
 
 
@@ -906,3 +934,64 @@ def test_names_typed_in_are_cleaned_as_the_who_page_cleans_them(client, store):
     with store._conn() as conn:
         names = [r[0] for r in conn.execute("SELECT display_name FROM vendors WHERE display_name LIKE 'A%'")]
     assert names and all("\x00" not in n and "\u202e" not in n and len(n) <= 120 for n in names)
+
+
+def test_with_a_chart_loaded_gl_accounts_say_where_they_come_from_and_replace_warns_first(chart_company_client,
+                                                                                            chart_company):  # fmt: skip
+    """B-2423: GL accounts & tax said nothing of the chart of accounts loaded on JD Edwards files (230 accounts there,
+    117 GL accounts here, 20 business units there and 14 cost centers here, unexplained), and a two-row list imported
+    with "Replace my current list" took the GL accounts from 117 to 2 without a word of warning."""
+    client, store = chart_company_client, chart_company.store
+    gl, cc = len(store.list_accounts("gl_accounts")), len(store.list_accounts("cost_centers"))
+    accounts = sum(1 for row in store.chart_accounts() if not row.is_header)
+    page = re.sub(r"\s+", " ", client.get("/accounts?tab=gl").text)
+    assert f"These {gl:,} GL accounts come from the chart of accounts loaded on" in page
+    assert f"({accounts:,} accounts on {len(store.business_units()):,} business units)" in page
+    assert f"These {cc:,} cost centers come from the" in re.sub(r"\s+", " ", client.get("/accounts?tab=cc").text)
+    two = xlsx([["GL Code", "Account Name"], ["6010", "Paper"], ["6020", "Ink"]])
+    page = upload(client, "/accounts/gl_accounts/upload", "two.xlsx", two)
+    form = page.text.split('id="pick-gl_accounts"', 1)[1].split("</form>", 1)[0]
+    assert f"data-replace-confirm=\"Replace the {gl:,} GL accounts listed now with this file's?" in form
+    assert f"The chart of accounts loaded on JD Edwards files gives the {gl:,} GL accounts listed now" in form
+    assert f"Replace my current list: of the {gl:,} GL accounts listed now, those not in this file are removed" in form
+    assert "Load GL accounts</button>" in form
+
+
+def test_no_bank_accounts_yet_says_what_this_person_can_do(store):
+    """B-2458: with no bank account, the Bank accounts tab said "Import them above, or type them in the grid below"
+    to a Clerk, who can do neither (and to an Approver, who has no import). Each role is told what it can do."""
+    from tests.web.test_server_web import account, log_in, server_client
+
+    said = {}
+    for role in ("clerk", "approver", "admin"):
+        account(store, role, role)
+        client = server_client(store)
+        log_in(client, role)
+        page = client.get("/accounts?tab=bank").text
+        said[role] = page.split("No bank accounts yet", 1)[1].split("</div>", 1)[0]
+    assert "An Approver or an Admin adds them" in said["clerk"] and "grid" not in said["clerk"]
+    assert "Type them in the grid below." in said["approver"] and "Import" not in said["approver"]
+    assert "Import them above, or type them in the grid below." in said["admin"]
+
+
+def test_with_a_chart_loaded_and_a_list_imported_too_the_page_counts_what_came_from_where(chart_company_client,
+                                                                                         chart_company):  # fmt: skip
+    """B-2475: with the chart loaded and then two GL accounts (and two cost centers) imported here on top, GL accounts
+    & tax still said "These 119 GL accounts come from the chart of accounts" and "These 16 cost centers come from the
+    20 business units": two of each came from the file imported here."""
+    client, store = chart_company_client, chart_company.store
+    gl, cc = len(store.list_accounts("gl_accounts")), len(store.list_accounts("cost_centers"))
+    for table, rows in (("gl_accounts", [["Code", "Name"], ["9991", "Paper"], ["9992", "Ink"]]),
+                        ("cost_centers", [["Code", "Name"], ["CC991", "Lab"], ["CC992", "Shop"]])):  # fmt: skip
+        token = upload(client, f"/accounts/{table}/upload", "two.xlsx", xlsx(rows)).url.params["file"]
+        data = {"file": token, "col_code": "Code", "col_description": "Name"}
+        page = follow(client, client.post(f"/accounts/{table}/import", data=data, headers=PAGE))
+        assert "Loaded: 2 added" in page.text
+    for tab, noun, before in (("gl", "GL accounts", gl), ("cc", "cost centers", cc)):
+        said = re.sub(r"\s+", " ", client.get(f"/accounts?tab={tab}").text).split('id="from-chart"', 1)[1][:400]
+        assert f"{before:,} of these {before + 2:,} {noun} come from the" in said, said
+        assert "the other 2 were added on this page" in said and "These " not in said
+    page = upload(client, "/accounts/gl_accounts/upload", "more.xlsx", xlsx([["Code", "Name"], ["9993", "Toner"]]))
+    form = page.text.split('id="pick-gl_accounts"', 1)[1].split("</form>", 1)[0]
+    assert f"Those not in it are removed, though the chart of accounts loaded on JD Edwards files gives {gl:,}." in form
+    assert f"files gives {gl:,} of the {gl + 2:,} GL accounts listed now" in form

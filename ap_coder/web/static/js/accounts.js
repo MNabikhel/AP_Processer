@@ -11,6 +11,14 @@ if (list) {
   });
 }
 
+// An import with "Replace my current list" ticked asks first: the codes not in the file are removed.
+for (const form of document.querySelectorAll("form[data-replace-confirm]")) {
+  form.addEventListener("change", () => {
+    if (form.querySelector('input[name="replace"]:checked')) form.dataset.confirm = form.dataset.replaceConfirm;
+    else delete form.dataset.confirm;
+  });
+}
+
 const tax = document.getElementById("tax-form");
 if (tax) {
   tax.addEventListener("change", (event) => {

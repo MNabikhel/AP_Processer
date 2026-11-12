@@ -848,13 +848,14 @@ def screens_to_choose(request: Request, store: Store) -> bool:
 
 def can(request: Request, path: str, method: str = "POST") -> bool:
     """Whether the person asking may use ``path`` (a page hides what they can't; the server refuses it anyway):
-    always on a laptop, their role's say in server mode (web/roles.py)."""
-    if not server_mode(request):
-        return True
-    from ap_coder.web import roles
-
+    on a laptop, always from its own browser, and a colleague on the office network all but what is this computer's
+    (``identity.here_only``, B-2430); their role's say in server mode (web/roles.py)."""
     found = identity.person()
     path = path.split("#", 1)[0].split("?", 1)[0]  # a link's address: the route is the path's
+    if not server_mode(request):
+        return found is None or not identity.here_only(path, method.upper())
+    from ap_coder.web import roles
+
     return found is not None and roles.can(request.app, found.role, method, path)
 
 

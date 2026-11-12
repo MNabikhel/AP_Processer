@@ -1,0 +1,134 @@
+/* Imports (D-234): the cards of a page that loads files (JD Edwards files first; templates/_import.html). The app's
+   tokens and components (app.css: .card, .btn, .flash, .apc-pill, .dropzone) with the parts an import adds: a step
+   list of what is loaded, a card head with its number, the columns as chips, the file box and the file shown before
+   it is loaded. Nothing is wider than its card: long names wrap, the first rows scroll inside their box. */
+
+.imp {min-width: 0;}
+.imp .card {min-width: 0;}
+.imp h2 {font-size: 14px; font-weight: 600; margin: 0 0 4px;}  /* a card's title (h4 elsewhere: app.css) */
+.imp h5, .imp-sub {font-size: 12.5px; font-weight: 600; color: var(--lg-text); margin: 4px 0 0;}
+.imp-sub .muted {font-weight: 400;}
+.imp details > summary {cursor: pointer;}
+.imp .btn {white-space: normal; line-height: 1.25; padding-top: 6px; padding-bottom: 6px; text-align: left;}  /* long ones wrap */
+
+/* The steps: what is loaded, a line each */
+.imp-steps-head p {margin: 2px 0 0;}
+.imp-steps {list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;}
+.imp-step {display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--lg-hairline);}
+.imp-step:first-child {border-top: 0;}
+.imp-step-body {display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; flex: 1;
+  min-width: 0;}
+.imp-step-name {font-weight: 600; color: var(--lg-text);}
+.imp-step-state {display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; min-width: 0;}
+.imp-num {flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 12.5px;
+  font-weight: 600; background: var(--lg-neutral); color: var(--lg-muted); border: 1px solid var(--lg-border);}
+.imp-num .ms {font-size: 16px;}
+.imp-num.done {background: var(--lg-success-weak); color: var(--lg-success); border-color: var(--apc-ok-line);}
+.imp-step.attention .imp-num {background: var(--lg-warning-weak); color: var(--lg-warning); border-color: var(--apc-warn-line);}
+.imp-extra {padding-top: 10px; border-top: 1px solid var(--lg-hairline);}
+.imp-extra form {margin: 6px 0;}
+
+/* A card: its head, what is loaded, where the file comes from */
+.imp-head {display: flex; align-items: flex-start; gap: 12px; align-self: stretch;}
+.imp-head .imp-num {width: 30px; height: 30px; font-size: 13.5px;}
+.imp-title {flex: 1; min-width: 0;}
+.imp-title h2 {font-size: 15px; margin: 0;}
+.imp-title p {margin: 2px 0 0;}
+.imp-state {flex: none; margin-top: 4px;}
+.imp-now, .imp-source {display: flex; gap: 8px; align-items: flex-start; margin: 0;}
+.imp-now > .ms, .imp-source > .ms {color: var(--lg-subtle); margin-top: 1px;}
+.imp-report {display: flex; flex-direction: column; gap: 8px; align-self: stretch; padding: 12px 14px; border-radius: var(--lg-r);
+  background: var(--lg-head); border: 1px solid var(--lg-hairline); min-width: 0;}
+.imp-report > * {margin: 0;}
+.imp-two {display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 12px; align-self: stretch;}
+.imp-more > summary {font-size: 13px; color: var(--lg-accent); font-weight: 500; width: max-content; max-width: 100%;}
+.imp-more > p, .imp-more > ul {margin: 6px 0 0;}
+.imp-template {font-size: 13px;}
+.imp-template a {display: inline-flex; align-items: center; gap: 4px; font-weight: 500;}
+.imp-offer {padding: 10px 12px; border-radius: var(--lg-r); background: var(--lg-accent-weak); border: 1px solid var(--lg-accent-line);}
+
+/* The columns, as chips */
+.imp-cols {display: flex; flex-direction: column; gap: 6px; min-width: 0;}
+.imp-cols-line {display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0;}
+.imp-cols-what {font-size: 12px; font-weight: 600; color: var(--lg-muted); min-width: 64px;}
+.imp-chip {display: inline-block; max-width: 100%; padding: 2px 8px; border-radius: var(--lg-r-sm); font-size: 12.5px; font-weight: 500;
+  border: 1px dashed var(--lg-border); background: var(--lg-surface); color: var(--lg-muted); overflow-wrap: anywhere;}
+.imp-chip.need {border-style: solid; border-color: var(--lg-accent-line); background: var(--lg-accent-weak); color: var(--lg-accent-hover);}
+.imp-col-list {list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px;}
+.imp-col-list li {display: grid; grid-template-columns: minmax(0, 11rem) minmax(0, 1fr); gap: 4px 10px; align-items: start;}
+.imp-col-list li > .imp-chip {justify-self: start;}
+.imp-also {display: block; font-size: 12px; color: var(--lg-muted); overflow-wrap: anywhere;}  /* 4.5:1 on its grey */
+.imp-tag {font-size: 11.5px; font-weight: 600; color: var(--lg-accent);}
+.imp-tag.bad {color: var(--lg-danger);}
+.imp-note {font-size: 12.5px; margin: 8px 0 0;}
+
+/* The file box */
+.imp-upload {display: flex; flex-direction: column; gap: 10px; align-self: stretch;}
+.imp-drop {position: relative; padding: 18px 16px;}
+.imp-drop-what {overflow-wrap: anywhere;}
+.imp-drop.chosen {border-style: solid; border-color: var(--lg-accent-line); background: var(--lg-accent-weak);}
+.imp-drop.chosen > .ms {color: var(--lg-accent);}
+/* While its file is read (imports.js): the hourglass turns, the seconds count */
+.imp-drop.working {border-style: solid; border-color: var(--lg-accent); background: var(--lg-accent-weak); cursor: progress;}
+.imp-drop.working > .ms {color: var(--lg-accent); animation: imp-turn 2s ease-in-out infinite;}
+.imp-seconds {font-variant-numeric: tabular-nums; color: var(--lg-muted);}
+@keyframes imp-turn {to {transform: rotate(360deg);}}
+@media (prefers-reduced-motion: reduce) {.imp-drop.working > .ms {animation: none;}}
+
+/* The file shown before it is loaded */
+.imp-preview {align-self: stretch; gap: 10px; padding: 14px; border: 1px solid var(--lg-accent-line); border-radius: var(--lg-r);
+  background: var(--lg-surface); box-shadow: inset 3px 0 0 var(--lg-accent);}
+.imp-file {display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0; overflow-wrap: anywhere;}
+.imp-file > .ms {color: var(--lg-subtle);}
+.imp-verdict {align-self: stretch;}
+.imp-result > * + * {margin-top: 16px;}  /* a statement's comparison: its tiles, then its lines */
+.imp-result:focus {outline: none;}
+.imp-check {list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr));
+  gap: 4px 16px; font-size: 13px; align-self: stretch;}
+.imp-check li {display: flex; gap: 6px; align-items: flex-start; min-width: 0; overflow-wrap: anywhere;}
+.imp-check li > .ms {font-size: 16px; margin-top: 1px; flex: none;}
+.imp-check li.ok > .ms {color: var(--lg-success);}
+.imp-check li.miss > .ms {color: var(--lg-danger);}
+.imp-check li.opt {color: var(--lg-muted);}
+.imp-check li.opt > .ms {color: var(--lg-subtle);}
+.imp-unused {font-size: 12.5px; margin: 0; overflow-wrap: anywhere;}
+.imp-rows {align-self: stretch; border: 1px solid var(--lg-hairline); border-radius: var(--lg-r-sm);}
+.imp-rows td, .imp-rows th {white-space: nowrap; max-width: 18rem; overflow: hidden; text-overflow: ellipsis;}
+.imp-journals td {white-space: normal; overflow-wrap: anywhere;}
+.imp-said {margin: 0; padding-left: 18px; font-size: 13.5px;}
+.imp-brief {margin: 0; padding-left: 18px; font-size: 13.5px; display: flex; flex-direction: column; gap: 2px;}
+.imp-brief li:first-child {font-weight: 500;}
+/* What Load replaces or adds to, right above it; what a load did, its next step */
+.imp-then {display: flex; gap: 6px; align-items: flex-start; margin: 0; font-size: 13px; color: var(--lg-text);}
+.imp-then > .ms {font-size: 16px; margin-top: 1px; color: var(--lg-accent); flex: none;}
+.imp-done .stack {gap: 4px; min-width: 0;}
+.imp-done p {margin: 0;}
+.imp-next a {font-weight: 600;}
+.imp-secondary {align-self: stretch; border-top: 1px solid var(--lg-hairline); padding-top: 12px;}
+.imp-secondary > summary {display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 600; font-size: 13.5px;}
+.imp-secondary > summary .muted {font-weight: 400;}
+.imp-secondary > form {margin-top: 12px;}
+.imp-secondary input[type="text"] {width: min(100%, 520px);}
+
+/* An import whose columns are picked (templates/_sheet.html): the pane under the import's title, a choice for each
+   column, the line naming what is still to pick */
+.imp-pane {gap: 12px; min-width: 0; align-items: stretch;}
+.imp-pane > * {min-width: 0;}
+.imp-map {display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr)); gap: 10px 14px;
+  align-items: end; align-self: stretch;}
+.imp-map .field {display: block; min-width: 0;}  /* the name and "needed" on one line, the choice under them */
+.imp-map select {display: block; width: 100%; min-width: 0; margin-top: 4px;}
+.imp-map .imp-tag {margin-left: 4px;}
+.imp-wait {display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 0; font-size: 13px; color: var(--lg-warning);}
+.imp-wait > .ms {font-size: 16px;}
+.imp-wait[hidden] {display: none;}
+.btn[data-imp-go]:disabled {cursor: not-allowed;}
+
+@media (max-width: 600px) {
+  .imp-extra {grid-template-columns: minmax(0, 1fr);}
+  .imp-head {flex-wrap: wrap;}
+  .imp-state {margin-top: 0;}
+  .imp-col-list li {grid-template-columns: minmax(0, 1fr);}
+  .imp-report {padding: 10px;}
+  .imp-preview {padding: 10px;}
+}

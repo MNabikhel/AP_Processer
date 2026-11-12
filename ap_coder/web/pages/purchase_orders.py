@@ -2,7 +2,8 @@
 
 * ``GET /purchase-orders?q=&status=open|closed|all&po=<key>&shown=``: the list, ``POS_SHOWN`` at a time ("Show more",
   D-162), and one PO's lines with what was ordered, received and billed, and the invoices on it.
-* Import: upload (``POST /purchase-orders/upload``), check the columns (``?file=``), import; the template
+* Import: upload (``POST /purchase-orders/upload``), see it and check the columns (``?file=``: its spec,
+  ``import_specs.PURCHASE_ORDERS``), import; the template
   (``GET /purchase-orders/template.csv``) and the sample POs that go with the sample invoices.
 * A PO is closed / reopened or deleted (with a confirmation) by POST.
 """
@@ -21,6 +22,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from ap_coder.coding import po as po_mod
 from ap_coder.core import ui
 from ap_coder.core.store import Store, load_sample_purchase_orders
+from ap_coder.erp.import_specs import PURCHASE_ORDERS
 from ap_coder.web.core import (
     done,
     flash_message,
@@ -39,28 +41,18 @@ from ap_coder.web.files import (
     SheetError,
     download,
     drop_upload,
+    first_rows,
+    jde_refusal,
+    pick_refusal,
     picked_columns,
     read_upload,
     receive_sheet,
-    sheet_context,
+    spec_sheet,
+    unpicked,
 )
 
 router = page_router()  # each plain handler: one connection a request
 
-FIELD_LABELS = {
-    "po_number": "PO number",
-    "vendor_name": "Vendor",
-    "line_number": "Line number",
-    "description": "Description",
-    "quantity": "Quantity ordered",
-    "unit_price": "Unit price",
-    "amount": "Line amount",
-    "open_amount": "Open amount",
-    "received_quantity": "Quantity received",
-    "gl_code": "GL account",
-    "cost_center": "Cost center",
-    "status": "Status (open / closed)",
-}
 STATUS_FILTERS = {"open": "Open", "closed": "Closed", "all": "All"}
 POS_SHOWN = 200  # the POs listed at first, and how many more each time ("Show more")
 
@@ -86,10 +78,9 @@ def qty(value: float | None) -> str:
 
 
 def missing_columns(chosen: dict[str, str]) -> list[str]:
-    missing = [FIELD_LABELS[f] for f in po_mod.REQUIRED_COLUMNS if f not in chosen]
-    if "quantity" not in chosen and "unit_price" not in chosen and "amount" not in chosen:
-        missing.append("a quantity, unit price or amount")
-    return missing
+    """The needed fields without a column: the PO number, the description and one of the quantity, unit price or
+    amount (``import_specs.PURCHASE_ORDERS``)."""
+    return unpicked(PURCHASE_ORDERS, chosen)
 
 
 def po_detail(store: Store, p: dict[str, Any]) -> dict[str, Any] | None:
@@ -201,16 +192,11 @@ def purchase_orders_page(
         ("Over-billed", len(over), "invoices exceed the PO total" if over else "none"),
     ]
 
-    imp, imp_error, missing = None, "", []
+    imp, imp_error = None, ""
     if file:
         try:
             upload, df, sheets = read_upload(file, sheet or None)
-            columns = list(df.columns)
-            if df.empty:
-                imp_error = NO_ROWS
-            chosen = picked_columns({}, FIELD_LABELS, columns, po_mod.map_columns(columns))
-            missing = missing_columns(chosen)
-            imp = sheet_context(file, upload, df, sheets, sheet, FIELD_LABELS, chosen, po_mod.REQUIRED_COLUMNS)
+            imp = spec_sheet(file, upload, df, sheets, sheet, PURCHASE_ORDERS)
         except SheetError as exc:
             imp_error = str(exc)
 
@@ -244,7 +230,7 @@ def purchase_orders_page(
         detail=po_detail(store, chosen_po) if chosen_po else None,
         imp=imp,
         imp_error=imp_error,
-        missing=missing,
+        spec=PURCHASE_ORDERS,
     )
 
 
@@ -276,21 +262,22 @@ def _po_import(request: Request, form: Any) -> JSONResponse:
         _upload, df, _sheets = read_upload(token, sheet or None)
     except SheetError as exc:
         return refuse(str(exc))
+    if refusal := jde_refusal(first_rows(df)):  # (JD Edwards' own reports: on JD Edwards files only, B-2463)
+        return refuse(refusal)
     if df.empty:
         return refuse(NO_ROWS)
-    chosen = picked_columns(form, FIELD_LABELS, list(df.columns), {})
-    missing = missing_columns(chosen)
-    if missing:
-        return refuse("Pick the column for: " + ", ".join(missing))
+    chosen = picked_columns(form, po_mod.COLUMN_ALIASES, list(df.columns), {})
+    if refusal := pick_refusal(PURCHASE_ORDERS, chosen):
+        return refuse(refusal)
     rows, skipped = po_mod.rows_from_records(df.to_dict("records"), chosen)
     if not rows:  # "Replace" would delete every PO (B-1406)
         return refuse(f"No row has a PO number and a description in the columns picked ({skipped} skipped): nothing "
-                      "was imported, the purchase orders are as they were.")  # fmt: skip
+                      "was loaded, the purchase orders are as they were.")  # fmt: skip
     result = store.import_purchase_orders(rows, replace_all=bool(form.get("replace")), actor=reviewer())
     drop_upload(token)
     text = (
-        f"Imported {ui.plural(result['orders'], 'PO')} with {ui.plural(result['lines'], 'line')}: "
-        f"{result['added']} new, {result['updated']} updated"
+        f"Loaded: {result['added']} added, {result['updated']} updated "
+        f"({ui.plural(result['orders'], 'PO')} with {ui.plural(result['lines'], 'line')})"
         + (f", {ui.plural(skipped, 'row')} skipped (no PO number or description)." if skipped else ".")
     )
     return done(request, "/purchase-orders", flash_message(text, "ok", icon="shopping_cart"))

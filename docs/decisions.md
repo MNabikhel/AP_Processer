@@ -5725,3 +5725,59 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     a change to the docs alone still needs the tests that read the docs); pytest-xdist (the suite is written to
     run serially: not tried). To go lower the job-minutes must drop: the middle Pythons (Ubuntu 3.12 and 3.13,
     Windows 3.13's fast tier) could run on main only, about 80 job-minutes, if the pilot tester asks for it.
+- **D-234** · **Every import has one spec of its columns, made from its reader's own tables, and JD Edwards files
+  shows each file before it loads it: no "load it anyway"** (`erp/import_specs.py`, `web/pages/jde_files.py`,
+  `_import.html`; 12 Nov 2026).
+  - **Why:** the pilot tester: for each import, know which JD Edwards report to export and recognise it by its
+    columns; see the columns it needs and the file's own headers and rows before anything is saved; columns in any
+    order; a missing column flagged; a file is the right report or it is not loaded.
+  - **The spec** (`ImportSpec`, one for each of the 16 imports, by key in `SPECS`): what it is for, the report and
+    how to export it, its file types and its columns (the header the export writes, every other name the reader
+    reads, needed or optional and what each gives). Its aliases, required columns and way of finding them are the
+    reader's own (`chart.CHART_ALIASES`, `vendors.MASTER_ALIASES`, `registers.VOUCHER_REQUIRED`...), never a copy;
+    `tests/erp/test_import_specs.py` proves for each that a file without a required column is refused by its reader
+    and one with only those is taken. `check` gives each column found as which header, the missing ones and the
+    file's unused headers; `identify` says which report a file is (the most of its required columns there, then
+    whole). In `erp/`, not `core/`: it reads the readers' tables, which core may not import (D-192).
+  - **JD Edwards files:** each card says the report and its columns (chips, "What each column is"), gives a blank
+    template of them (`/jde-files/template/<key>`: an .xlsx of the headers; the journal's two header rows as a CSV),
+    and goes upload, shown, Load: the chart and the business units too (`/jde-files/chart/upload` and `/load`, the
+    same for `units`; `POST /jde-files/chart` and `/units`, which loaded at once, are gone). Load is offered only for
+    the report with every column it needs; a file that is another of the page's reports names the card it goes on.
+    The chart's "Load it anyway" is gone from the page (the command line keeps `chart import --anyway`, and the page
+    still says when a chart was loaded so).
+- **D-235** · **The menu fits the window: full from 1200 px, icons only from 901, a top bar with a Menu button
+  below** (`base.html`, `static/app.css`, `static/js/app.js`; 12 Nov 2026).
+  - **Why:** the pilot tester zooms in on a Windows laptop (Ctrl and the mouse wheel). Browser zoom shrinks the page's
+    width: 150% on a 1366 screen is 911 px, 200% is 683. Under 901 px the 256 px rail became a block of every link
+    above the page, so each page began a screen down, and from 901 to 1199 the rail took a quarter of the width.
+  - **What:** 1200 px and wider, the rail as before; 901 to 1199, icons only (64 px; each link's name as a tooltip
+    and for screen readers); under 901, a slim top bar with the logo and a Menu button, the full menu opening over
+    the page (a real button with `aria-expanded`; Esc, a click elsewhere or tabbing out closes it). The review
+    screen's own menu button shares the code. A window under 400 px high does not keep the approve bar and the
+    JD Edwards strip on screen (B-2398). `tests/web/test_narrow_windows.py` opens every menu page at 683 and 390.
+- **D-236** · **Every other import shows its columns and its file first too; the column picker stays where files come
+  from many places, but nothing is imported without every needed column** (GL accounts & tax, its bank accounts,
+  Vendors, purchase orders, statements, Exports' register, Learning's past coding, Settings → JD Edwards' GL map and
+  worksheet; 12 Nov 2026; follows D-234).
+  - **What:** each page says what file it wants and where it comes from, lists its needed and optional columns from
+    its spec (`erp/import_specs.py`) with a blank template (`/imports/template/<key>`; none for a statement: the
+    supplier sends it), and after the upload shows each column found as which header or missing, the file's other
+    columns and its first rows. The GL map and the worksheet are uploaded, shown, then imported (the worksheet's
+    answers listed before any is applied).
+  - **The picker kept:** a supplier's statement or another system's purchase orders have no fixed headers, so the
+    person may still say which column is which. Each choice starts from the headers (never from the order of the
+    columns), each needed field is marked, Import stays off with a line naming those still without a column, and
+    the server refuses the same. JD Edwards' own exports (the JD Edwards files page, the voucher list on Exports)
+    have no picker: the right report or nothing (D-234).
+- **D-237** · **The dashboard switches between its threads every half millisecond, not Python's 5** (`web/app.py`
+  `SWITCH_INTERVAL`, set by `create_app`; 12 Nov 2026).
+  - **Why:** a page opened while a chart of 16,000 accounts loads on another thread (10 to 20 s of Python reading
+    the workbook) waited for Python's lock in 5 ms turns: JD Edwards files took 11 to 13 s to open (B-2436). Counting
+    the chart with one query instead of row by row left 5.6 s; the interval set to 0.5 ms, 0.4 s.
+  - **Cost, measured:** the chart's load 15.0 s → 15.2 s (about 1%). The interval matters only while two threads
+    want the lock at once; the OCR engine and SQLite let go of it while they work. It is process-wide: revisit if a
+    measured slowdown of reading (`python -m ap_coder.bench speed`) is traced to it.
+  - **Amended (B-2481):** not on Windows. There CI's server load test left requests unanswered and a failover
+    timing test ran over with it, on both runs; Windows keeps Python's 5 ms. The page's one-query count (B-2436)
+    is what keeps JD Edwards files quick there.

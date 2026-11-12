@@ -281,6 +281,8 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
     counts: the checklist's counter is the rows done out of the rows shown (B-503)."""
     mapped = tax_types_mapped(store)
     gl_count = len(store.list_accounts("gl_accounts"))
+    from_chart = store.account_pairs() is not None  # (the chart of accounts gives the GL accounts: JD Edwards files)
+    gl_said = f"{gl_count:,} from the chart of accounts" if from_chart else f"{gl_count} imported"
     if ocr_available():
         reader = ("ok", "Reading invoices", "PDF text + OCR")
     else:
@@ -290,7 +292,7 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
         reader,
         name_step(),
         province_step(store),
-        ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "none yet: import them"),
+        ("ok" if gl_count else "todo", "GL accounts", gl_said if gl_count else "none yet: import them"),
         # (before any GL account none is set: the taxes that need no account are not "2 of 5 set", B-2103)
         ("ok" if mapped == len(TAX_TYPES) else "todo", TAX_STEP, f"{mapped} of {len(TAX_TYPES)} set")
         if gl_count
@@ -324,13 +326,13 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
     # Kept until the vendor list or the numbers set change: 20,000 vendors read at every view took 0.23 s (D-166).
     vendors, an8 = store.summary_memo("master_vendors_counted", counted, topic="", changes="vendors", asked=overrides)
     if not vendors:
-        what = "the ERP's vendor list" + (", with each supplier's address number (AN8)" if shown else "")
-        vendor = ("todo", VENDOR_STEP, f"on Vendors: import {what}")
+        vendor = ("todo", VENDOR_STEP, "on JD Edwards files: load the supplier master, with each supplier's address "
+                  "number (AN8)" if shown else "on Vendors: import the ERP's vendor list")  # fmt: skip
     elif shown:
         vendor = (
             ("ok" if an8 else "todo"),
             VENDOR_STEP,
-            f"{ui.plural(vendors, 'vendor')}, {an8} with an address number (AN8)"
+            f"{ui.plural(vendors, 'vendor')}, {an8:,} with an address number (AN8)"
             if an8
             else f"{ui.plural(vendors, 'vendor')}, but no address number (AN8): import it as the ERP ID, or set "
             "it in Settings → JD Edwards → Supplier address numbers",
@@ -353,6 +355,14 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
             steps.append(("todo", JDE_STEP, f"company {settings.company_code} saved, but "
                           f"{ui.plural(len(missing), 'account')} ({shown}) {verb} no JD Edwards business unit: set a "
                           "Default BU, or map them, in Settings → JD Edwards E1"))  # fmt: skip
+        elif saved and not problems and (offer := _company_offer(store)):  # (card 2 offers it: B-2440)
+            steps.append(("todo", JDE_STEP, f"company {settings.company_code} saved, but every business unit loaded "
+                          f"is company {offer}: use it on JD Edwards files (2. Business units), or set yours in "
+                          "Settings → JD Edwards E1"))  # fmt: skip
+        elif saved and not problems and not _company_confirmed(store, settings):  # (B-2478)
+            steps.append(("todo", JDE_STEP, f"company {settings.company_code} is the one a new installation starts "
+                          "with: load the business units on JD Edwards files (2. Business units), or set yours in "
+                          "Settings → JD Edwards E1"))  # fmt: skip
         elif saved and not problems:
             mapped = f"Default BU {settings.default_bu.strip()}" if settings.use_default_rule and \
                 settings.default_bu.strip() else ui.plural(len(settings.gl_map), "account") + " mapped"  # fmt: skip
@@ -360,10 +370,32 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
         else:
             steps.append(("todo", JDE_STEP, problems[0] if problems else
                           "company, document type, accounts and tax areas: Settings → JD Edwards E1"))  # fmt: skip
-    taught = store.history_count()
-    steps.append(("ok", HISTORY_STEP, ui.plural(taught, "past line") + " taught") if taught
-                 else ("todo", HISTORY_STEP, HISTORY_WHY))  # fmt: skip
+    # the past lines taught on Learning, and last year's journal loaded on JD Edwards files: both are past coding
+    taught, learned = store.history_count(), sum(f["learned_lines"] for f in store.journal_files())
+    said = [ui.plural(taught, "past line") + " taught"] if taught else []
+    said += [ui.plural(learned, "coding line") + " from last year's journal"] if learned else []
+    steps.append(("ok", HISTORY_STEP, ", ".join(said)) if said else ("todo", HISTORY_STEP, HISTORY_WHY))
     return steps
+
+
+def _company_confirmed(store: Store, settings: Any) -> bool:
+    """Whether JD Edwards' company number is the company's own: another than the one a new installation starts with,
+    settings a person saved (not the new installation's, ``jde_prototype.prototype_settings``), or the company of a
+    business unit loaded. The new installation's alone is never ticked (B-2478)."""
+    from ap_coder.erp import jde_prototype, jde_settings
+
+    if settings.company != jde_settings.JdeSettings().company:
+        return True
+    if settings.to_json() != jde_prototype.prototype_settings().to_json():
+        return True
+    return any(unit.company in (settings.company, settings.company_code) for unit in store.business_units())
+
+
+def _company_offer(store: Store) -> str:
+    """The company JD Edwards files offers to use (the one of every business unit loaded), "" when none."""
+    from ap_coder.web.pages import jde_files
+
+    return jde_files._company_offer(store, store.business_units())
 
 
 BANK_STEP = "Your bank accounts (optional)"
@@ -427,6 +459,14 @@ STEP_LINKS = {
     HISTORY_STEP: "/learning?teach=1#history",
     "Process your first invoices": "/process",
 }
+# With JD Edwards in use (its settings step shown) the chart, the supplier master and last year's journal are loaded
+# on JD Edwards files: the chart gives the GL accounts and the cost centers.
+JDE_LINKS = {"GL accounts": "/jde-files#chart", VENDOR_STEP: "/jde-files#suppliers", HISTORY_STEP: "/jde-files#journal"}
+
+
+def step_links(steps: list[tuple[str, str, str]]) -> dict[str, str]:
+    """Where each step of ``steps`` is done (``STEP_LINKS``; ``JDE_LINKS`` with JD Edwards in use)."""
+    return STEP_LINKS | (JDE_LINKS if any(label == JDE_STEP for _, label, _ in steps) else {})
 
 
 def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
@@ -435,6 +475,7 @@ def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
     accounts, then the first invoices. None once all four are done (LM Studio is the checklist's first row, with
     Check again, and has its own banner)."""
     state = {label: (s, detail) for s, label, detail in steps}
+    links = step_links(steps)
     lm = next((s for s in steps if s[1] == LM_STUDIO), None)
     if lm is not None and (help_ := lm_studio_help(lm)):  # step 0: LM Studio, with Check again (B-529)
         return help_
@@ -442,9 +483,15 @@ def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
         return {"title": "Add your name", "icon": "badge", "href": STEP_LINKS["Your name"], "button": "Add your name",
                 "text": "Each approval is recorded under it. Until you add it, approvals carry this computer's "
                         "login."}  # fmt: skip
+    if state["GL accounts"][0] != "ok" and JDE_STEP in state:
+        return {"title": "Load your chart of accounts", "icon": "account_tree", "href": links["GL accounts"],
+                "button": "Load the chart of accounts", "sample": True,
+                "text": "JD Edwards' chart of accounts gives AP Coder its GL accounts and cost centers: load it on JD "
+                        "Edwards files, then the business units. To look around first, use the sample accounts and "
+                        "switch to yours later."}  # fmt: skip
     if state["GL accounts"][0] != "ok":
         return {"title": "Import your GL accounts", "icon": "account_tree", "href": STEP_LINKS["GL accounts"],
-                "button": "Import GL accounts", "sample": True,
+                "button": "Load GL accounts", "sample": True,
                 "text": "AP Coder codes each invoice line to one of your GL accounts. To look around first, use the "
                         "sample accounts and switch to yours later."}  # fmt: skip
     if state[TAX_STEP][0] != "ok":
@@ -454,11 +501,11 @@ def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
                         "none), so approved invoices can be posted. Then Save tax setup."}  # fmt: skip
     if JDE_STEP in state:  # the pilot with JD Edwards: the vendor master, its settings, the past coding (D-92)
         if state[VENDOR_STEP][0] != "ok":
-            return {"title": "Import your vendor master", "icon": "storefront", "href": STEP_LINKS[VENDOR_STEP],
-                    "button": "Import the vendor master",
-                    "text": "The ERP's vendor list, with each supplier's JD Edwards address number (AN8) as its "
-                            "ERP ID: each voucher needs it, and an invoice from a vendor not in the list is "
-                            "flagged."}  # fmt: skip
+            return {"title": "Load your supplier master", "icon": "storefront", "href": links[VENDOR_STEP],
+                    "button": "Load the supplier master",
+                    "text": "JD Edwards' supplier master, with each supplier's address number (AN8): each voucher "
+                            "needs it, and an invoice from a vendor not in the list is flagged. Then the vendor "
+                            "information list, for their tax IDs."}  # fmt: skip
         if state[JDE_STEP][0] != "ok":
             return {"title": "Fill in the JD Edwards settings", "icon": "settings", "href": STEP_LINKS[JDE_STEP],
                     "button": "JD Edwards settings",
@@ -466,10 +513,9 @@ def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
                             "or download the worksheet for your JDE team and import their answers."}  # fmt: skip
         if state[HISTORY_STEP][0] != "ok":
             return {"title": "Teach AP Coder your past coding", "icon": "history_edu",
-                    "href": STEP_LINKS[HISTORY_STEP], "button": "Teach from past coding",
-                    "text": f"{HISTORY_WHY}: import last year's posted AP invoice lines from JD Edwards (vendor, "
-                            "line description, GL account, cost center), so the first invoices are coded "
-                            "already."}  # fmt: skip
+                    "href": links[HISTORY_STEP], "button": "Load last year's journal",
+                    "text": f"{HISTORY_WHY}: load last year's Transaction Journal from JD Edwards (report R09321), "
+                            "so the first invoices are coded already."}  # fmt: skip
     if state["Process your first invoices"][0] != "ok":
         return {"title": "Import your first invoices", "icon": "upload_file", "button": "Import invoices",
                 "href": STEP_LINKS["Process your first invoices"],
@@ -483,7 +529,7 @@ def shown_setup(request: Request, steps: list[tuple[str, str, str]], coming: dic
     """The checklist, its Next step and the steps' links as the person sees them: on a laptop as they are; on the
     company server (D-102) LM Studio is IT's or an Admin's (it runs on the server), a step whose page the role can't
     open has no link, and a Next step the role can't do says who does it."""
-    links = {label: href for label, href in STEP_LINKS.items() if can(request, href, "GET")}
+    links = {label: href for label, href in step_links(steps).items() if can(request, href, "GET")}
     if not server_mode(request):
         return steps, coming, links
     steps = [(state, label, f"not ready: {SERVER_LM_STUDIO}" if label == LM_STUDIO and state in ("todo", "bad")

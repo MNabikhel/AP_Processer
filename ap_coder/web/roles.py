@@ -140,6 +140,8 @@ RULES: dict[tuple[str, str], str] = {
         "GET /vendors", "POST /vendors/save",
         "GET /accounts", "GET /accounts/{table}.csv", "GET /accounts/bank/template.csv",
         "GET /jde-files",  # what is loaded of JD Edwards' exports (loading them: an Admin's)
+        "GET /jde-files/template/{key}",  # a blank template of a report's columns (D-234)
+        "GET /imports/template/{key}",  # the same, of any import of the app
         # The rows of what is loaded, and their CSV (D-221): whoever opens the page; changing a row is an Admin's.
         "GET /jde-files/loaded/{what}", "GET /jde-files/loaded/{what}.csv",
         "GET /purchase-orders", "GET /purchase-orders/template.csv",
@@ -177,7 +179,8 @@ RULES: dict[tuple[str, str], str] = {
         # JD Edwards' journal: as the past coding
         "POST /learning/journal/load", "POST /learning/journal/forget", "POST /learning/journal/as-table",
         # JD Edwards files: the chart, the business units, the suppliers, the journal and the voucher list loaded
-        "POST /jde-files/chart", "POST /jde-files/units", "POST /jde-files/chart/settings",
+        "POST /jde-files/chart/upload", "POST /jde-files/chart/load", "POST /jde-files/units/upload",
+        "POST /jde-files/units/load", "POST /jde-files/chart/settings",
         "POST /jde-files/suppliers/upload", "POST /jde-files/suppliers/load",
         "POST /jde-files/journal/upload", "POST /jde-files/journal/load", "POST /jde-files/journal/forget",
         "POST /jde-files/vouchers/upload", "POST /jde-files/vouchers/load",
@@ -196,8 +199,9 @@ RULES: dict[tuple[str, str], str] = {
         "POST /settings/reading/azure", "POST /settings/reading/azure-test", "POST /settings/automation/touchless",
         "POST /settings/reading/servers",  # the backup model servers (D-180)
         "POST /settings/automation/limit", "POST /settings/jde", "POST /settings/jde/gl-map",
-        "POST /settings/jde/gl-map/import", "POST /settings/jde/tax-map", "POST /settings/jde/terms",
-        "POST /settings/jde/an8", "GET /settings/jde/worksheet.xlsx", "POST /settings/jde/worksheet",
+        "POST /settings/jde/gl-map/upload", "POST /settings/jde/gl-map/import", "POST /settings/jde/tax-map",
+        "POST /settings/jde/terms", "POST /settings/jde/an8", "GET /settings/jde/worksheet.xlsx",
+        "POST /settings/jde/worksheet/upload", "POST /settings/jde/worksheet",
         "POST /settings/jde/api", "POST /settings/jde/api/test", "POST /settings/jde/api/sync",  # D-104
         "POST /settings/hub", "POST /settings/hub/run",  # the finance hub feed (D-103)
         "GET /admin/users", "POST /admin/users/add", "POST /admin/users/{user_id:int}/reset",

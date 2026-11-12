@@ -57,6 +57,7 @@ class Look:
     said: tuple[str, ...]  # the summary, a line each (none when the file could not be read: ``problem`` says it)
     state: str
     problem: str = ""
+    brief: tuple[str, ...] = ()  # the summary in three lines: what was read, what is learned, what to check
 
 
 def _first(items: list[str]) -> str:
@@ -172,6 +173,46 @@ def _kept_said(store: Store, journal: jr.Journal, learned: list[jr.CodingLine], 
     return said
 
 
+def _brief(store: Store, journal: jr.Journal, learned: list[jr.CodingLine]) -> tuple[str, ...]:
+    """The summary in three lines, for a page to show above the rest: what was read (and whether it matches the
+    report's own total), what will be learned from, and what to check (``said`` has each in full)."""
+    totals = journal.totals
+    read = (f"Read {plural(totals.vouchers, 'voucher')} with {plural(totals.lines, 'line')}, G/L dates "
+            f"{totals.first_date} to {totals.last_date}")  # fmt: skip
+    if totals.file_debit is None:
+        read += ": the file has no Grand Total row to check them against."
+    elif totals.differ:
+        read += ": they do not add up to the report's Grand Total."
+    else:
+        read += ", matching the report's Grand Total."
+    suppliers = {supplier_key(line.supplier_number) for line in learned} - {""}
+    learn = (f"To learn from: {plural(len(learned), 'coding line')} on "
+             f"{plural(len({line.voucher_row for line in learned}), 'voucher')}, of "
+             f"{plural(len(suppliers), 'supplier')}." if learned
+             else "Nothing to learn from: no line of AP's coding was read.")  # fmt: skip
+    check = []
+    unbalanced = sum(1 for v in journal.vouchers if not v.balanced and not v.affiliate)
+    if unbalanced:
+        check.append(f"{plural(unbalanced, 'voucher')} that {'does' if unbalanced == 1 else 'do'} not balance "
+                     "(kept, not learned from)")  # fmt: skip
+    known = {supplier_key(erp_id) for _, erp_id in store.master_vendor_ids() if supplier_key(erp_id)}
+    if learned and not known:
+        check.append("no supplier master is loaded to look the suppliers up in")
+    elif missing := len(suppliers - known):
+        check.append(f"{plural(missing, 'supplier')} not in the vendor master")
+    pairs = store.account_pairs()
+    if learned and pairs is None:
+        check.append("no chart of accounts is loaded to check the accounts against")
+    elif pairs is not None:
+        wrong = sum(1 for account in {line.line.account for line in learned}
+                    if pairs.status(*chart.split_account(account)) != chart.OK)  # fmt: skip
+        if wrong:
+            check.append(f"{plural(wrong, 'account')} not in the chart, or not offered for coding")
+    said = (f"To check: {'; '.join(check)}." if check
+            else "Nothing to check: every supplier and every account is known.")  # fmt: skip
+    return read, learn, said
+
+
 def _state(store: Store, digest: str, journal: jr.Journal, objects: dict[str, tuple[str, ...]]) -> tuple[str, str]:
     """(``Look.state``, ``Look.problem``) of a journal as read."""
     before = next((f for f in store.journal_files() if f["hash"] == digest), None)
@@ -217,7 +258,7 @@ def look(store: Store, data: bytes, name: str, *, trade: Any = None, intercompan
             *_kept_said(store, journal, learned, state == SAME_FILE)]  # fmt: skip
     if learned:
         said += [_suppliers_said(store, learned), *_accounts_said(store, learned)]
-    return Look(name, digest, journal, objects, tuple(said), state, problem)
+    return Look(name, digest, journal, objects, tuple(said), state, problem, _brief(store, journal, learned))
 
 
 def load(store: Store, data: bytes, name: str, *, trade: Any = None, intercompany: Any = None, tax: Any = None,

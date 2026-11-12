@@ -56,8 +56,8 @@ LISTS = {
     loaded.JOURNAL: ("Last year's coding", "journal", "supplier, account, remark, 2025-03…",
                      "Every line of the journals loaded, a voucher's lines together, the oldest first. A record of "
                      "what was keyed: it is not changed here."),
-    loaded.VOUCHERS: ("Vouchers already in JD Edwards", "vouchers", "supplier, invoice number, date…",
-                      "Every bill of the voucher list loaded: what the duplicate checks look in. A record of what "
+    loaded.VOUCHERS: ("Invoices already in JD Edwards", "vouchers", "supplier, invoice number, date…",
+                      "Every voucher of the voucher list loaded: what the duplicate checks look in. A record of what "
                       "is in JD Edwards: it is not changed here."),
 }  # fmt: skip
 EDITABLE = (loaded.CHART, loaded.UNITS, loaded.SUPPLIERS)

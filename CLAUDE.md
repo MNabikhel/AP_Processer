@@ -46,6 +46,9 @@ guides, the bug log (BUGS.md) and decisions (decisions.md), their older entries 
   tax codes `coding/line_tax.py`, ITCs and self-assessment `coding/taxreturn.py`, vendors `coding/vendors.py`. Every
   check code needs a `CheckHelp` in `ops/help.py` (`tests/ops/test_help.py` enforces it).
 - Exports: `erp/exports.py` (Excel/CSV), Finance Hub `erp/hub/`. Reports: the rest of `erp/`.
+- Imports (D-234, D-236): one spec each of the columns a file needs, from its reader's own tables
+  (`erp/import_specs.py` `SPECS`: `check`, `identify`, `recognise`); uploads, reading and the column picker
+  `web/files.py`; what a page shows of a file `templates/_import.html`, `static/imports.css`, `static/js/imports.js`.
 - JD Edwards E1 vouchers, one subject a module (D-222; each imports only the ones before it, and a name is imported
   from its home: `jde_settings.load`, not `jde.load`): `erp/jde_formats.py` (dates, amounts), `jde_settings.py`
   (`JdeSettings`, `load`, `save`, `in_use`, the open period), `jde_prototype.py` (`use_prototype`),
@@ -98,6 +101,8 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
   docs/decisions.md).
 - A refactor, clean-up or speed-up is proven to change nothing with `python scripts/same_behaviour.py` (probes on
   origin/main and this checkout, compared; D-124), plus the tests.
+- See a page as a person does: `python scripts/screens.py /jde-files --data company` saves full-page pictures at
+  1366, 911, 683 and 390 px (laptop zoom, phone) and prints what is past the right edge.
 - Bench runs (`python -m ap_coder.bench run|learn|lines|speed|coding|triage`): add `--quick` to check a change in
   under a minute or two (sizes in `bench/__main__.py` `QUICK`). Scans (OCR) set the time of a full run: `learn` 20 x 50
   at `--scanned 0.1` takes ~40 min, `lines` 6 x 8 at `--scanned 1` ~6 min, `run --n 60` ~2.5 min.

@@ -13,12 +13,21 @@
 <body data-page="{{ page }}"{% if server_mode %} data-server{% endif %}>
   <a class="skip" href="#main">Skip to the page</a>
   <div class="shell">
+    {# A window under 901 px (a laptop zoomed in to 200%, a phone): this bar in place of the menu, whose Menu button
+       opens it over the page; from 901 to 1199 px the menu shows its icons only, its own Menu button above them. #}
+    <div class="topbar">
+      <button type="button" class="btn sm" data-rail-toggle aria-expanded="false"><span class="ms" aria-hidden="true">menu</span>Menu</button>
+      <a class="brand" href="/" aria-label="AP Coder: review queue"><img src="{{ static_url('/assets/logo.svg') }}" alt="AP Coder" height="24"></a>
+    </div>
     <aside class="rail" aria-label="AP Coder">
-      <a class="brand" href="/" aria-label="AP Coder: review queue">
-        <img src="{{ static_url('/assets/logo.svg') }}" alt="AP Coder" height="24">
-      </a>
+      <div class="rail-top">
+        <a class="brand" href="/" aria-label="AP Coder: review queue">
+          <img src="{{ static_url('/assets/logo.svg') }}" alt="AP Coder" height="24">
+        </a>
+        <button type="button" class="rail-toggle" data-rail-toggle aria-expanded="false" aria-label="Menu" title="Show the whole menu (Esc closes it)"><span class="ms" aria-hidden="true">menu</span></button>
+      </div>
       {% macro nav_link(item) %}
-        <a href="{{ item.page.path }}" class="nav-link{% if item.page.key == page %} on{% endif %}"
+        <a href="{{ item.page.path }}" class="nav-link{% if item.page.key == page %} on{% endif %}" title="{{ item.page.title }}"
            {% if item.page.key == page %}aria-current="page"{% endif %}>
           <span class="ms" aria-hidden="true">{{ item.page.icon }}</span>
           <span class="label">{{ item.page.title }}</span>
@@ -37,7 +46,7 @@
         {% else %}
         {% set in_more = rail.more | selectattr("page.key", "equalto", page) | list %}
         <details class="nav-more" id="nav-more"{% if in_more %} open data-here{% endif %}>
-          <summary class="nav-link"><span class="ms" aria-hidden="true">more_horiz</span><span class="label">More</span><span class="ms chev" aria-hidden="true">expand_more</span></summary>
+          <summary class="nav-link" title="More"><span class="ms" aria-hidden="true">more_horiz</span><span class="label">More</span><span class="ms chev" aria-hidden="true">expand_more</span></summary>
           {% for item in rail.more %}{{ nav_link(item) }}{% endfor %}
         </details>
         <script src="{{ static_url('/static/js/nav_more.js') }}"></script>{# not inline: the server's Content-Security-Policy runs AP Coder's own files only #}

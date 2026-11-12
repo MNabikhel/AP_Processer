@@ -5,6 +5,9 @@ are then that person's, and this computer's own browser works as before."""
 
 from __future__ import annotations
 
+import html
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -265,3 +268,81 @@ def test_a_link_from_another_site_keeps_who_the_colleague_is(app):
 def test_an_ipv4_mapped_loopback_address_is_this_computer():
     assert identity.is_this_computer("::ffff:127.0.0.1")
     assert not identity.is_this_computer("::ffff:10.0.0.5")
+
+
+# What a colleague may not change: every import of the setup and the master data (B-2429, B-2430).
+MASTER_DATA_CHANGES = [
+    "/jde-files/chart/upload", "/jde-files/chart/load", "/jde-files/units/upload", "/jde-files/units/load",
+    "/jde-files/chart/settings", "/jde-files/suppliers/upload", "/jde-files/suppliers/load",
+    "/jde-files/journal/upload", "/jde-files/journal/load", "/jde-files/journal/forget", "/jde-files/vouchers/upload",
+    "/jde-files/vouchers/load", "/jde-files/meals", "/jde-files/company", "/jde-files/loaded/chart/edit",
+    "/purchase-orders/upload", "/purchase-orders/import", "/purchase-orders/sample", "/purchase-orders/status",
+    "/purchase-orders/delete", "/exports/register/upload", "/exports/register/import", "/exports/register/clear",
+    "/learning/history/upload", "/learning/history/teach", "/learning/history/forget", "/learning/journal/load",
+    "/learning/journal/forget", "/learning/journal/as-table", "/settings/jde/gl-map/upload",
+    "/settings/jde/gl-map/import", "/settings/jde/worksheet/upload", "/settings/jde/worksheet",
+]  # fmt: skip
+
+
+def test_a_colleague_cannot_load_jde_files_purchase_orders_the_erps_list_or_the_past_coding(app, store):
+    """B-2429: the laptop shared on the office network kept only /accounts, /rules and /vendors/master to itself: a
+    colleague replaced the chart of accounts, the suppliers, the chart's settings, the voucher list and the journal
+    on JD Edwards files, and imported purchase orders, Exports' ERP list and the past coding. Every change of the
+    master data is this computer's; the statements a colleague compares stay theirs."""
+    ana = colleague(app, "10.0.0.5", "Ana")
+    for path in MASTER_DATA_CHANGES:
+        answer = ana.post(path, headers=PAGE)
+        assert answer.status_code == 403 and "computer running AP Coder" in answer.json()["error"], path
+    assert ana.post("/statements/upload", headers=PAGE).status_code != 403
+    for path in ("/jde-files", "/purchase-orders", "/exports", "/learning"):
+        assert ana.get(path).status_code == 200, path  # looking stays open
+    assert this_computer(app).post("/purchase-orders/sample", headers=PAGE).status_code != 403
+
+
+def test_a_colleague_is_offered_no_form_this_computer_alone_may_send(app, store):
+    """B-2430: a colleague's /jde-files offered the chart's, the suppliers', the journal's and the voucher list's
+    upload forms, the chart's settings and the meals accounts, and /accounts its import, each refused once sent.
+    What only this computer may send is not offered to a colleague; this computer's own browser sees it all."""
+    from ap_coder.web.core import SHOW_JDE
+
+    store.set_setting(SHOW_JDE, "1")
+    pages = {"/jde-files": "/jde-files/", "/accounts": "/accounts/", "/purchase-orders": "/purchase-orders/",
+             "/exports": "/exports/register/", "/learning": "/learning/history/"}  # fmt: skip
+    ana, here = colleague(app, "10.0.0.5", "Ana"), this_computer(app)
+    for page, kept in pages.items():
+        actions = re.findall(r'action="([^"]+)"', ana.get(page).text)
+        assert not [a for a in actions if a.startswith(kept)], page
+        assert [a for a in re.findall(r'action="([^"]+)"', here.get(page).text) if a.startswith(kept)], page
+    assert "/settings/reading" not in ana.get("/review").text  # (Settings is this computer's too)
+
+
+def test_a_colleague_is_told_the_setup_is_changed_on_the_computer_running_ap_coder_not_by_an_admin(app, store):
+    """B-2477: a colleague on the laptop shared on the office network (no sign-in, so no Admin) was told "An Admin
+    loads these files" on JD Edwards files, "An Admin imports the purchase orders / the vendor master / the past
+    coding", "An Approver or an Admin adds them" of the bank accounts; GL accounts and Exports said nothing of who
+    changes them. Each says it is done on the computer running AP Coder (the server keeps its roles' words)."""
+    from ap_coder.web.core import SHOW_JDE
+
+    store.set_setting(SHOW_JDE, "1")
+    ana = colleague(app, "10.0.0.5", "Ana")
+    pages = {"/jde-files": "These files are loaded", "/purchase-orders": "The purchase orders are loaded",
+             "/vendors": "The vendor master is loaded", "/learning": "The past coding is loaded",
+             "/accounts?tab=bank": "Bank accounts are added, changed and removed",
+             "/accounts?tab=gl": "The GL accounts are loaded and changed",
+             "/accounts?tab=cc": "The cost centers are loaded and changed",
+             "/exports": "The ERP's invoice list is loaded"}  # fmt: skip
+    for page, said in pages.items():
+        text = html.unescape(re.sub(r"\s+", " ", ana.get(page).text))
+        assert f"{said} on the computer running AP Coder." in text, page
+        assert "An Admin" not in text and "an Admin" not in text and "An Approver" not in text, page
+    from tests.web.test_server_web import account, log_in, server_client
+
+    account(store, "clerk", "clerk")
+    clerk = server_client(store)
+    log_in(clerk, "clerk")
+    pages = {"/jde-files": "An Admin loads these files.", "/purchase-orders": "An Admin loads the purchase orders.",
+             "/accounts?tab=gl": "An Admin loads and changes the GL accounts.",
+             "/exports": "An Admin sets the ERP layout and loads the ERP's invoice list."}  # fmt: skip
+    for page, said in pages.items():
+        text = html.unescape(re.sub(r"\s+", " ", clerk.get(page).text))
+        assert said in text and "computer running AP Coder" not in text, page

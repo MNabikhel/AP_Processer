@@ -92,6 +92,10 @@
 .inv-doc > * + * {margin-top: 0;}
 .inv-doc-head {display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px 6px 16px;}
 .inv-doc-tools {display: flex; align-items: center; gap: 4px; flex: none;}
+@media (max-width: 600px) {  /* a phone: the tools go under "Document · the file", not over it */
+  .inv-doc-head {flex-wrap: wrap; gap: 4px 8px;}
+  .inv-doc-head .rvw-doc-head {flex: 1 1 140px; min-width: 0; overflow: hidden;}
+}
 .inv-doc-more-body {width: min(420px, 90vw);}
 .inv-dot {display: inline-block; width: 7px; height: 7px; margin-left: 4px; border-radius: 50%; background: var(--apc-warn-dot, #f59e0b);}
 .inv-doc-notes {padding: 0 16px 8px; display: flex; flex-direction: column; gap: 4px;}
@@ -279,6 +283,12 @@ button.inv-pick {border: 0; font-family: inherit; text-align: left; cursor: poin
 button.inv-pick:hover {text-decoration: underline;}
 button.inv-pick .ms {font-size: 14px;}
 @media (max-width: 600px) {.rvw-split .legend span {white-space: normal;}}
+/* A window under 400 px high (a 1366 x 768 laptop zoomed to 200% is 330): the bar stays at the end of the form, or
+   with the strip at the top it covered more than a third of the window. */
+@media (max-height: 400px) {
+  .inv-actionbar, html:has(.inv-acct) .inv-top {position: static;}
+  html:has(.inv-acct) {scroll-padding: 0;}
+}
 /* "Checking…" while the edits are checked (invoice.js check): a small tag above the bar's left end (the toasts are at
    the right), never in the bar, which would wrap and move its buttons; nothing when idle. */
 .inv-checking {position: absolute; left: 16px; bottom: calc(100% + 6px); padding: 2px 10px; white-space: nowrap;
@@ -778,6 +788,9 @@ html:has(.inv-acct) .rvw-nav > .spacer {flex-grow: 0;}
   html.menu-open:has(.inv-acct) .rail > .nav:not(.nav-pinned) {overflow-y: auto;}
 }
 @media (max-width: 1100px) {html:has(.inv-acct) .rvw-pos-bar, html:has(.inv-acct) .rvw-nav .pop {display: none;}}
+html:has(.inv-acct) .topbar {display: none;}  /* the screen's own Menu button in its place */
+/* a phone: the bar takes two lines rather than push Previous and Next past the window's edge */
+@media (max-width: 600px) {html:has(.inv-acct) .rvw-nav {flex-wrap: wrap;}}
 .inv-split.inv-acct {grid-template-columns: minmax(0, 1fr); gap: 8px;}
 .inv-split.inv-acct > .inv-doc {position: static;}
 .inv-split.inv-acct > .col {min-width: 0;}
@@ -808,6 +821,10 @@ html:has(.inv-acct) .inv-actionbar {margin: 8px -12px -64px; padding: 8px 12px;}
 .inv-head-row.one {grid-template-columns: minmax(0, 1fr) minmax(110px, 150px) minmax(100px, 116px);}
 .inv-head-row.two {grid-template-columns: minmax(96px, 124px) minmax(88px, 108px) 68px minmax(100px, 116px) minmax(0, 1fr);}
 .inv-head-row.bank {grid-template-columns: minmax(0, 420px);}
+@media (max-width: 600px) {  /* a phone: the vendor on its own line, then two boxes a line */
+  .inv-head-row.one, .inv-head-row.two {grid-template-columns: repeat(2, minmax(0, 1fr));}
+  .inv-head-row.one > :first-child {grid-column: 1 / -1;}
+}
 .inv-head-row .field {min-width: 0;}
 .inv-head-row .field input, .inv-head-row .field select {width: 100%; min-width: 0; height: 30px;}
 .inv-head-row .field input[type="number"] {font-variant-numeric: tabular-nums; text-align: right;}
@@ -840,8 +857,11 @@ html:has(.inv-acct) .inv-actionbar {margin: 8px -12px -64px; padding: 8px 12px;}
 .inv-acct details.inv-fold {padding: 6px 12px;}
 .inv-acct details.inv-fold > section.card {padding: 6px 0 4px; border: 0; box-shadow: none; background: none;
   margin-top: 4px;}
-.inv-lines-grid.acct thead {position: sticky; top: 44px; z-index: 3; background: var(--lg-surface);}
-@media (max-height: 719px) {.inv-lines-grid.acct thead {top: 38px;}}
+/* (from 640 px, where they are shown: on a narrower card they are hidden as elsewhere, each box saying what it is;
+   in the table's flow they made it a real table, the lines squeezed into a 160 px column) */
+@container lines (min-width: 640px) {.inv-lines-grid.acct thead {position: sticky; top: 44px; z-index: 3; background: var(--lg-surface);}}
+@container lines (min-width: 640px) {@media (max-height: 719px) {.inv-lines-grid.acct thead {top: 38px;}}}
+@container lines (min-width: 640px) {@media (max-height: 400px) {.inv-lines-grid.acct thead {top: 0;}}}
 /* the column names stay under the strip as the page scrolls: the lines' wrap is no scroller of its own here */
 .inv-acct .inv-lines > .table-wrap {overflow: visible;}
 /* The invoice pane at its narrowest (400 px): its head wraps, the file's name gives way first. */

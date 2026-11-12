@@ -127,19 +127,43 @@ def read(source: bytes, name: str) -> dict[str, Any] | None:
     words, for the list when its rows cannot be read."""
     records = chart_file.read_rows(source, name)
     try:
-        try:
-            headers = next(records, ())
-        except ChartError:  # no workbook that can be read: the caller's own reader says why
-            return None
-        where = positions(headers)
-        if not all(field in where for field in NEEDS):
+        for at in range(chart_file.HEADER_ROWS):  # (row 1, or under a grid's title rows: B-2273)
+            try:
+                headers = next(records, None)
+            except ChartError:  # no workbook that can be read: the caller's own reader says why
+                return None
+            if headers is None:
+                return None
+            where, above = positions(headers), at
+            if all(field in where for field in NEEDS):
+                break
+        else:
             return None
         rows, left = rows_of(records, where)
     finally:
         records.close()
-    return {"name": name, "rows": rows, "left": dict(left),
+    return {"name": name, "rows": _numbers_first(rows), "left": dict(left), "header_row": above,
             "found": [(label, _text(headers[where[field]])) for field, label in LABELS.items() if field in where],
             "missing": [label for field, label in LABELS.items() if field not in where]}  # fmt: skip
+
+
+_UNIT = re.compile(r"[0-9][0-9A-Z]*")  # a business unit's number as JD Edwards writes it ("00210", "0031045990")
+
+
+def _numbers_first(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """The rows with the business unit's number and name each in its own field: the list's two "Business Unit"
+    columns told apart by what they hold, not by their order (put the other way round, the name was kept as the
+    number)."""
+
+    def numbers(field: str) -> int:
+        return sum(1 for row in rows if _UNIT.fullmatch(row.get(field, "")))
+
+    if not rows or "business_unit_name" not in rows[0]:
+        return rows
+    if numbers("business_unit_name") <= numbers("business_unit"):
+        return rows
+    return [{**row, "business_unit": row["business_unit_name"], "business_unit_name": row["business_unit"]}
+            for row in rows]  # fmt: skip
 
 
 def master_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:

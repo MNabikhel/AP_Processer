@@ -16,7 +16,8 @@ after 15 s with nothing held. A file that is no such workbook is refused in plai
 with a traceback (B-2124).
 
 Entry points: ``read_chart``, ``read_business_units`` (a path, or an upload's bytes), giving ``chart.Rows``;
-``read_rows``, the rows as they are, for another of JD Edwards' long exports (the vendor information list, D-219).
+``read_rows``, the rows as they are, for another of JD Edwards' long exports (the vendor information list, D-219);
+``sheet_heads``, each sheet's first rows.
 """
 
 from __future__ import annotations
@@ -148,18 +149,39 @@ def read_export(source: str | Path | bytes, columns_of: Callable[[list[str], str
             yield {column: row[at] if at < len(row) else None for at, column in kept}
 
 
-def read_rows(source: str | Path | bytes, name: str = chart.FILE) -> Iterator[tuple[Any, ...]]:
-    """The first sheet's rows as they are, one at a time, for an export read by where its columns are (the vendor
-    information list has two columns of one name): bounded as ``read_export`` is, and refused in the same plain
-    words (``ChartError``), which call the file ``name``."""
-    with _first_sheet(source, name) as sheet:
-        yield from sheet.iter_rows(values_only=True)
+def read_rows(source: str | Path | bytes, name: str = chart.FILE, sheet: str = "") -> Iterator[tuple[Any, ...]]:
+    """The first sheet's rows as they are (``sheet``: the sheet of that name), one at a time, for an export read by
+    where its columns are (the vendor information list has two columns of one name; the voucher list, B-2433):
+    bounded as ``read_export`` is, and refused in the same plain words (``ChartError``), which call the file
+    ``name``."""
+    with _first_sheet(source, name, sheet) as opened:
+        yield from opened.iter_rows(values_only=True)
+
+
+def sheet_heads(source: bytes, name: str = chart.FILE, most: int = HEADER_ROWS) -> list[tuple[str, list[tuple]]]:
+    """Each sheet's name and its ``most`` first rows, of a workbook within the bounds ``read_rows`` reads in (a
+    report put on another sheet than the first is found by its name). ``ChartError`` as ``read_rows``'s."""
+    import openpyxl
+
+    opened = io.BytesIO(source)
+    _refuse_too_big(opened, name)
+    try:
+        workbook = openpyxl.load_workbook(opened, read_only=True, data_only=True)
+    except UNREADABLE as exc:
+        raise ChartError(f"{name} could not be read as an Excel workbook, so nothing was read: open it in Excel and "
+                         "save it again as .xlsx, or export it from JD Edwards again.") from exc  # fmt: skip
+    try:
+        return [(sheet.title, [row[:COLUMNS_MOST] for row in itertools.islice(sheet.iter_rows(values_only=True), most)])
+                for sheet in workbook.worksheets]  # fmt: skip
+    finally:
+        workbook.close()
 
 
 @contextmanager
-def _first_sheet(source: str | Path | bytes, name: str) -> Iterator[Any]:
-    """The workbook's first sheet, opened to be read a row at a time once the file is within its bounds, and closed
-    at the end. ``ChartError`` for a file that is none, or cannot be read (while it is read too)."""
+def _first_sheet(source: str | Path | bytes, name: str, title: str = "") -> Iterator[Any]:
+    """The workbook's first sheet (``title``: the sheet of that name), opened to be read a row at a time once the
+    file is within its bounds, and closed at the end. ``ChartError`` for a file that is none, or cannot be read
+    (while it is read too)."""
     import openpyxl
 
     opened = io.BytesIO(source) if isinstance(source, bytes) else Path(source)
@@ -167,7 +189,7 @@ def _first_sheet(source: str | Path | bytes, name: str) -> Iterator[Any]:
     try:
         _refuse_too_big(opened, name)
         workbook = openpyxl.load_workbook(opened, read_only=True, data_only=True)
-        sheet = workbook.worksheets[0]
+        sheet = workbook[title] if title in workbook.sheetnames else workbook.worksheets[0]
         sheet.reset_dimensions()  # the rows as they are, whatever size the file says the sheet has
         yield sheet
     except (ChartError, PermissionError):

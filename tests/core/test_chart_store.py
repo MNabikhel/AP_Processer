@@ -74,15 +74,16 @@ def test_the_import_keeps_the_exact_rows_and_works_out_the_two_lists(store):
 
 def test_importing_the_same_chart_again_changes_nothing(store):
     _loaded(store)
-    before = (store.chart_version(), store.events_stamp(), store.checks_stamp(), store.list_accounts("gl_accounts"),
+    before = (store.chart_version(), store.checks_stamp(), store.list_accounts("gl_accounts"),
               store.list_accounts("cost_centers"), store.account_pairs())  # fmt: skip
     result = store.import_chart(_chart(), actor="pat")
     assert (result["added"], result["updated"], result["removed"], result["rows"]) == (0, 0, 0, 41)
     assert result["gl_accounts"] == {"now": 13, "added": 0, "updated": 0, "removed": 0}
     assert store.import_business_units(_units())["cost_centers"] == {"now": 8, "added": 0, "updated": 0, "removed": 0}
-    after = (store.chart_version(), store.events_stamp(), store.checks_stamp(), store.list_accounts("gl_accounts"),
+    after = (store.chart_version(), store.checks_stamp(), store.list_accounts("gl_accounts"),
              store.list_accounts("cost_centers"), store.account_pairs())  # fmt: skip
-    assert after[:5] == before[:5] and after[5] is before[5]
+    assert after[:4] == before[:4] and after[4] is before[4]  # (only the two loads are recorded: B-2439)
+    assert [e["detail"].get("unchanged") for e in store.events(actions=["accounts_imported"])[:2]] == [True, True]
 
 
 def test_a_smaller_chart_removes_what_is_gone_and_keeps_ticks_categories_and_managers(store):

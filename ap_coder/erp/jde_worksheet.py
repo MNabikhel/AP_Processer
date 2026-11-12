@@ -258,6 +258,7 @@ BY_ID = {q.id: q for q in QUESTIONS}
 UPPER = {"document_type", "credit_document_type", "po_document_type", "domestic_currency", "self_assessed_code",
          "exempt_code"}  # fmt: skip
 YES, NO = {"yes", "y", "true", "1", "oui", "o", "x"}, {"no", "n", "false", "0", "non"}
+ID, ANSWER = "ID", "Your answer"  # the Questions sheet's columns its answers are read from
 
 
 def _current(q: Question, settings: jde_settings.JdeSettings) -> str:
@@ -327,9 +328,7 @@ def build(settings: jde_settings.JdeSettings, gl_accounts: list[dict[str, Any]],
     readme.column_dimensions["A"].width = 110
 
     ws = wb.create_sheet("Questions")
-    ws.append(
-        ["ID", "Topic", "Question for the JDE team", "JDE field", "AP Coder uses now", "Your answer", "Allowed answers"]
-    )
+    ws.append([ID, "Topic", "Question for the JDE team", "JDE field", "AP Coder uses now", ANSWER, "Allowed answers"])
     choice_dv: dict[str, DataValidation] = {}
     for q in QUESTIONS:
         allowed = {BOOL: "yes or no", CHOICE: " / ".join(q.choices.values()), LIST: "codes separated by commas",
@@ -406,6 +405,15 @@ def _choice(q: Question, answer: str) -> str | None:
     return None
 
 
+NOT_A_WORKBOOK = ("This file could not be opened as an Excel workbook (.xlsx): download the worksheet again on this "
+                  "page, fill in its answers in Excel and load the file Excel saved.")  # fmt: skip
+EMPTY_FILE = "This file is empty (0 bytes): load the worksheet as Excel saved it, its answers filled in."
+TOO_LARGE = (
+    "This workbook is too large to open here: it unzips to far more than AP Coder's worksheet (some 30 KB). "
+    "Download the worksheet again on this page, fill in its answers in Excel and load the file Excel saved."
+)
+
+
 def read(content: bytes, settings: jde_settings.JdeSettings) -> Result:
     """The settings with the worksheet's answers applied (a copy), what changed and what could not be used."""
     import openpyxl
@@ -413,20 +421,23 @@ def read(content: bytes, settings: jde_settings.JdeSettings) -> Result:
     out = Result(jde_settings.JdeSettings.from_json(settings.to_json()))
     s = out.settings
     if triage.sheet_unzips_too_big(content):  # an uploaded workbook: its unzipped sizes are checked first (W2-01)
-        out.problems.append(
-            "This workbook unzips to far more than its size on disk, so it is not opened: it may be damaged."
-        )
+        out.problems.append(TOO_LARGE)
         return out
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
-    except Exception as exc:  # noqa: BLE001 - not an Excel file, or damaged
-        out.problems.append(f"The file could not be opened as an Excel workbook ({type(exc).__name__}).")
+    except Exception:  # noqa: BLE001 - not an Excel file, or damaged
+        out.problems.append(NOT_A_WORKBOOK if content else EMPTY_FILE)
         return out
     if "Questions" not in wb.sheetnames:
         out.problems.append("This is not AP Coder's JDE worksheet (it has no Questions sheet).")
         return out
+    header = {str(h or "").strip() for h in next(wb["Questions"].iter_rows(max_row=1, values_only=True), ())}
+    if lost := [f"“{name}”" for name in (ID, ANSWER) if name not in header]:  # (renamed or deleted: B-2399)
+        out.problems.append(f"The worksheet's Questions sheet has no {' or '.join(lost)} column: nothing was read. "
+                            f"Download the worksheet again and fill in its “{ANSWER}” column.")  # fmt: skip
+        return out
     for row in _rows(wb, "Questions"):
-        q, answer = BY_ID.get(row.get("ID", "")), row.get("Your answer", "")
+        q, answer = BY_ID.get(row.get(ID, "")), row.get(ANSWER, "")
         if q is None or not answer:
             continue
         label = f'"{q.question[:60]}"'

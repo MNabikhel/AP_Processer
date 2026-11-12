@@ -5,7 +5,8 @@
   used, GST/HST numbers and bank accounts its invoices carried (the history, masked), recent invoices, the terms and
   ERP ID from the vendor master, the controls (hold, expected GST/HST number, notes) and the emails asking the vendor
   for what its invoices in the queue are missing (``&lang=``).
-* The ERP's vendor master: upload (``POST /vendors/master/upload``), check the columns (``?file=``), import.
+* The ERP's vendor master: upload (``POST /vendors/master/upload``), see it and check the columns (``?file=``: its spec,
+  ``import_specs.VENDOR_MASTER``), import.
 """
 
 from __future__ import annotations
@@ -23,10 +24,10 @@ from ap_coder.coding import vendor_mail
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
 from ap_coder.coding.vendors import (
     ACTIVE,
+    MASTER_ALIASES,
     ON_HOLD,
     bank_branch,
     mask_account,
-    master_columns,
     master_rows,
     norm_tax_number,
     same_bank_account,
@@ -34,9 +35,10 @@ from ap_coder.coding.vendors import (
 )
 from ap_coder.core import ui
 from ap_coder.core.store import PARKED, REVIEW, Store, reports
-from ap_coder.core.store.vendor_master import PAYMENTS_ONLY, stops_vouchers
+from ap_coder.core.store.vendor_master import JDE_FILES, PAYMENTS_ONLY, stops_vouchers
 from ap_coder.core.store.vendors import HOLD_CODES_SETTING, SKIP_WORDS_SETTING, listed
 from ap_coder.erp import recurring
+from ap_coder.erp.import_specs import VENDOR_MASTER
 from ap_coder.erp.insights import vendor_workload
 from ap_coder.ops.help import help_for
 from ap_coder.web.access import may_lift_hold
@@ -57,10 +59,13 @@ from ap_coder.web.files import (
     NO_ROWS,
     SheetError,
     drop_upload,
+    first_rows,
+    jde_refusal,
+    pick_refusal,
     picked_columns,
     read_upload,
     receive_sheet,
-    sheet_context,
+    spec_sheet,
 )
 from ap_coder.web.invoice_grid import gl_name
 
@@ -77,15 +82,6 @@ SORTS = {
 }
 VIEWS = {"all": "All", "hold": "On hold", "new": "New"}
 VENDORS_SHOWN = 200  # the vendors listed at first, and how many more each time ("Show more")
-MASTER_LABELS = {
-    "vendor_name": "Vendor name",
-    "erp_id": "Vendor ID",
-    "gst": "GST/HST number",
-    "terms": "Payment terms",
-    "status": "Status",
-    "hold": "Hold payment code (JD Edwards)",
-    "default_gl": "Default GL account",
-}
 TARGET = 0.9  # the AI accuracy shown in green from here
 
 
@@ -257,16 +253,12 @@ def vendors_page(
             ),
         ]
 
-    # The vendor master waiting for its columns
+    # The vendor master waiting for its columns (each of its reader's: B-2400)
     master, master_error = None, ""
     if file:
         try:
             upload, df, sheets = read_upload(file, sheet or None)
-            columns = list(df.columns)
-            if df.empty:
-                master_error = NO_ROWS
-            chosen = picked_columns({}, MASTER_LABELS, columns, master_columns(columns))
-            master = sheet_context(file, upload, df, sheets, sheet, MASTER_LABELS, chosen, ("vendor_name",))
+            master = spec_sheet(file, upload, df, sheets, sheet, VENDOR_MASTER, accept=VENDOR_JDE)
             master |= {
                 "hold_codes": ", ".join(store.hold_codes()),
                 "skip_words": ", ".join(store.supplier_markers()),
@@ -302,11 +294,13 @@ def vendors_page(
         list_query=urlencode(keep),
         has_master=store.has_vendor_master(),
         master_count=0 if vendors else len(store.master_vendors()),  # imported, no invoice yet (B-1008)
+        from_jde=master_from_jde(store),
         spend_items=spend_items,
         target=TARGET,
         master=master,
         setup=bool(setup),  # from Getting started: the vendor master's import open
         master_error=master_error,
+        vendor_spec=VENDOR_MASTER,
         detail=vendor_detail(store, chosen_vendor, lang) if chosen_vendor else None,
         statuses={ACTIVE: "Active", ON_HOLD: "On hold"},
         provinces={**PROVINCE_NAMES, OUTSIDE_CANADA: "Outside Canada"},
@@ -366,7 +360,7 @@ def save_vendor(
 
 @router.post("/vendors/master/upload")
 async def master_upload(request: Request, file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
-    token, problem = await receive_sheet(file)
+    token, problem = await receive_sheet(file, accept=VENDOR_JDE)
     if problem:
         return refuse(problem)
     return done(request, f"/vendors?file={token}#import")
@@ -379,6 +373,9 @@ async def master_import(request: Request) -> JSONResponse:
     return await run_in_threadpool(_master_import, request, form)  # a large company's list: 20,000 vendors
 
 
+# JD Edwards' own report the vendor list's import reads, with every column it needs (any other: JD Edwards files only,
+# and the vendor information list on its card 3: B-2406)
+VENDOR_JDE = ("supplier_master",)
 SHARED_NAMED = 200  # the names several supplier numbers share that an import's note lists
 HOLD_CODES_LABEL = "Hold payment codes that put a supplier on hold"  # the import form's field, as its notes name it
 
@@ -403,23 +400,32 @@ def _master_import(request: Request, form: Any) -> JSONResponse:
         _upload, df, _sheets = read_upload(token, sheet or None)
     except SheetError as exc:
         return refuse(str(exc))
+    if refusal := jde_refusal(first_rows(df), VENDOR_JDE):
+        return refuse(refusal)
     if df.empty:
         return refuse(NO_ROWS)
-    chosen = picked_columns(form, MASTER_LABELS, list(df.columns), {})
-    if "vendor_name" not in chosen:
-        return refuse("Pick the column with the vendor name.")
+    chosen = picked_columns(form, MASTER_ALIASES, list(df.columns), {})
+    if refusal := pick_refusal(VENDOR_MASTER, chosen):
+        return refuse(refusal)
     save_import_rules(store, form)
     result = store.import_vendor_master(master_rows(df.to_dict("records"), chosen), actor=reviewer())
     drop_upload(token)
     return done(request, "/vendors", *import_notes(result))
 
 
+def master_from_jde(store: Store) -> dict[str, Any] | None:
+    """The vendor master loaded on JD Edwards files (its events say where, B-2476): how many vendors it has, and
+    whether a list loaded elsewhere (this page, the sync, the sample) added to it; None when none was loaded there."""
+    wheres = {event["detail"].get("where", "") for event in store.events(actions=["vendors_imported"])}
+    if JDE_FILES not in wheres:
+        return None
+    return {"count": store.master_vendor_count(), "others": bool(wheres - {JDE_FILES})}
+
+
 def import_notes(result: dict[str, Any]) -> list[Any]:
     """What an import of the vendor master says: how many, the names merged, and the hold payment codes it did not
     treat as a hold."""
-    notes = [
-        flash_message(f"Vendor master: {result['added']} added, {result['updated']} updated.", "ok", icon="storefront")
-    ]
+    notes = [flash_message(f"Loaded: {result['added']} added, {result['updated']} updated.", "ok", icon="storefront")]
     dupes = result["duplicates"]
     if dupes:
         notes.append(

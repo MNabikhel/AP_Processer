@@ -31,6 +31,8 @@ NEVER_HOLD = ("", "N")
 # pays nothing, so the invoice goes on with a warning (VENDOR_PAYMENTS_HELD), not held as one of ``Y`` or ``1`` is
 # (B-2157).
 PAYMENTS_ONLY = ("2",)
+# Where a list was loaded, kept in its event (``vendors_imported``): JD Edwards files' card 3 (the other pages: none).
+JDE_FILES = "jde_files"
 # What JD Edwards' vendor information list says of a supplier, kept by its number (``vendor_info``, D-219).
 INFO_COLUMNS = ("tax_id", "tax_id_norm", "currency", "terms", "address1", "address2", "address3", "address4", "city",
                 "state", "country", "postal_code", "email", "business_unit", "business_unit_name")  # fmt: skip
@@ -304,7 +306,7 @@ class VendorMasterMixin:
 
     def import_vendor_master(
         self, rows: list[dict[str, Any]], actor: str | None = None, only_new: bool = False, by_erp_id: bool = False,
-        log: bool = True,
+        log: bool = True, where: str = "",
     ) -> dict[str, Any]:  # fmt: skip
         """Import the ERP's vendor list (``vendors.master_rows`` output). Each vendor is matched by name;
         what the file gives (ERP ID, GST/HST #, terms, default GL, status) replaces what was there; what
@@ -315,7 +317,8 @@ class VendorMasterMixin:
         which brings the list a page or a night's changes at a time, D-181): the vendors already there count as rows
         before these, so a row goes to the vendor of its name holding its ERP ID ("Acme", or "Acme #4002" the second
         of two, B-930) and another ERP ID's row of that name is merged into that vendor or is the second vendor, as
-        in one file. ``log``: the import's event (the sync logs one for all its pages).
+        in one file. ``log``: the import's event (the sync logs one for all its pages); ``where``: the page it was
+        loaded on, kept in the event (``JDE_FILES``), so Vendors says where its vendors came from (B-2476).
         A supplier whose name the ERP marks as retired ("… DO NOT USE", ``name_marker``) is kept under its name
         without the marker, on hold, with a note that says so; when the list has a supplier of that name in use too,
         that one is the vendor of the name and the retired one is kept under its ERP ID (B-2083).
@@ -384,6 +387,7 @@ class VendorMasterMixin:
             if log:
                 self._log(conn, "vendors_imported", actor=actor, detail={
                     "added": added, "updated": updated, "duplicates": len(duplicates),
+                    **({"where": where} if where else {}),
                 })  # fmt: skip
         bases = sorted({key.partition(" #")[0] for key in merged if " #" in key})
         shared = [[f"{v['erp_id']} {v['display_name']}" for v in found] for base in bases
@@ -487,6 +491,7 @@ class VendorMasterMixin:
                 self._log(conn, "vendors_imported", actor=actor, detail={
                     "added": result["added"], "updated": result["updated"], "duplicates": len(result["duplicates"]),
                     "list": "vendor information", "tax_ids": sum(1 for r in info if r.get("tax_id")),
+                    "where": JDE_FILES,
                 })  # fmt: skip
         return result
 
@@ -509,6 +514,10 @@ class VendorMasterMixin:
     def has_vendor_master(self) -> bool:
         with self._conn() as conn:
             return conn.execute("SELECT 1 FROM vendors WHERE in_master = 1 LIMIT 1").fetchone() is not None
+
+    def master_vendor_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM vendors WHERE in_master = 1").fetchone()[0])
 
     def master_vendors(self) -> list[dict[str, Any]]:
         with self._conn() as conn:

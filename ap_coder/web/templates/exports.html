@@ -1,6 +1,8 @@
 {% extends "base.html" %}
-{% from "_sheet.html" import upload_form, preview, columns %}
-{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
+{% from "_sheet.html" import sheets, columns, go %}
+{% import "_import.html" as imp with context %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">
+<link rel="stylesheet" href="{{ static_url('/static/imports.css') }}">{% endblock %}
 {% block content %}
 {{ ui.tiles([
   ui.tile("Ready to export", ready | length, "outbox", "blue", (ready_total ~ " total") if ready else "nothing waiting"),
@@ -140,36 +142,48 @@
   </form>
 </details>
 
+{% if can("/exports/register/upload") %}{# the office network: this computer's alone (B-2430) #}
 <details class="card expander" id="register"{% if reg or reg_error %} open{% endif %}>
-  <summary><span class="ms" aria-hidden="true">receipt_long</span>Invoices already in the ERP{% if register_count %} ({{ register_count | num }} known){% endif %}</summary>
-  <p class="muted">Import the ERP's AP invoice list (vendor, invoice number, date, total), e.g. the last 18 months.
-    Invoices processed in AP Coder are then also checked against bills already entered or paid in the ERP.
+  <summary><span class="ms" aria-hidden="true">receipt_long</span>{{ register_name }}{% if register_count %} ({{ register_count | num }} known){% endif %}</summary>
+  <p class="muted">Load the list of AP invoices in {{ register_erp }} (vendor, invoice number, date, total), e.g. the
+    last 18 months. Invoices processed in AP Coder are then also checked against the invoices already entered or paid
+    in {{ register_erp }}.
     JD Edwards' voucher list (Supplier Ledger Inquiry, exported to Excel) is read as it comes.</p>
+  <div class="stack imp-pane">
+  {{ imp.report(register_spec) }}
   {% if reg_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ reg_error }}</div></div>{% endif %}
   {% if reg %}
-  {{ preview(reg, "/exports", {"register": reg.token}) }}
-  <form method="post" action="/exports/register/import" class="stack" data-busy="Importing…" data-long>
+  {{ sheets(reg, "/exports", {"register": reg.token}) }}
+  {% call imp.preview(reg.look, "erp_register") %}{% endcall %}
+  <form method="post" action="/exports/register/import" class="stack" data-busy="Loading…" data-long id="pick-erp_register">
     {% if reg.vouchers %}{# JD Edwards' voucher list (one row per pay item): read as it comes, no column to pick #}
     <input type="hidden" name="file" value="{{ reg.token }}">
     <input type="hidden" name="sheet" value="{{ reg.sheet }}">
-    <div class="flash info"><span class="ms" aria-hidden="true">info</span><div>{{ reg.vouchers }} Nothing to pick: Import keeps these vouchers, and takes off the list any voucher it shows at 0.00 (voided in JD Edwards).</div></div>
+    <div class="flash info"><span class="ms" aria-hidden="true">info</span><div>{{ reg.vouchers }} Nothing to pick: Load keeps these vouchers, and takes off the list any voucher it shows at 0.00 (voided in JD Edwards).</div></div>
     <label class="check"><input type="checkbox" name="whole" value="1"> This list is every voucher of the period it covers (the grid was not filtered by supplier, batch or pay status): also take off the list the vouchers of that period it no longer shows</label>
     {% else %}{{ columns(reg) }}{% endif %}
-    <label class="check"><input type="checkbox" name="replace" value="1"> Replace the invoices already imported</label>
+    {% if register_count %}<label class="check"><input type="checkbox" name="replace" value="1"> Replace the list loaded now, {{ register_count | plural("invoice") }} (otherwise these are added to it)</label>{% endif %}
     <div class="row">
-      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import</button>
-      <a class="link" href="/exports#register">Cancel</a>
+      <button class="btn primary" type="submit"{% if not reg.vouchers %}{{ go(reg) }}{% endif %}><span class="ms" aria-hidden="true">upload</span>Load invoices</button>
+      <a class="btn" href="/exports#register"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
     </div>
   </form>
   {% else %}
-  {{ upload_form("/exports/register/upload", "ERP invoice list (CSV or Excel)", "Upload the ERP invoice list") }}
+  {{ imp.file_box("/exports/register/upload", register_spec.accept, "The list of " ~ register_name[:1] | lower ~ register_name[1:] ~ ", a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…") }}
   {% endif %}
   {% if register_count %}
-  <form method="post" action="/exports/register/clear" data-confirm="Clear the list of {{ register_count | num }} ERP invoices? Invoices are then no longer checked against it.">
+  <form method="post" action="/exports/register/clear" data-confirm="Clear the {{ register_count | plural('invoice') }} of “{{ register_name }}”? Invoices are then no longer checked against them.">
     <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Clear the list</button>
   </form>
   {% endif %}
+  </div>
 </details>
+{% else %}{# who loads it, where it can't be loaded from here (B-2477) #}
+<section class="card" id="register"><p class="muted"><b>{{ register_name }}</b>{% if register_count %} ({{ register_count | num }} known){% endif %}:
+  {{ imp.done_by("An Admin loads the ERP's invoice list.", "The ERP's invoice list is loaded") }}</p></section>
+{% endif %}
+{% else %}
+<section class="card" id="register"><p class="muted">{{ imp.done_by("An Admin sets the ERP layout and loads the ERP's invoice list.", "The ERP layout and the ERP's invoice list are set") }}</p></section>
 {% endif %}
 
 <section class="card" id="batches">
@@ -324,8 +338,9 @@
 <section class="card" id="audit">
   <div class="card-head">
     <div><h4>Duplicate payment audit</h4>
-      <p class="muted">Bills that may have been approved, or posted in the ERP, twice: number typos, the same bill under two
-        vendor names, the same amount days apart. Includes the ERP invoice register when imported (above).</p></div>
+      <p class="muted">Bills that may have been approved, or posted in {{ register_erp }}, twice: number typos, the same
+        bill under two vendor names, the same amount days apart. Includes the invoices already in
+        {{ register_erp }} when loaded (above).</p></div>
     <a class="btn" href="/exports?audit=1&fmt={{ fmt }}#audit"><span class="ms" aria-hidden="true">search</span>Run the audit</a>
   </div>
   {% if pairs is not none %}
@@ -356,4 +371,5 @@
   {% endif %}
 </section>
 {% endblock %}
-{% block scripts %}<script type="module" src="{{ static_url('/static/js/exports.js') }}"></script>{% endblock %}
+{% block scripts %}<script type="module" src="{{ static_url('/static/js/exports.js') }}"></script>
+<script type="module" src="{{ static_url('/static/js/imports.js') }}"></script>{% endblock %}
