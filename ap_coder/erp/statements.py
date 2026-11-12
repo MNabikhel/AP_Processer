@@ -126,6 +126,15 @@ class Reconciliation:
     # An open-items statement (``reconcile``'s ``open_items``): the invoices exported it leaves out, counted.
     exported_left_out: int = 0
 
+    @property
+    def exported_note(self) -> str:
+        """``exported_left_out`` in a sentence, as the page and the CSV say it; "" when none."""
+        n = self.exported_left_out
+        if not n:
+            return ""
+        invoices, are = ("invoice", "is") if n == 1 else ("invoices", "are")
+        return f"{n:,} {invoices} already exported {are} not expected on an open-items statement."
+
     def count(self, status: str) -> int:
         return sum(1 for li in self.lines if li.status == status)
 
@@ -298,4 +307,6 @@ def to_csv(rec: Reconciliation) -> bytes:
             "" if li.difference is None else f"{li.difference:.2f}",
             li.invoice_id or "", li.ap_status, li.note,
         ]))  # fmt: skip
+    if rec.exported_note:  # an open-items statement: the invoices exported are left out, and the file says so
+        writer.writerow([rec.exported_note] + [""] * 8)
     return ("\ufeff" + out.getvalue()).encode("utf-8")

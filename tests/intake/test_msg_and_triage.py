@@ -17,6 +17,7 @@ from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.intake import inbox, triage
 from ap_coder.intake.mailbox import PERSON_FOLDER, STATEMENTS_FOLDER, read_msg_mail, triage_log, unpack, unpack_folder
 from ap_coder.intake.msgfile import MsgError, read_msg
+from tests.conftest import fill_from
 from tests.pdfs import pdf_bytes as _pdf
 from tests.webclient import client_for, follow, post
 
@@ -434,6 +435,27 @@ def test_the_process_page_lists_emails_that_need_a_person(tmp_path):
     (st,) = inbox.statements(store, folder)
     answer = post(client, f"/statements/emailed/{st['id']}/{st['n']}", {"vendor": ""})
     assert answer.status_code == 200 and "/statements?" in answer.json()["redirect"]
+
+
+def test_an_emailed_statement_keeps_the_open_items_choice(store, setup_demo_template):
+    """D-242: the Reconcile button of a statement received by email carries the page's open-items choice (a hidden
+    field), forwarded to the statement's page as an upload's is; unticked, none."""
+    fill_from(store, setup_demo_template)  # vendors: the button is shown only with some
+    client = client_for(store)
+    from ap_coder.web.core import invoice_dir
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    _eml(folder / "soa.eml", "Statement", "attached", ("soa.csv", b"Invoice,Amount\nINV-1,10\n"))
+    unpack(folder / "soa.eml", folder)
+    (st,) = inbox.statements(store, folder)
+    hidden = '<input type="hidden" name="open_items" value="1">'
+    assert hidden in client.get("/statements?open_items=1").text
+    assert 'type="hidden" name="open_items"' not in client.get("/statements").text
+    ticked = post(client, f"/statements/emailed/{st['id']}/{st['n']}", {"vendor": "", "open_items": "1"})
+    assert "open_items=1" in ticked.json()["redirect"]
+    plain = post(client, f"/statements/emailed/{st['id']}/{st['n']}", {"vendor": ""})
+    assert "open_items" not in plain.json()["redirect"]
 
 
 def _sheet_bomb() -> bytes:

@@ -21,7 +21,7 @@
     <tbody>{% for st in emailed %}
       <tr><td>{{ st.name }}</td><td>{{ st.sender }}</td><td>{{ st.at }}</td>
         <td class="r row">
-          {% if st.sheet and names %}<form method="post" action="/statements/emailed/{{ st.id }}/{{ st.n }}"><input type="hidden" name="vendor" value="{{ vendor }}"><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">fact_check</span>Reconcile</button></form>{% endif %}
+          {% if st.sheet and names %}<form method="post" action="/statements/emailed/{{ st.id }}/{{ st.n }}"><input type="hidden" name="vendor" value="{{ vendor }}">{% if open_items %}<input type="hidden" name="open_items" value="1">{% endif %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">fact_check</span>Reconcile</button></form>{% endif %}
           <a class="btn" href="/process/inbox/{{ st.id }}/file/{{ st.n }}"><span class="ms" aria-hidden="true">open_in_new</span>Open</a>
           <form method="post" action="/process/inbox/{{ st.id }}/done"><button class="btn" type="submit" title="Remove from this list"><span class="ms" aria-hidden="true">done_all</span>Done</button></form>
         </td></tr>
@@ -48,7 +48,7 @@
   <p class="muted">A Clerk uploads a vendor's statement here to compare it with the invoices.</p>
   {% endif %}
   {% if s %}
-  {{ sheets(s, "/statements", {"vendor": vendor, "file": s.token, "open_items": "1" if open_items else ""}) }}
+  {{ sheets(s, "/statements", dict({"vendor": vendor, "file": s.token}, **({"open_items": "1"} if open_items else {}))) }}
   {% call imp.preview(s.look, "statements") %}{% if rec %}<p id="statements-compared">{{ compared }} <a href="#result">See the comparison</a></p>{% endif %}{% endcall %}
   <form method="get" action="/statements#result" class="stack" id="pick-statements">
     {{ columns(s) }}
@@ -69,7 +69,7 @@
 {# The comparison: where Reconcile takes the person, the focus on it (imports.js) #}
 <div class="imp-result" id="result" tabindex="-1" data-imp-result aria-labelledby="result-title">
 {{ tile_row(tiles) }}
-{% if rec.exported_left_out %}<p class="muted" id="statement-exported">{{ rec.exported_left_out | plural("invoice") }} already exported {{ "is" if rec.exported_left_out == 1 else "are" }} not expected on an open-items statement.</p>{% endif %}
+{% if rec.exported_note %}<p class="muted" id="statement-exported">{{ rec.exported_note }}</p>{% endif %}
 {% if rec.period_unknown %}<div class="flash warn" id="statement-period-unknown"><span class="ms" aria-hidden="true">warning</span><div>The statement's dates read either way (day or month first) and its invoices didn't tell which, so its period couldn't be told: the invoices it leaves out may not be listed as Not on statement.</div></div>{% endif %}
 <section class="card">
   <div class="card-head">
