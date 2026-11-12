@@ -163,7 +163,7 @@ def _value_over_label(lines: list[Line], line: Line, hit: _LabelHit) -> Reading 
     if up is None or _a_label(up):
         return None
     above = _value_reading(hit.field, up, 0, 0.85 * hit.strength, "label-above")
-    if above is None or _in_a_sentence(up, above):
+    if above is None or _in_a_sentence(up, above) or _beside_a_label(lines, up):
         return None
     down = next(iter(_below(lines, line, lb)[:1]), None)
     if down is None or not _value_reading(hit.field, down, 0, 1.0, "x"):
@@ -192,6 +192,15 @@ def _value_over_label(lines: list[Line], line: Line, hit: _LabelHit) -> Reading 
     if over_its_label and line.box.y0 - up.box.y1 < 0.5 * (down.box.y0 - line.box.y1):
         return above
     return None
+
+
+def _beside_a_label(lines: list[Line], value: Line) -> bool:
+    """``value`` printed right of a label on its row, that label's value: "Invoice date | 2026-11-05" over "Terms |
+    Due in 30 days" is not the due date printed over its label "Due" (B-2602). A label on its own: not a name that
+    starts with a label's word ("Total Supply Ltd")."""
+    left = (other for other in lines if other is not value and other.box.page == value.box.page
+            and other.box.x1 <= value.box.x0 + 0.002 and other.box.y0 < value.box.y1 and value.box.y0 < other.box.y1)  # fmt: skip
+    return any(value in _right_of(lines, other)[:1] and _bare_hits(other) for other in left)
 
 
 def _under_another_label(lines: list[Line], value: Line, label: Line) -> bool:
