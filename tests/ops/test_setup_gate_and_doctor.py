@@ -208,3 +208,40 @@ def test_the_doctor_asks_no_gst_account_of_a_laptop_that_keys_the_gst_on_the_pay
     jde_settings.save(store, settings)
     cli.main(args)
     assert "[WARN] tax GST" in capsys.readouterr().out
+
+
+def _server_accounts(store):
+    from ap_coder.ops.doctor import store_checks
+
+    return next(c for c in store_checks(store, server=True) if c.area == "server accounts")
+
+
+def test_the_doctor_fails_a_server_whose_authenticator_key_is_gone(store):
+    """B-2532: "server accounts PASS" while every authenticator code is refused: the key that opens them is gone."""
+    from ap_coder.core import authenticator
+    from ap_coder.ops.doctor import FAIL, PASS
+    from tests.webclient import enrol
+
+    uid = store.add_user("boss", "a long admin password 1", role="admin", must_change=False)
+    enrol(store, uid)
+    assert _server_accounts(store).status == PASS
+    (store.path.parent / authenticator.KEY_FILE).unlink()
+    line = _server_accounts(store)
+    assert line.status == FAIL and authenticator.KEY_FILE in line.detail, line
+
+
+def test_the_doctor_fails_a_server_whose_only_admin_can_no_longer_log_in(store, monkeypatch):
+    """B-2532: "server accounts PASS" while the only Admin's temporary password is past its 3 days."""
+    import time
+
+    from ap_coder.core.store import users
+    from ap_coder.ops.doctor import FAIL, PASS
+
+    store.add_user("boss", "a long admin password 1", role="admin")  # as `users add --admin`: temporary
+    store.add_user("carl", "a long clerk password 1", role="clerk", must_change=False)
+    assert _server_accounts(store).status == PASS
+    later = time.time() + users.TEMPORARY_SECONDS + 60
+    monkeypatch.setattr(users.time, "time", lambda: later)
+    line = _server_accounts(store)
+    assert line.status == FAIL and "python -m ap_coder users reset boss" in line.detail, line
+

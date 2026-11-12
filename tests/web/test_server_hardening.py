@@ -741,6 +741,22 @@ def test_a_temporary_password_expires_after_3_days(tmp_path):
     assert store.authenticate("ann", "another good secret", "10.0.0.5")
 
 
+def test_the_only_admin_whose_temporary_password_expired_is_told_the_command_that_resets_it(tmp_path):
+    """B-2532: the only Admin was told to "ask an Admin for a new one": there is none to ask."""
+    from ap_coder.core.store.users import TEMPORARY_EXPIRED, LoginRefused
+
+    store = Store(tmp_path / "ap_coder.db")
+    store.add_user("boss", GOOD, role="admin")  # as `users add --admin`: temporary
+    with store._conn() as conn:
+        conn.execute("UPDATE events SET created_at = '2000-01-01T00:00:00' WHERE action = 'user_added'")
+    with pytest.raises(LoginRefused) as refused:
+        store.authenticate("boss", GOOD, "10.0.0.5")
+    assert "python -m ap_coder users reset boss" in str(refused.value) and "ask an Admin" not in str(refused.value)
+    store.add_user("kim", GOOD, role="admin", must_change=False)  # another Admin: the one to ask
+    with pytest.raises(LoginRefused, match=TEMPORARY_EXPIRED[:30]):
+        store.authenticate("boss", GOOD, "10.0.0.5")
+
+
 def test_wrong_current_passwords_on_the_password_page_log_the_person_out(web):
     from tests.web.test_server_security import log_in
     from tests.webclient import PAGE

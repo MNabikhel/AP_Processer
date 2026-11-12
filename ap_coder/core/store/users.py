@@ -73,6 +73,9 @@ ABSOLUTE_SECONDS = 12 * 3600
 TEMPORARY_SECONDS = 72 * 3600  # a temporary password (a new account, a reset) not changed by then no longer logs in
 TEMPORARY_EXPIRED = ("Your temporary password has expired (it lasts 3 days): ask an Admin for a new one (Users → "
                      "Reset password).")  # fmt: skip
+# ...and to an Admin with no other Admin who can log in to ask (B-2532): the command that gives a new one
+TEMPORARY_EXPIRED_ONLY_ADMIN = ("Your temporary password has expired (it lasts 3 days), and there is no other Admin "
+                                "to ask: on the server, run python -m ap_coder users reset {username}")  # fmt: skip
 SEEN_EVERY = 60  # seconds between two writes of a session's last use
 SEEN_WAIT_MS = 200  # how long that write may wait for another writer before it is left to the next request
 MAX_FAILURES = 5  # tries that don't match within FAILURE_WINDOW for one username from one address...
@@ -701,6 +704,13 @@ class UsersMixin:
             return False
         return time.time() - when > TEMPORARY_SECONDS  # (the events' own clock)
 
+    def _only_admin(self, row: Any) -> bool:
+        """Whether ``row`` is an Admin and no other active Admin can log in (their temporary passwords expired)."""
+        if row["role"] != ADMIN:
+            return False
+        others = [u for u in self.list_users() if u["role"] == ADMIN and u["active"] and u["id"] != row["id"]]
+        return all(u["must_change"] and self._temporary_expired(u) for u in others)
+
     def _locked(self, conn: Any, key: str, ip: str, now: float, console: bool) -> bool:
         """Whether logins are paused for ``key`` (a username, or ``UNKNOWN`` and its hash) from ``ip``, or from
         ``ip`` whatever the username (never for the server's own console), or for ``key`` from anywhere. An address
@@ -784,7 +794,8 @@ class UsersMixin:
         if row is not None and row["active"] and matches and row["must_change"] and self._temporary_expired(row):
             with self._conn() as conn:
                 self._log(conn, "login_failed", None, None, {"username": name, "why": "temporary password expired"})
-            raise LoginRefused(TEMPORARY_EXPIRED)
+            raise LoginRefused(TEMPORARY_EXPIRED_ONLY_ADMIN.format(username=name) if self._only_admin(row)
+                               else TEMPORARY_EXPIRED)  # fmt: skip
         with self._conn() as conn:
             self._begin_alone(conn, "authenticate")  # its own: a refusal's events are kept when LoginRefused is raised
             if row is not None and row["active"] and matches:
