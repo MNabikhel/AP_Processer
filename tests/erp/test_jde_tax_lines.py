@@ -88,7 +88,7 @@ def test_taxable_amount_is_the_sum_of_a_tax_printed_twice():
 
 
 def test_one_pay_item_a_line_splits_the_taxable_amount_of_the_tax_printed_twice():
-    """B-2511: with a pay item for each G/L line, the taxable amount was split over the lines of the tax whose one
+    """B-2487: with a pay item for each G/L line, the taxable amount was split over the lines of the tax whose one
     tax line had the largest taxable amount, while VLATXA adds each tax's lines (B-923): the BC PST (goods only)
     printed before the GST (goods, then freight) gave the goods 150.00 taxable on 100.00 (VLATXN -50.00) and the
     freight none, its 3.00 GST on no taxable amount. The tax whose lines add up to the most is split."""

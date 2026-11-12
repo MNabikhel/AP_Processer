@@ -246,7 +246,7 @@ def voucher_rows(
             if t["tax_type"] in v.recoverable_types:
                 part = _split(_units(t.get("tax_amount"), v.decimals), carrying(t["tax_type"]), unit)
                 shares = [a + b for a, b in zip(shares, part, strict=True)]
-        bases: dict[str, int] = {}  # each tax's taxable amount, its lines added up, as VLATXA is (B-923, B-2511)
+        bases: dict[str, int] = {}  # each tax's taxable amount, its lines added up, as VLATXA is (B-923, B-2487)
         for t in v.charged:
             if t["tax_type"] not in v.expensed:
                 bases[t["tax_type"]] = bases.get(t["tax_type"], 0) + _units(t.get("taxable_amount"), v.decimals)

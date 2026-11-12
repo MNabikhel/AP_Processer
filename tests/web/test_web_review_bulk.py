@@ -141,7 +141,7 @@ def test_an_invoice_edited_or_acted_on_while_the_job_ran_is_left_for_a_person(st
 
 
 def test_an_invoice_in_a_currency_not_in_use_is_left_for_a_person(store):
-    """B-2534: bulk approval checks each invoice again as it is coded, and "XYZ" (no currency in use, D-75) was said
+    """B-2502: bulk approval checks each invoice again as it is coded, and "XYZ" (no currency in use, D-75) was said
     only on the review screen: it was approved in bulk, a voucher in no currency."""
     ids = _clean(store, 2)
     with sqlite3.connect(store.path) as conn:

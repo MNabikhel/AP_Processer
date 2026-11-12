@@ -70,7 +70,7 @@ def test_line_math_and_numbering(reference, ground_truth):
 
 
 def test_a_currency_code_not_in_use_is_an_error_of_the_coding_itself(reference, ground_truth):
-    """B-2534: "XYZ" or "CDN" (no currency in use, D-75) was said only on the review screen, so bulk approval, the
+    """B-2502: "XYZ" or "CDN" (no currency in use, D-75) was said only on the review screen, so bulk approval, the
     queue's Ready and touchless approval passed it. The coding's own checks say it, once."""
     for code in ("XYZ", "CDN"):
         report = validate_coding(InvoiceCoding.model_validate({**ground_truth, "currency": code}), reference)

@@ -365,7 +365,7 @@ def test_in_a_browser_duplicate_insert_copy_from_above_and_clear_a_lines_account
 def test_in_a_browser_a_line_added_between_others_leaves_their_numbers_so_approval_learns_them_as_they_were(
     browser, store
 ):
-    """B-2530: a line duplicated or inserted under line 1 renumbered every line under it, and approval pairs the
+    """B-2498: a line duplicated or inserted under line 1 renumbered every line under it, and approval pairs the
     screen's lines with the AI's by number: lines nobody touched were learned as corrections. A new line takes the
     number after the last; the others keep theirs."""
     client = TestClient(_app(store), base_url="http://localhost")

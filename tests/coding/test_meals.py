@@ -288,7 +288,7 @@ def test_one_pay_item_per_line_takes_the_tax_of_the_distribution():
 
 
 def test_a_meal_with_the_hst_of_another_province_keeps_half_of_its_own_tax():
-    """B-2500: Ontario HST 13% on 1,000.00 of paper and Nova Scotia HST 14% on a 500.00 dinner: each HST line was
+    """B-2481: Ontario HST 13% on 1,000.00 of paper and Nova Scotia HST 14% on a 500.00 dinner: each HST line was
     spread by amount over both lines, so the dinner took 66.66 of HST and 33.34 was expensed, the ITC over-claimed by
     1.66. The lines' amounts tell which HST is on which line: the dinner's 70.00, half of it (35.00) expensed with
     it, and the pay items take the same."""

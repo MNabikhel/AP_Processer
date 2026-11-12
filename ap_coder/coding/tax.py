@@ -305,8 +305,8 @@ def _each_tax_line(check: _TaxCheck) -> None:
 def tax_line_ways(coding: Any, tl: Any, places: int) -> list[float]:
     """The ways a tax line's tax is worked out: once on its taxable amount, and line by line, each line rounded
     (``money.tax_right`` holds the tax to them): on the lines marked with its tax when it is the only line of its
-    tax that charges something (a line of 0.00 charges nothing, B-2503), else on its own lines
-    (``_line_by_line_on_its_lines``, B-2502)."""
+    tax that charges something (a line of 0.00 charges nothing, B-2484), else on its own lines
+    (``_line_by_line_on_its_lines``, B-2483)."""
     ways = [times(tl.taxable_amount, tl.rate, places)]
     flagged = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
     if sum(1 for t in coding.tax_lines if t.tax_type == tl.tax_type and on_its_lines(t, places)) == 1:
@@ -320,7 +320,7 @@ def tax_line_ways(coding: Any, tl: Any, places: int) -> list[float]:
 def on_its_lines(tl: Any, places: int = 2) -> bool:
     """Whether a tax line is charged on lines of the invoice: it charges something, or its rate on its taxable
     amount rounds to nothing (GST 5% on 0.06). A line of 0.00 at no rate (GST 0% on a zero-rated line), or at a rate
-    that would charge something, is on no line (B-2503)."""
+    that would charge something, is on no line (B-2484)."""
     return not nil(tl.tax_amount) or (tl.rate > 0 and nil(times(tl.taxable_amount, tl.rate, places)))
 
 
@@ -407,7 +407,7 @@ def _tax_line_rate(check: _TaxCheck, tl: Any) -> None:
 def _lines_carry_each_tax(check: _TaxCheck) -> None:
     """Which invoice lines carry each tax (their tax code, D-64), and does their sum match the taxable amount?
     Compared per tax type, because the same tax can be printed more than once (e.g. on goods and on freight). A tax
-    line of nothing (GST 0.00 on a zero-rated line) is on no line: its taxable amount is not counted (B-2503)."""
+    line of nothing (GST 0.00 on a zero-rated line) is on no line: its taxable amount is not counted (B-2484)."""
     coding, tol = check.coding, check.tol
     places = currency_places(getattr(coding, "currency", ""))
     for tax_type in sorted(check.charged):
@@ -487,7 +487,7 @@ def _lines_marked_with_a_tax_not_charged(check: _TaxCheck) -> None:
 
 def _qst_before_gst(check: _TaxCheck) -> None:
     """QST is calculated on the price excluding GST (no tax-on-tax since 2013): every QST line's base against every
-    GST line's, each tax printed on goods and on freight alike (B-2501)."""
+    GST line's, each tax printed on goods and on freight alike (B-2482)."""
     places = currency_places(getattr(check.coding, "currency", ""))
     gst = [t for t in check.tax_lines if t.tax_type == "GST" and on_its_lines(t, places)]
     qst = [t for t in check.tax_lines if t.tax_type == "QST" and on_its_lines(t, places)]
@@ -637,7 +637,7 @@ def _exemptions_to_confirm(check: _TaxCheck) -> None:
 
 def _registration_numbers(check: _TaxCheck) -> None:
     """Registration numbers needed to claim input tax credits: printed wrong, whatever the amount; missing, from the
-    documentary threshold (``taxreturn.document_threshold``: $100 since 21 April 2021, $30 before; B-2504)."""
+    documentary threshold (``taxreturn.document_threshold``: $100 since 21 April 2021, $30 before; B-2485)."""
     from .taxreturn import document_threshold
 
     coding = check.coding
@@ -892,7 +892,7 @@ def tax_shares(lines: list[Any], tax_line: Any, places: int = 2, tax_lines: Any 
     voluntary tip is not taxed), in cents. A tax kept in the expense is added to the lines by these shares
     (``build_gl_distribution``, B-2169), and the JD Edwards pay items take the same (B-867; a pay item per line, by
     the same rule, B-1889). ``tax_lines``, the invoice's: a tax printed at two rates or for two provinces is spread
-    over the lines its rate was charged on, when their amounts tell which (``taxmath._lines_of_each_rate``, B-2500)."""
+    over the lines its rate was charged on, when their amounts tell which (``taxmath._lines_of_each_rate``, B-2481)."""
     items = list(enumerate(lines))
     tax_type = tax_line.tax_type
     # The lines whose tax code carries it; none marked: the lines not marked exempt, zero-rated or out of scope

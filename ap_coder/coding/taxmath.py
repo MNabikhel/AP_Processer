@@ -161,7 +161,7 @@ def _tax_row(sums: _Sums, tax_type: str) -> dict[str, Any]:
     """One tax: its rate on the lines marked with it, against what is charged."""
     items, n, setup = sums.items, sums.n, sums.setup
     taxes = [t for t in sums.coding.tax_lines if t.tax_type == tax_type]
-    # A tax line of nothing beside lines that charge the tax (GST 0.00 on a zero-rated line) is on no line (B-2503)
+    # A tax line of nothing beside lines that charge the tax (GST 0.00 on a zero-rated line) is on no line (B-2484)
     taxes = [t for t in taxes if on_its_lines(t, sums.places)] or taxes
     charged = add_up(t.tax_amount for t in taxes)
     label = tax_name(tax_type, sums.province)
@@ -315,7 +315,7 @@ def _total_row(coding: InvoiceCoding, taxes_total: float) -> dict[str, Any]:
     adds_up = within(diff, 0, CENT) or cash
     taxes_agree = within(taxes_total, coding.tax_total, CENT)
     shown = diff if not adds_up else half_up(coding.grand_total - half_up(coding.subtotal + taxes_total))
-    sign = "-" if coding.tax_total < 0 else "+"  # a credit's tax is taken off: -500.00 - 60.00, not + -60.00 (B-2535)
+    sign = "-" if coding.tax_total < 0 else "+"  # a credit's tax is taken off: -500.00 - 60.00, not + -60.00 (B-2503)
     tax = money(abs(coding.tax_total))
     row = {"kind": "total", "what": "Subtotal + tax = total", "ok": adds_up and taxes_agree,
            "diff": "" if adds_up and taxes_agree else money(shown), "subtotal": money(coding.subtotal),

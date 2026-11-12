@@ -237,7 +237,7 @@ def test_a_header_amount_too_long_to_be_one_is_refused_like_a_word(client, store
 
 
 def test_approve_anyway_and_its_reason_stay_ticked_when_the_invoice_is_opened_again(client, store):
-    """B-2536: "Approve anyway" ticked with its reason was gone once the page was drawn again (a reload, Previous or
+    """B-2504: "Approve anyway" ticked with its reason was gone once the page was drawn again (a reload, Previous or
     Next and back): the draft kept neither. They are kept with it, ticked again only while the errors are the same
     ones (``override_key``); a bare tick keeps nothing (B-825)."""
     cascade = next(i["id"] for i in store.list_invoices(REVIEW) if "Cascade" in (i["vendor_name"] or ""))
@@ -462,7 +462,7 @@ def test_split_a_line(client, store):
 
 
 def test_a_gap_left_by_a_line_deleted_on_screen_is_not_said_to_be_a_line_missed(client, store):
-    """B-2531: a line the AI read that a person deleted left its number out, and the checks then warned "The line
+    """B-2499: a line the AI read that a person deleted left its number out, and the checks then warned "The line
     numbers don't run 1, 2, 3…" of what was done on purpose. A gap the reading had itself, or a number typed in
     beyond the lines, still warns."""
     inv_id = next(
