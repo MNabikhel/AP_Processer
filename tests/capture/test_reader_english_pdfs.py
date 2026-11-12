@@ -617,6 +617,19 @@ def test_a_deposit_or_holdback_under_a_printed_total_holds_the_total_for_a_perso
     assert held["grand_total"].status == VERIFIED
 
 
+def test_a_line_item_named_for_a_deposit_or_holdback_or_a_holdback_of_nothing_leaves_the_total_as_it_is(tmp_path):
+    """B-2520 held every total of a document printing a deposit or holdback with an amount: a line item's own words
+    ("Holdback release - Phase 1 550.00") and a totals row of nothing ("Holdback 0.00") held ordinary invoices too."""
+    for i, desc in enumerate(["Holdback release - Phase 1", "10% Holdback release", "Prepayment 50% of order 1234",
+                              "Retainage billing - Phase 2", "Deposit received on PO 1234"]):  # fmt: skip
+        head = [x for x in _NORTHWIND if x[2] not in ("Consulting services", "550.00")]
+        f = _totals(tmp_path, _PLAIN, head=[*head, (50, 258, desc), (500, 258, "550.00")], name=f"li{i}.pdf")
+        assert (f["grand_total"].value, f["grand_total"].status) == (621.5, VERIFIED), desc
+    f = _totals(tmp_path, [("Subtotal", "550.00"), ("HST 13%", "71.50"), ("Total", "621.50"), ("Holdback", "0.00")],
+                name="none.pdf")  # fmt: skip
+    assert (f["grand_total"].value, f["grand_total"].status) == (621.5, VERIFIED)
+
+
 def test_an_invoice_number_ending_in_a_word_after_a_slash_is_kept_whole(tmp_path):
     head = [x for x in _NORTHWIND if x[2] != "INV-3001"] + [(470, 95, "1234/Revised")]
     assert _totals(tmp_path, _PLAIN, head=head)["invoice_number"].value == "1234/Revised"

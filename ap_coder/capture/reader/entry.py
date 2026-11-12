@@ -705,8 +705,15 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
     items = read_line_items(layout)
     line_sum = round(sum(i.amount for i in items if i.amount is not None), 2) if items else None
     # A deposit or holdback printed, before or after a printed total: the totals may add up without it, and it is
-    # dropped, but whether the total before or after it is posted is still AP's call (D-47).
-    taken_off = any(TAKEN_OFF in r.method for r in cands.get("other_charges", []))
+    # dropped, but whether the total before or after it is posted is still AP's call (D-47). Not a line item's own
+    # words ("Holdback release - Phase 1"), nor a row of nothing taken off ("Holdback 0.00").
+    rows = [b for item in items for b in item.boxes]
+    taken_off = any(
+        TAKEN_OFF in r.method
+        and abs(r.value or 0) >= 0.005
+        and not any(r.boxes and b.page == r.boxes[0].page and b.y0 <= r.boxes[0].cy <= b.y1 for b in rows)
+        for r in cands.get("other_charges", [])
+    )
     cands = _solve_totals(cands, line_sum)
     if taken_off or any(TAKEN_OFF in r.method for r in cands.get("other_charges", [])):
         for r in cands.get("grand_total", []):
