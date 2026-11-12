@@ -218,6 +218,11 @@ def _state(store: Store, digest: str, journal: jr.Journal, objects: dict[str, tu
     before = next((f for f in store.journal_files() if f["hash"] == digest), None)
     if before is not None:
         who = f" by {before['loaded_by']}" if before["loaded_by"] else ""
+        if otherwise := store.journal_read_otherwise(before["id"], journal):
+            return SAME_FILE, (f"This file is loaded already ({before['loaded_at'][:10]}{who}), but "
+                               f"{plural(otherwise, 'voucher')} of it {'reads' if otherwise == 1 else 'read'} "
+                               "otherwise now: AP Coder reads such files better than when it was loaded. Forget it "
+                               "and load it again to learn from it as it reads now.")  # fmt: skip
         return SAME_FILE, (f"This file is loaded already ({before['loaded_at'][:10]}{who}): there is nothing to "
                            "add. To load it again, with other objects for instance, forget it first.")  # fmt: skip
     if not journal.vouchers:
