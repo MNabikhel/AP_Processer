@@ -5778,3 +5778,6 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Cost, measured:** the chart's load 15.0 s → 15.2 s (about 1%). The interval matters only while two threads
     want the lock at once; the OCR engine and SQLite let go of it while they work. It is process-wide: revisit if a
     measured slowdown of reading (`python -m ap_coder.bench speed`) is traced to it.
+  - **Amended (B-2481):** not on Windows. There CI's server load test left requests unanswered and a failover
+    timing test ran over with it, on both runs; Windows keeps Python's 5 ms. The page's one-query count (B-2436)
+    is what keeps JD Edwards files quick there.

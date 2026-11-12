@@ -1107,6 +1107,24 @@ def test_in_a_browser_the_chart_box_says_it_is_reading_and_how_long_it_takes(chr
         page.close()
 
 
+def test_on_windows_the_dashboard_keeps_pythons_own_switch_interval(store, monkeypatch):
+    """B-2481: on Windows the dashboard's threads taking turns every half millisecond (D-237) left requests of three
+    people's load unanswered and made a chat call's failover take twice its limit; there Python's own is kept."""
+    import sys
+
+    from ap_coder.web import app as web_app
+
+    before = sys.getswitchinterval()
+    try:
+        sys.setswitchinterval(0.005)
+        monkeypatch.setattr(sys, "platform", "win32")
+        web_app.create_app(store)
+        assert sys.getswitchinterval() == 0.005
+    finally:
+        monkeypatch.undo()
+        sys.setswitchinterval(before)
+
+
 def test_the_page_counts_the_chart_and_never_reads_its_rows(client, store, exports, monkeypatch):
     """B-2436: opening JD Edwards files while a chart was being loaded took 11 to 13 s: the page read the chart's
     20,000 rows one at a time only to count them, and after each row it waited for the load, reading its workbook on
@@ -1117,7 +1135,8 @@ def test_the_page_counts_the_chart_and_never_reads_its_rows(client, store, expor
 
     from ap_coder.web import app as web_app
 
-    assert sys.getswitchinterval() == web_app.SWITCH_INTERVAL <= 0.0005  # (set by create_app)
+    if sys.platform != "win32":  # not on Windows (B-2481)
+        assert sys.getswitchinterval() == web_app.SWITCH_INTERVAL <= 0.0005  # (set by create_app)
     _load_chart(client, exports)
     accounts, units = _accounts(store), len({row.bu for row in store.chart_accounts()})
     vendors = len(store.master_vendors())
