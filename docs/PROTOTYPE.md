@@ -91,11 +91,14 @@ delete. The top of the page (*What is loaded*) ticks off what is loaded.
 | 4 | Last year's coding (CSV) | what each supplier's lines were coded to, and their remarks | the Transaction Journal, saved as CSV |
 | 5 | Vouchers already in JD Edwards (Excel) | the duplicate check, and the voucher and batch numbers | supplier ledger inquiry |
 
-The chart (**Load the chart**) and the business units (**Load the business units**) are loaded at once and say what
-they read. The other three (**Read the suppliers**, **Read the journal**, **Read the voucher list**) first show what
-they found (how many rows, which columns were read as what) with nothing kept yet; the **Load** button under it keeps
-them. A newer chart, business unit list or voucher list replaces the older one, a newer supplier list adds the new
-suppliers and updates the others, and what you changed by hand is kept (below).
+Each card says which report to export and how (**How to get it**), the columns it needs and the optional ones (the
+other names each is read by under *What each column is*), and has **Download a blank template** with those column
+names to compare with your export. The columns can be in any order. Choose (or drag in) the file and click **Check
+the file**: the card shows the file first, with nothing kept yet: its rows, each column it needs found as which of
+your headers or missing, its other columns and its first 5 rows. **Load** is offered only when every column it needs
+is there; a file without one is not loaded (the card names the missing column), and a file that belongs on another
+card says which. A newer chart, business unit list or voucher list replaces the older one, a newer supplier list adds
+the new suppliers and updates the others, and what you changed by hand is kept (below).
 
 Box 3 takes both supplier exports and tells them apart by their column names. Each row goes to the supplier of its
 number, so loading one never removes what only the other gives. The vendor information list lists the suppliers of

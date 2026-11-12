@@ -12,7 +12,7 @@ in their order:
    serve``, for a developer's checkout without one); the short menu ("Simple screens") the guide lists;
 2. the made-up company in a second data folder (``set AP_PRIVATE_DIR=...``, ``demo --company``, ``serve``), deleted
    after, the first data folder untouched;
-3. the five JD Edwards files loaded on Setup -> JD Edwards files (the last three shown before they are kept), each
+3. the five JD Edwards files loaded on Setup -> JD Edwards files (each shown before it is kept), each
    one's rows to see; the chart's settings, the meals accounts and the company number offered there; Sales tax
    accounts as a new installation sets them; the province (Settings -> Review); a bank account (Bank accounts);
 4. ``pilot-score --journal --hold-out 2``; past invoices copied into the invoices folder and processed, then
@@ -330,24 +330,23 @@ def section_2(work: Path, data: Path) -> None:
 
 
 def section_3(client: Client, exports: Path) -> None:
-    step("3. Setup -> JD Edwards files: the five exports (the suppliers, the journal, the vouchers shown first)")
+    step("3. Setup -> JD Edwards files: the five exports, each shown first, then loaded")
     first = page(client, "/jde-files")
     top = card(first, "checklist") if 'id="checklist"' in first else plain(first)
     says(first, "What is loaded", "Chart of accounts", "Business units", "Suppliers", "Last year's coding",
-         "Vouchers already in JD Edwards", "Load the chart", "Load the business units", "Read the suppliers",
-         "Read the journal", "Read the voucher list")  # fmt: skip
+         "Vouchers already in JD Edwards", "How to get it", "Download a blank template", "Check the file")  # fmt: skip
     check(top.count("Not yet") >= 5, f"the top of the page does not tick off what is loaded: {top[:600]}")
 
-    for path, name in (("/jde-files/chart", jde_exports.CHART_FILE), ("/jde-files/units", jde_exports.UNITS_FILE)):
-        loaded = page(client, send(client, path, [exports / name])["redirect"])
-        seen(f"{name}: {card(loaded, path.rsplit('/', 1)[1] + '-said')[:220]}")
-
-    for box, name in (("suppliers", jde_exports.SUPPLIERS_FILE), ("suppliers", jde_exports.VENDOR_INFO_FILE),
+    for box, name in (("chart", jde_exports.CHART_FILE), ("units", jde_exports.UNITS_FILE),
+                      ("suppliers", jde_exports.SUPPLIERS_FILE), ("suppliers", jde_exports.VENDOR_INFO_FILE),
                       ("journal", jde_exports.JOURNAL_FILE), ("vouchers", jde_exports.HEADERS_FILE)):  # fmt: skip
         shown = page(client, send(client, f"/jde-files/{box}/upload", [exports / name])["redirect"])
         summary = card(shown, f"{box}-summary")
         check(name in summary and "nothing is loaded yet" in summary, f"{name} is not shown first: {summary[:500]}")
-        check(re.search(r"Load th(?:ese|is) \w+", summary), f"the summary of {name} has no Load button: {summary}")
+        check(
+            re.search(r"Load (?:th(?:ese|is) \w+|[\d,]+ rows)", summary),
+            f"the summary of {name} has no Load button: {summary}",
+        )
         seen(f"{name}, shown first: {summary.split('nothing is loaded yet.', 1)[-1].strip()[:220]}")
         token = re.search(rf'action="/jde-files/{box}/load".*?name="token" value="([^"]+)"', shown, re.S)
         check(token, f"the summary of {name} has no Load button")

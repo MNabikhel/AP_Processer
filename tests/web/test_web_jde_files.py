@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import csv
 import io
+import random
 import re
 
 import openpyxl
@@ -13,15 +14,16 @@ from markupsafe import escape
 
 from ap_coder.bench import jde_exports as made
 from ap_coder.core.reference_data import reads_like_meals
-from ap_coder.erp import jde_settings
-from ap_coder.ops import journal_cmd
+from ap_coder.erp import import_specs, jde_settings
+from ap_coder.ops import chart_cmd, journal_cmd
 from ap_coder.web import files, roles
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import jde_files
 from tests import chart_files as cf
 from tests.webclient import PAGE, follow, web_settings
 
-ROUTES = ["/jde-files/chart", "/jde-files/units", "/jde-files/chart/settings", "/jde-files/suppliers/upload",
+ROUTES = ["/jde-files/chart/upload", "/jde-files/chart/load", "/jde-files/units/upload", "/jde-files/units/load",
+          "/jde-files/chart/settings", "/jde-files/suppliers/upload",
           "/jde-files/suppliers/load", "/jde-files/journal/upload", "/jde-files/journal/load",
           "/jde-files/journal/forget", "/jde-files/vouchers/upload", "/jde-files/vouchers/load",
           "/jde-files/meals", "/jde-files/company"]  # fmt: skip
@@ -40,16 +42,22 @@ def _send(client, path: str, folder, name: str, as_name: str = ""):
 
 def _token(answer) -> str:
     assert answer.status_code == 200, answer.text
-    return re.search(r"(?:suppliers|journal|vouchers)=([^&#]+)", answer.json()["redirect"]).group(1)
+    return re.search(r"(?:chart|units|suppliers|journal|vouchers)=([^&#]+)", answer.json()["redirect"]).group(1)
 
 
 def _accounts(store) -> int:
     return len([row for row in store.chart_accounts() if not row.is_header])
 
 
+def _upload_and_load(client, card: str, name: str, data: bytes):
+    """A chart or business unit file sent, shown, then loaded: the page after the load."""
+    token = _token(client.post(f"/jde-files/{card}/upload", files={"file": (name, data)}, headers=PAGE))
+    return follow(client, client.post(f"/jde-files/{card}/load", data={"token": token}, headers=PAGE))
+
+
 def _load_chart(client, exports) -> None:
-    for path, name in (("/jde-files/chart", made.CHART_FILE), ("/jde-files/units", made.UNITS_FILE)):
-        assert _send(client, path, exports, name).status_code == 200
+    for card, name in (("chart", made.CHART_FILE), ("units", made.UNITS_FILE)):
+        _upload_and_load(client, card, name, (exports / name).read_bytes())
 
 
 def test_the_page_starts_with_nothing_loaded_and_says_the_order(client):
@@ -62,12 +70,12 @@ def test_the_page_starts_with_nothing_loaded_and_says_the_order(client):
 
 
 def test_the_chart_and_the_business_units_load_and_say_what_was_read(client, store, exports):
-    page = follow(client, _send(client, "/jde-files/chart", exports, made.CHART_FILE))
+    page = _upload_and_load(client, "chart", made.CHART_FILE, (exports / made.CHART_FILE).read_bytes())
     said = page.split('id="chart-said"', 1)[1].split("</div></div>", 1)[0]
     assert "Chart of accounts" in said and "Accounts a line may be coded to" in said
     assert _accounts(store) > 0 and f"{_accounts(store):,} accounts</b>" in page and "last loaded" in page
     assert 'id="chart-tally"' in page and "A newer export replaces the chart whole" in page
-    page = follow(client, _send(client, "/jde-files/units", exports, made.UNITS_FILE))
+    page = _upload_and_load(client, "units", made.UNITS_FILE, (exports / made.UNITS_FILE).read_bytes())
     assert "Business units" in page.split('id="units-said"', 1)[1].split("</div></div>", 1)[0]
     assert store.business_units() and f"{len(store.business_units()):,} business units</b>" in page
     assert page.count("Not yet") == 6  # three files still to load
@@ -85,28 +93,31 @@ def test_the_charts_settings_are_saved_from_the_page(client, store, exports):
     assert store.chart_settings().home_business_unit == home
 
 
-@pytest.mark.parametrize("column, said", [
-    ("P E", "Loaded without the posting edit column (“P E”): every account is offered"),
-    ("Subsidiary", "Loaded without the “Subsidiary” column: the accounts of one object that differ only by"),
-])  # fmt: skip
-def test_a_chart_without_a_column_it_needs_is_loaded_only_when_ticked_and_the_page_keeps_saying_so(
-        column, said, client, store, tmp_path):  # fmt: skip
+@pytest.mark.parametrize("column, field", [("P E", "posting edit code"), ("Subsidiary", "subsidiary")])
+def test_a_chart_without_a_column_it_needs_is_shown_and_never_loaded_and_one_loaded_so_elsewhere_says_so(
+        column, field, client, store, tmp_path):  # fmt: skip
     """A grid exported without its posting edit column loaded with every account postable, one without its
-    Subsidiary column with most accounts left out, and neither with a word about the column (B-2271, B-2272)."""
+    Subsidiary column with most accounts left out, and neither with a word about the column (B-2271, B-2272). The
+    page has no "Load it anyway" (D-234): the file is shown, the column named, and nothing loads it; the command
+    line's --anyway still can, and the page then says so every time."""
     grid = cf.write_chart(tmp_path / "grid.xlsx", without=(column,)).read_bytes()
     page = client.get("/jde-files").text
-    assert 'name="anyway"' in page and "Load it anyway: every account will be offered" in page
-    refused = client.post("/jde-files/chart", files={"file": ("grid.xlsx", grid)}, headers=PAGE)
-    assert refused.status_code == 400 and store.chart_accounts() == []
-    why = refused.json()["error"]
-    assert why.startswith("Not loaded: This file has no ") and column in why and "export again" in why
-    assert why.endswith("Or tick “Load it anyway” under the file and load it again.")
-    ticked = client.post("/jde-files/chart", files={"file": ("grid.xlsx", grid)}, data={"anyway": "1"}, headers=PAGE)
-    assert said in follow(client, ticked).split('id="chart-said"', 1)[1].split("</div></div>", 1)[0]
-    assert _accounts(store) > 0
-    assert said in client.get("/jde-files").text.split('id="chart-tally"', 1)[1].split("</ul>", 1)[0]  # every time
+    assert 'name="anyway"' not in page.split('id="journal"', 1)[0] and "Load it anyway" not in page
+    token = _token(client.post("/jde-files/chart/upload", files={"file": ("grid.xlsx", grid)}, headers=PAGE))
+    summary = client.get(f"/jde-files?chart={token}").text.split('id="chart-summary"', 1)[1].split("</section>")[0]
+    why = f"Not loaded: this file has no “{column}” ({field}) column, which JD Edwards&#39; account master export"
+    assert "grid.xlsx" in summary and why in summary and f"missing: “{column}”" in summary
+    assert "It looks like" not in summary  # (a chart missing a column, not the business units)
+    assert "/jde-files/chart/load" in summary and "as the chart</button>" not in summary  # Cancel only
+    refused = client.post("/jde-files/chart/load", data={"token": token}, headers=PAGE)
+    assert refused.status_code == 400 and str(escape(refused.json()["error"])) in summary
+    assert store.chart_accounts() == [] and "Loaded</span>" not in client.get("/jde-files").text
+    chart_cmd.import_files(store, chart_source=grid, anyway=True)  # (the command line's --anyway)
+    page = client.get("/jde-files").text
+    assert "Loaded without" in page.split('id="chart-tally"', 1)[1].split("</ul>", 1)[0]
+    assert "Loaded without a column it needs" in page.split('id="checklist"', 1)[1].split("</section>", 1)[0]
     whole = cf.write_chart(tmp_path / "chart.xlsx").read_bytes()
-    page = follow(client, client.post("/jde-files/chart", files={"file": ("chart.xlsx", whole)}, headers=PAGE))
+    page = _upload_and_load(client, "chart", "chart.xlsx", whole)
     assert "Loaded without" not in page and store.chart_without() == ()
 
 
@@ -147,7 +158,7 @@ def test_the_one_company_of_the_business_units_is_offered_as_jd_edwards_company(
     several = [(code, name, "00002" if n else company, kind, status)
                for n, (code, name, company, kind, status) in enumerate(cf.UNITS)]  # fmt: skip
     units = cf.write_business_units(tmp_path / "bu.xlsx", several).read_bytes()
-    page = follow(client, client.post("/jde-files/units", files={"file": ("bu.xlsx", units)}, headers=PAGE))
+    page = _upload_and_load(client, "units", "bu.xlsx", units)
     assert "/jde-files/company" not in page
     refused = client.post("/jde-files/company", headers=PAGE)
     assert refused.status_code == 400 and jde_settings.load(store).company == "00001"
@@ -165,7 +176,7 @@ def test_the_suppliers_are_shown_before_they_are_loaded(client, store, exports):
     token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.SUPPLIERS_FILE))
     page = client.get(f"/jde-files?suppliers={token}").text
     summary = page.split('id="suppliers-summary"', 1)[1].split("</section>", 1)[0]
-    assert made.SUPPLIERS_FILE in summary and "nothing is loaded yet" in summary and "Columns found: " in summary
+    assert made.SUPPLIERS_FILE in summary and "nothing is loaded yet" in summary and "as</span> “Alpha Name”" in summary
     assert "Load these suppliers" in summary and f'href="/vendors?file={token}#import"' in summary
     assert store.master_vendors() == []
     page = follow(client, client.post("/jde-files/suppliers/load", data={"token": token}, headers=PAGE))
@@ -185,10 +196,10 @@ def test_suppliers_without_their_number_column_are_refused_with_the_columns_name
     token = _token(answer)
     summary = client.get(f"/jde-files?suppliers={token}").text.split('id="suppliers-summary"', 1)[1]
     summary = summary.split("</section>", 1)[0]
-    assert "no supplier number column (“Address Number”" in summary and "Load these suppliers" not in summary
-    assert "Add the column to the grid in JD Edwards and export again" in summary
+    assert "no “Address Number” (supplier number) column, which JD Edwards&#39; supplier master" in summary
+    assert "Load these suppliers" not in summary and "Add the column to the grid in JD Edwards" in summary
     refused = client.post("/jde-files/suppliers/load", data={"token": token}, headers=PAGE)
-    assert refused.status_code == 400 and refused.json()["error"] == jde_files.NO_NUMBER_COLUMN
+    assert refused.status_code == 400 and refused.json()["error"].startswith("Not loaded: this file has no “Address")
     assert store.master_vendors() == []
 
 
@@ -205,7 +216,8 @@ def test_the_vendor_information_list_is_told_by_its_columns_and_shown_before_it_
     assert made.VENDOR_INFO_FILE in summary and "nothing is loaded yet" in summary
     assert "55 suppliers to load: 0 already in the supplier list by their number" in summary
     assert "Left out: 1 row of totals at the end." in summary and "Tax ID: " in summary and "Currency: CAD" in summary
-    assert "Tax ID (“Tax ID”)" in summary and "Business unit (“Business Unit”)" in summary
+    assert '<b>Tax ID</b> <span class="muted">as</span> “Tax ID”' in summary
+    assert '<b>Business unit</b> <span class="muted">as</span> “Business Unit”' in summary
     assert "Load these suppliers" in summary and "/vendors?file=" not in summary  # its columns are not picked
     assert store.master_vendors() == [] and store.vendor_info_count() == 0
     page = follow(client, client.post("/jde-files/suppliers/load", data={"token": token}, headers=PAGE))
@@ -304,34 +316,56 @@ def test_the_voucher_list_is_shown_then_loaded(client, store, exports):
 
 
 def test_a_wrong_file_in_a_box_is_refused_in_plain_words(client, store, exports):
-    for path in ("/jde-files/chart", "/jde-files/units"):
-        wrong = _send(client, path, exports, made.SUPPLIERS_FILE)
-        assert wrong.status_code == 400 and "Not loaded: " in wrong.json()["error"], path
+    for card in ("chart", "units"):
+        path = f"/jde-files/{card}/upload"
+        token = _token(_send(client, path, exports, made.SUPPLIERS_FILE))  # shown, with the card it goes on
+        summary = client.get(f"/jde-files?{card}={token}").text.split(f'id="{card}-summary"', 1)[1]
+        assert "It looks like JD Edwards&#39; supplier master export: load it under 3. Suppliers." in summary, card
+        wrong = client.post(f"/jde-files/{card}/load", data={"token": token}, headers=PAGE)
+        assert wrong.status_code == 400 and wrong.json()["error"].startswith("Not loaded: this file has no "), card
         other = _send(client, path, exports, made.JOURNAL_FILE)
         assert other.status_code == 400 and other.json()["error"] == jde_files.NOT_XLSX, path
         broken = client.post(path, files={"file": ("chart.xlsx", b"not a workbook")}, headers=PAGE)
         assert broken.status_code == 400 and "is not an Excel workbook" in broken.json()["error"], path
+    token = _token(_send(client, "/jde-files/units/upload", exports, made.CHART_FILE))  # every column of the units
+    summary = client.get(f"/jde-files?units={token}").text.split('id="units-summary"', 1)[1].split("</section>")[0]
+    assert (
+        "this file is JD Edwards&#39; account master export (the chart of accounts), not JD Edwards&#39; business "
+        "unit master export: load it under 1. Chart of accounts."
+        in summary
+        and "Load these" not in summary
+    )
+    gone = client.post("/jde-files/chart/load", data={"token": "nothing"}, headers=PAGE)
+    assert gone.status_code == 400 and gone.json()["error"] == jde_files.GONE
     assert store.chart_accounts() == [] and store.business_units() == []
 
     token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.UNITS_FILE))
-    assert jde_files.NO_NAME_COLUMN in client.get(f"/jde-files?suppliers={token}").text
+    page = client.get(f"/jde-files?suppliers={token}").text
+    assert "It looks like JD Edwards&#39; business unit master export: load it under 2. Business units." in page
     wrong = client.post("/jde-files/suppliers/load", data={"token": token}, headers=PAGE)
-    assert wrong.status_code == 400 and wrong.json()["error"] == jde_files.NO_NAME_COLUMN
+    assert wrong.status_code == 400 and "load it under 2. Business units." in wrong.json()["error"]
     gone = client.post("/jde-files/suppliers/load", data={"token": "nothing"}, headers=PAGE)
     assert gone.status_code == 400 and gone.json()["error"] == files.GONE
     assert store.master_vendors() == []
 
     wrong = _send(client, "/jde-files/journal/upload", exports, made.SUPPLIERS_FILE)
-    assert wrong.status_code == 400 and wrong.json()["error"] == journal_cmd.NOT_A_JOURNAL
+    assert wrong.status_code == 400 and wrong.json()["error"] == journal_cmd.NOT_A_JOURNAL + (
+        " It looks like JD Edwards' supplier master export: load it under 3. Suppliers."
+    )
     gone = client.post("/jde-files/journal/load", data={"token": "nothing"}, headers=PAGE)
     assert gone.status_code == 400 and "expired" in gone.json()["error"]
 
     token = _token(_send(client, "/jde-files/vouchers/upload", exports, made.SUPPLIERS_FILE))
     page = client.get(f"/jde-files?vouchers={token}").text
-    assert "voucher list (the supplier ledger inquiry" in page and f'href="/exports?register={token}#register"' in page
+    assert "voucher list (the supplier ledger inquiry" in page and "load it under 3. Suppliers." in page
     assert "Load these vouchers" not in page
     wrong = client.post("/jde-files/vouchers/load", data={"token": token}, headers=PAGE)
-    assert wrong.status_code == 400 and wrong.json()["error"] == jde_files.NOT_VOUCHERS
+    assert wrong.status_code == 400 and "It looks like JD Edwards' supplier master" in wrong.json()["error"]
+    other = client.post("/jde-files/vouchers/upload", files={"file": ("list.csv", b"Vendor,Invoice,Total\nA,1,2\n")},
+                        headers=PAGE)  # fmt: skip
+    page = client.get(f"/jde-files?vouchers={_token(other)}").text
+    assert jde_files.OTHER_INVOICES.replace("'", "&#39;") in page
+    assert f"/exports?register={_token(other)}#register" in page
     broken = client.post("/jde-files/vouchers/upload", files={"file": ("list.xlsx", b"not a workbook")}, headers=PAGE)
     assert broken.status_code == 400 and store.erp_register_count() == 0
 
@@ -355,3 +389,136 @@ def test_on_the_server_anyone_from_a_clerk_sees_the_page_and_only_an_admin_loads
     for path in ROUTES:
         assert roles.can(app, "admin", "POST", path), path
         assert not any(roles.can(app, role, "POST", path) for role in ("readonly", "clerk", "approver")), path
+
+
+# --- Look first: each card's report, its columns and template, the file shown before it is loaded (D-234) -----------
+
+
+def _shuffled(data: bytes, drop: str = "") -> bytes:
+    """The export with its columns in another order (and without the column headed ``drop``)."""
+    sheet = openpyxl.load_workbook(io.BytesIO(data)).active
+    rows = [list(row) for row in sheet.iter_rows(values_only=True)]
+    order = [i for i in range(len(rows[0])) if rows[0][i] != drop]
+    random.Random(3).shuffle(order)
+    book = openpyxl.Workbook()
+    for row in rows:
+        book.active.append([row[i] if i < len(row) else None for i in order])
+    out = io.BytesIO()
+    book.save(out)
+    return out.getvalue()
+
+
+def test_each_card_says_its_report_its_columns_and_gives_a_blank_template(client):
+    page = client.get("/jde-files").text
+    for key in import_specs.JDE_REPORTS:
+        spec = import_specs.SPECS[key]
+        card = page.split(f'id="cols-{key}"', 1)[1].split("</details>", 1)[0]
+        assert all(f'<span class="imp-chip need" title="{escape(c.label)}">{escape(c.header)}</span>' in card
+                   for c in spec.required), key  # fmt: skip
+        assert all(f">{escape(c.header)}</span>" in card for c in spec.optional), key
+        assert str(escape(spec.source)) in page and f'href="/jde-files/template/{key}" download' in page, key
+        answer = client.get(f"/jde-files/template/{key}")
+        assert answer.status_code == 200 and "attachment" in answer.headers["content-disposition"], key
+        if key == "journal":
+            assert answer.headers["content-type"].startswith("text/csv") and b"Account Number" in answer.content
+        else:
+            header = next(openpyxl.load_workbook(io.BytesIO(answer.content)).active.iter_rows(values_only=True))
+            assert list(header) == [c.header for c in spec.columns], key
+    for other in ("purchase_orders", "jde_worksheet", "nothing"):
+        assert client.get(f"/jde-files/template/{other}").status_code == 404, other
+
+
+def test_the_chart_is_shown_first_its_columns_in_any_order_and_loaded_only_on_load(client, store, exports):
+    whole = (exports / made.CHART_FILE).read_bytes()
+    token = _token(client.post("/jde-files/chart/upload", files={"file": ("mixed.xlsx", _shuffled(whole))},
+                               headers=PAGE))  # fmt: skip
+    page = client.get(f"/jde-files?chart={token}").text
+    summary = page.split('id="chart-summary"', 1)[1].split("</section>", 1)[0]
+    rows = len(list(openpyxl.load_workbook(io.BytesIO(whole)).active.iter_rows())) - 1
+    assert f"<b>mixed.xlsx</b> · {rows:,} rows · nothing is loaded yet." in summary
+    assert "every column it needs is here." in summary and 'role="alert"' not in summary
+    for header in ("Business Unit", "Object Account", "Subsidiary", "P E", "Account Description", "L D"):
+        assert f'<span class="muted">as</span> “{header}”' in summary, header
+    assert "104 other columns of the file are not used:" in summary
+    assert summary.count("<tr>") == 1 + 5 and f"Load {rows:,} rows as the chart" in summary
+    assert store.chart_accounts() == []
+    assert "Choose the file" not in page.split('id="chart"', 1)[1].split("</section>")[0]
+    page = follow(client, client.post("/jde-files/chart/load", data={"token": token}, headers=PAGE))
+    assert _accounts(store) > 0 and 'id="chart-said"' in page and 'id="chart-summary"' not in page
+    gone = client.post("/jde-files/chart/load", data={"token": token}, headers=PAGE)
+    assert gone.status_code == 400 and gone.json()["error"] == jde_files.GONE  # loaded once
+
+
+def test_a_file_without_a_column_is_named_and_another_report_is_sent_to_its_card(client, store, exports):
+    """No "load it anyway": a file is the report with every column it needs, or it is not loaded; dropped on the
+    wrong card, it says which card it goes on."""
+    whole = (exports / made.CHART_FILE).read_bytes()
+    cut = _shuffled(whole, "Object Account")
+    token = _token(client.post("/jde-files/chart/upload", files={"file": ("cut.xlsx", cut)}, headers=PAGE))
+    summary = client.get(f"/jde-files?chart={token}").text.split('id="chart-summary"', 1)[1].split("</section>")[0]
+    assert "Not loaded: this file has no “Object Account” (object account) column" in summary
+    assert 'role="alert"' in summary and "missing: “Object Account”" in summary
+    assert "as the chart</button>" not in summary
+    checklist = client.get(f"/jde-files?chart={token}").text.split('id="checklist"', 1)[1].split("</section>")[0]
+    assert "The file chosen cannot be loaded" in checklist
+    token = _token(_send(client, "/jde-files/chart/upload", exports, made.HEADERS_FILE))
+    summary = client.get(f"/jde-files?chart={token}").text.split('id="chart-summary"', 1)[1].split("</section>")[0]
+    assert (
+        "It looks like JD Edwards&#39; voucher list (the supplier ledger inquiry&#39;s grid): load it under 5. "
+        "Vouchers already in JD Edwards."
+    ) in summary
+    refused = client.post("/jde-files/chart/load", data={"token": token}, headers=PAGE)
+    assert refused.status_code == 400 and "load it under 5. Vouchers already in JD Edwards." in refused.json()["error"]
+    assert store.chart_accounts() == []
+
+
+def test_the_supplier_master_and_the_voucher_list_show_their_columns_and_first_rows(client, exports):
+    token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.SUPPLIERS_FILE))
+    summary = client.get(f"/jde-files?suppliers={token}").text.split('id="suppliers-summary"', 1)[1]
+    assert "JD Edwards&#39; supplier master export: every column it needs is here." in summary
+    assert "“Address Number”" in summary and "not in this file (optional)" in summary
+    assert "Individual Tax ID" in summary.split("not used:", 1)[1].split("</p>", 1)[0]
+    token = _token(_send(client, "/jde-files/vouchers/upload", exports, made.HEADERS_FILE))
+    summary = client.get(f"/jde-files?vouchers={token}").text.split('id="vouchers-summary"', 1)[1]
+    assert '<th scope="col">Gross Amount</th>' in summary and "Load these vouchers" in summary
+
+
+def test_in_a_browser_a_shuffled_chart_is_shown_then_loaded_and_one_without_a_column_is_refused(
+    chromium, store, exports, tmp_path
+):
+    from tests.browser import browser_on
+
+    whole = (exports / made.CHART_FILE).read_bytes()
+    (tmp_path / "mixed.xlsx").write_bytes(_shuffled(whole))
+    (tmp_path / "no_pe.xlsx").write_bytes(_shuffled(whole, "P E"))
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
+        errors: list[str] = []
+        for width in (1366, 683, 390):
+            page = browser.new_page(viewport={"width": width, "height": 800})
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(base + "/jde-files")
+            box = page.locator("#chart input[type=file]")
+            box.set_input_files(str(tmp_path / "no_pe.xlsx"))
+            assert "no_pe.xlsx" in page.locator("#chart [data-imp-chosen]").inner_text()
+            page.locator("#chart .imp-upload button[type=submit]").click()
+            page.wait_for_selector("#chart-summary")
+            verdict = page.locator("#chart-summary [role=alert]").inner_text()
+            assert "this file has no “P E” (posting edit code) column" in verdict, width
+            assert page.locator("#chart-summary button", has_text="as the chart").count() == 0
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), width
+            page.locator("#chart-summary a", has_text="Choose another file").click()
+            page.wait_for_selector("#chart input[type=file]", state="attached")
+            page.locator("#chart input[type=file]").set_input_files(str(tmp_path / "mixed.xlsx"))
+            page.locator("#chart .imp-upload button[type=submit]").click()
+            page.wait_for_selector("#chart-summary")
+            assert "every column it needs is here." in page.locator("#chart-summary").inner_text()
+            assert page.locator("#chart-summary .imp-check li.ok").count() == 6
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), width
+            if width == 390:
+                assert store.chart_accounts() == []
+                page.locator("#chart-summary button", has_text="as the chart").click()
+                page.wait_for_selector("#chart-said")
+                assert "Chart of accounts" in page.locator("#chart-said").inner_text()
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            page.close()
+        assert errors == [] and _accounts(store) > 0
