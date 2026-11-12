@@ -255,6 +255,16 @@ def load(store: Any) -> JdeSettings:
     return JdeSettings.from_json(store.get_setting(SETTING_KEY))
 
 
+def set_up(settings: JdeSettings) -> bool:
+    """Whether saved settings are a JD Edwards setup someone made, which the keying set-up leaves as it is
+    (``web.core.keying_to_set_up``, B-2541): a company of its own, an open period, account mappings or a default
+    business unit, or tax areas other than the placeholders (the department's own too: keying set up already). A save
+    holding a value or two besides (a supplier number, a terms code) is not: the set-up keeps those."""
+    default = JdeSettings()
+    return (settings.company_code != default.company_code or bool(settings.open_from or settings.open_to)
+            or bool(settings.gl_map or settings.default_bu.strip()) or settings.tax_map != default.tax_map)  # fmt: skip
+
+
 def save(store: Any, settings: JdeSettings, actor: str | None = None) -> bool:
     """Save to the store's settings table; True when something changed (and is logged)."""
     text = settings.to_json()

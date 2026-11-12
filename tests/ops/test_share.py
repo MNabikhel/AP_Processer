@@ -131,6 +131,36 @@ def test_with_no_console_to_ask_on_the_first_admin_is_said_with_its_command(lapt
     assert Store(db).list_users() == [] and not service.config_path(data).exists()
 
 
+def test_the_first_admin_share_made_still_signs_in_after_3_days_while_the_only_admin(laptop, monkeypatch):
+    """B-2542: the owner's account ``share`` made has a temporary password, which lasted 3 days: an owner who first
+    signed in later was refused, and there was no other Admin to give a new one. While it is the only active Admin
+    and has never signed in, it does not expire; a temporary password given later (a colleague's, a reset once it
+    signed in, or once there is another Admin) lasts 3 days as before."""
+    import time
+
+    from ap_coder.core.store import users
+
+    data, db = laptop
+    assert share.prepare(data, db, Said(), openssl="openssl", run=openssl_stand_in([]),
+                         ask=answers("Pat Lee", "pat"), password=lambda username, name: GOOD) is not None  # fmt: skip
+    store = Store(db)
+    store.add_user("ann", "a long clerk password 1", role="clerk", by_user=store.find_user("pat")["id"])
+    later = time.time() + users.TEMPORARY_SECONDS + 60
+    monkeypatch.setattr(users.time, "time", lambda: later)
+    assert store.authenticate("pat", GOOD)["must_change"]  # the first sign-in, 3 days on: let in
+    with pytest.raises(users.LoginRefused, match=users.TEMPORARY_EXPIRED[:30]):
+        store.authenticate("ann", "a long clerk password 1")  # given by an Admin: 3 days
+    with store._conn() as conn:
+        conn.execute("UPDATE users SET last_login = '2026-11-01T09:00:00' WHERE username = 'pat'")
+    with pytest.raises(users.LoginRefused, match=users.TEMPORARY_EXPIRED[:30]):
+        store.authenticate("pat", GOOD)  # once it signed in, a temporary password is one again
+    with store._conn() as conn:
+        conn.execute("UPDATE users SET last_login = NULL WHERE username = 'pat'")
+    store.add_user("kim", "a long admin password 1", role="admin", must_change=False)
+    with pytest.raises(users.LoginRefused, match=users.TEMPORARY_EXPIRED[:30]):
+        store.authenticate("pat", GOOD)  # another Admin can give a new one
+
+
 def test_a_first_tests_plain_http_is_never_what_share_starts(laptop):
     data, db = laptop
     Store(db).add_user("pat", GOOD, role="admin")

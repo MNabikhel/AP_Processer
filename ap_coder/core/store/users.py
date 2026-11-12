@@ -687,8 +687,12 @@ class UsersMixin:
 
     def _temporary_expired(self, row: Any) -> bool:
         """Whether ``row``'s temporary password was given over ``TEMPORARY_SECONDS`` ago (its last ``user_added``
-        or ``password_reset`` event; else the account's creation)."""
+        or ``password_reset`` event; else the account's creation). Never for the only active Admin before its first
+        sign-in (the first Admin, made at the console: ``share``, ``users add --admin``): nobody else could give it
+        a new one (B-2542)."""
         with self._conn() as conn:
+            if row["role"] == ADMIN and row["active"] and not row["last_login"] and self._active_admins(conn) == 1:
+                return False
             given = conn.execute(
                 "SELECT MAX(created_at) FROM events WHERE action IN ('user_added', 'password_reset') "
                 "AND json_extract(detail, '$.username') = ?",

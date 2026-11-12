@@ -437,6 +437,57 @@ def test_a_folder_whose_simple_screens_never_got_jd_edwards_keying_is_finished_a
     _set_up_for_keying(Store(half))
 
 
+def test_an_older_folder_with_no_invoices_but_its_own_setup_is_asked_before_its_qst_is_changed(tmp_path, demo_db):
+    """B-2540: a folder with no invoices of its own (the demo's, or none) was set up without a question, so a folder
+    holding its own GL accounts and tax setup had its QST changed to "add to the expense line" at the start, though
+    D-232 never touches what was set up. It is asked first, as one with invoices of its own is; the demo invoices
+    still go without a question."""
+    for answer in (None, False, True):
+        db = _copy_of(demo_db, tmp_path / str(answer))
+        own = Store(db)
+        own.set_tax_treatment("QST", "recoverable", "1180")  # their QST claimed back, to their own account
+        asked: list[str] = []
+        ask = None if answer is None else (lambda q, answer=answer, asked=asked: asked.append(q) or answer)
+        said = core.older_folder_start(db, ask)
+        store = Store(db)
+        assert asked == ([] if answer is None else [core.ASK_SIMPLE]) and store.demo_count() == 0, answer
+        if answer:
+            assert said == f"{SET_UP}; the demo invoices removed." and core.simple_screens(store)
+            continue
+        assert said == "The demo invoices were removed.", answer
+        qst = store.tax_treatments()["QST"]
+        assert (qst.treatment, qst.gl_code) == ("recoverable", "1180") and not core.simple_screens(store), answer
+        assert not store.get_setting(jde_settings.SETTING_KEY), answer
+        assert store.get_setting(core.PILOT_SETUP) == ("declined" if answer is False else ""), answer
+    accounts = _old_folder(tmp_path / "accounts")  # no invoices ever: its own GL accounts alone are asked about too
+    accounts.save_accounts("gl_accounts", [{"code": "6100", "description": "Office supplies"}])
+    assert core.older_folder_start(accounts.path) == "" and not core.simple_screens(accounts)
+
+
+def test_jd_edwards_settings_saved_with_a_supplier_number_only_do_not_block_the_keying_set_up(tmp_path):
+    """B-2541: one supplier number saved on Settings → JD Edwards E1 counted as JD Edwards set up: the start, the
+    queue's card and Settings → About never set up the keying, and said "your JD Edwards settings kept as they are".
+    Only a company, an open period, account mappings or tax areas of its own keep the settings as they are; the
+    keying set-up keeps the supplier number."""
+    store = _old_folder(tmp_path / "an8")
+    only = jde_settings.JdeSettings(an8_overrides={"acme": "1001"})
+    jde_settings.save(store, only)
+    assert KEYING in client_for(store).get("/review").text.split(CARD, 1)[1].split("</section>", 1)[0]
+    assert core.older_folder_start(store.path) == f"{SET_UP}."
+    assert jde_settings.load(store) == jde_prototype.prototype_settings(only) and jde_settings.in_use(store)
+    assert jde_settings.load(store).an8_overrides == {"acme": "1001"}
+    mapping = [jde_settings.GlMap("6100", bu="100")]
+    for name, theirs in (("company", jde_settings.JdeSettings(company="00070")),
+                         ("period", jde_settings.JdeSettings(open_from="2026-11-01")),
+                         ("mapping", jde_settings.JdeSettings(gl_map=mapping))):  # fmt: skip
+        kept = _old_folder(tmp_path / name)
+        jde_settings.save(kept, theirs)
+        assert not core.keying_to_set_up(kept), name
+        assert core.older_folder_start(kept.path).endswith("your JD Edwards settings kept as they are."), name
+        assert kept.get_setting(jde_settings.SETTING_KEY) == theirs.to_json(), name
+    assert not core.keying_to_set_up(core.first_run(tmp_path / "new" / "ap_coder.db", server=False))
+
+
 def test_a_new_data_folder_and_the_company_server_are_never_asked(tmp_path):
     new = core.first_run(tmp_path / "new" / "ap_coder.db", server=False)
     assert CARD not in client_for(new).get("/review").text
