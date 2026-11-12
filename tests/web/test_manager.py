@@ -349,6 +349,37 @@ def test_remembering_the_manager_does_not_take_another_managers_cost_center(stor
     assert "CC-300 keeps its manager, Bob Plant" in client.get(answer["redirect"]).text
 
 
+def test_a_cost_center_whose_manager_left_is_given_the_new_one(store):
+    """B-2523: with Remember ticked, a cost center whose manager left kept them: sending to the new manager changed
+    nothing, and the next invoice suggested the one who left. The manager the screen suggested is replaced; another
+    manager's cost center is kept, and the message says how to change it."""
+    client = client_for(store)
+    iid, form = _split_form(store)
+    store.set_cost_center_manager(["CC-200"], "Bob Left", "bob@example.com", "AP")
+    store.set_cost_center_manager(["CC-300"], "Dan Other", "dan@example.com", "AP")
+    # as the screen sends it: CC-200's manager suggested, the new one typed over it, the box ticked
+    form = {**form, "manager_name": "Carol New", "manager_email": "carol@example.com", "remember_manager": "1",
+            "manager_suggested": "Bob Left"}  # fmt: skip
+    answer = client.post(f"/review/{iid}/manager", data=form, headers=PAGE).json()
+    assert answer["ok"], answer
+    known = store.cost_center_managers()
+    assert known["CC-200"] == {"name": "Carol New", "email": "carol@example.com"}, known
+    assert known["CC-300"] == {"name": "Dan Other", "email": "dan@example.com"}, known
+    said = client.get(answer["redirect"]).text
+    assert "CC-300 keeps its manager, Dan Other" in said and "send one of its invoices to the new manager" in said
+
+
+def test_the_review_screen_sends_the_manager_it_suggested(store):
+    """B-2523: what the Remember box replaces is the manager the screen suggested, sent with the form."""
+    client = client_for(store)
+    iid = _first(store)
+    for row in store.list_accounts("cost_centers"):
+        store.set_cost_center_manager([row["code"]], "Bob Left", "bob@example.com", "AP")
+    page = client.get(f"/review/{iid}").text
+    assert re.search(r'<input type="text" name="manager_name"[^>]*value="Bob Left"', page)
+    assert re.search(r'<input type="hidden" name="manager_suggested" form="inv" value="Bob Left">', page)
+
+
 def test_the_manager_sees_only_their_own_cost_centers_marked(server, store):
     """B-2527: a Manager answering for CC-200 saw the CC-300 lines of the same invoice marked as theirs too."""
     client, tokens, bob_id = server

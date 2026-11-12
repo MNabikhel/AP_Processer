@@ -225,22 +225,36 @@ class ManagersMixin:
                 self._log(conn, "cost_center_manager_set", None, actor, {"cost_centers": codes, "manager": name})
         return n
 
-    def remember_cost_center_manager(self, codes: list[str], name: str, email: str, actor: str) -> dict[str, str]:
-        """Remember ``name`` as the manager of those of ``codes`` with no manager or this one (its email kept up to
-        date): never another manager's. Returns the others, cost center -> the name of the manager it keeps."""
+    def remember_cost_center_manager(self, codes: list[str], name: str, email: str, actor: str,
+                                     replaces: str = "") -> dict[str, str]:  # fmt: skip
+        """Remember ``name`` as the manager of those of ``codes`` with no manager, or with ``replaces`` (the manager
+        the screen suggested: one who left is replaced, B-2523); never another manager's. Where ``name`` is the one
+        remembered already, its spelling stays and so does its email unless a new one is given. Returns the others,
+        cost center -> the name of the manager it keeps."""
         known = self.cost_center_managers()
-        kept = {c: known[c]["name"] for c in codes if c in known and not _same_name(known[c]["name"], name)}
-        if free := [c for c in codes if c not in kept]:
+        same = [c for c in codes if c in known and _same_name(known[c]["name"], name)]
+        kept = {
+            c: known[c]["name"]
+            for c in codes
+            if c in known and c not in same and not (replaces.strip() and _same_name(known[c]["name"], replaces))
+        }
+        if free := [c for c in codes if c not in kept and c not in same]:
             self.set_cost_center_manager(free, name, email, actor)
+        for c in same:  # the same manager: only a new email changes, never to none
+            if email.strip() and email.strip() != known[c]["email"]:
+                self.set_cost_center_manager([c], known[c]["name"], email, actor)
         return kept
 
     def managers_cost_centers(self, req: dict[str, Any]) -> set[str]:
-        """The cost centers the manager of request ``req`` answers for: their Manager account's (server mode), else
-        the ones remembered with their name (``cost_center_managers``)."""
+        """The request's cost centers (as its lines have them) that its manager answers for: their Manager account's
+        (server mode), else the ones remembered with their name (``cost_center_managers``); case aside (B-2527)."""
         if req.get("manager_user") is not None:
             account = self.user(int(req["manager_user"])) or {}
-            return {c.strip() for c in str(account.get("cost_centers") or "").split(",") if c.strip()}
-        return {c for c, m in self.cost_center_managers().items() if _same_name(m["name"], req.get("manager_name"))}
+            theirs = {c.strip().casefold() for c in str(account.get("cost_centers") or "").split(",") if c.strip()}
+        else:
+            known = self.cost_center_managers().items()
+            theirs = {c.casefold() for c, m in known if _same_name(m["name"], req.get("manager_name"))}
+        return {c for c in req.get("cost_centers") or [] if str(c).casefold() in theirs}
 
 
 def _same_name(one: Any, other: Any) -> bool:

@@ -104,6 +104,37 @@ def test_a_cost_centers_manager_is_remembered(store):
     assert store.cost_center_managers() == {"CC-200": {"name": "Bob Manager", "email": "bob@example.com"}}
 
 
+def test_the_same_manager_typed_again_keeps_the_spelling_and_email_remembered(store):
+    """B-2523: "  ann   SITE " with no email, sent again with Remember ticked, replaced "Ann Site" and her email: the
+    next request email went to nobody."""
+    store.import_accounts("cost_centers", [{"c": "CC-200"}], "c", None)
+    store.set_cost_center_manager(["CC-200"], "Ann Site", "ann@example.com", "AP")
+    assert store.remember_cost_center_manager(["CC-200"], "  ann   SITE ", "", "AP") == {}
+    assert store.cost_center_managers()["CC-200"] == {"name": "Ann Site", "email": "ann@example.com"}
+    store.remember_cost_center_manager(["CC-200"], "ann site", "ann.site@example.com", "AP")  # a new email: kept
+    assert store.cost_center_managers()["CC-200"] == {"name": "Ann Site", "email": "ann.site@example.com"}
+
+
+def test_a_manager_who_left_is_replaced_where_they_were_suggested(store):
+    """B-2523: a cost center's manager who left could never be replaced: Remember kept every manager there was."""
+    store.import_accounts("cost_centers", [{"c": "CC-200"}, {"c": "CC-300"}, {"c": "CC-400"}], "c", None)
+    store.set_cost_center_manager(["CC-200", "CC-300"], "Bob Left", "bob@example.com", "AP")
+    store.set_cost_center_manager(["CC-400"], "Dan Other", "dan@example.com", "AP")
+    kept = store.remember_cost_center_manager(["CC-200", "CC-300", "CC-400"], "Carol New", "carol@example.com", "AP",
+                                              replaces=" bob  left")  # fmt: skip
+    assert kept == {"CC-400": "Dan Other"}
+    known = store.cost_center_managers()
+    assert known["CC-200"] == known["CC-300"] == {"name": "Carol New", "email": "carol@example.com"}
+
+
+def test_a_manager_accounts_cost_centers_are_theirs_whatever_their_case(store):
+    """B-2527: a Manager account set to "cc-200" had none of the CC-200 lines marked as theirs."""
+    uid = store.add_user("bob", "correct horse battery", role="manager", must_change=False)
+    store.set_user_cost_centers(uid, "cc-200")
+    req = {"manager_user": uid, "manager_name": "Bob", "cost_centers": ["CC-200", "CC-300"]}
+    assert store.managers_cost_centers(req) == {"CC-200"}  # as the lines have it
+
+
 def test_the_users_page_still_lists_admins_first_and_managers_last(store):
     for name, role in (("mo", "manager"), ("cy", "clerk"), ("ad", "admin")):
         store.add_user(name, "correct horse battery", role=role)
