@@ -807,18 +807,13 @@ def _history_upload(request: Request, name: str, content: bytes) -> JSONResponse
 
 
 def _table_upload(request: Request, name: str, content: bytes) -> JSONResponse:
-    """A table of past lines read and kept, waiting for its columns."""
+    """A table of past lines read and kept, waiting for its columns: the page's verdict says what was found (B-2471)."""
     try:
         sheets = read_sheets(name, content)
     except ValueError as exc:
         return refuse(str(exc))
     token = keep_upload(name, sheets)
-    return done(request, _url(history=token) + "#history", flash_message_for_columns(name, sheets))
-
-
-def flash_message_for_columns(name: str, sheets: dict[str, tuple[list[str], list[dict[str, Any]]]]) -> str:
-    rows = sum(len(r) for _, r in sheets.values())
-    return f"Read {name}: {ui.plural(rows, 'line')}. Check the columns below, then load."
+    return done(request, _url(history=token) + "#history")
 
 
 @router.post("/learning/history/teach")

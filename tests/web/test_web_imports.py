@@ -671,7 +671,7 @@ def test_the_words_beside_a_load_button_say_load(client):
     past = _xlsx([["Vendor", "Description", "GL Code"], ["A", "B", "6100"]])
     answer = client.post("/learning/history/upload", headers=PAGE, files={"file": ("past.xlsx", past)})
     page = client.get(answer.json()["redirect"]).text
-    assert "Check the columns below, then load." in page and "then teach" not in page
+    assert "Check them, then load." in page and "then teach" not in page
     html, _token = _upload(client, "gl_accounts", [["Postal Code", "Company Name"], ["T5H 1L2", "Bracken"]])
     assert "Check each below before you load." in html and "before you import" not in html
 
@@ -716,3 +716,13 @@ def test_a_gl_account_list_with_an_ordinary_code_header_is_not_said_guessed(clie
         assert _offered(html)["code"] == header
     html, _token = _upload(client, "gl_accounts", [["Postal Code", "Company Name"], ["T5H 1L2", "Bracken"]])
     assert "Guessed by a word" in html
+
+
+def test_past_coding_shows_one_verdict_and_its_way_back_says_choose_another_file(client):
+    """B-2471: Learning showed a green "Read past_miss.xlsx: 1 line. Check the columns below, then load." above the
+    amber "Not found by its name: GL account", and its button back said Cancel, where every other import shows one
+    verdict and says "Choose another file"."""
+    html, _token = _upload(client, "past_coding", [["Vendor", "Description"], ["Acme Ltd", "Paper"]])
+    assert "Not found by its name: GL account." in html
+    assert "Read list.xlsx" not in html and len(re.findall(r'class="flash (?:ok|warn|err)\b', html)) == 1
+    assert "Choose another file</a>" in html and ">Cancel</a>" not in html
