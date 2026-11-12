@@ -190,6 +190,19 @@ def test_a_vendor_already_in_the_list_is_not_added_again(tmp_path):
         store.add_vendor_here("   ", actor="Jane")
 
 
+def test_adding_a_vendor_ap_gave_tax_numbers_keeps_the_numbers_the_dialog_left_blank(tmp_path):
+    store = Store(tmp_path / "a.db")
+    load_sample_vendor_master(store)
+    store.save_vendor("acme supplies", "Acme Supplies Ltd", expected_gst="123456789RT0001",
+                      qst_number="1234567890TQ0001", pst_number="PST-1234-5678", province="QC")  # fmt: skip
+    key = store.add_vendor_here("Acme Supplies Ltd", pst="PST-9999-0000", actor="Jane")
+    vendor = store.get_vendor(key)
+    assert vendor["in_master"] == 2 and vendor["province"] == "QC" and vendor["pst_number"] == "PST-9999-0000"
+    assert (vendor["expected_gst"], vendor["qst_number"]) == ("123456789RT0001", "1234567890TQ0001")
+    detail = store.events(actions=["vendor_added"])[0]["detail"]
+    assert detail["gst"] == "123456789RT0001" and detail["replaced"] == {"pst": "PST-1234-5678"}
+
+
 def test_the_vendor_choices(tmp_path):
     store = Store(tmp_path / "a.db")
     load_sample_setup(store)
