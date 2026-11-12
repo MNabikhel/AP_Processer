@@ -313,3 +313,124 @@ def test_in_a_browser_the_erp_register_is_shown_its_total_picked_and_imported(ch
     errors = _picked_in_a_browser(chromium, store, tmp_path, "/exports#register", "#register", "erp.xlsx", rows,
                                   "total", "Gross")  # fmt: skip
     assert errors == [] and store.erp_register_count() == 1
+
+
+# --- JD Edwards' own reports: on JD Edwards files only (the pilot tester's rule) -------------------------------------
+
+
+@pytest.fixture(scope="module")
+def jde(tmp_path_factory):
+    from ap_coder.bench import jde_exports as made
+
+    folder = tmp_path_factory.mktemp("jde")
+    made.write_all(folder, size="small")
+    return folder
+
+
+def _grid(data: bytes) -> list[list]:
+    return [list(row) for row in openpyxl.load_workbook(io.BytesIO(data)).active.iter_rows(values_only=True)]
+
+
+def _without(rows: list[list], header: str) -> list[list]:
+    at = rows[0].index(header)
+    return [[cell for i, cell in enumerate(row) if i != at] for row in rows]
+
+
+# Each page of a column picker, where its file is uploaded.
+PICKERS = {"gl_accounts": "/accounts/gl_accounts/upload", "cost_centers": "/accounts/cost_centers/upload",
+           "bank_accounts": "/accounts/bank/upload", "vendor_master": "/vendors/master/upload",
+           "purchase_orders": "/purchase-orders/upload", "erp_register": "/exports/register/upload",
+           "gl_map": "/settings/jde/gl-map/upload"}  # fmt: skip
+
+
+def test_a_jd_edwards_report_is_refused_on_every_column_picker_naming_its_card(client, store, jde):
+    """B-2404: GL accounts & tax took any of JD Edwards' exports: the vendor information list's Postal Code was
+    picked as the code ("found by its name") and its postal codes imported as GL accounts, the chart's Account ID too.
+    Each is refused, naming the card of JD Edwards files it is loaded on."""
+    from ap_coder.bench import jde_exports as made
+
+    files = {made.CHART_FILE: "1. Chart of accounts", made.UNITS_FILE: "2. Business units",
+             made.VENDOR_INFO_FILE: "3. Suppliers", made.JOURNAL_FILE: "4. Last year's coding",
+             made.SUPPLIERS_FILE: "3. Suppliers", made.HEADERS_FILE: SPECS["vouchers"].card,
+             "voucher_split_pay_items.xlsx": SPECS["vouchers"].card}  # fmt: skip
+    before = sorted(a["code"] for a in store.list_accounts("gl_accounts"))
+    for key, url in PICKERS.items():
+        for name, card in files.items():
+            if (key, name) in (("vendor_master", made.SUPPLIERS_FILE), ("erp_register", made.HEADERS_FILE)):
+                continue  # (read there whole: B-2406)
+            answer = client.post(url, files={"file": (name, (jde / name).read_bytes())}, headers=PAGE)
+            assert answer.status_code == 400, (key, name)
+            said = answer.json()["error"]
+            assert said.startswith("Not imported: this file is ") and f"under {card}" in said, (key, name, said)
+    assert sorted(a["code"] for a in store.list_accounts("gl_accounts")) == before
+    assert store.master_vendors() == [] and store.erp_register_count() == 0
+    # Chosen on the page from a workbook's other sheet, at the import too.
+    book = openpyxl.Workbook()
+    book.active.append(["Code", "Description"])
+    book.active.append(["6010", "IT Hardware"])
+    chart = book.create_sheet("Chart")
+    for row in _grid((jde / made.CHART_FILE).read_bytes()):
+        chart.append(row)
+    out = io.BytesIO()
+    book.save(out)
+    answer = client.post(PICKERS["gl_accounts"], files={"file": ("two.xlsx", out.getvalue())}, headers=PAGE)
+    token = parse_qs(urlsplit(answer.json()["redirect"]).query)["file"][0]
+    assert "1. Chart of accounts" in client.get(f"/accounts?tab=gl&file={token}&sheet=Chart").text
+    refused = post(client, "/accounts/gl_accounts/import", {"file": token, "sheet": "Chart", "col_code": "Account ID"})
+    assert refused.status_code == 400 and "under 1. Chart of accounts" in refused.json()["error"]
+    assert sorted(a["code"] for a in store.list_accounts("gl_accounts")) == before
+
+
+def test_a_column_guessed_by_a_word_in_its_header_is_shown_as_guessed_not_found_by_its_name(client):
+    """B-2405: "Postal Code" picked as the GL account's code was shown in green, "found by its name"."""
+    html, _token = _upload(client, "gl_accounts", [["Postal Code", "Company Name"], ["T5H 1L2", "Bracken"]])
+    shown = _check(html, "gl_accounts")
+    assert '“Postal Code” <span class="imp-tag">guessed: check it</span>' in shown
+    assert "Every column" not in html and "Guessed by a word in the header" in html
+    html, _token = _upload(client, "gl_accounts", [["Code", "Description"], ["6010", "IT Hardware"]])
+    assert "guessed: check it" not in _check(html, "gl_accounts") and "Every column" in html
+
+
+def test_vendors_and_exports_refuse_jd_edwards_report_without_a_needed_column_naming_it(client, store, jde):
+    """B-2406: the supplier master without Address Number went in on Vendors (40 vendors with no number), the
+    voucher list without Gross Amount on Exports (its total picked from Open Amount). Whole, each is read there."""
+    from ap_coder.bench import jde_exports as made
+
+    rows = _without(_grid((jde / made.SUPPLIERS_FILE).read_bytes()), "Address Number")
+    answer = client.post("/vendors/master/upload", files={"file": ("s.xlsx", _xlsx(rows))}, headers=PAGE)
+    assert answer.status_code == 400 and "“Address Number” (supplier number)" in answer.json()["error"]
+    rows = _without(_grid((jde / made.HEADERS_FILE).read_bytes()), "Gross Amount")
+    answer = client.post("/exports/register/upload", files={"file": ("v.xlsx", _xlsx(rows))}, headers=PAGE)
+    assert answer.status_code == 400 and "“Gross Amount” (gross amount)" in answer.json()["error"]
+    assert store.master_vendors() == [] and store.erp_register_count() == 0
+    whole = client.post("/vendors/master/upload", files={"file": (made.SUPPLIERS_FILE,
+                        (jde / made.SUPPLIERS_FILE).read_bytes())}, headers=PAGE)  # fmt: skip
+    assert whole.status_code == 200, whole.text
+
+
+def test_vendors_refuses_the_vendor_information_list_naming_its_card(client, store, jde):
+    """B-2419: Vendors took the vendor information list for a vendor list: "Vendor name missing", its Tax ID
+    offered as the GST/HST number."""
+    from ap_coder.bench import jde_exports as made
+
+    answer = client.post("/vendors/master/upload", files={"file": (made.VENDOR_INFO_FILE,
+                         (jde / made.VENDOR_INFO_FILE).read_bytes())}, headers=PAGE)  # fmt: skip
+    assert answer.status_code == 400
+    assert answer.json()["error"] == import_specs.elsewhere("vendor_info", verb="imported")
+    assert "under 3. Suppliers" in answer.json()["error"] and store.master_vendors() == []
+
+
+def test_an_empty_file_and_a_worksheet_that_is_no_workbook_say_so_in_plain_words(client):
+    """B-2417, B-2418: a 0-byte file "could not be read as a spreadsheet", an empty workbook asked to add the columns;
+    the worksheet upload said "(BadZipFile)"."""
+    from ap_coder.web import files
+
+    for url in PICKERS.values():
+        for data in (b"", _xlsx([])):
+            answer = client.post(url, files={"file": ("list.xlsx", data)}, headers=PAGE)
+            assert answer.status_code == 400 and answer.json()["error"] == files.EMPTY, url
+    for data in (b"not a workbook", b""):
+        answer = client.post("/settings/jde/worksheet/upload", files={"file": ("w.xlsx", data)}, headers=PAGE)
+        said = answer.json()["error"]
+        assert answer.status_code == 400 and "BadZipFile" not in said and "Error" not in said, said
+        assert ("empty" in said) == (not data), said

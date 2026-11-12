@@ -32,15 +32,15 @@
     {% elif not look.problem %}<p>Nothing new in the worksheet: every answer in it is in use already.</p>{% endif %}
     {% if look.unused %}<p><b>Not used</b> (fix them in the worksheet and load it again):</p>
     <ul class="imp-said">{% for line in look.unused[:40] %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
-    <form method="post" action="/settings/jde/worksheet" class="row" data-busy="Importing…" data-long>
+    <form method="post" action="/settings/jde/worksheet" class="row" data-busy="Loading…" data-long>
       <input type="hidden" name="token" value="{{ look.token }}">
-      {% if not look.problem and look.changes %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload_file</span>Apply {{ look.changes | length | plural("answer") }}</button>{% endif %}
+      {% if not look.problem and look.changes %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload_file</span>Load {{ look.changes | length | plural("answer") }}</button>{% endif %}
       <a class="btn" href="/settings/jde#worksheet"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
     </form>
   {% endcall %}
   {% else %}
   {% if look %}<div class="flash err" role="alert"><span class="ms" aria-hidden="true">error</span><div>{{ look.problem }}</div></div>{% endif %}
-  {{ imp.file_box("/settings/jde/worksheet/upload", worksheet_spec.accept, "The worksheet with the JDE team's answers, as you downloaded it (.xlsx)", "Reading…", then="Apply") }}
+  {{ imp.file_box("/settings/jde/worksheet/upload", worksheet_spec.accept, "The worksheet with the JDE team's answers, as you downloaded it (.xlsx)", "Reading…") }}
   {% endif %}
   </div>
   {% if js.answers %}
@@ -252,18 +252,18 @@
   {% if look and look.name %}
   {% call imp.preview(look, "gl-map") %}
     {% if not look.problem %}<p>{{ look.kept | plural("mapping row") }} to import.</p>{% endif %}
-    <form method="post" action="/settings/jde/gl-map/import" class="stack" data-busy="Importing…" data-long>
+    <form method="post" action="/settings/jde/gl-map/import" class="stack" data-busy="Loading…" data-long>
       <input type="hidden" name="token" value="{{ look.token }}">
       {% if not look.problem %}<label class="check"><input type="checkbox" name="replace" value="1"> Replace the current mapping (otherwise these rows are added to it, a GL code and cost center already there replaced)</label>{% endif %}
       <div class="row">
-        {% if not look.problem %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import {{ look.kept | plural("mapping row") }}</button>{% endif %}
+        {% if not look.problem %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Load {{ look.kept | plural("mapping row") }}</button>{% endif %}
         <a class="btn" href="/settings/jde#gl-map"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
       </div>
     </form>
   {% endcall %}
   {% else %}
   {% if look %}<div class="flash err" role="alert"><span class="ms" aria-hidden="true">error</span><div>{{ look.problem }}</div></div>{% endif %}
-  {{ imp.file_box("/settings/jde/gl-map/upload", gl_map_spec.accept, "A CSV or Excel file (.csv, .xlsx or .xls), a row for each GL account", "Reading…", then="Import") }}
+  {{ imp.file_box("/settings/jde/gl-map/upload", gl_map_spec.accept, "A CSV or Excel file (.csv, .xlsx or .xls), a row for each GL account", "Reading…") }}
   {% endif %}
   </div>
 </section>

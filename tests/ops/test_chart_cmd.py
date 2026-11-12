@@ -90,7 +90,7 @@ def test_both_files_are_imported_and_what_was_read_is_said(tmp_path, capsys):
     assert "Business units: 9 added, 0 changed, 0 removed." in out
     assert "Read 41 rows of the chart: 32 accounts on 9 business units; 19 may be posted to." in out
     assert "Not for posting, by posting edit code: 1 with B, 1 with I, 1 with L, 1 with M, 9 with N." in out
-    assert "Chart of accounts: 41 added, 0 changed, 0 removed." in out
+    assert "Chart of accounts: 41 rows added, 0 changed, 0 removed." in out
     assert "GL accounts: 13 now (13 added, 0 changed, 0 removed)." in out
     assert "Cost centers: 8 now (8 added, 0 changed, 0 removed)." in out
     assert "Accounts a line may be coded to: 16" in out

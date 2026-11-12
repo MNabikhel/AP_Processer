@@ -59,6 +59,8 @@ from ap_coder.web.files import (
     NO_ROWS,
     SheetError,
     drop_upload,
+    first_rows,
+    jde_refusal,
     pick_refusal,
     picked_columns,
     read_upload,
@@ -256,7 +258,7 @@ def vendors_page(
     if file:
         try:
             upload, df, sheets = read_upload(file, sheet or None)
-            master = spec_sheet(file, upload, df, sheets, sheet, VENDOR_MASTER)
+            master = spec_sheet(file, upload, df, sheets, sheet, VENDOR_MASTER, accept=VENDOR_JDE)
             master |= {
                 "hold_codes": ", ".join(store.hold_codes()),
                 "skip_words": ", ".join(store.supplier_markers()),
@@ -357,7 +359,7 @@ def save_vendor(
 
 @router.post("/vendors/master/upload")
 async def master_upload(request: Request, file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
-    token, problem = await receive_sheet(file)
+    token, problem = await receive_sheet(file, accept=VENDOR_JDE)
     if problem:
         return refuse(problem)
     return done(request, f"/vendors?file={token}#import")
@@ -370,6 +372,9 @@ async def master_import(request: Request) -> JSONResponse:
     return await run_in_threadpool(_master_import, request, form)  # a large company's list: 20,000 vendors
 
 
+# JD Edwards' own report the vendor list's import reads, with every column it needs (any other: JD Edwards files only,
+# and the vendor information list on its card 3: B-2406)
+VENDOR_JDE = ("supplier_master",)
 SHARED_NAMED = 200  # the names several supplier numbers share that an import's note lists
 HOLD_CODES_LABEL = "Hold payment codes that put a supplier on hold"  # the import form's field, as its notes name it
 
@@ -394,6 +399,8 @@ def _master_import(request: Request, form: Any) -> JSONResponse:
         _upload, df, _sheets = read_upload(token, sheet or None)
     except SheetError as exc:
         return refuse(str(exc))
+    if refusal := jde_refusal(first_rows(df), VENDOR_JDE):
+        return refuse(refusal)
     if df.empty:
         return refuse(NO_ROWS)
     chosen = picked_columns(form, MASTER_ALIASES, list(df.columns), {})

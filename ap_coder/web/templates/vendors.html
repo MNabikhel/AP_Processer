@@ -19,7 +19,7 @@
   {% if master %}
   {{ sheets(master, "/vendors", {"file": master.token}) }}
   {% call imp.preview(master.look, "vendor_master") %}{% endcall %}
-  <form method="post" action="/vendors/master/import" class="stack" data-busy="Importing…" data-long id="pick-vendor_master">
+  <form method="post" action="/vendors/master/import" class="stack" data-busy="Loading…" data-long id="pick-vendor_master">
     {{ columns(master) }}
     <div class="map-grid">
       <label class="field">{{ master.hold_codes_label }}
@@ -32,12 +32,12 @@
       synced; a code taken off stops holding every supplier at this import. The words are also the ones a business
       unit of the chart is left out for (the star, before or after a name, is for suppliers only).</p>
     <div class="row">
-      <button class="btn primary" type="submit"{{ go(master) }}><span class="ms" aria-hidden="true">upload</span>Import vendors</button>
+      <button class="btn primary" type="submit"{{ go(master) }}><span class="ms" aria-hidden="true">upload</span>Load vendors</button>
       <a class="btn" href="/vendors"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
     </div>
   </form>
   {% elif can("/vendors/master/upload") %}{# server mode: the vendor master is an Admin's (D-98) #}
-  {{ imp.file_box("/vendors/master/upload", vendor_spec.accept, "The vendor list, a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…", then="Import") }}
+  {{ imp.file_box("/vendors/master/upload", vendor_spec.accept, "The vendor list, a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…") }}
   {% else %}
   <p class="muted">An Admin imports the vendor master.</p>
   {% endif %}

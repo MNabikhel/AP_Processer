@@ -41,12 +41,8 @@
     never count in the accuracy figures.</p>
   {% if journal %}
   {# JD Edwards' Transaction Journal (R09321): what loading it would keep, then "Load this journal" #}
-  <p><b>{{ journal.name }}</b> · JD Edwards' Transaction Journal (report R09321). Nothing is loaded yet.</p>
-  {% if journal.said %}
-  <ul id="journal-summary">{% for a in journal.said %}
-    <li>{{ a.text }}{% if a.sub %}<ul>{% for b in a.sub %}<li>{{ b.text }}{% if b.sub %}<ul>{% for c in b.sub %}<li class="apc-muted">{{ c.text }}</li>{% endfor %}</ul>{% endif %}</li>{% endfor %}</ul>{% endif %}</li>
-  {% endfor %}</ul>
-  {% endif %}
+  <p><b>{{ journal.name }}</b> · JD Edwards' Transaction Journal (report R09321){% if journal.size %} · {{ journal.size }}{% endif %}. {{ "It is loaded already." if journal.already else "Nothing is loaded yet." }}</p>
+  {{ imp.journal_brief(journal) }}
   {% if journal.problem %}{{ ui.empty_note(journal.note, " " ~ journal.problem, "warning") }}{% endif %}
   {% if journal.read and journal.state != "same_file" and can("/learning/journal/load") %}
   <form class="row" method="get" action="/learning#history">
@@ -72,6 +68,7 @@
   {% else %}
   <p><a class="btn" href="/learning#history">Back</a></p>
   {% endif %}
+  {{ imp.journal_details(journal, "journal-summary") }}
   {% if journal.state != "same_file" and can("/learning/journal/as-table") %}
   <form method="post" action="/learning/journal/as-table" data-busy="Reading…">
     <input type="hidden" name="token" value="{{ journal.token }}">
@@ -88,11 +85,11 @@
   </form>
   {% endif %}
   {% call imp.preview(upload.s.look, "past_coding") %}{% endcall %}
-  <form method="post" action="/learning/history/teach" class="stack" data-busy="Teaching…" data-long id="pick-past_coding">
+  <form method="post" action="/learning/history/teach" class="stack" data-busy="Loading…" data-long id="pick-past_coding">
     {{ columns(upload.s, token="token") }}
     <p class="muted">Lines without a vendor, a description or a GL account are skipped.</p>
     <div class="row">
-      <button class="btn primary" type="submit"{{ go(upload.s) }}><span class="ms" aria-hidden="true">school</span>Teach {{ upload.rows | plural("line") }}</button>
+      <button class="btn primary" type="submit"{{ go(upload.s) }}><span class="ms" aria-hidden="true">school</span>Load {{ upload.rows | plural("line") }}</button>
       <a class="btn" href="/learning#history">Cancel</a>
     </div>
   </form>
@@ -101,7 +98,7 @@
   {% if can("/learning/history/upload") %}{# server mode: teaching the past coding is an Admin's (D-98) #}
   <div class="stack imp-pane">
   {{ imp.report(history_spec) }}
-  {{ imp.file_box("/learning/history/upload", ".csv,.xlsx,.xls,.txt", "The AP line history, a CSV or Excel file (.csv, .xlsx or .xls), or JD Edwards' Transaction Journal", "Reading…", then="Teach") }}
+  {{ imp.file_box("/learning/history/upload", ".csv,.xlsx,.xls,.txt", "The AP line history, a CSV or Excel file (.csv, .xlsx or .xls), or JD Edwards' Transaction Journal", "Reading…") }}
   <p class="muted">From JD Edwards: the Transaction Journal (report R09321) saved as CSV is read as it comes. Its
     summary is shown first; nothing is loaded until you say so.</p>
   </div>

@@ -57,7 +57,8 @@ def test_a_journal_is_summarised_loaded_listed_and_forgotten(store, data, truth,
     # The summary is the command's, line for line, and nothing is written yet.
     seen = journal_cmd.look(store, data, "R09321.csv")
     words = _text(page)
-    assert "R09321.csv · JD Edwards' Transaction Journal (report R09321). Nothing is loaded yet." in words
+    shown = "R09321.csv · JD Edwards' Transaction Journal (report R09321) · 405 lines on 120 vouchers."
+    assert f"{shown} Nothing is loaded yet." in words and all(line in words for line in seen.brief)
     assert len(seen.said) == 20 and all(line.strip() in words for line in seen.said)
     assert "Read: 120 vouchers with 405 lines, G/L dates 2024-01-15 to 2024-12-30." in words
     assert "Learned from: 154 coding lines on 103 vouchers." in words
@@ -69,7 +70,7 @@ def test_a_journal_is_summarised_loaded_listed_and_forgotten(store, data, truth,
         assert f'<input type="text" name="{name}" value="{value}"' in page
         assert f'<input type="hidden" name="{name}" value="{value}">' in page
     assert "Load this journal" in page and 'action="/learning/journal/load"' in page and "disabled" not in page
-    assert "Teach 4" not in page and "col_vendor_name" not in page  # not the table's column matching
+    assert "Load 4" not in page and "col_vendor_name" not in page  # not the table's column matching
 
     loaded = post(client, "/learning/journal/load", {"token": token, "trade": "2110", "intercompany": "2150",
                                                      "tax": "2420"})  # fmt: skip
@@ -165,7 +166,7 @@ def test_a_table_of_past_lines_still_goes_to_its_columns(store, data):
                          headers=PAGE)  # fmt: skip
     assert answer.status_code == 200 and "history=" in answer.json()["redirect"]
     page = client.get(answer.json()["redirect"]).text
-    assert "Teach 2 lines" in page and '<option value="Supplier" selected>' in page and "Load this journal" not in page
+    assert "Load 2 lines" in page and '<option value="Supplier" selected>' in page and "Load this journal" not in page
     assert "the Transaction Journal (report R09321) saved as CSV is read as it comes" in _text(client.get(
         "/learning").text)  # fmt: skip
     gone = client.get("/learning?journal=not-a-token").text
@@ -184,7 +185,7 @@ def test_a_table_whose_header_looks_like_the_journals_can_still_be_read_as_a_tab
     as_table = post(client, "/learning/journal/as-table", {"token": token})
     assert as_table.status_code == 200 and "history=" in as_table.json()["redirect"]
     page = client.get(as_table.json()["redirect"]).text
-    assert "Teach 2 lines" in page and '<option value="Vendor" selected>' in page
+    assert "Load 2 lines" in page and '<option value="Vendor" selected>' in page
     assert post(client, "/learning/journal/as-table", {"token": token}).status_code == 400  # used up
     assert store.journal_files() == []
 

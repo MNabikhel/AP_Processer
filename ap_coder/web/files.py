@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import io
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -31,18 +31,21 @@ from fastapi.responses import Response
 from ap_coder.core.csvio import sniff_delimiter
 from ap_coder.erp import import_specs
 from ap_coder.erp.import_specs import ImportSpec
+from ap_coder.erp.journal import looks_like_journal
 from ap_coder.intake import triage
 from ap_coder.web.core import current_store
 
 SHEET_TYPES = (".csv", ".xlsx", ".xls")
 NONE = ""  # the value of "(none)" in a column choice
 PREVIEW_ROWS = 5
+HEADER_ROWS = 10  # the rows a report's column names are looked for in, under its title rows (as ``chart_file``'s)
 
 CANNOT_READ = (
     "This file could not be read as a spreadsheet: it may be empty, damaged or another format. In Excel, save it as "
     "CSV UTF-8 or Excel Workbook (.xlsx) and upload it again."
 )
 NOT_A_SHEET = "Upload a CSV or Excel file (.csv or .xlsx)."
+EMPTY = "This file is empty: it has no column names and no rows. Export the list again and upload the file it saved."
 NO_ROWS = "This file has no rows under its header line."
 GONE = "That upload is no longer here (uploads are kept for an hour). Upload the file again."
 TOO_BIG_UNZIPPED = (
@@ -116,24 +119,51 @@ async def read_capped(file: UploadFile) -> bytes | None:
     return None if len(content) > _MAX_BYTES else content
 
 
-async def receive_sheet(file: UploadFile) -> tuple[str, str]:
+async def receive_sheet(file: UploadFile, accept: Iterable[str] | None = ()) -> tuple[str, str]:
     """(token, "") for an uploaded spreadsheet that can be read, else ("", the problem in plain words). The sheet is
-    read and kept on a threadpool thread: a 50 MB workbook never holds up the dashboard's other requests."""
+    read and kept on a threadpool thread: a 50 MB workbook never holds up the dashboard's other requests. JD Edwards'
+    Transaction Journal is refused, naming its card; so is any other of JD Edwards' reports (``jde_refusal``), but
+    those of ``accept`` with every column they need. ``accept`` None: the caller judges JD Edwards' reports itself
+    (the JD Edwards files page)."""
     name = file.filename or "upload.csv"
-    if not name.lower().endswith(SHEET_TYPES):
+    if not name.lower().endswith((*SHEET_TYPES, ".txt")):
         return "", NOT_A_SHEET
     content = await read_capped(file)
     if content is None:
         return "", TOO_BIG
-    return await run_in_threadpool(_keep_sheet, name, content)
+    if not name.lower().endswith((".xlsx", ".xls")) and looks_like_journal(content):
+        return "", import_specs.elsewhere("journal", verb="loaded" if accept is None else "imported")
+    if not name.lower().endswith(SHEET_TYPES):
+        return "", NOT_A_SHEET
+    return await run_in_threadpool(_keep_sheet, name, content, accept)
 
 
-def _keep_sheet(name: str, content: bytes) -> tuple[str, str]:
+def _keep_sheet(name: str, content: bytes, accept: Iterable[str] | None = ()) -> tuple[str, str]:
     try:
-        read_sheet(name, content)
+        df, _names = read_sheet(name, content)
     except SheetError as exc:
         return "", str(exc)
+    if accept is not None and (refusal := jde_refusal(first_rows(df), accept)):
+        return "", refusal
     return keep_upload(name, content), ""
+
+
+def first_rows(df: pd.DataFrame) -> list[list[Any]]:
+    """A sheet's column names and the rows under them, as many as a report's title rows may be."""
+    return [list(df.columns), *df.head(HEADER_ROWS).values.tolist()]
+
+
+def jde_refusal(rows: list[list[Any]], accept: Iterable[str] = ()) -> str:
+    """Why a sheet of these first rows (``first_rows``) is not imported on a page of any ERP's lists ("" when it
+    may be): it is one of JD Edwards' own reports (``import_specs.recognise``), loaded on the JD Edwards files page
+    only, never through another page's column picker. One the page reads (``accept``: the supplier master on Vendors,
+    the voucher list on Exports) is refused only without a column it needs, naming it."""
+    for row in rows[:HEADER_ROWS]:
+        if key := import_specs.recognise(row):
+            if key in accept:
+                return import_specs.check(import_specs.SPECS[key], row).problem()
+            return import_specs.elsewhere(key, verb="imported")
+    return ""
 
 
 # --- Reading a spreadsheet ---------------------------------------------------------------------------------------
@@ -247,9 +277,15 @@ def _widest_sheet(content: bytes) -> int:
         book.close()
 
 
-def read_sheet(name: str, content: bytes, sheet: str | None = None) -> tuple[pd.DataFrame, list[str]]:
+def read_sheet(name: str, content: bytes, sheet: str | None = None,
+               specs: Sequence[ImportSpec] = ()) -> tuple[pd.DataFrame, list[str]]:  # fmt: skip
     """(the sheet as text cells, the workbook's sheet names) of an uploaded CSV or Excel file. ``sheet``: the
-    workbook sheet to read (default the first). Semicolon CSVs and Windows-1252 CSVs (Excel's "CSV") are read too."""
+    workbook sheet to read (default the first with a cell filled; with ``specs``, the first that is one of them
+    whole: its name is the frame's ``attrs["sheet"]``). Semicolon CSVs and Windows-1252 CSVs (Excel's "CSV") are read
+    too. ``specs``: the reports the file should be, whose column names are looked for under a report's title rows
+    (``import_specs.header_row``)."""
+    if not content:
+        raise SheetError(EMPTY)
     names: list[str] = []
     try:
         if name.lower().endswith((".xlsx", ".xls")):
@@ -257,24 +293,64 @@ def read_sheet(name: str, content: bytes, sheet: str | None = None) -> tuple[pd.
             names = [str(n) for n in sheets]
             if not names:
                 raise SheetError(CANNOT_READ)
-            key = next((k for k in sheets if str(k) == sheet), next(iter(sheets)))
-            df = sheets[key]
+            frames = {k: _named_row(_frame(df), specs) for k, df in sheets.items()}
+            key = next((k for k in frames if str(k) == sheet), None)
+            if key is None:  # (the first sheet that is the report, else the first with anything on it)
+                key = next((k for k in frames if specs and _whole(frames[k], specs)), None)
+                key = key if key is not None else next((k for k in frames if _filled(frames[k])), next(iter(frames)))
+            df = frames[key]
+            df.attrs["sheet"] = str(key)
         else:
-            df = read_csv(content)
+            df = _named_row(_frame(read_csv(content)), specs)
     except SheetError:
         raise
     except Exception as exc:  # noqa: BLE001 - empty file, not really a spreadsheet, damaged workbook...
         raise SheetError(CANNOT_READ) from exc
+    if not _filled(df):
+        raise SheetError(EMPTY)
+    return df, names
+
+
+def _filled(df: pd.DataFrame) -> bool:
+    return not df.empty or any(str(c).strip() and not str(c).startswith("Unnamed:") for c in df.columns)
+
+
+def _frame(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [str(c) for c in df.columns]  # a header like 2024 arrives as a number
-    return _header_below_title(df).fillna(""), names
+    return _header_below_title(df).fillna("")
 
 
-def read_upload(token: str | None, sheet: str | None = None) -> tuple[Upload, pd.DataFrame, list[str]]:
-    """The waiting upload ``token`` as (upload, sheet, sheet names). Raises SheetError when it is gone or unreadable."""
+def _named_row(df: pd.DataFrame, specs: Sequence[ImportSpec]) -> pd.DataFrame:
+    """The sheet with its column names on the row of ``specs``' columns (under a report's title rows: a print date
+    beside its title is a second cell, B-2273), as it is without ``specs``."""
+    if not specs:
+        return df
+    at = import_specs.header_row(first_rows(df), specs)
+    if not at:
+        return df
+    names: list[str] = []
+    for j, cell in enumerate(str(v).strip() for v in df.iloc[at - 1].tolist()):
+        name = cell or f"Unnamed: {j}"
+        while name in names:  # two columns of one name: kept apart, as pandas does
+            name += ".1"
+        names.append(name)
+    out = df.iloc[at:].reset_index(drop=True)
+    out.columns = names
+    return out
+
+
+def _whole(df: pd.DataFrame, specs: Sequence[ImportSpec]) -> bool:
+    return any(import_specs.check(spec, df.columns).ok for spec in specs)
+
+
+def read_upload(token: str | None, sheet: str | None = None,
+                specs: Sequence[ImportSpec] = ()) -> tuple[Upload, pd.DataFrame, list[str]]:  # fmt: skip
+    """The waiting upload ``token`` as (upload, sheet, sheet names) (``read_sheet``). Raises SheetError when it is
+    gone or unreadable."""
     upload = get_upload(token)
     if upload is None:
         raise SheetError(GONE)
-    df, names = read_sheet(upload.name, upload.content, sheet)
+    df, names = read_sheet(upload.name, upload.content, sheet, specs)
     return upload, df, names
 
 
@@ -309,7 +385,7 @@ def sheet_context(
         "token": token,
         "name": upload.name,
         "sheets": sheets,
-        "sheet": sheet if sheet in sheets else (sheets[0] if sheets else ""),
+        "sheet": sheet if sheet in sheets else df.attrs.get("sheet", sheets[0] if sheets else ""),
         "columns": columns,
         "count": len(df),
         "preview": [[str(v) for v in row] for row in df.head(PREVIEW_ROWS).itertuples(index=False)],
@@ -341,12 +417,13 @@ def pick_refusal(spec: ImportSpec, chosen: Mapping[str, str]) -> str:
 
 
 def spec_sheet(token: str, upload: Upload, df: pd.DataFrame, sheets: list[str], sheet: str | None, spec: ImportSpec,
-               params: Mapping[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
+               params: Mapping[str, Any] | None = None, accept: Iterable[str] = ()) -> dict[str, Any]:  # fmt: skip
     """What a page shows of an uploaded sheet to import as ``spec`` (``_sheet.html``'s ``columns``, ``_import.html``'s
     ``preview``): ``sheet_context`` with a choice for each of the spec's columns, filled from the file's headers by
     the spec's reader (``ImportSpec.find``: their order never matters) until the person picks (``params``'
     ``col_<field>``), the needed ones marked; ``missing``: the needed fields still without a column; ``look``: the
-    file's header check (each column found as which header, or missing; its other columns) and its first rows."""
+    file's header check (each column found as which header, or missing; its other columns) and its first rows, and
+    why it is not imported when it is one of JD Edwards' reports (``jde_refusal``: a sheet chosen on the page)."""
     columns = [str(c) for c in df.columns]
     fields = {c.field: c.label for c in spec.columns}
     found = import_specs.check(spec, columns)
@@ -360,5 +437,7 @@ def spec_sheet(token: str, upload: Upload, df: pd.DataFrame, sheets: list[str], 
             "need": {c.field: c.label for c in spec.required},
             "one_of": {"fields": list(spec.one_of), "label": unpicked(spec, {})[-1]} if spec.one_of else None,
             "look": {"name": upload.name, "count": len(df), "spec": spec, "check": found, "pick": True,
-                     "unfound": unpicked(spec, found.found), "problem": "" if len(df) else NO_ROWS,
+                     "unfound": unpicked(spec, found.found),
+                     "guessed": "; ".join(f"{spec.column(f).label} as “{found.found[f]}”" for f in found.guessed),
+                     "problem": jde_refusal(first_rows(df), accept) or ("" if len(df) else NO_ROWS),
                      "sample": import_specs.preview(rows, 0)}}  # fmt: skip

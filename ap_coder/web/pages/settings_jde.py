@@ -451,8 +451,8 @@ def _worksheet_head(content: bytes) -> tuple[list[list[str]], str]:
         return [], "This workbook unzips to far more than its size on disk, so it is not opened: it may be damaged."
     try:
         book = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
-    except Exception as exc:  # noqa: BLE001 - not an Excel file, or damaged
-        return [], f"The file could not be opened as an Excel workbook ({type(exc).__name__})."
+    except Exception:  # noqa: BLE001 - not an Excel file, or damaged
+        return [], jde_worksheet.NOT_A_WORKBOOK if content else jde_worksheet.EMPTY_FILE
     try:
         if "Questions" not in book.sheetnames:
             return [], "This is not AP Coder's JDE worksheet (it has no Questions sheet)."

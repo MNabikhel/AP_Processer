@@ -179,3 +179,20 @@ def test_in_a_browser_the_review_screens_bars_leave_a_zoomed_in_laptop_the_page(
         page.goto(f"{base}/review/{number}")
         assert page.evaluate(_BARS) <= 1 / 4
         page.close()
+
+
+@pytest.mark.parametrize("width", [683, 390])
+def test_in_a_browser_every_tab_of_a_tab_strip_is_seen_whole_in_a_narrow_window(browser, width):
+    """B-2428: a strip of tabs scrolled sideways inside itself with nothing to say so: at 683 px the page of what
+    is loaded from JD Edwards cut its last tab ("Invoices already in…"), at 390 GL accounts & tax hid Bank
+    accounts past the edge. The tabs go on a second line instead."""
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": width, "height": 700})
+    for path in ("/accounts", "/jde-files/loaded/vouchers", "/settings/review"):
+        page.goto(base + path)
+        tabs = page.locator("nav.tabs a")
+        assert tabs.count() >= 2, path
+        for at in range(tabs.count()):
+            box = tabs.nth(at).bounding_box()
+            assert box["x"] >= 0 and box["x"] + box["width"] <= width + 0.5, (path, tabs.nth(at).inner_text())
+    page.close()

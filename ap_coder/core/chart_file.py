@@ -16,7 +16,8 @@ after 15 s with nothing held. A file that is no such workbook is refused in plai
 with a traceback (B-2124).
 
 Entry points: ``read_chart``, ``read_business_units`` (a path, or an upload's bytes), giving ``chart.Rows``;
-``read_rows``, the rows as they are, for another of JD Edwards' long exports (the vendor information list, D-219).
+``read_rows``, the rows as they are, for another of JD Edwards' long exports (the vendor information list, D-219);
+``sheet_heads``, each sheet's first rows.
 """
 
 from __future__ import annotations
@@ -154,6 +155,25 @@ def read_rows(source: str | Path | bytes, name: str = chart.FILE) -> Iterator[tu
     words (``ChartError``), which call the file ``name``."""
     with _first_sheet(source, name) as sheet:
         yield from sheet.iter_rows(values_only=True)
+
+
+def sheet_heads(source: bytes, name: str = chart.FILE, most: int = HEADER_ROWS) -> list[tuple[str, list[tuple]]]:
+    """Each sheet's name and its ``most`` first rows, of a workbook within the bounds ``read_rows`` reads in (a
+    report put on another sheet than the first is found by its name). ``ChartError`` as ``read_rows``'s."""
+    import openpyxl
+
+    opened = io.BytesIO(source)
+    _refuse_too_big(opened, name)
+    try:
+        workbook = openpyxl.load_workbook(opened, read_only=True, data_only=True)
+    except UNREADABLE as exc:
+        raise ChartError(f"{name} could not be read as an Excel workbook, so nothing was read: open it in Excel and "
+                         "save it again as .xlsx, or export it from JD Edwards again.") from exc  # fmt: skip
+    try:
+        return [(sheet.title, [row[:COLUMNS_MOST] for row in itertools.islice(sheet.iter_rows(values_only=True), most)])
+                for sheet in workbook.worksheets]  # fmt: skip
+    finally:
+        workbook.close()
 
 
 @contextmanager

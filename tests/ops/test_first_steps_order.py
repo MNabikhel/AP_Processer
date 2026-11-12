@@ -59,13 +59,13 @@ def test_the_next_step_walks_through_them_one_by_one(fresh):
         return page.split('class="card next-step"', 1)[1].split("</section>", 1)[0]
 
     load_sample_setup(fresh)
-    assert "Import your vendor master" in card() and f'href="{process.STEP_LINKS[process.VENDOR_STEP]}"' in card()
+    assert "Load your supplier master" in card() and f'href="{process.JDE_LINKS[process.VENDOR_STEP]}"' in card()
     fresh.import_vendor_master([{"vendor_name": "Northwind Supply", "erp_id": "1001", "status": "active"}])
     assert "JD Edwards settings" in card() and 'href="/settings/jde"' in card()
     # what the export needs (B-1300)
     jde_settings.save(fresh, jde_settings.JdeSettings(company="00001", default_bu="100"))
     assert "Teach AP Coder your past coding" in card() and WHY in card()
-    assert f'href="{process.STEP_LINKS[process.HISTORY_STEP]}"' in card()
+    assert f'href="{process.JDE_LINKS[process.HISTORY_STEP]}"' in card()
     fresh.import_history([{"vendor_name": "Northwind Supply", "description": "Copy paper", "gl_code": "6000",
                            "cost_center": "", "amount": 50.0, "date": "2026-01-05"}])  # fmt: skip
     assert "Import your first invoices" in card()
@@ -139,3 +139,22 @@ def test_past_coding_codes_the_first_invoice_from_a_new_vendor(tmp_path, monkeyp
     lines, before = coded(False)
     assert lines >= 3 and before == 0
     assert coded(True) == (lines, lines)
+
+
+def test_with_jd_edwards_the_steps_lead_to_its_files_and_the_journal_loaded_is_past_coding(fresh, chart_company):
+    """B-2420: with JD Edwards in use, Getting started sent the GL accounts to /accounts, the vendor master to
+    Vendors and the past coding to Learning, never to the JD Edwards files page that loads them; and once last
+    year's journal was loaded there, "Past coding from your ERP" still said to do it (it counted the past lines
+    taught only)."""
+    fresh.set_setting(SHOW_JDE, "1")
+    page = _client(fresh).get("/process").text.split("<h4>Setup</h4>", 1)[1].split("</section>", 1)[0]
+    for card in ("chart", "suppliers", "journal"):
+        assert f'href="/jde-files#{card}"' in page
+    assert 'href="/accounts"' not in page and 'href="/learning?teach=1#history"' not in page
+    load_sample_setup(fresh)
+    assert 'href="/jde-files#suppliers"' in _client(fresh).get("/review").text.split('class="card next-step"')[1]
+    steps = {label: (state, detail) for state, label, detail in process.setup_steps(chart_company.store, Settings())}
+    learned = sum(f["learned_lines"] for f in chart_company.store.journal_files())
+    assert chart_company.store.history_count() == 0 and learned > 0
+    assert steps[process.HISTORY_STEP] == ("ok", f"{learned:,} coding lines from last year's journal")
+    assert steps["GL accounts"][1].endswith("from the chart of accounts")

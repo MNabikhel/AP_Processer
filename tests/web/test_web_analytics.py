@@ -486,7 +486,7 @@ def test_history_upload_columns_teach_and_forget(client, busy):
                            headers=PAGE)  # fmt: skip
     assert response.status_code == 200, response.text
     page = client.get(response.json()["redirect"]).text
-    assert "Teach 3 lines" in page and '<option value="Supplier" selected>' in page
+    assert "Load 3 lines" in page and '<option value="Supplier" selected>' in page
     token = response.json()["redirect"].split("history=")[1].split("&")[0].split("#")[0]
     missing = client.post("/learning/history/teach", data={"token": token, "col_vendor_name": "Supplier"}, headers=PAGE)
     assert missing.status_code == 400 and "Pick the column for" in missing.json()["error"]

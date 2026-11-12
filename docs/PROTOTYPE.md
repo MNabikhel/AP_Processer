@@ -89,7 +89,7 @@ delete. The top of the page (*What is loaded*) ticks off what is loaded.
 | 2 | Business units (Excel) | their names, and which are closed | business unit master |
 | 3 | Suppliers (Excel): two exports, loaded one after the other in either order | the supplier master's grid: supplier numbers, names, payment holds; the vendor information list: each supplier's tax ID, currency, payment terms, address and e-mail | supplier master; vendor information list |
 | 4 | Last year's coding (CSV) | what each supplier's lines were coded to, and their remarks | the Transaction Journal, saved as CSV |
-| 5 | Vouchers already in JD Edwards (Excel) | the duplicate check, and the voucher and batch numbers | supplier ledger inquiry |
+| 5 | Invoices already in JD Edwards: the voucher list (Excel) | the duplicate check, and the voucher and batch numbers | supplier ledger inquiry |
 
 Each card says which report to export and how (**How to get it**), the columns it needs and the optional ones (the
 other names each is read by under *What each column is*), and has **Download a blank template** with those column

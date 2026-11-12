@@ -18,10 +18,12 @@ _OPEN = "kind >= 'open:' AND kind < 'open;'"  # every invoice's "open:<id>" rows
 class EphemeralMixin:
     # --- Kept for a short while ---------------------------------------------------------------------------------
 
-    def keep_ephemeral(self, kind: str, value: bytes, ttl: float, keep: int | None = None) -> str:
+    def keep_ephemeral(self, kind: str, value: bytes, ttl: float, keep: int | None = None,
+                       token: str | None = None) -> str:  # fmt: skip
         """Keep ``value`` under a new one-off token for ``ttl`` seconds; at most ``keep`` of this ``kind`` (the oldest
-        go first). Expired ones of every kind are removed now."""
-        token = secrets.token_urlsafe(12)
+        go first). Expired ones of every kind are removed now. ``token``: kept under this one (a token another kind
+        gave: what became of that upload), replacing what this kind kept under it."""
+        given, token = token, token or secrets.token_urlsafe(12)
         now = time.time()
         with self._conn() as conn:
             conn.execute("DELETE FROM ephemeral WHERE expires_at < ?", (now,))
@@ -31,6 +33,8 @@ class EphemeralMixin:
                     "ORDER BY created_at DESC, rowid DESC LIMIT ?)",
                     (kind, kind, max(keep - 1, 0)),
                 )
+            if given:
+                conn.execute("DELETE FROM ephemeral WHERE kind = ? AND token = ?", (kind, token))
             conn.execute("INSERT INTO ephemeral (kind, token, value, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
                          (kind, token, value, now, now + ttl))  # fmt: skip
         return token

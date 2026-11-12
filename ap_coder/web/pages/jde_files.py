@@ -40,12 +40,14 @@ from ap_coder.core import chart, chart_file, ui
 from ap_coder.core.reference_data import reads_like_meals
 from ap_coder.core.store import Store
 from ap_coder.core.store.vendor_master import name_marker
-from ap_coder.erp import import_specs, jde_settings, registers
+from ap_coder.erp import import_specs, jde_settings, journal, registers
 from ap_coder.erp.import_specs import SPECS, ImportSpec
 from ap_coder.erp.journal import looks_like_journal
 from ap_coder.ops import chart_cmd, journal_cmd
+from ap_coder.web import files
 from ap_coder.web.core import current_store, done, get_store, one_connection, page_router, refuse, render, reviewer
 from ap_coder.web.files import (
+    EMPTY,
     NO_ROWS,
     TOO_BIG,
     SheetError,
@@ -69,20 +71,21 @@ INFO_KIND = "jde-vendor-info"  # the vendor information list as read at its uplo
 LOOK_KIND = "jde-files-look"  # a chart or business unit file's first rows and count as read at its upload
 ORDER = ("Load them in this order: the chart of accounts and the business units first, because the suppliers, last "
          "year's coding and the vouchers are checked against them; then the suppliers; then last year's coding; "
-         "then the vouchers already in JD Edwards.")  # fmt: skip
+         "then the invoices already in JD Edwards, its voucher list.")  # fmt: skip
 # Each card: its title, and the reports loaded on it (``import_specs.SPECS``), in the order the page names them.
 CARDS = {
     "chart": ("Chart of accounts", ("chart",)),
     "units": ("Business units", ("units",)),
     "suppliers": ("Suppliers", ("supplier_master", "vendor_info")),
     "journal": ("Last year's coding", ("journal",)),
-    "vouchers": ("Vouchers already in JD Edwards", ("vouchers",)),
+    "vouchers": ("Invoices already in JD Edwards", ("vouchers",)),
 }
 NOT_XLSX = "Upload the export as JD Edwards saves it, an Excel workbook (.xlsx)."
-OTHER_INVOICES = ("Another list of invoices is loaded on Exports, under Invoices already in the ERP, where its "
-                  "columns are picked.")  # fmt: skip
-OTHER_SUPPLIERS = "Another ERP's supplier list is loaded on Vendors, where its columns are picked."
-GONE = "That upload has expired. Upload the file again."
+GONE = files.GONE  # (one message for an upload no longer kept, on every page)
+LOADED_KIND = "jde-files-loaded"  # an upload's token once its file is loaded: a second Load says so (B-2416)
+LOADED = "That file is loaded already: the card says what it holds. To load another, upload it."
+JOURNAL_XLSX = ("This is the Transaction Journal saved as an Excel workbook: it is read as CSV. Open it in Excel, "
+                "save it as CSV UTF-8 (File, Save As) and load that file.")  # fmt: skip
 
 
 def _url(card: str, **query: str) -> str:
@@ -94,6 +97,16 @@ def _said(request: Request, card: str, lines: list[str]) -> JSONResponse:
     """Go back to ``card`` showing what its load said, a line each."""
     kept = json.dumps({"card": card, "lines": lines}).encode("utf-8")
     return done(request, _url(card, said=current_store().keep_ephemeral(SAID_KIND, kept, SAID_TTL, keep=8)))
+
+
+def _loaded(token: str) -> None:
+    """Remember that the upload ``token`` was loaded, for an hour: a second Load of it says so (``_gone``)."""
+    current_store().keep_ephemeral(LOADED_KIND, b"1", SAID_TTL, token=token)
+
+
+def _gone(token: str) -> str:
+    """Why an upload is not here to load: it was loaded already, or it is no longer kept."""
+    return LOADED if token and current_store().ephemeral(LOADED_KIND, token) is not None else GONE
 
 
 def _last(store: Store, action: str, table: str = "") -> dict[str, str] | None:
@@ -108,11 +121,8 @@ def _last(store: Store, action: str, table: str = "") -> dict[str, str] | None:
 
 
 def _where(spec: ImportSpec | None) -> str:
-    """The card a report is loaded on, as the page numbers it ("1. Chart of accounts")."""
-    for n, (title, keys) in enumerate(CARDS.values(), start=1):
-        if spec is not None and spec.key in keys:
-            return f"{n}. {title}"
-    return ""
+    """The card a report is loaded on, as the page numbers it ("1. Chart of accounts": ``ImportSpec.card``)."""
+    return spec.card if spec is not None else ""
 
 
 def _cells(row: Any) -> list[str]:
@@ -120,16 +130,23 @@ def _cells(row: Any) -> list[str]:
 
 
 def _judge(card: str, headers: list[str]) -> dict[str, Any]:
-    """A file's column names against the card's reports: which one it is (``import_specs.identify``), each of its
-    columns found as which header or missing, and why it is not loaded ("" when it can be): a column it needs is
-    missing, or it is another report of the page, named with the card it goes on."""
+    """A file's column names against the card's reports: which one it is (``import_specs.identify``, else by
+    JD Edwards' own headers whichever columns it lacks: ``recognise``), each of its columns found as which header or
+    missing, and why it is not loaded ("" when it can be): a column it needs is missing, or it is another report of
+    the page, named with the card it goes on, or a voucher's own grid. A file that is none of them is judged as the
+    card's report with the most of its needed columns there."""
     own = [SPECS[key] for key in CARDS[card][1]]
-    known = import_specs.identify(headers)
-    spec = known if known in own else own[0]
+    seen = import_specs.recognise(headers)
+    known = import_specs.identify(headers) or SPECS.get(seen or "")
+    checks = {spec.key: import_specs.check(spec, headers) for spec in own}
+    most = max(own, key=lambda spec: len(spec.required) - len(checks[spec.key].missing))
+    spec = known if known in own else most
     belongs = known if known is not None and known not in own else None
-    result = import_specs.check(spec, headers)
-    return {"spec": spec, "check": result, "belongs": belongs, "where": _where(belongs),
-            "problem": result.problem(belongs, _where(belongs))}  # fmt: skip
+    result = checks[spec.key]
+    problem = result.problem(belongs, _where(belongs))
+    if seen in import_specs.VOUCHER_GRIDS:
+        problem = import_specs.elsewhere(seen, card)
+    return {"spec": spec, "check": result, "belongs": belongs, "where": _where(belongs), "problem": problem}
 
 
 def _look(card: str, token: str, name: str, headers: list[str], sample: dict[str, Any] | None = None,
@@ -147,18 +164,23 @@ def _sample(df: Any, used: Any) -> dict[str, Any]:
 
 def _read_head(content: bytes, name: str) -> dict[str, Any]:
     """A chart or business unit export's first rows (its title rows, its column names and the rows under them) and
-    how many rows it has with a cell filled, read a row at a time by the chart's reader (its own bounds:
-    ``core/chart_file``). ``ChartError`` in plain words for a file that is no workbook it can read."""
+    how many rows it has with a cell filled, and in each column (``filled``: how many accounts a chart holds, its
+    rows with an object account), read a row at a time by the chart's reader (its own bounds: ``core/chart_file``).
+    ``ChartError`` in plain words for a file that is no workbook it can read."""
     rows: list[list[str]] = []
     count = 0
+    filled: list[int] = []
     for row in chart_file.read_rows(content, name):
-        cells = _cells(row)
+        cells = _cells(row)[: chart_file.COLUMNS_MOST]
         if not any(cells):
             continue
         count += 1
+        filled += [0] * (len(cells) - len(filled))
+        for at, cell in enumerate(cells):
+            filled[at] += bool(cell)
         if len(rows) < chart_file.HEADER_ROWS + import_specs.PREVIEW_ROWS:
-            rows.append(cells[: chart_file.COLUMNS_MOST])
-    return {"name": name, "rows": rows, "count": count}
+            rows.append(cells)
+    return {"name": name, "rows": rows, "count": count, "filled": filled}
 
 
 def _export_look(card: str, token: str) -> dict[str, Any] | None:
@@ -171,9 +193,36 @@ def _export_look(card: str, token: str) -> dict[str, Any] | None:
     at = import_specs.header_row(rows[: chart_file.HEADER_ROWS], [SPECS[key] for key in import_specs.JDE_REPORTS])
     look = _look(card, token, head["name"], rows[at] if rows else [], count=max(head["count"] - at - 1, 0))
     look["sample"] = import_specs.preview(rows, at, look["check"].found.values()) if rows else None
-    if not look["problem"] and not look["count"]:
+    if not rows:
+        look["problem"] = EMPTY
+    elif not look["problem"] and not look["count"]:
         look["problem"] = NO_ROWS
+    elif look["problem"] and head.get("on_sheet"):
+        look["problem"] += " " + _on_sheet(head["first_sheet"], head["on_sheet"], look["spec"])
+    if card == "chart" and rows and (named := look["check"].found.get("object")) in rows[at]:
+        column = rows[at].index(named)  # the accounts: the rows under the column names with an object account
+        filled = head.get("filled") or []
+        if column < len(filled):
+            look["accounts"] = filled[column] - sum(1 for row in rows[: at + 1] if column < len(row) and row[column])
     return look
+
+
+def _on_sheet(first: str, other: str, spec: ImportSpec) -> str:
+    return (f"Only the workbook's first sheet (“{first}”) is read, and {spec.title.lower()} is on its sheet “{other}”: "
+            "move that sheet to the front in Excel (or delete the others), save, and load the file again.")  # fmt: skip
+
+
+def _report_sheet(content: bytes, name: str, card: str) -> tuple[str, str]:
+    """(the first sheet's name, the name of a later sheet that is the card's report whole) of a workbook whose
+    first sheet is not that report; ("", "") when no later sheet is (or the workbook has one sheet)."""
+    own = [SPECS[key] for key in CARDS[card][1]]
+    sheets = chart_file.sheet_heads(content, name)
+    for title, rows in sheets[1:]:
+        rows = [_cells(row) for row in rows]
+        at = import_specs.header_row(rows, own) if rows else 0
+        if rows and any(import_specs.check(spec, rows[at]).ok for spec in own):
+            return sheets[0][0], title
+    return "", ""
 
 
 def _keep_vendor_info(name: str, content: bytes) -> tuple[str, str]:
@@ -187,8 +236,9 @@ def _keep_vendor_info(name: str, content: bytes) -> tuple[str, str]:
     if read is None:
         return "", ""
     head = []
-    for row in chart_file.read_rows(content, name):
-        head.append(_cells(row))
+    for at, row in enumerate(chart_file.read_rows(content, name)):
+        if at >= read["header_row"]:  # (under a grid's title rows)
+            head.append(_cells(row))
         if len(head) > import_specs.PREVIEW_ROWS:
             break
     read["head"] = head
@@ -216,37 +266,47 @@ def _suppliers_look(store: Store, token: str) -> dict[str, Any]:
     if kept is not None:
         return _vendor_info_look(store, token, json.loads(kept))
     try:
-        upload, df, _sheets = read_upload(token)
+        upload, df, sheets = _card_sheet("suppliers", token)
     except SheetError as exc:
         return {"problem": str(exc)}
     look = _look("suppliers", token, upload.name, [str(c) for c in df.columns], count=len(df))
     look["sample"] = _sample(df, look["check"].found.values())
-    problem = NO_ROWS if df.empty else _master_problem(look)
+    problem = NO_ROWS if df.empty and not look["problem"] else _master_problem(look, df, sheets)
     rows = [] if problem else master_rows(df.to_dict("records"), master_columns(list(df.columns)))
-    return {**look, "kept": len(rows), "left_out": len(df) - len(rows), "other": not look["belongs"],
-            "problem": problem + (" " + OTHER_SUPPLIERS if problem and not look["belongs"] else "")}  # fmt: skip
+    # (the suppliers it would add: those of no supplier loaded now, by the import's own rules, nothing written)
+    there = {key for key, _number in store.master_vendor_ids()}
+    new = sum(1 for key in store._master_rows_merged(rows, True)[0] if key not in there) if rows else 0
+    return {**look, "kept": len(rows), "left_out": len(df) - len(rows), "problem": problem, "new": new}
 
 
-def _master_problem(judged: dict[str, Any]) -> str:
+def _card_sheet(card: str, token: str) -> tuple[Any, Any, list[str]]:
+    """The upload ``token`` read as the card's reports: the sheet that is one of them, its column names under its
+    title rows (``files.read_upload``)."""
+    return read_upload(token, specs=[SPECS[key] for key in CARDS[card][1]])
+
+
+def _master_problem(judged: dict[str, Any], df: Any, sheets: list[str]) -> str:
     """Why a supplier file read as a sheet is not loaded as the supplier master ("" when it is): the header check's
-    words, or the vendor information list saved otherwise than JD Edwards saves it (it is read from its workbook)."""
+    words, or the vendor information list saved otherwise than JD Edwards saves it (it is read from its workbook's
+    first sheet)."""
     if judged["problem"] or judged["spec"].key == "supplier_master":
         return judged["problem"]
+    if sheets and df.attrs.get("sheet", sheets[0]) != sheets[0]:
+        return "Not loaded: " + _on_sheet(sheets[0], df.attrs["sheet"], judged["spec"])
     return "Load the vendor information list as JD Edwards saves it, an Excel workbook (.xlsx): nothing was loaded."
 
 
 def _vouchers_look(store: Store, token: str) -> dict[str, Any]:
     """The uploaded voucher list as it would be loaded, nothing written (``registers.vouchers_said``)."""
     try:
-        upload, df, _sheets = read_upload(token)
+        upload, df, _sheets = _card_sheet("vouchers", token)
     except SheetError as exc:
         return {"problem": str(exc)}
     look = _look("vouchers", token, upload.name, [str(c) for c in df.columns], count=len(df))
     look["sample"] = _sample(df, look["check"].found.values())
     found = None if df.empty or look["problem"] else jde_vouchers(store, df)
     if found is None:
-        problem = NO_ROWS if df.empty else look["problem"] + ("" if look["belongs"] else " " + OTHER_INVOICES)
-        return {**look, "problem": problem, "other": not look["belongs"]}
+        return {**look, "problem": look["problem"] or NO_ROWS}
     return {**look, "said": registers.vouchers_said(found[1]), "kept": len(found[0]),
             "problem": "" if found[0] else "No voucher of this list can be kept."}  # fmt: skip
 
@@ -268,7 +328,8 @@ def _journal_look(look: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def _known_report(name: str, content: bytes) -> ImportSpec | None:
-    """Which report of the page a file that is not the journal is, by its first rows ("" when none)."""
+    """Which report of the page a file that is not the journal saved as CSV is, by its first rows (None when none):
+    the journal itself when it is a workbook."""
     try:
         if name.lower().endswith(".xlsx"):
             rows = []
@@ -280,8 +341,11 @@ def _known_report(name: str, content: bytes) -> ImportSpec | None:
             rows = import_specs.journal_head(content)[0][: chart_file.HEADER_ROWS]
     except ValueError:  # (a ChartError too)
         return None
+    if name.lower().endswith(".xlsx") and rows and (_cells(rows[0])[:1] == [journal.REPORT] or any(
+            import_specs.check(import_specs.JOURNAL, row).found for row in rows)):  # fmt: skip
+        return import_specs.JOURNAL  # (the journal saved as a workbook)
     for row in rows:
-        if found := import_specs.identify(row):
+        if found := import_specs.identify(row) or SPECS.get(import_specs.recognise(row) or ""):
             return found
     return None
 
@@ -350,6 +414,7 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
         "vouchers": _last(store, "erp_register_imported"),
     }
     tax_ids = store.vendor_info_count()
+    meals = _meals(store) if rows else None
     return {
         "order": ORDER,
         "checklist": [
@@ -360,7 +425,8 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
                 "rows": rows_of[card],
                 "by_hand": by_hand.get(card, 0),
                 "last": last[card],
-                "attention": _attention(card, looks[card], loaded[card], store, tax_ids),
+                "attention": _attention(card, looks[card], loaded[card], store, tax_ids)
+                or ("No meals account ticked yet" if card == "chart" and meals and not meals["ticked"] else ""),
             }
             for card, (title, _keys) in CARDS.items()
         ],  # fmt: skip
@@ -369,18 +435,65 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
         "specs": {card: [SPECS[key] for key in keys] for card, (_title, keys) in CARDS.items()},
         "templates": {card: template_links(card) for card in CARDS},
         "chart_units": len({r.bu for r in rows}),
-        "meals": _meals(store) if rows else None,
+        "meals": meals,
+        "lists": {"gl": len(store.list_accounts("gl_accounts")), "cc": len(store.list_accounts("cost_centers"))},
+        "load": {card: _load_words(card, looks[card], loaded[card], by_hand.get(card, 0)) for card in CARDS},
         "company": _company_offer(store, units),
         "tally": [line.strip() for line in chart_cmd.tally_lines(store)] if rows else [],
         "chart_settings": settings.saved(),
         "home_name": pairs.name_of(settings.home_business_unit) if pairs and settings.home_business_unit else "",
-        "said": json.loads(said) if said else None,
+        "said": _said_view(json.loads(said), loaded) if said else None,
         "looks": looks,
         "upload_gone": journals.pop("upload_gone", False)
         or any(q.get(card) and looks[card] is None for card in ("chart", "units")),
         "tax_ids": tax_ids,
         **journals,
     }
+
+
+def _load_words(card: str, look: dict[str, Any] | None, loaded: int, by_hand: int) -> dict[str, str]:
+    """What a card's Load button loads, and the line above it saying what that replaces or adds to ({} with nothing
+    to load): the chart and the business units are replaced whole, the suppliers updated by their number, a journal
+    added to those loaded, the voucher list added to or replacing the one loaded."""
+    if not look or look.get("problem") or not look.get("name"):
+        return {}
+    kept = f" The {ui.plural(by_hand, 'row')} changed by hand {'is' if by_hand == 1 else 'are'} kept." * bool(by_hand)
+    if card == "chart":
+        accounts = look.get("accounts")
+        button = f"Load {ui.plural(accounts or look['count'], 'account' if accounts else 'row')}"
+        then = f"Replaces the {ui.plural(loaded, 'account')} loaded now: the chart is taken whole from this file.{kept}"
+    elif card == "units":
+        button = f"Load {ui.plural(look['count'], 'business unit')}"
+        then = (f"Replaces the {ui.plural(loaded, 'business unit')} loaded now: the list is taken whole from this "
+                f"file.{kept}")  # fmt: skip
+    elif card == "suppliers":
+        button = f"Load {ui.plural(look['kept'], 'supplier')}"
+        new = look.get("new", 0)
+        then = "" if look.get("info") else (f"Updates the {ui.plural(look['kept'] - new, 'supplier')} loaded already "
+                                            f"and adds {new:,}: no supplier is removed.{kept}")  # fmt: skip
+    elif card == "journal":
+        button = "Load this journal" + (f": {look['size']}" if look.get("size") else "")
+        then = f"Added to the {ui.plural(loaded, 'journal')} loaded now: a voucher in both is counted once."
+    else:
+        button, then = f"Load {ui.plural(look.get('kept', 0), 'voucher')}", ""
+    return {"button": button, "then": then if loaded else ""}
+
+
+def _said_view(said: dict[str, Any], loaded: dict[str, int]) -> dict[str, Any]:
+    """What a load said, as its card shows it: the line that says what was done first (``head``; the journal's
+    "Loaded …", the voucher list's count), the rest folded under it (``more``), and the next card still to load
+    (``next``: None once every file is loaded)."""
+    lines, card = said["lines"], said["card"]
+    at = 0
+    if card == "journal":
+        at = next((n for n, line in enumerate(lines) if line.startswith("Loaded ")), 0)
+    elif card == "vouchers":
+        at = len(lines) - 1
+    cards = list(CARDS)
+    after = cards[cards.index(card) + 1 :] + cards[: cards.index(card)]
+    coming = next((c for c in after if not loaded[c]), None)
+    shown = {"card": coming, "name": f"{cards.index(coming) + 1}. {CARDS[coming][0]}"} if coming else None
+    return {**said, "head": lines[at] if lines else "", "more": lines[:at] + lines[at + 1 :], "next": shown}
 
 
 def _attention(card: str, look: dict[str, Any] | None, loaded: int, store: Store, tax_ids: int) -> str:
@@ -405,10 +518,14 @@ def jde_files_page(request: Request) -> HTMLResponse:
 
 async def _workbook(file: UploadFile) -> tuple[bytes | None, str]:
     """An uploaded export's bytes, or (None, why not). The 50 MB of any upload on disk; how far it may unzip is
-    the reader's to say (a chart's sheet unzips to 104 MB: ``core/chart_file``'s own limit, D-209)."""
+    the reader's to say (a chart's sheet unzips to 104 MB: ``core/chart_file``'s own limit, D-209). The Transaction
+    Journal dropped here is named with its card; an empty file is said to be empty."""
     if not (file.filename or "").lower().endswith(".xlsx"):
-        return None, NOT_XLSX
+        content = await read_capped(file) if (file.filename or "").lower().endswith((".csv", ".txt")) else None
+        return None, import_specs.elsewhere("journal") if content and looks_like_journal(content) else NOT_XLSX
     content = await read_capped(file)
+    if content == b"":
+        return None, EMPTY
     return (None, TOO_BIG) if content is None else (content, "")
 
 
@@ -453,6 +570,7 @@ async def _export_upload(request: Request, card: str, file: UploadFile) -> JSONR
 def _keep_export(request: Request, card: str, name: str, content: bytes) -> JSONResponse:
     try:
         head = _read_head(content, name)
+        head["first_sheet"], head["on_sheet"] = _report_sheet(content, name, card)
     except chart.ChartError as exc:
         return refuse(f"Not loaded: {exc}")
     head["upload"] = keep_upload(name, content)
@@ -478,7 +596,7 @@ def _chart_import(request: Request, card: str, token: str) -> JSONResponse:
     look, upload = _export_look(card, token), json.loads(current_store().ephemeral(LOOK_KIND, token) or b"{}")
     kept = get_upload(upload.get("upload"))
     if look is None or kept is None:
-        return refuse(GONE)
+        return refuse(_gone(token))
     if look["problem"]:
         return refuse(look["problem"])
     given = {"chart_source": kept.content} if card == "chart" else {"units_source": kept.content}
@@ -488,6 +606,7 @@ def _chart_import(request: Request, card: str, token: str) -> JSONResponse:
         return refuse(f"Not loaded: {exc}")
     current_store().drop_ephemeral(LOOK_KIND, token)
     drop_upload(upload["upload"])
+    _loaded(token)
     return _said(request, card, said)
 
 
@@ -519,7 +638,7 @@ def meals_mark(request: Request, code: list[str] = Form([])) -> JSONResponse:  #
         ticked = get_store(request).mark_meals_accounts(code, actor=reviewer())
     except ValueError as exc:
         return refuse(str(exc))
-    return done(request, _url("checklist"), f"{ui.plural(len(ticked), 'account')} ticked as meals accounts: half "
+    return done(request, _url("chart"), f"{ui.plural(len(ticked), 'account')} ticked as meals accounts: half "
                 "the GST/HST of a line coded to one is claimable.")  # fmt: skip
 
 
@@ -550,11 +669,13 @@ async def suppliers_upload(request: Request, file: UploadFile = File(...)) -> JS
         content = await read_capped(file)
         if content is None:
             return refuse(TOO_BIG)
+        if not content:
+            return refuse(EMPTY)
         token, problem = await run_in_threadpool(_keep_vendor_info, name, content)
         if token or problem:
             return refuse(problem) if problem else done(request, _url("suppliers", suppliers=token))
         await file.seek(0)
-    token, problem = await receive_sheet(file)
+    token, problem = await receive_sheet(file, accept=None)
     if problem:
         return refuse(problem)
     return done(request, _url("suppliers", suppliers=token))
@@ -572,6 +693,8 @@ def _suppliers_load(request: Request, token: str) -> JSONResponse:
     is in (B-2298)."""
     store = get_store(request)
     kept = current_store().ephemeral(INFO_KIND, token)
+    if kept is None and get_upload(token) is None:
+        return refuse(_gone(token))
     if kept is not None:
         rows = json.loads(kept)["rows"]
         if not rows:
@@ -583,16 +706,18 @@ def _suppliers_load(request: Request, token: str) -> JSONResponse:
                 "are as they were."]  # fmt: skip
     else:
         try:
-            _upload, df, _sheets = read_upload(token)
+            _upload, df, sheets = _card_sheet("suppliers", token)
         except SheetError as exc:
             return refuse(str(exc))
-        if problem := NO_ROWS if df.empty else _master_problem(_judge("suppliers", [str(c) for c in df.columns])):
+        if problem := _master_problem(_judge("suppliers", [str(c) for c in df.columns]), df, sheets) or (
+                NO_ROWS if df.empty else ""):  # fmt: skip
             return refuse(problem)
         columns = master_columns(list(df.columns))
         result = store.import_vendor_master(master_rows(df.to_dict("records"), columns), actor=reviewer(),
                                             by_erp_id=True)  # fmt: skip
         drop_upload(token)
         said = [f"Suppliers: {result['added']:,} added, {result['updated']:,} updated."]
+    _loaded(token)
     if dupes := result["duplicates"]:
         said.append(f"{ui.plural(len(dupes), 'supplier')} {'appears' if len(dupes) == 1 else 'appear'} more than "
                     "once in the file under similar names (merged here; one on hold keeps the supplier on hold): "
@@ -609,8 +734,12 @@ async def journal_upload(request: Request, file: UploadFile = File(...)) -> JSON
     content = await read_capped(file)
     if content is None:
         return refuse(TOO_BIG)
+    if not content:
+        return refuse(EMPTY)
     if not looks_like_journal(content):
         known = await run_in_threadpool(_known_report, name, content)
+        if known is import_specs.JOURNAL:
+            return refuse(JOURNAL_XLSX)
         return refuse(journal_cmd.NOT_A_JOURNAL + (f" It looks like {known.report}: load it under {_where(known)}."
                                                    if known else ""))  # fmt: skip
     return done(request, _url("journal", journal=learning.keep_journal(name, content)))
@@ -627,12 +756,13 @@ def _journal_load(request: Request, token: str, anyway: bool) -> JSONResponse:
     the file; Learning has the boxes to change them)."""
     kept = learning.get_journal(token)
     if kept is None:
-        return refuse(GONE)
+        return refuse(_gone(token))
     name, data = kept
     outcome, said = journal_cmd.load(get_store(request), data, name, anyway=anyway, actor=reviewer())
     if outcome in (journal_cmd.REFUSED, journal_cmd.DIFFERS):
         return refuse(said[-1])
     current_store().drop_ephemeral(learning.JOURNAL_KIND, token)
+    _loaded(token)
     return _said(request, "journal", [line.strip() for line in said])
 
 
@@ -649,7 +779,7 @@ def journal_forget(request: Request, file_id: str = Form(...)) -> JSONResponse:
 
 @router.post(HERE + "/vouchers/upload")
 async def vouchers_upload(request: Request, file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
-    token, problem = await receive_sheet(file)
+    token, problem = await receive_sheet(file, accept=None)
     if problem:
         return refuse(problem)
     return done(request, _url("vouchers", vouchers=token))
@@ -663,14 +793,16 @@ async def vouchers_load(request: Request, token: str = Form(""), replace: str = 
 @one_connection
 def _vouchers_load(request: Request, token: str, replace: bool) -> JSONResponse:
     store = get_store(request)
+    if get_upload(token) is None:
+        return refuse(_gone(token))
     try:
-        _upload, df, _sheets = read_upload(token)
+        _upload, df, _sheets = _card_sheet("vouchers", token)
     except SheetError as exc:
         return refuse(str(exc))
-    if df.empty:
-        return refuse(NO_ROWS)
     if problem := _judge("vouchers", [str(c) for c in df.columns])["problem"]:
         return refuse(problem)
+    if df.empty:
+        return refuse(NO_ROWS)
     found = jde_vouchers(store, df)
     if found is None:  # (the header check found its columns: the reader finds the same)
         return refuse(NO_ROWS)
@@ -680,4 +812,5 @@ def _vouchers_load(request: Request, token: str, replace: bool) -> JSONResponse:
         return refuse(f"No voucher of this list can be kept: nothing was loaded, the list is as it was. {said}")
     total = store.import_erp_vouchers(rows, replace_all=replace, actor=reviewer())
     drop_upload(token)
+    _loaded(token)
     return _said(request, "vouchers", [said, f"{ui.plural(total, 'voucher')} of JD Edwards known now."])

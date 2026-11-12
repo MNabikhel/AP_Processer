@@ -334,7 +334,7 @@ def section_3(client: Client, exports: Path) -> None:
     first = page(client, "/jde-files")
     top = card(first, "checklist") if 'id="checklist"' in first else plain(first)
     says(first, "What is loaded", "Chart of accounts", "Business units", "Suppliers", "Last year's coding",
-         "Vouchers already in JD Edwards", "How to get it", "Download a blank template", "Check the file")  # fmt: skip
+         "Invoices already in JD Edwards", "How to get it", "Download a blank template", "Check the file")  # fmt: skip
     check(top.count("Not yet") >= 5, f"the top of the page does not tick off what is loaded: {top[:600]}")
 
     for box, name in (("chart", jde_exports.CHART_FILE), ("units", jde_exports.UNITS_FILE),

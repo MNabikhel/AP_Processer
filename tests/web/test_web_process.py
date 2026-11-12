@@ -646,7 +646,7 @@ def test_the_vendor_master_step_follows_the_vendor_list_and_the_numbers_set_whoe
     def step() -> str:
         return next(s for s in pilot_steps(store) if s[1] == VENDOR_STEP)[2]
 
-    assert step().startswith("on Vendors: import")
+    assert step().startswith("on JD Edwards files: load the supplier master")
     other.import_vendor_master([{"vendor_name": "Northwind Supply", "status": "active"}])
     assert step().startswith("1 vendor, but no address number")
     _plain(store, "UPDATE vendors SET erp_id = '1001' WHERE in_master = 1")

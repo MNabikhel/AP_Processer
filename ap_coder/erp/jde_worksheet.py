@@ -405,6 +405,11 @@ def _choice(q: Question, answer: str) -> str | None:
     return None
 
 
+NOT_A_WORKBOOK = ("This file could not be opened as an Excel workbook (.xlsx): download the worksheet again on this "
+                  "page, fill in its answers in Excel and load the file Excel saved.")  # fmt: skip
+EMPTY_FILE = "This file is empty (0 bytes): load the worksheet as Excel saved it, its answers filled in."
+
+
 def read(content: bytes, settings: jde_settings.JdeSettings) -> Result:
     """The settings with the worksheet's answers applied (a copy), what changed and what could not be used."""
     import openpyxl
@@ -418,8 +423,8 @@ def read(content: bytes, settings: jde_settings.JdeSettings) -> Result:
         return out
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
-    except Exception as exc:  # noqa: BLE001 - not an Excel file, or damaged
-        out.problems.append(f"The file could not be opened as an Excel workbook ({type(exc).__name__}).")
+    except Exception:  # noqa: BLE001 - not an Excel file, or damaged
+        out.problems.append(NOT_A_WORKBOOK if content else EMPTY_FILE)
         return out
     if "Questions" not in wb.sheetnames:
         out.problems.append("This is not AP Coder's JDE worksheet (it has no Questions sheet).")

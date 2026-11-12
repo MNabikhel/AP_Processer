@@ -45,6 +45,8 @@ from ap_coder.web.files import (
     SheetError,
     download,
     drop_upload,
+    first_rows,
+    jde_refusal,
     pick_refusal,
     picked_columns,
     read_upload,
@@ -113,7 +115,18 @@ def account_context(store: Store, table: str, file: str, sheet: str) -> dict[str
         "imp": imp,
         "imp_error": imp_error,
         "spec": SPECS[table],
+        "chart": _from_chart(store),
     }
+
+
+def _from_chart(store: Store) -> dict[str, int] | None:
+    """The chart of accounts and business units loaded on JD Edwards files, which give the GL accounts and the cost
+    centers (``chart.account_lists``): how many accounts and business units (None while no chart is loaded)."""
+    rows = store.chart_accounts()
+    if not rows:
+        return None
+    return {"accounts": sum(1 for row in rows if not row.is_header), "units": len(store.business_units()) or
+            len({row.bu for row in rows})}  # fmt: skip
 
 
 def tax_context(store: Store) -> dict[str, Any]:
@@ -272,6 +285,8 @@ def _bank_import(request: Request, form: Any) -> JSONResponse:
         _upload, df, _sheets = read_upload(token, sheet or None)
     except SheetError as exc:
         return refuse(str(exc))
+    if refusal := jde_refusal(first_rows(df)):  # (JD Edwards' own reports: on JD Edwards files only, B-2404)
+        return refuse(refusal)
     if df.empty:
         return refuse(NO_ROWS)
     picked = picked_columns(form, banks.ALIASES, list(df.columns), {})
@@ -374,6 +389,8 @@ def _accounts_import(request: Request, table: str, form: Any) -> JSONResponse:
         _upload, df, _sheets = read_upload(token, sheet or None)
     except SheetError as exc:
         return refuse(str(exc))
+    if refusal := jde_refusal(first_rows(df)):  # (JD Edwards' own reports: on JD Edwards files only, B-2404)
+        return refuse(refusal)
     if df.empty:
         return refuse(NO_ROWS)
     picked = picked_columns(form, {c.field: c.label for c in SPECS[table].columns}, list(df.columns), {})

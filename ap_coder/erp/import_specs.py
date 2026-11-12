@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import csv
 import io
+import re
+from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -84,6 +86,8 @@ class ImportSpec:
     no_template: str = ""
     fix: str = "Add the column to the file and load it again."
     jde: bool = False
+    card: str = ""  # a JD Edwards report's card on the JD Edwards files page, as the page numbers it
+    guess: bool = False  # its columns are guessed by a word in their header (the Accounts tables)
 
     @property
     def required(self) -> tuple[Column, ...]:
@@ -123,7 +127,7 @@ def _matcher(aliases: dict[str, Sequence[str]]) -> Callable[[list[str]], dict[st
 JDE_FIX = "Add the column to the grid in JD Edwards (every column shown), export it to Excel again and load that file."
 
 CHART = ImportSpec(
-    key="chart", title="Chart of accounts", jde=True, page="/jde-files#chart",
+    key="chart", card="1. Chart of accounts", title="Chart of accounts", jde=True, page="/jde-files#chart",
     purpose="Every account a line may be coded to, and which ones can be posted to.",
     source="JD Edwards' account master: list your company's accounts in its grid, every column shown, and export the "
            "grid to Excel (.xlsx).",
@@ -143,7 +147,7 @@ CHART = ImportSpec(
 )  # fmt: skip
 
 UNITS = ImportSpec(
-    key="units", title="Business units", jde=True, page="/jde-files#units",
+    key="units", card="2. Business units", title="Business units", jde=True, page="/jde-files#units",
     purpose="Which business units are open, what they are called and the company each belongs to.",
     source="JD Edwards' business unit master: export its grid to Excel (.xlsx), every column shown.",
     more="A newer export replaces the business units whole; what you changed by hand is kept.",
@@ -175,7 +179,7 @@ _SUPPLIER_ABOUT = {
 SUPPLIER_MASTER_NEEDS = ("vendor_name", "erp_id")  # (B-2275: the number is the supplier's identity)
 
 SUPPLIER_MASTER = ImportSpec(
-    key="supplier_master", title="Supplier master", jde=True, page="/jde-files#suppliers",
+    key="supplier_master", card="3. Suppliers", title="Supplier master", jde=True, page="/jde-files#suppliers",
     purpose="Each supplier's number, name and payment hold.",
     source="JD Edwards' supplier master: export its grid to Excel (.xlsx), every column shown.",
     report="JD Edwards' supplier master export", file_types=(XLSX, CSV), fix=JDE_FIX,
@@ -204,7 +208,7 @@ def _info_find(headers: list[str]) -> dict[str, str]:
 
 
 VENDOR_INFO = ImportSpec(
-    key="vendor_info", title="Vendor information list", jde=True, page="/jde-files#suppliers",
+    key="vendor_info", card="3. Suppliers", title="Vendor information list", jde=True, page="/jde-files#suppliers",
     purpose="Each supplier's tax ID, currency, payment terms, address and e-mail.",
     source="JD Edwards' vendor information list: export it to Excel (.xlsx) as it comes.",
     report="JD Edwards' vendor information list", file_types=(XLSX,), fix=JDE_FIX,
@@ -212,7 +216,8 @@ VENDOR_INFO = ImportSpec(
                       for f in (*vendor_info.COLUMNS, *vendor_info.SECOND)}, vendor_info.NEEDS,
                      {f: (vendor_info.LABELS.get(f, f.replace("_", " ").capitalize()), header)
                       for f, header in _INFO_HEADERS.items()} | {"business_unit_name": ("Business unit name",
-                                                                                         "Business Unit")},
+                                                                                         "Business Unit")}
+                     | {f"address{n}": (f"Address line {n}", f"Address Line {n}") for n in range(1, 5)},
                      _INFO_ABOUT),
     find=_info_find,
 )  # fmt: skip
@@ -240,7 +245,7 @@ def _journal_find(headers: list[str]) -> dict[str, str]:
 
 
 JOURNAL = ImportSpec(
-    key="journal", title="Last year's coding", jde=True, page="/jde-files#journal",
+    key="journal", card="4. Last year's coding", title="Last year's coding", jde=True, page="/jde-files#journal",
     purpose="How each supplier's invoices were coded before: what the suggestions learn from.",
     source="JD Edwards' Transaction Journal, report R09321: run it for document type PV (vouchers), your company and "
            "12 months of G/L dates, and save it as CSV.",
@@ -267,7 +272,8 @@ _VOUCHER_LABELS = {
 }  # fmt: skip
 
 VOUCHERS = ImportSpec(
-    key="vouchers", title="Vouchers already in JD Edwards", jde=True, page="/jde-files#vouchers",
+    key="vouchers", card="5. Invoices already in JD Edwards", title="Invoices already in JD Edwards", jde=True,
+    page="/jde-files#vouchers",
     purpose="The invoices entered in JD Edwards already: one entered again is caught as a duplicate.",
     source="JD Edwards' supplier ledger inquiry: export its grid (a row for each pay item) to Excel (.xlsx).",
     more="The pay items of one voucher are added up into it. Without the document company and type columns a "
@@ -322,7 +328,7 @@ def _accounts(key: str, title: str, noun: str, meals: bool) -> ImportSpec:
     if meals:
         hints["meals"] = MEALS_HEADERS
     return ImportSpec(
-        key=key, title=title, page="/accounts", file_types=SHEETS, report=f"a list of {noun}s",
+        key=key, title=title, page="/accounts", file_types=SHEETS, report=f"a list of {noun}s", guess=True,
         purpose=f"The {noun}s a line may be coded to.",
         source="Any list from your ERP or a spreadsheet, a row for each: its columns are picked on the page.",
         columns=_columns(hints, ("code",), {
@@ -480,10 +486,12 @@ class HeaderCheck:
     missing_optional: tuple[Column, ...] = ()
     none_of: tuple[Column, ...] = ()
     unused: tuple[str, ...] = ()
+    twice: tuple[Column, ...] = ()  # needed columns whose header the file has more than once: which is it?
+    guessed: tuple[str, ...] = ()  # fields found by a word in their header, not by a name read (``ImportSpec.guess``)
 
     @property
     def ok(self) -> bool:
-        return not self.missing and not self.none_of
+        return not self.missing and not self.none_of and not self.twice
 
     def rows(self) -> list[dict[str, Any]]:
         """Each column of the spec, required first: {"column", "header" (the file's, "" when missing)}."""
@@ -499,6 +507,11 @@ class HeaderCheck:
         load_it = f": load it under {where}" if where else ""
         if self.ok and other is not None:
             return f"Not loaded: this file is {other.report}, not {self.spec.report}{load_it}."
+        if self.twice and not self.missing and not self.none_of:
+            named = _and([f"“{self.found[c.field]}”" for c in self.twice])
+            return (f"Not loaded: this file has more than one column named {named}, so which one is the "
+                    f"{_and([_lower(c.label) for c in self.twice])} cannot be told. Delete the column that is not "
+                    "the export's own (or rename it), then load the file again.")  # fmt: skip
         named = [f"“{c.header}” ({_lower(c.label)})" for c in self.missing]
         if self.none_of:
             named.append(" or ".join(f"“{c.header}”" for c in self.none_of))
@@ -522,8 +535,20 @@ def _and(items: list[str]) -> str:
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
 
+_MANGLED = re.compile(r"(.+)\.\d+")  # how pandas names the second column of a name the file has twice ("Alpha Name.1")
+
+
+def _named(header: str, headers: set[str]) -> str:
+    """A header as the file names it: "Alpha Name" for pandas' "Alpha Name.1" when "Alpha Name" is there too."""
+    mangled = _MANGLED.fullmatch(header)
+    return mangled.group(1) if mangled and mangled.group(1) in headers else header
+
+
 def check(spec: ImportSpec, headers: Iterable[Any]) -> HeaderCheck:
-    """``headers`` (a file's column names, in any order) against ``spec``, as its reader finds them."""
+    """``headers`` (a file's column names, in any order) against ``spec``, as its reader finds them. A needed column
+    whose header the file has twice is ``twice`` (the reader would take the first, whichever it is), unless the spec
+    reads both (the vendor information list's two "Business Unit" columns); for a spec whose columns are guessed by a
+    word, the fields found by no name it reads are ``guessed``."""
     named = [_text(h) for h in headers]
     found = spec.find([h for h in named if h]) if any(named) else {}
     used = set(found.values())
@@ -531,7 +556,14 @@ def check(spec: ImportSpec, headers: Iterable[Any]) -> HeaderCheck:
     optional = tuple(c for c in spec.optional if c.field not in found)
     none_of = tuple(spec.column(f) for f in spec.one_of) if spec.one_of and not set(spec.one_of) & set(found) else ()
     unused = tuple(h for h in named if h and h not in used)
-    return HeaderCheck(spec, tuple(named), found, missing, optional, none_of, unused)
+    present = set(named)
+    times = Counter(header_key(_named(h, present)) for h in named if h)
+    taken = Counter(header_key(_named(h, present)) for h in found.values())
+    twice = tuple(c for c in spec.required if c.field in found
+                  and times[key := header_key(_named(found[c.field], present))] > taken[key])  # fmt: skip
+    guessed = tuple(f for f, h in found.items() if spec.guess and header_key(h) not in {
+        header_key(n) for n in (spec.column(f).header, *spec.column(f).names) if "…" not in n})  # fmt: skip
+    return HeaderCheck(spec, tuple(named), found, missing, optional, none_of, unused, twice, guessed)
 
 
 def identify(headers: Iterable[Any], keys: Iterable[str] = JDE_REPORTS) -> ImportSpec | None:
@@ -543,6 +575,66 @@ def identify(headers: Iterable[Any], keys: Iterable[str] = JDE_REPORTS) -> Impor
     checks = [check(SPECS[key], named) for key in keys]
     best = max(checks, key=lambda c: (len(c.spec.required) - len(c.missing), c.ok, len(c.found)), default=None)
     return best.spec if best is not None and best.ok and best.found else None
+
+
+# --- JD Edwards' own reports, told by the headers only JD Edwards writes --------------------------------------------
+
+# Headers JD Edwards' grid of each report writes and another system's list does not (none a column of another report
+# here), compared as ``header_key``; besides its reports, the grids of one voucher's screens, which nothing loads.
+JDE_MARKS: dict[str, tuple[str, ...]] = {
+    "chart": ("Object Account", "L D", "P E", "Account ID", "Business Unit Description", "M C", "Taxable Account",
+              "Posting Edit Code", "Level of Detail", "WCI Code", "Rt Cd"),
+    "units": ("Job Number", "Job Name", "BU Ty", "Job Sts", "Related BU", "Related Bu Description",
+              "Address Number1"),
+    "supplier_master": ("Address Number", "Alpha Name", "Hold Payment Code", "Individual Tax ID", "Long Address",
+                        "Industry Class", "Hold Orders Code", "C M"),
+    "vendor_info": ("Internal Supplier Number", "Complete Address", "City - CTY1", "Cur Cod", "Check/ Itm Date",
+                    "JDE email address", "Total Payment Count", "Pmt Trm", "Payment Terms - A/P", "DUNS Number"),
+    "vouchers": ("Doc Co", "Pay Item", "Supplier Number Desc", "Pay Stat", "Pay Status Code", "Batch Number",
+                 "Batch Type", "Batch Type Desc", "Foreign Open", "Doc Co (PO)", "PO Doc Type", "Pay Ext"),
+    "gl_distribution": ("Explanation -Remark-", "Sub- ledger", "Subledger Description", "JE Line Number",
+                        "Tax ExpCode", "TaxRate Area", "Track Taxes", "Alternate Home Business Unit",
+                        "Employee Pool Grouping Code", "Job Pool Grouping Code", "Short Item No"),
+    "pay_items": ("Pymt Terms", "Payee Number", "G/L Bank Account Number", "Amount To Distribute",
+                  "Domestic Gross Amount", "Non-Recoverable Tax Amount", "Adjust Doc Ty", "Hdl Cod",
+                  "Foreign Gross Amount", "G/L Credit Account ID"),
+    "payment_history": ("Doc Pay Item", "Payment Amount", "Discount Taken", "Doc Type-M", "Exchange Rate"),
+}  # fmt: skip
+MARKS = 3  # a file with this many of a report's marks is that report, whichever columns it lacks
+# The grids of one voucher in JD Edwards, as a message names them.
+VOUCHER_GRIDS = {
+    "gl_distribution": "the G/L distribution of one voucher (its account lines)",
+    "pay_items": "the pay items of one voucher",
+    "payment_history": "the payment history of one voucher",
+}
+_LEDGER = ("JD Edwards' vouchers are read from the Supplier Ledger Inquiry's grid, a row for each pay item of every "
+           "voucher: export that grid to Excel")  # fmt: skip
+
+
+def recognise(headers: Iterable[Any]) -> str | None:
+    """Which of JD Edwards' reports (a key of ``SPECS``) or a voucher's grids (``VOUCHER_GRIDS``) a file with these
+    column names is, whichever columns it lacks: the one with the most of its marks (``JDE_MARKS``), when it has
+    ``MARKS`` of them, or has every column it needs (``identify``) and two of them. None for any other list: a vendor
+    list of another system has a name and a number too, a cost center list a business unit."""
+    named = [_text(h) for h in headers]
+    keys = {header_key(h) for h in named if h}
+    counts = {key: sum(header_key(mark) in keys for mark in marks) for key, marks in JDE_MARKS.items()}
+    best = max(counts, key=lambda key: counts[key])
+    if counts[best] >= MARKS:
+        return best
+    whole = identify(named)
+    return whole.key if whole is not None and counts.get(whole.key, 0) >= 2 else None
+
+
+def elsewhere(key: str, card: str = "", verb: str = "loaded") -> str:
+    """Why a file that is JD Edwards' report ``key`` (``recognise``) is not ``verb`` here: what it is and the card
+    of the JD Edwards files page it is loaded on (``card``: the card it was dropped on, when it is one)."""
+    if key in VOUCHER_GRIDS:
+        load = "here" if card == "vouchers" else f"on the JD Edwards files page, under {VOUCHERS.card}"
+        what = f"this file is {VOUCHER_GRIDS[key]}, from a voucher's screen in JD Edwards"
+        return f"Not {verb}: {what}. {_LEDGER} and load it {load}."
+    spec = SPECS[key]
+    return f"Not {verb}: this file is {spec.report}. It is loaded on the JD Edwards files page, under {spec.card}."
 
 
 def header_row(rows: Sequence[Sequence[Any]], specs: Iterable[ImportSpec]) -> int:

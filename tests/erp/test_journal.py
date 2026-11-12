@@ -246,7 +246,8 @@ def test_the_totals_and_the_control_total(journal):
     assert (totals.file_debit, totals.file_credit) == (6397.25, 5897.25)  # the Grand Total row
     assert not totals.differ
     assert journal.notes[-1] == (
-        "The lines read add up to the report's Grand Total: debits 6,397.25 and credits 5,897.25."
+        "No row is missing: the lines read match the report's Grand Total row (debits 6,397.25 and credits "
+        "5,897.25, as the report prints them)."
     )
 
 
@@ -524,3 +525,16 @@ def test_an_expense_beside_others_is_not_taken_for_tax():
     objects, tax, why = jr.suggest_objects(as_csv(rows_of(found)))
     assert objects == jr.PayableObjects((TRADE,)) and tax == ()
     assert why[0].startswith(f"Trade payable: object {TRADE} closes 12 of 12 vouchers") and len(why) == 2
+
+
+def test_a_header_row_without_the_remark_column_is_refused_naming_it_never_read_by_position():
+    """B-2407: a header naming Account Number but not Remark was no header at all: the file was read by the report's
+    positions, the supplier numbers taken for names and no remark kept. Read by position only with no header."""
+    rows = rows_of(vouchers())
+    at = next(i for i, row in enumerate(rows) if "             Remark" in row)
+    remark = rows[at].index("             Remark")
+    cut = [[cell for i, cell in enumerate(row) if i != remark] for row in rows]
+    assert jr.looks_like_journal(as_csv(cut))
+    with pytest.raises(ValueError, match="no “Remark” column"):
+        read(as_csv(cut))
+    assert read(as_csv(rows_of(vouchers(), header=False))).vouchers  # (no header row: the report's positions)

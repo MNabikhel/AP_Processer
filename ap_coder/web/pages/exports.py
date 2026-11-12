@@ -65,6 +65,8 @@ from ap_coder.web.files import (
     SheetError,
     download,
     drop_upload,
+    first_rows,
+    jde_refusal,
     pick_refusal,
     picked_columns,
     read_upload,
@@ -368,7 +370,7 @@ def exports_page(
     if register:
         try:
             upload, df, sheets = read_upload(register, sheet or None)
-            reg = spec_sheet(register, upload, df, sheets, sheet, ERP_REGISTER)
+            reg = spec_sheet(register, upload, df, sheets, sheet, ERP_REGISTER, accept=REGISTER_JDE)
             found = jde_vouchers(store, df)  # JD Edwards' voucher list: read as it comes, no column to pick
             reg["vouchers"] = registers.vouchers_said(found[1]) if found else ""
             if found:  # (its columns checked as JD Edwards files checks them)
@@ -419,6 +421,8 @@ def exports_page(
         delimiters=export_layout.DELIMITERS,
         csv_preview=layout_preview(store, current, ready),
         register_count=store.erp_register_count(),
+        # the list's one name, as JD Edwards files' card 5 names it (another system's: "your ERP")
+        register_name="Invoices already in " + ("JD Edwards" if jde_shown(store) else "your ERP"),
         reg=reg,
         reg_error=reg_error,
         register_spec=ERP_REGISTER,
@@ -619,9 +623,12 @@ def _preview_layout(request: Request, form: Any) -> JSONResponse:
 # --- Invoices already in the ERP -----------------------------------------------------------------------------------
 
 
+REGISTER_JDE = ("vouchers",)  # JD Edwards' report the register reads as it comes, whole (B-2406)
+
+
 @router.post("/exports/register/upload")
 async def register_upload(request: Request, file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
-    token, problem = await receive_sheet(file)
+    token, problem = await receive_sheet(file, accept=REGISTER_JDE)
     if problem:
         return refuse(problem)
     return done(request, f"/exports?register={token}#register")
@@ -676,6 +683,8 @@ def _register_import(request: Request, form: Any) -> JSONResponse:
         _upload, df, _sheets = read_upload(token, sheet or None)
     except SheetError as exc:
         return refuse(str(exc))
+    if refusal := jde_refusal(first_rows(df), REGISTER_JDE):
+        return refuse(refusal)
     if df.empty:
         return refuse(NO_ROWS)
     if found := jde_vouchers(store, df):

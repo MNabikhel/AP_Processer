@@ -4,13 +4,20 @@
 {% import "_import.html" as imp with context %}
 {% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">
 <link rel="stylesheet" href="{{ static_url('/static/imports.css') }}">{% endblock %}
-{# What the load just made said, a line each. #}
+{# What the load just made said: the line that says what was done, the next file to load, the rest folded. #}
 {% macro what_was_said(card) %}
 {% if said and said.card == card %}
-<div class="flash ok" role="status" id="{{ card }}-said"><span class="ms" aria-hidden="true">task_alt</span>
-  <div><ul>{% for line in said.lines %}<li>{{ line }}</li>{% endfor %}</ul></div></div>
+<div class="flash ok imp-done" role="status" id="{{ card }}-said"><span class="ms" aria-hidden="true">task_alt</span>
+  <div class="stack">
+    <p class="imp-done-head"><b>{{ said.head }}</b></p>
+    <p class="imp-next">{% if said.next %}Next: <a href="#{{ said.next.card }}">{{ said.next.name }}</a>{% else %}Every file is loaded.{% if can("/process", "GET") %} Next: <a href="/process">import your first invoices</a>.{% endif %}{% endif %}</p>
+    {% if said.more %}<details class="imp-more"><summary>All it said ({{ said.more | length | plural("more line") }})</summary>
+      <ul class="imp-said">{% for line in said.more %}<li>{{ line }}</li>{% endfor %}</ul></details>{% endif %}
+  </div></div>
 {% endif %}
 {% endmacro %}
+{# What Load does, right above it: what it replaces or adds to (``load``: jde_files._load_words). #}
+{% macro load_then(card) %}{% if load[card].then %}<p class="imp-then" id="{{ card }}-then"><span class="ms" aria-hidden="true">info</span><span>{{ load[card].then }}</span></p>{% endif %}{% endmacro %}
 {# A card's head: its number, title, what it is for, and whether it is loaded. #}
 {% macro card_head(n, card, title, purpose) %}
 <div class="imp-head">
@@ -54,9 +61,22 @@
     </li>
     {% endfor %}
   </ol>
+  <details class="imp-more"><summary>Why this order</summary><p class="muted">{{ order }}</p></details>
+  {% if not can("/jde-files/chart/upload") %}<p class="muted">An Admin loads these files.</p>{% endif %}
+  {% if upload_gone %}{{ ui.empty_note("That upload is no longer here", " (uploads are kept for an hour). Upload the file again.", "warning") }}{% endif %}
+</section>
+
+<section class="card stack" id="chart">
+  {{ card_head(1, "chart", "Chart of accounts", specs.chart[0].purpose) }}
+  {{ what_was_said("chart") }}
+  {{ loaded_now("chart", loaded.chart, "account", last.chart) }}
+  {% if loaded.chart %}
+  <p class="muted" id="chart-lists">From these accounts, GL accounts &amp; tax lists {{ lists.gl | plural("GL account") }}
+    (each object.subsidiary that may be posted to, once) and {{ lists.cc | plural("cost center") }} (the business units
+    that are active and have such an account).</p>
   {# The chart does not say which accounts are meals accounts: ticked here with one click, or one by one. #}
   {% if meals %}
-  <dl class="apc-kv imp-extra">
+  <dl class="apc-kv imp-extra" id="meals">
     <dt>Meals accounts</dt>
     <dd id="meals-accounts">
       {% if meals.ticked %}
@@ -79,17 +99,7 @@
     </dd>
   </dl>
   {% endif %}
-  <details class="imp-more"><summary>Why this order</summary><p class="muted">{{ order }}</p></details>
-  {% if not can("/jde-files/chart/upload") %}<p class="muted">An Admin loads these files.</p>{% endif %}
-  {% if upload_gone %}{{ ui.empty_note("That upload has expired.", " Upload the file again.", "warning") }}{% endif %}
-</section>
-
-<section class="card stack" id="chart">
-  {{ card_head(1, "chart", "Chart of accounts", specs.chart[0].purpose) }}
-  {{ what_was_said("chart") }}
-  {{ loaded_now("chart", loaded.chart, "account", last.chart) }}
-  {% if loaded.chart %}
-  <details class="imp-more" {% if said and said.card == "chart" %}open{% endif %}><summary>What the chart holds</summary>
+  <details class="imp-more"><summary>What the chart holds</summary>
     <p class="muted">On {{ chart_units | plural("business unit") }}. A newer export replaces the chart whole.</p>
     <ul id="chart-tally">{% for line in tally %}<li>{{ line }}</li>{% endfor %}</ul>
   </details>
@@ -98,10 +108,13 @@
   {% if looks.chart %}
   {% call imp.preview(looks.chart, "chart") %}
     {% if can("/jde-files/chart/load") %}
-    <form method="post" action="/jde-files/chart/load" class="row" data-busy="Loading the chart (10 to 20 seconds)…" data-long>
+    <form method="post" action="/jde-files/chart/load" class="stack" data-busy="Loading the chart (10 to 20 seconds)…" data-long>
       <input type="hidden" name="token" value="{{ looks.chart.token }}">
-      {% if not looks.chart.problem %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">account_tree</span>Load {{ looks.chart.count | plural("row") }} as the chart</button>{% endif %}
+      {{ load_then("chart") }}
+      <div class="row">
+      {% if not looks.chart.problem %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">account_tree</span>{{ load.chart.button }}</button>{% endif %}
       {{ cancel("chart") }}
+      </div>
     </form>
     {% endif %}
   {% endcall %}
@@ -140,10 +153,13 @@
   {% if looks.units %}
   {% call imp.preview(looks.units, "units") %}
     {% if can("/jde-files/units/load") %}
-    <form method="post" action="/jde-files/units/load" class="row" data-busy="Loading…" data-long>
+    <form method="post" action="/jde-files/units/load" class="stack" data-busy="Loading…" data-long>
       <input type="hidden" name="token" value="{{ looks.units.token }}">
-      {% if not looks.units.problem %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">domain</span>Load these business units</button>{% endif %}
+      {{ load_then("units") }}
+      <div class="row">
+      {% if not looks.units.problem %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">domain</span>{{ load.units.button }}</button>{% endif %}
       {{ cancel("units") }}
+      </div>
     </form>
     {% endif %}
   {% endcall %}
@@ -169,15 +185,15 @@
   {% call imp.preview(look, "suppliers") %}
     {% if look.info %}<ul class="imp-said">{% for line in look.said %}<li>{{ line }}</li>{% endfor %}</ul>
     {% elif not look.problem %}<p>{{ look.count | plural("row") }} read: {{ look.kept | plural("supplier") }} to load{% if look.left_out %}, {{ look.left_out | plural("row") }} left out (no name){% endif %}.</p>{% endif %}
+    {{ load_then("suppliers") }}
     {% if can("/jde-files/suppliers/load") %}
     <div class="row">
       {% if not look.problem %}
       <form method="post" action="/jde-files/suppliers/load" data-busy="Loading…" data-long>
         <input type="hidden" name="token" value="{{ look.token }}">
-        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">storefront</span>Load these suppliers</button>
+        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">storefront</span>{{ load.suppliers.button }}</button>
       </form>
       {% endif %}
-      {% if look.other and not look.info %}<a class="btn" href="/vendors?file={{ look.token }}#import">Pick the columns on Vendors</a>{% endif %}
       {{ cancel("suppliers") }}
     </div>
     {% endif %}
@@ -199,11 +215,7 @@
   {% if journal %}
   {% call imp.preview(journal, "journal") %}
     {% if journal.positions %}<p class="muted">The file has no header row: its columns are read where the report prints them.</p>{% endif %}
-    {% if journal.said %}
-    <ul class="imp-said">{% for a in journal.said %}
-      <li>{{ a.text }}{% if a.sub %}<ul>{% for b in a.sub %}<li>{{ b.text }}{% if b.sub %}<ul>{% for c in b.sub %}<li class="apc-muted">{{ c.text }}</li>{% endfor %}</ul>{% endif %}</li>{% endfor %}</ul>{% endif %}</li>
-    {% endfor %}</ul>
-    {% endif %}
+    {{ imp.journal_brief(journal) }}
     {% if journal.note and journal.problem %}<p><b>{{ journal.note }}.</b></p>{% endif %}
     {% if can("/jde-files/journal/load") %}
     <form method="post" action="/jde-files/journal/load" class="stack" data-busy="Loading…" data-long>
@@ -211,15 +223,17 @@
       {% if journal.state == "differs" %}
       <label class="check"><input type="checkbox" name="anyway" value="1" required> Load it though its lines do not add up to the report's Grand Total</label>
       {% endif %}
+      {{ load_then("journal") }}
       <div class="row">
         {% if journal.read and journal.state not in ("same_file", "refused") %}
-        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">school</span>Load this journal</button>
+        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">school</span>{{ load.journal.button or "Load this journal" }}</button>
         {% endif %}
         {% if journal.read %}<a class="btn" href="/learning?journal={{ journal.token }}#history">Change the payable or tax objects on Learning</a>{% endif %}
         {{ cancel("journal") }}
       </div>
     </form>
     {% endif %}
+    {{ imp.journal_details(journal) }}
   {% endcall %}
   {% elif can("/jde-files/journal/upload") %}
   {{ imp.file_box("/jde-files/journal/upload", specs.journal[0].accept, "Report R09321 saved as CSV (.csv), or as Unicode Text (.txt)", "Reading…") }}
@@ -244,7 +258,7 @@
 </section>
 
 <section class="card stack" id="vouchers">
-  {{ card_head(5, "vouchers", "Vouchers already in JD Edwards", specs.vouchers[0].purpose) }}
+  {{ card_head(5, "vouchers", "Invoices already in JD Edwards", specs.vouchers[0].purpose) }}
   {{ what_was_said("vouchers") }}
   {{ loaded_now("vouchers", loaded.vouchers, "voucher", last.vouchers) }}
   {{ report(specs.vouchers[0]) }}
@@ -256,10 +270,9 @@
     {% if can("/jde-files/vouchers/load") %}
     <form method="post" action="/jde-files/vouchers/load" class="stack" data-busy="Loading…" data-long>
       <input type="hidden" name="token" value="{{ look.token }}">
-      {% if not look.problem and loaded.vouchers %}<label class="check"><input type="checkbox" name="replace" value="1"> Replace the list loaded now (otherwise these vouchers are added to it)</label>{% endif %}
+      {% if not look.problem and loaded.vouchers %}<label class="check"><input type="checkbox" name="replace" value="1"> Replace the list loaded now, {{ loaded.vouchers | plural("voucher") }} (otherwise these are added to it)</label>{% endif %}
       <div class="row">
-        {% if not look.problem %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">receipt_long</span>Load these vouchers</button>{% endif %}
-        {% if look.other %}<a class="btn" href="/exports?register={{ look.token }}#register">Pick its columns on Exports</a>{% endif %}
+        {% if not look.problem %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">receipt_long</span>{{ load.vouchers.button }}</button>{% endif %}
         {{ cancel("vouchers") }}
       </div>
     </form>
@@ -271,7 +284,7 @@
   {% elif can("/jde-files/vouchers/upload") %}
   {{ imp.file_box("/jde-files/vouchers/upload", specs.vouchers[0].accept, "The supplier ledger inquiry's grid, an Excel workbook (.xlsx)", "Reading…") }}
   {% endif %}
-  <p class="muted">The list is cleared on <a href="/exports#register">Exports, under Invoices already in the ERP</a>.</p>
+  <p class="muted">The list is cleared on <a href="/exports#register">Exports, under Invoices already in JD Edwards</a>.</p>
 </section>
 </div>
 {% endblock %}

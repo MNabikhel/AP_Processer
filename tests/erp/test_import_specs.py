@@ -280,3 +280,39 @@ def test_the_worksheet_has_no_blank_template_and_says_why():
 
 def _sheet_of(data: bytes) -> list[list[str]]:
     return [["" if v is None else str(v) for v in row] for row in chart_file.read_rows(data)]
+
+
+def test_a_needed_column_whose_header_is_there_twice_is_refused_naming_it(exports):
+    """B-2408: the first of two columns named as a needed one was read, whichever it was (a junk "Business Unit"
+    before the chart's own: every account on business unit "ZZZ")."""
+    headers = _sheet(exports / made.CHART_FILE)[0]
+    doubled = specs.check(SPECS["chart"], ["Business Unit", *headers])
+    assert not doubled.ok and [c.field for c in doubled.twice] == ["business_unit"]
+    assert "more than one column named “Business Unit”" in doubled.problem()
+    master = _sheet(exports / made.SUPPLIERS_FILE)[0]
+    mangled = specs.check(SPECS["supplier_master"], [*master, "Alpha Name.1"])  # (as pandas names the second)
+    assert [c.field for c in mangled.twice] == ["vendor_name"] and "“Alpha Name”" in mangled.problem()
+    info = specs.check(SPECS["vendor_info"], _sheet(exports / made.VENDOR_INFO_FILE)[0])
+    assert info.ok and not info.twice  # (the list's own two "Business Unit" columns, both read)
+
+
+def test_jd_edwards_reports_are_told_by_their_own_headers_and_other_lists_are_not(exports):
+    """B-2404: what a page of any ERP's lists refuses as JD Edwards' (``recognise``), with a column missing too;
+    never a list of another system with a name, a number, a code or a business unit."""
+    for name, key in ((made.CHART_FILE, "chart"), (made.UNITS_FILE, "units"), (made.SUPPLIERS_FILE, "supplier_master"),
+                      (made.VENDOR_INFO_FILE, "vendor_info"), (made.HEADERS_FILE, "vouchers"),
+                      ("voucher_split_gl_distribution.xlsx", "gl_distribution"),
+                      ("voucher_split_pay_items.xlsx", "pay_items"),
+                      ("voucher_split_payment_history.xlsx", "payment_history")):  # fmt: skip
+        headers = _sheet(exports / name)[0]
+        assert specs.recognise(headers) == key, name
+        needed = SPECS[key].required[0].header if key in SPECS else headers[0]
+        assert specs.recognise([h for h in headers if h != needed]) == key, (name, needed)
+    for key in ("gl_accounts", "cost_centers", "bank_accounts", "vendor_master", "purchase_orders", "statements",
+                "erp_register", "past_coding", "gl_map"):  # fmt: skip
+        assert specs.recognise([c.header for c in SPECS[key].columns]) is None, key
+    for headers in (["Code", "Name"], ["Cost Center", "Description"], ["Vendor Name", "Vendor ID", "Tax ID"],
+                    ["Business Unit", "Object Account", "Subsidiary", "GL Code"],
+                    ["Document Number", "Supplier Number", "Gross Amount", "Invoice Number"]):  # fmt: skip
+        assert specs.recognise(headers) is None, headers
+    assert specs.recognise(["Alpha Name", "Address Number"]) == "supplier_master"  # (every column it needs)

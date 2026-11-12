@@ -87,6 +87,14 @@
 .imp-rows td, .imp-rows th {white-space: nowrap; max-width: 18rem; overflow: hidden; text-overflow: ellipsis;}
 .imp-journals td {white-space: normal; overflow-wrap: anywhere;}
 .imp-said {margin: 0; padding-left: 18px; font-size: 13.5px;}
+.imp-brief {margin: 0; padding-left: 18px; font-size: 13.5px; display: flex; flex-direction: column; gap: 2px;}
+.imp-brief li:first-child {font-weight: 500;}
+/* What Load replaces or adds to, right above it; what a load did, its next step */
+.imp-then {display: flex; gap: 6px; align-items: flex-start; margin: 0; font-size: 13px; color: var(--lg-text);}
+.imp-then > .ms {font-size: 16px; margin-top: 1px; color: var(--lg-accent); flex: none;}
+.imp-done .stack {gap: 4px; min-width: 0;}
+.imp-done p {margin: 0;}
+.imp-next a {font-weight: 600;}
 .imp-secondary {align-self: stretch; border-top: 1px solid var(--lg-hairline); padding-top: 12px;}
 .imp-secondary > summary {display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 600; font-size: 13.5px;}
 .imp-secondary > summary .muted {font-weight: 400;}

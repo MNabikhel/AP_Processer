@@ -63,10 +63,12 @@ def _left_out(skipped: dict[str, int]) -> list[str]:
     return [f"  Left out ({why}): {n:,}." for why, n in skipped.items()]
 
 
-def _changed(name: str, result: dict[str, Any]) -> str:
+def _changed(name: str, result: dict[str, Any], rows: str = "") -> str:
+    """What an import changed; ``rows``: what it counts, when its rows are not all the thing named (the chart's are
+    its accounts and each business unit's title row)."""
     if not (result["added"] or result["updated"] or result["removed"]):
         return f"{name}: the same as already imported."
-    return f"{name}: {result['added']:,} added, {result['updated']:,} changed, {result['removed']:,} removed."
+    return f"{name}: {result['added']:,} {rows}added, {result['updated']:,} changed, {result['removed']:,} removed."
 
 
 def _units_read(read: chart.Rows) -> list[str]:
@@ -185,7 +187,7 @@ def import_files(store: Store, chart_source: str | Path | bytes | None = None,
             said += [*_units_read(units), _changed("Business units", results[-1])]
         if rows is not None:
             results.append(store.import_chart(rows.rows, actor=actor, without=rows.without))
-            said += [*_chart_read(rows, store.chart_settings()), _changed("Chart of accounts", results[-1])]
+            said += [*_chart_read(rows, store.chart_settings()), _changed("Chart of accounts", results[-1], "rows ")]
     return said + lists_lines(results) + tally_lines(store)
 
 

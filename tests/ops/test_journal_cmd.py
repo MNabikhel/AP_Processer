@@ -52,7 +52,8 @@ def test_the_small_journal_is_loaded_and_what_was_read_is_said(tmp_path, capsys,
         "1 voucher where the debits and the credits are not the same amount (kept and marked): row 12 (740075 "
         "WINDROW WIRELESS CORP.).",
         "1 voucher with a line that has an amount in both the debit and the credit column (kept and marked): row 12.",
-        "The lines read add up to the report's Grand Total: debits 383,307.80 and credits 383,423.04.",
+        "No row is missing: the lines read match the report's Grand Total row (debits 383,307.80 and credits "
+        "383,423.04, as the report prints them).",
         "The payable and tax lines are JD Edwards' own, not AP's coding. They are told by their object:",
         "  The trade payable object: 2110 (worked out from this file).",
         "    Object 2110 closes 103 of 119 vouchers that balance (its lines alone are the other side of the coding "

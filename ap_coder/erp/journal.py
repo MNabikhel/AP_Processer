@@ -182,25 +182,39 @@ def _rows(data: bytes) -> list[list[str]]:
         raise ValueError("This file could not be read as a CSV file. Save the report as CSV and try again.") from exc
 
 
+_NEEDED = ("account", "remark")  # the header's columns a journal is not read without
+HEADER_NAMES = 3  # the header's words a row names, one of ``_NEEDED`` among them, to be the header without the other
+
+
 def _positions(rows: list[list[str]]) -> tuple[dict[str, int], int | None]:
     """({field: its column}, the header row's index): the header is the first row naming the account number and the
-    remark, and each column is where its words are. Two columns are headed "Number" ("Document" and "Address" are
-    on the row above): the one before the account is the document type's, the one after it the supplier number's.
-    With no header: the standard positions, and None."""
+    remark, or one of them and others of the header's words (``HEADER_NAMES`` in all), and each column is where its
+    words are (the one of ``_NEEDED`` it lacks: ``header_lacks``). Two columns are headed "Number" ("Document" and
+    "Address" are on the row above): the one before the account is the document type's, the one after it the
+    supplier number's. With no header: the standard positions, and None."""
     for at, row in enumerate(rows[:HEADER_ROWS]):
         keys = [header_key(cell) for cell in row]
-        if HEADER_WORDS["account"] not in keys or HEADER_WORDS["remark"] not in keys:
-            continue
         found = {name: keys.index(word) for name, word in HEADER_WORDS.items() if word in keys}
+        named = set(_NEEDED) & set(found)
+        if not named or len(named) < len(_NEEDED) and len(found) < HEADER_NAMES:
+            continue
         numbers = [i for i, key in enumerate(keys) if key in _NUMBER_HEADERS]
-        before = [i for i in numbers if i < found["account"]]
-        after = [i for i in numbers if i > found["account"]]
+        account = found.get("account", POSITIONS["account"])
+        before = [i for i in numbers if i < account]
+        after = [i for i in numbers if i > account]
         if before:
             found["doc_type"] = before[0]
         if after:
             found["supplier"] = after[-1]
         return {**POSITIONS, **found}, at
     return dict(POSITIONS), None
+
+
+def header_lacks(row: list[str]) -> list[str]:
+    """The columns of ``_NEEDED`` the header row ``row`` does not name, as the report prints them ("Remark")."""
+    keys = {header_key(cell) for cell in row}
+    return [{"account": "Account Number", "remark": "Remark"}[name] for name in _NEEDED
+            if HEADER_WORDS[name] not in keys]  # fmt: skip
 
 
 def _cell(row: list[str], at: int) -> str:
@@ -261,6 +275,10 @@ def read_journal(data: bytes, *, payable_objects: PayableObjects, tax_objects: I
     Raises ValueError when the file is not a CSV at all."""
     rows = _rows(data)
     pos, header = _positions(rows)
+    if header is not None and (lacks := header_lacks(rows[header])):  # (never read by position: B-2407)
+        named = " and ".join(f"“{name}”" for name in lacks)
+        raise ValueError(f"The report's header row has no {named} column{'s' if len(lacks) > 1 else ''}, so its "
+                         "lines cannot be read: run report R09321 again and save it as CSV as it comes.")  # fmt: skip
     start = 0 if header is None else header + 1
     intercompany = frozenset(clean(o) for o in payable_objects.intercompany)
     kinds = {clean(o): TAX for o in tax_objects}
@@ -373,7 +391,7 @@ def _control_note(totals: Totals) -> str:
             f"Total row: debits {totals.file_debit:,.2f} and credits {totals.file_credit:,.2f}. Rows are missing "
             "from this file or could not be read."
         )
-    return f"The lines read add up to the report's Grand Total: {read}."
+    return f"No row is missing: the lines read match the report's Grand Total row ({read}, as the report prints them)."
 
 
 def journal_of(vouchers: Iterable[Voucher]) -> Journal:

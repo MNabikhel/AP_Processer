@@ -934,3 +934,24 @@ def test_names_typed_in_are_cleaned_as_the_who_page_cleans_them(client, store):
     with store._conn() as conn:
         names = [r[0] for r in conn.execute("SELECT display_name FROM vendors WHERE display_name LIKE 'A%'")]
     assert names and all("\x00" not in n and "\u202e" not in n and len(n) <= 120 for n in names)
+
+
+def test_with_a_chart_loaded_gl_accounts_say_where_they_come_from_and_replace_warns_first(chart_company_client,
+                                                                                            chart_company):  # fmt: skip
+    """B-2423: GL accounts & tax said nothing of the chart of accounts loaded on JD Edwards files (230 accounts there,
+    117 GL accounts here, 20 business units there and 14 cost centers here, unexplained), and a two-row list imported
+    with "Replace my current list" took the GL accounts from 117 to 2 without a word of warning."""
+    client, store = chart_company_client, chart_company.store
+    gl, cc = len(store.list_accounts("gl_accounts")), len(store.list_accounts("cost_centers"))
+    accounts = sum(1 for row in store.chart_accounts() if not row.is_header)
+    page = re.sub(r"\s+", " ", client.get("/accounts?tab=gl").text)
+    assert f"These {gl:,} GL accounts come from the chart of accounts loaded on" in page
+    assert f"({accounts:,} accounts on {len(store.business_units()):,} business units)" in page
+    assert f"These {cc:,} cost centers come from the" in re.sub(r"\s+", " ", client.get("/accounts?tab=cc").text)
+    two = xlsx([["GL Code", "Account Name"], ["6010", "Paper"], ["6020", "Ink"]])
+    page = upload(client, "/accounts/gl_accounts/upload", "two.xlsx", two)
+    form = page.text.split('id="pick-gl_accounts"', 1)[1].split("</form>", 1)[0]
+    assert f"data-replace-confirm=\"Replace the {gl:,} GL accounts listed now with this file's?" in form
+    assert f"The chart of accounts loaded on JD Edwards files gives the {gl:,} GL accounts listed now" in form
+    assert f"Replace my current list: of the {gl:,} GL accounts listed now, those not in this file are removed" in form
+    assert "Load GL accounts</button>" in form

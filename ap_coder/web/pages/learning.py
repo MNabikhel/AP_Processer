@@ -271,7 +271,10 @@ def _journal_context(store: Store, token: str | None, q: Any) -> dict[str, Any]:
         context["journal"] = {
             "token": token, "name": name, "said": _outline(seen.said), "state": seen.state, "problem": seen.problem,
             "note": JOURNAL_NOTES.get(seen.state, ""), "labels": JOURNAL_LABELS, "read": seen.journal is not None,
-            "objects": {key: ", ".join(seen.objects[key]) for key in JOURNAL_LABELS},
+            "objects": {key: ", ".join(seen.objects[key]) for key in JOURNAL_LABELS}, "brief": seen.brief,
+            "size": f"{ui.plural(seen.journal.totals.lines, 'line')} on "
+                    f"{ui.plural(seen.journal.totals.vouchers, 'voucher')}" if seen.journal else "",
+            "already": seen.state == journal_cmd.SAME_FILE,
         }  # fmt: skip
     return context
 
@@ -291,7 +294,6 @@ def _history_context(store: Store, token: str | None, sheet: str | None) -> dict
         head = pd.DataFrame(rows[:PREVIEW_ROWS], columns=columns)  # (the choices and the first rows: spec_sheet)
         picked = spec_sheet(token, Upload(name, b""), head, list(sheets), sheet, PAST_CODING)
         picked["count"] = picked["look"]["count"] = len(rows)
-        picked["look"] |= {"done": "taught", "go": "teach"}
         context["upload"] = {"token": token, "name": name, "sheets": list(sheets), "sheet": sheet, "rows": len(rows),
                              "s": picked}  # fmt: skip
     return context

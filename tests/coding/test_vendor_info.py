@@ -220,3 +220,24 @@ def test_what_the_list_gives_is_seen_with_the_suppliers_loaded_under_readable_he
         "900001", "70412 9930 RT0001", "CAD", "B3J 1P3")  # fmt: skip
     word = store.loaded_page("suppliers", q="CHARITABLE")["rows"]
     assert {r["tax_id"] for r in word} == {"CHARITABLE"} and {r["expected_gst"] for r in word} == {""}
+
+
+def test_the_two_business_unit_columns_are_told_apart_by_what_they_hold_not_their_order(truth, listed):
+    """B-2409: with the number's and the name's columns the other way round, the name ("*** DO NOT USE ***", "Head
+    Office") was kept as the supplier's business unit."""
+    book = openpyxl.load_workbook(io.BytesIO(made.vendor_info_xlsx(truth)))
+    rows = [list(row) for row in book.active.iter_rows(values_only=True)]
+    first = rows[0].index("Business Unit")
+    for row in rows:
+        row[first], row[first + 1] = row[first + 1], row[first]
+    swapped = openpyxl.Workbook()
+    for row in rows:
+        swapped.active.append(row)
+    out = io.BytesIO()
+    swapped.save(out)
+    read = vendor_info.read(out.getvalue(), "info.xlsx")
+    by_number = {row["erp_id"]: row for row in listed["rows"]}
+    assert [(r["business_unit"], r["business_unit_name"]) for r in read["rows"]] == [
+        (by_number[r["erp_id"]]["business_unit"], by_number[r["erp_id"]]["business_unit_name"]) for r in read["rows"]
+    ]
+    assert read["rows"][1]["business_unit"] == made.OTHER_UNIT[0]

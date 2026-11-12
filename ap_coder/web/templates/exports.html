@@ -143,9 +143,9 @@
 </details>
 
 <details class="card expander" id="register"{% if reg or reg_error %} open{% endif %}>
-  <summary><span class="ms" aria-hidden="true">receipt_long</span>Invoices already in the ERP{% if register_count %} ({{ register_count | num }} known){% endif %}</summary>
-  <p class="muted">Import the ERP's AP invoice list (vendor, invoice number, date, total), e.g. the last 18 months.
-    Invoices processed in AP Coder are then also checked against bills already entered or paid in the ERP.
+  <summary><span class="ms" aria-hidden="true">receipt_long</span>{{ register_name }}{% if register_count %} ({{ register_count | num }} known){% endif %}</summary>
+  <p class="muted">Load the ERP's AP invoice list (vendor, invoice number, date, total), e.g. the last 18 months.
+    Invoices processed in AP Coder are then also checked against the invoices already entered or paid in the ERP.
     JD Edwards' voucher list (Supplier Ledger Inquiry, exported to Excel) is read as it comes.</p>
   <div class="stack imp-pane">
   {{ imp.report(register_spec) }}
@@ -153,21 +153,21 @@
   {% if reg %}
   {{ sheets(reg, "/exports", {"register": reg.token}) }}
   {% call imp.preview(reg.look, "erp_register") %}{% endcall %}
-  <form method="post" action="/exports/register/import" class="stack" data-busy="Importing…" data-long id="pick-erp_register">
+  <form method="post" action="/exports/register/import" class="stack" data-busy="Loading…" data-long id="pick-erp_register">
     {% if reg.vouchers %}{# JD Edwards' voucher list (one row per pay item): read as it comes, no column to pick #}
     <input type="hidden" name="file" value="{{ reg.token }}">
     <input type="hidden" name="sheet" value="{{ reg.sheet }}">
-    <div class="flash info"><span class="ms" aria-hidden="true">info</span><div>{{ reg.vouchers }} Nothing to pick: Import keeps these vouchers, and takes off the list any voucher it shows at 0.00 (voided in JD Edwards).</div></div>
+    <div class="flash info"><span class="ms" aria-hidden="true">info</span><div>{{ reg.vouchers }} Nothing to pick: Load keeps these vouchers, and takes off the list any voucher it shows at 0.00 (voided in JD Edwards).</div></div>
     <label class="check"><input type="checkbox" name="whole" value="1"> This list is every voucher of the period it covers (the grid was not filtered by supplier, batch or pay status): also take off the list the vouchers of that period it no longer shows</label>
     {% else %}{{ columns(reg) }}{% endif %}
-    <label class="check"><input type="checkbox" name="replace" value="1"> Replace the invoices already imported</label>
+    {% if register_count %}<label class="check"><input type="checkbox" name="replace" value="1"> Replace the list loaded now, {{ register_count | plural("invoice") }} (otherwise these are added to it)</label>{% endif %}
     <div class="row">
-      <button class="btn primary" type="submit"{% if not reg.vouchers %}{{ go(reg) }}{% endif %}><span class="ms" aria-hidden="true">upload</span>Import</button>
+      <button class="btn primary" type="submit"{% if not reg.vouchers %}{{ go(reg) }}{% endif %}><span class="ms" aria-hidden="true">upload</span>Load</button>
       <a class="btn" href="/exports#register"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
     </div>
   </form>
   {% else %}
-  {{ imp.file_box("/exports/register/upload", register_spec.accept, "The ERP's invoice list, a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…", then="Import") }}
+  {{ imp.file_box("/exports/register/upload", register_spec.accept, "The ERP's invoice list, a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…") }}
   {% endif %}
   {% if register_count %}
   <form method="post" action="/exports/register/clear" data-confirm="Clear the list of {{ register_count | num }} ERP invoices? Invoices are then no longer checked against it.">
