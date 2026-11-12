@@ -323,8 +323,15 @@ def _account_find(meals: bool) -> Callable[[list[str]], dict[str, str]]:
     return find
 
 
-def _accounts(key: str, title: str, noun: str, meals: bool) -> ImportSpec:
+# The headers the other imports read a GL account under, as their files write them: Past coding's and the GL map's
+# "GL Code", a bank account's cash "GL Account", the Transaction Journal's "Account Number". A GL account list's code
+# under one of them is found by its name, not guessed (B-2470); the column picked is the guess's as before.
+GL_CODE_NAMES = ("GL Code", "GL Account", JOURNAL.column("account").header)
+
+
+def _accounts(key: str, title: str, noun: str, meals: bool, code_names: Sequence[str] = ()) -> ImportSpec:
     hints: dict[str, Sequence[str]] = {f: tuple(f"…{w}…" for w in words) for f, words in ACCOUNT_HINTS.items()}
+    hints["code"] = (*code_names, *hints["code"])
     if meals:
         hints["meals"] = MEALS_HEADERS
     return ImportSpec(
@@ -340,7 +347,7 @@ def _accounts(key: str, title: str, noun: str, meals: bool) -> ImportSpec:
     )  # fmt: skip
 
 
-GL_ACCOUNTS = _accounts("gl_accounts", "GL accounts", "GL account", meals=True)
+GL_ACCOUNTS = _accounts("gl_accounts", "GL accounts", "GL account", meals=True, code_names=GL_CODE_NAMES)
 COST_CENTERS = _accounts("cost_centers", "Cost centers", "cost center", meals=False)
 
 BANK_ACCOUNTS = ImportSpec(

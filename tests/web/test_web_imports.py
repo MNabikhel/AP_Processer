@@ -705,3 +705,14 @@ def test_a_needed_column_named_twice_is_picked_by_the_person_and_that_one_is_loa
         assert loaded.status_code == 200 and loaded.json()["ok"], loaded.text
     assert [a["code"] for a in store.list_accounts("gl_accounts") if a["code"] in ("ZZZ", "6010")] == ["6010"]
     assert [v["display_name"] for v in store.master_vendors()] == ["Acme Ltd"]
+
+
+def test_a_gl_account_list_with_an_ordinary_code_header_is_not_said_guessed(client):
+    """B-2470: GL accounts headed "GL Code" (Past coding's and the GL map's own template header), "Account Number" or
+    "GL Account" said "Guessed by a word in the header… check each"; they are names of the code, as "Code" is."""
+    for header in ("GL Code", "Account Number", "GL Account"):
+        html, _token = _upload(client, "gl_accounts", [[header, "Description"], ["6010", "IT Hardware"]])
+        assert "Guessed by a word" not in html and "Every column" in html, header
+        assert _offered(html)["code"] == header
+    html, _token = _upload(client, "gl_accounts", [["Postal Code", "Company Name"], ["T5H 1L2", "Bracken"]])
+    assert "Guessed by a word" in html
