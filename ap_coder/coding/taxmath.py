@@ -160,6 +160,8 @@ def _tax_row(sums: _Sums, tax_type: str) -> dict[str, Any]:
     """One tax: its rate on the lines marked with it, against what is charged."""
     items, n, setup = sums.items, sums.n, sums.setup
     taxes = [t for t in sums.coding.tax_lines if t.tax_type == tax_type]
+    # A tax line of nothing beside lines that charge the tax (GST 0.00 on a zero-rated line) is on no line (B-2503)
+    taxes = [t for t in taxes if not nil(t.tax_amount)] or taxes
     charged = add_up(t.tax_amount for t in taxes)
     label = tax_name(tax_type, sums.province)
     flagged = [li for li in items if tax_type in li.taxes_applied]

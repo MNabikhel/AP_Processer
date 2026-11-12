@@ -15,6 +15,7 @@ from ap_coder.coding.tax import (
     valid_gst_number,
     valid_qst_number,
 )
+from ap_coder.coding.taxmath import math_check
 from ap_coder.coding.validation import validate_coding
 from ap_coder.core.schema import InvoiceCoding
 from tests.erp.test_jde_gl_mode import doc, line, tl
@@ -158,6 +159,21 @@ def test_a_tax_at_two_rates_may_be_rounded_line_by_line_on_each_rates_lines(refe
     d = doc(lines, [tl("GST", "", 0.05, 80.4, 4.02), tl("PST", "BC", 0.07, 40.2, 2.8),
                     tl("PST", "BC", 0.10, 40.2, pst_10)], prov="BC")  # fmt: skip
     assert ("TAX_CALC_MISMATCH" in {c for c, _ in _findings(d, reference)}) is said
+
+
+def test_a_tax_line_printed_at_nothing_adds_no_taxable_amount(reference):
+    """B-2503: a GST line printed at 0.00 on a zero-rated line (GST 0% on 20.00) beside the GST charged on the other
+    lines added its 20.00 to the GST's taxable amount: the zero-rated line looked taxed (EXEMPT_LINE_TAXED) and the
+    Tax check's GST row was ✕. A tax line of nothing charges nothing, on no line."""
+    lines = [line(1, 100.0, "5100", ["GST"]), line(2, 20.0, "5200", [], status="zero_rated", desc="Milk")]
+    d = doc(lines, [tl("GST", "", 0.05, 100.0, 5.0), tl("GST", "", 0.0, 20.0, 0.0)], prov="AB")
+    assert not {c for c, _ in _findings(d, reference)} & {"EXEMPT_LINE_TAXED", "TAX_BASE_MISMATCH", "TAX_CALC_MISMATCH"}
+    assert math_check(InvoiceCoding.model_validate(d), reference.tax)["ok"]
+    # GST rounded on each line (8 x 10.10: 0.51 a line, 4.08; 80.80 x 5% = 4.04) is right beside the GST 0.00 line
+    rounded = doc([line(n, 10.1, "5100", ["GST"]) for n in range(1, 9)] + [line(9, 20.0, "5200", [], status="zero_rated")],
+                  [tl("GST", "", 0.05, 80.8, 4.08), tl("GST", "", 0.0, 20.0, 0.0)], prov="AB")  # fmt: skip
+    assert not {c for c, _ in _findings(rounded, reference)} & {"EXEMPT_LINE_TAXED", "TAX_CALC_MISMATCH"}
+    assert math_check(InvoiceCoding.model_validate(rounded), reference.tax)["ok"]
 
 
 def test_missing_pst_suggests_self_assessment(reference):

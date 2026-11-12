@@ -305,10 +305,11 @@ def _each_tax_line(check: _TaxCheck) -> None:
 def tax_line_ways(coding: Any, tl: Any, places: int) -> list[float]:
     """The ways a tax line's tax is worked out: once on its taxable amount, and line by line, each line rounded
     (``money.tax_right`` holds the tax to them): on the lines marked with its tax when it is the only line of its
-    tax, else on its own lines (``_line_by_line_on_its_lines``, B-2502)."""
+    tax that charges something (a line of 0.00 charges nothing, B-2503), else on its own lines
+    (``_line_by_line_on_its_lines``, B-2502)."""
     ways = [times(tl.taxable_amount, tl.rate, places)]
     flagged = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
-    if sum(1 for t in coding.tax_lines if t.tax_type == tl.tax_type) == 1:
+    if sum(1 for t in coding.tax_lines if t.tax_type == tl.tax_type and not nil(t.tax_amount)) == 1:
         if flagged:
             ways.append(add_up((times(li.amount, tl.rate, places) for li in flagged), places))
     elif (by_line := _line_by_line_on_its_lines(flagged, tl, places)) is not None:
@@ -398,12 +399,14 @@ def _tax_line_rate(check: _TaxCheck, tl: Any) -> None:
 
 def _lines_carry_each_tax(check: _TaxCheck) -> None:
     """Which invoice lines carry each tax (their tax code, D-64), and does their sum match the taxable amount?
-    Compared per tax type, because the same tax can be printed more than once (e.g. on goods and on freight)."""
+    Compared per tax type, because the same tax can be printed more than once (e.g. on goods and on freight). A tax
+    line of nothing (GST 0.00 on a zero-rated line) is on no line: its taxable amount is not counted (B-2503)."""
     coding, tol = check.coding, check.tol
     for tax_type in sorted(check.charged):
         name = tax_name(tax_type, check.prov)
         flagged = [li for li in coding.line_items if tax_type in li.taxes_applied]
-        taxable = add_up(t.taxable_amount for t in check.tax_lines if t.tax_type == tax_type)
+        taxes = [t for t in check.tax_lines if t.tax_type == tax_type and not nil(t.tax_amount)]
+        taxable = add_up(t.taxable_amount for t in taxes)
         if not flagged:
             check.add(WARNING, "TAX_NOT_ALLOCATED",
                       f"{name} is charged but no line is marked with it: pick the tax code of the lines it applies "
@@ -436,8 +439,8 @@ def _lines_carry_each_tax(check: _TaxCheck) -> None:
             said = f"line {suspect.line_number} ({short(suspect.description)}, {suspect.amount:,.2f})"
             hint = f": {said} may be exempt from {name}" if gap < 0 else f": {said} may carry {name} too"
         else:
-            charged_amount = add_up(t.tax_amount for t in check.tax_lines if t.tax_type == tax_type)
-            rates = {round(t.rate, 6) for t in check.tax_lines if t.tax_type == tax_type}
+            charged_amount = add_up(t.tax_amount for t in taxes)
+            rates = {round(t.rate, 6) for t in taxes}
             hint = (_unexplained(coding.line_items, tax_type, charged_amount, rates.pop(), name)[0]
                     if len(rates) == 1
                     else f": check the lines' tax codes, or the {name} the vendor charged")  # fmt: skip
