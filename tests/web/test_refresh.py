@@ -138,6 +138,7 @@ def test_two_processes_one_works_the_answers_out_again_and_the_other_waits_for_o
                       again=[])  # fmt: skip
         store.want_answer("slow", reports.asked_key(None), [], _db(store))
         lease = f"answer/slow/{reports.asked_key(None)}"
+        ends = time.monotonic() + 30  # (each wait its own 30 s: a busy Windows runner took the whole of one, B-2534)
         while not store._lease_held(lease) and time.monotonic() < ends:
             time.sleep(0.05)
         assert store._lease_held(lease)  # (it works it out: 3 s, its hold renewed)
