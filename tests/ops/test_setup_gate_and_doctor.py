@@ -232,6 +232,30 @@ def test_the_doctor_fails_a_server_whose_authenticator_key_is_gone(store):
     assert line.status == FAIL and authenticator.KEY_FILE in line.detail, line
 
 
+def test_with_the_key_gone_the_doctor_counts_only_the_active_accounts_with_an_app(store):
+    """B-2525: with the key gone, the doctor said "nobody can log in" though an Admin without an app still can (a new
+    key is made when they set one up): an account turned off counted, and one active Clerk with an app was all."""
+    from ap_coder.core import authenticator
+    from ap_coder.ops.doctor import FAIL, PASS, WARN
+    from tests.webclient import enrol
+
+    boss = store.add_user("boss", "a long admin password 1", role="admin", must_change=False)
+    for name in ("carl", "dana"):
+        enrol(store, store.add_user(name, "a long clerk password 1", role="clerk", must_change=False))
+    store.deactivate_user(store.find_user("carl")["id"])
+    store.deactivate_user(store.find_user("dana")["id"])
+    (store.path.parent / authenticator.KEY_FILE).unlink()
+    assert _server_accounts(store).status == PASS  # the two with an app are turned off
+    with store._conn() as conn:
+        conn.execute("UPDATE users SET active = 1 WHERE username = 'dana'")
+    line = _server_accounts(store)
+    assert line.status == WARN and "dana" in line.detail and "carl" not in line.detail and "boss" not in line.detail
+    with store._conn() as conn:  # the Admin's app set up too: no Admin can log in
+        conn.execute("UPDATE users SET totp_on = 1 WHERE id = ?", (boss,))
+    line = _server_accounts(store)
+    assert line.status == FAIL and authenticator.KEY_FILE in line.detail, line
+
+
 def test_the_doctor_fails_a_server_whose_only_admin_can_no_longer_log_in(store, monkeypatch):
     """B-2525: "server accounts PASS" while the only Admin's temporary password is past its 3 days."""
     import time

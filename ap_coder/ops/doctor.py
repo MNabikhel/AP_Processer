@@ -423,10 +423,14 @@ def _server_accounts(store: Any) -> Check:
     if not admins:
         return Check("server accounts", FAIL, f"{len(users)} account(s), but no active Admin: python -m ap_coder users "
                      "add --admin <name>")  # fmt: skip
-    if any(u["totp_on"] for u in users) and authenticator.load_key(store.path.parent) is None:
-        return Check("server accounts", FAIL, f"the sign-in codes' key ({authenticator.KEY_FILE} in the data folder) "
-                     "is missing or damaged: no authenticator code is accepted, so nobody can log in. Put it back from "
-                     "a backup, or reset each person's app: python -m ap_coder users reset-2fa <name>")  # fmt: skip
+    # without the key no code of an app set up is accepted; an app set up later makes a new key (``load_key``)
+    locked = [u["username"] for u in users if u["active"] and u["totp_on"]]
+    if locked and authenticator.load_key(store.path.parent) is None:
+        missing = f"the sign-in codes' key ({authenticator.KEY_FILE} in the data folder) is missing or damaged"
+        fix = "Put it back from a backup, or reset their apps: python -m ap_coder users reset-2fa <name>"
+        if all(u["totp_on"] for u in admins):
+            return Check("server accounts", FAIL, f"{missing}: no Admin can log in. {fix}")
+        return Check("server accounts", WARN, f"{missing}: {', '.join(locked)} can't log in. {fix}")
     if all(u["must_change"] and store._temporary_expired(u) for u in admins):
         name = admins[0]["username"] if len(admins) == 1 else "<name>"
         return Check("server accounts", FAIL, f"no Admin can log in: the temporary password of "
