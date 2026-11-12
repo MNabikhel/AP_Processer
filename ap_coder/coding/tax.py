@@ -866,8 +866,14 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
 # them (Quebec's QST Act does the same for the QST input tax refunds). PST is never recoverable: nothing to halve.
 MEALS_RESTRICTED = ("GST", "HST", "QST")
 MEALS_NOTE = "Meals: 50% of the {taxes} is claimable. Billed to a client or a staff event? Use the other account."
-# A tip or gratuity line: a voluntary tip is not taxed, so none of the tax printed is on it.
-_TIP = re.compile(r"\b(tips?|gratuit(?:y|ies|[ée]s?)|pourboires?|thank\s*you|merci)\b", re.I)
+# A tip or gratuity line: a voluntary tip is not taxed, so none of the tax printed is on it. Only the tip words and
+# those printed beside them ("Server - thank you", "Gratuity 18% included"): "Excel tips workshop", "Thank you cards"
+# or "Livraison gratuite" (free delivery) are not tips (B-2620).
+_TIP = re.compile(r"\b(tips?|gratuit(?:y|ies)|gratuités?|pourboires?|thank\s*you|merci)\b", re.I)
+_BESIDE_TIP = re.compile(
+    r"(?i)\b(?:server|serveur|serveuse|staff|driver|delivery|livreur|livraison|added|suggested|included|incl"
+    r"|optional|auto|service|for|the|your|and|et|au|du|de|le|la|on|of|sur)\b"
+)
 
 
 def meals_note(province: str) -> str:
@@ -927,7 +933,8 @@ def _lines_of_its_rate(lines: list[Any], tax_line: Any, tax_lines: Any) -> list[
 
 
 def is_tip(line: Any) -> bool:
-    return bool(_TIP.search(str(getattr(line, "description", "") or "")))
+    text = str(getattr(line, "description", "") or "")
+    return bool(_TIP.search(text)) and not re.search(r"[^\W\d_]", _BESIDE_TIP.sub(" ", _TIP.sub(" ", text)))
 
 
 def meals_parts(lines: list[Any], tax_line: Any, meals_gl_codes: Any, places: int = 2,

@@ -347,7 +347,8 @@ _WORDS = (
     (re.compile(r"(?i)\b(?:qst|tvq)\b"), "QST"),
 )
 _EXEMPT_WORDS = re.compile(r"(?i)\b(?:exempt|exon[ée]r[ée]e?|non[- ]?taxable|not\s+taxable|tax[- ]?free)\b")
-_ZERO_WORDS = re.compile(r"(?i)\bzero[- ]?rated?\b|\bdétaxée?\b|\bdetaxee?\b|\b0\s*%")
+# A rate of 0%, 0.0% or 0,0 %, not the end of another one ("5.0%", B-2621)
+_ZERO_WORDS = re.compile(r"(?i)\bzero[- ]?rated?\b|\bdétaxée?\b|\bdetaxee?\b|(?<![\w.,])0(?:[.,]0+)?\s*%")
 _OUT_WORDS = re.compile(r"(?i)\bout\s+of\s+scope\b|\bnot\s+applicable\b|\bhors\s+champ\b")
 _TAXABLE_WORDS = re.compile(r"(?i)^(?:taxable|tax(?:ed)?|yes|oui|y|t|\*+)$")
 # Letters many invoices use without printing what they mean: only read when the tax they stand for is charged.
