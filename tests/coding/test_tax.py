@@ -170,7 +170,8 @@ def test_a_tax_line_printed_at_nothing_adds_no_taxable_amount(reference):
     assert not {c for c, _ in _findings(d, reference)} & {"EXEMPT_LINE_TAXED", "TAX_BASE_MISMATCH", "TAX_CALC_MISMATCH"}
     assert math_check(InvoiceCoding.model_validate(d), reference.tax)["ok"]
     # GST rounded on each line (8 x 10.10: 0.51 a line, 4.08; 80.80 x 5% = 4.04) is right beside the GST 0.00 line
-    rounded = doc([line(n, 10.1, "5100", ["GST"]) for n in range(1, 9)] + [line(9, 20.0, "5200", [], status="zero_rated")],
+    eight = [line(n, 10.1, "5100", ["GST"]) for n in range(1, 9)]
+    rounded = doc([*eight, line(9, 20.0, "5200", [], status="zero_rated")],
                   [tl("GST", "", 0.05, 80.8, 4.08), tl("GST", "", 0.0, 20.0, 0.0)], prov="AB")  # fmt: skip
     assert not {c for c, _ in _findings(rounded, reference)} & {"EXEMPT_LINE_TAXED", "TAX_CALC_MISMATCH"}
     assert math_check(InvoiceCoding.model_validate(rounded), reference.tax)["ok"]
@@ -190,6 +191,26 @@ def test_registration_numbers_needed_for_credits(reference):
     gt["gst_hst_registration_number"] = ""
     gt["qst_registration_number"] = "12345"
     assert {"GST_HST_NUMBER_MISSING", "QST_NUMBER_FORMAT"} <= _codes(gt, reference)
+
+
+@pytest.mark.parametrize(
+    ("amount", "date", "said"),
+    [(40.0, "2026-03-02", False), (-40.0, "2026-03-02", False), (95.0, "2026-03-02", True),
+     (40.0, "2020-12-31", True), (20.0, "2020-12-31", False)],
+)  # fmt: skip
+def test_a_receipt_under_the_documentary_threshold_needs_no_registration_number(reference, amount, date, said):
+    """B-2504: GST_HST_NUMBER_MISSING (and QST_NUMBER_MISSING) warned on a 42.00 receipt, while no registration number
+    is needed to claim the tax under $100 from 21 April 2021 ($30 before: ``taxreturn.document_threshold``, which the
+    sales tax return already follows). From the threshold on (95.00 + tax), it is still said."""
+    gst, qst = round(amount * 0.05, 2), round(amount * 0.09975, 2)
+    d = doc([line(1, amount, "5100", ["GST", "QST"])],
+            [tl("GST", "", 0.05, amount, gst), tl("QST", "QC", 0.09975, amount, qst)], prov="QC",
+            invoice_date=date, gst_hst_registration_number="", qst_registration_number="")  # fmt: skip
+    codes = {c for c, _ in _findings(d, reference)}
+    assert ("GST_HST_NUMBER_MISSING" in codes, "QST_NUMBER_MISSING" in codes) == (said, said)
+    # A number printed wrong is still said, whatever the amount
+    wrong = {**d, "gst_hst_registration_number": "12345", "qst_registration_number": "12345"}
+    assert {"GST_HST_NUMBER_FORMAT", "QST_NUMBER_FORMAT"} <= {c for c, _ in _findings(wrong, reference)}
 
 
 def test_tax_lines_must_add_to_tax_total(reference):

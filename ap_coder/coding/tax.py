@@ -627,13 +627,18 @@ def _exemptions_to_confirm(check: _TaxCheck) -> None:
 
 
 def _registration_numbers(check: _TaxCheck) -> None:
-    """Registration numbers needed to claim input tax credits."""
+    """Registration numbers needed to claim input tax credits: printed wrong, whatever the amount; missing, from the
+    documentary threshold (``taxreturn.document_threshold``: $100 since 21 April 2021, $30 before; B-2504)."""
+    from .taxreturn import document_threshold
+
     coding = check.coding
+    needed = abs(coding.grand_total) >= document_threshold(coding.invoice_date)
     if check.charged & {"GST", "HST"}:
         number = coding.gst_hst_registration_number
         if not number.strip():
-            check.add(WARNING, "GST_HST_NUMBER_MISSING",
-                      "supplier GST/HST registration number not found (needed for ITC)")  # fmt: skip
+            if needed:
+                check.add(WARNING, "GST_HST_NUMBER_MISSING",
+                          "supplier GST/HST registration number not found (needed for ITC)")  # fmt: skip
         elif not valid_gst_number(number):
             check.add(WARNING, "GST_HST_NUMBER_FORMAT", "GST/HST number is not in the format 123456789RT0001")
         elif not gst_check_digit_ok(number):
@@ -642,7 +647,9 @@ def _registration_numbers(check: _TaxCheck) -> None:
     if "QST" in check.charged:
         number = coding.qst_registration_number
         if not number.strip():
-            check.add(WARNING, "QST_NUMBER_MISSING", "supplier QST registration number not found (needed for ITR)")
+            if needed:
+                check.add(WARNING, "QST_NUMBER_MISSING",
+                          "supplier QST registration number not found (needed for ITR)")  # fmt: skip
         elif not valid_qst_number(number):
             check.add(WARNING, "QST_NUMBER_FORMAT", "QST number is not in the format 1234567890TQ0001")
 
