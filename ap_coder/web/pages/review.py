@@ -158,7 +158,7 @@ def _to_fix(facts: dict[str, Any], cost_centers: bool) -> tuple[str, int, int]:
 
 def attention(store: Store, reference: ReferenceData | None, pending: list[dict[str, Any]],
               threshold: float | None = None, checks: dict[int, dict[str, Any]] | None = None,
-              recheck: bool | None = None, parts: dict[int, tuple[str, str, int, int, bool]] | None = None
+              recheck: bool | None = None, parts: dict[int, tuple[str, str, int, int, bool, str]] | None = None
               ) -> dict[int, str]:  # fmt: skip
     """Why each invoice of ``pending`` (the queue) needs attention, by id; one not listed is Ready: its review
     screen's Approve is open as it stands, and nothing in its checks keeps bulk approval from taking it (B-1027).
@@ -167,7 +167,8 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
     The checks are today's (``bulk.queue_checks``, or ``checks`` when the caller has it; ``recheck`` as there): an
     invoice whose stored checks were made against other settings is checked again (B-815). ``parts``: filled with
     what each one's reason was made from (what its lines need, its Pay from account's trouble, its errors, its other
-    findings for a person, confidence under the threshold): what ``first_to_fix`` says in words."""
+    findings for a person, confidence under the threshold, why its lines coded from other vendors' approvals leave it
+    for a person, D-241): what ``first_to_fix`` says in words."""
     from ap_coder.coding import banks
 
     if checks is None:
@@ -181,6 +182,7 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
     out = {}
     for inv in pending:
         to_pick, errors, warned = _to_fix(checks.get(inv["id"]) or {}, cost_centers)
+        others = str((checks.get(inv["id"]) or {}).get("q_others") or "")  # (``supplier.others_reason``, D-241)
         low = threshold is not None and (inv.get("adjusted_confidence") or 0.0) < threshold
         bank = ""
         if paying:
@@ -197,11 +199,12 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
             f"{ui.plural(errors, 'error')} to fix" if errors else "",
             # Ready is what bulk approval takes: a warning, or a finding that always goes to a person, is not (B-1027)
             f"{ui.plural(warned, 'warning')} to look at" if warned else "",
+            others,  # never Ready, as bulk approval leaves it for a person
             f"confidence under {threshold:.0%}" if low and inv.get("requires_review") else "",
         ]
         why = [w for w in why if w]
         if parts is not None and why:
-            parts[inv["id"]] = (to_pick, bank, errors, warned, bool(why[-1].startswith("confidence under")))
+            parts[inv["id"]] = (to_pick, bank, errors, warned, bool(why[-1].startswith("confidence under")), others)
         if why or inv.get("requires_review"):
             # flagged when its review screen last checked it, nothing standing today: opening it checks it again
             out[inv["id"]] = (why[0][0].upper() + "; ".join(why)[1:]) if why else FLAGGED_BEFORE
@@ -219,14 +222,15 @@ def _said(issue: dict[str, Any]) -> str:
     return f"Line {line}: {words}" if line else words[:1].upper() + words[1:]
 
 
-def first_to_fix(parts: tuple[str, str, int, int, bool], issues: list[dict[str, Any]], output: dict[str, Any],
+def first_to_fix(parts: tuple[str, str, int, int, bool, str], issues: list[dict[str, Any]], output: dict[str, Any],
                  counted: str) -> str:  # fmt: skip
     """The queue's one sentence for an invoice that needs attention: the first thing to fix, in words (B-2219). That
     it may not be an invoice (``SAID_FIRST``); else the first error's own sentence; else why the first line without
     an account was left for a person ("Line 4: this supplier's 9 lines last year went to 3 accounts ..."); else its
-    Pay from account's trouble; else the first finding a person looks at; else ``counted`` (``attention``'s own
-    words: confidence under the threshold). What else there is to fix is counted after it: "(and 2 more)"."""
-    to_pick, bank, errors, warned, _ = parts
+    Pay from account's trouble; else the first finding a person looks at; else its lines coded from other vendors'
+    approvals; else ``counted`` (``attention``'s own words: confidence under the threshold). What else there is to
+    fix is counted after it: "(and 2 more)"."""
+    to_pick, bank, errors, warned, _, others = parts
     first = next((_said(i) for i in issues if i.get("code") in SAID_FIRST), "")
     if first:
         pass
@@ -247,9 +251,11 @@ def first_to_fix(parts: tuple[str, str, int, int, bool], issues: list[dict[str, 
     elif warned:
         first = next((_said(i) for i in issues if i.get("severity") != "error" and i.get("code") not in TO_PICK_CODES
                       and needs_a_person(i.get("severity"), i.get("code"))), "")  # fmt: skip
+    elif others:
+        first = others[:1].upper() + others[1:]
     if not first:
         return counted
-    more = errors + warned + bool(to_pick) + bool(bank) - 1
+    more = errors + warned + bool(to_pick) + bool(bank) + bool(others) - 1
     return f"{first} (and {more} more)" if more > 0 else first
 
 
@@ -309,7 +315,8 @@ NO_VENDOR = "No vendor name"
 
 def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float, reasons: dict[int, str] | None = None,
                others: dict[int, list[str]] | None = None,
-               parts: dict[int, tuple[str, str, int, int, bool]] | None = None) -> list[dict[str, Any]]:  # fmt: skip
+               parts: dict[int, tuple[str, str, int, int, bool, str]] | None = None
+               ) -> list[dict[str, Any]]:  # fmt: skip
     """What each row of the queue shows (plain values; the template escapes them). ``reasons``: ``attention()``.
     ``others``: the names of those who have an invoice open (``invoice_drafts.open_elsewhere``, D-184). ``parts``: what
     ``attention`` made the reasons of: each of these says the first thing to fix in words (``first_to_fix``), the
@@ -482,7 +489,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     # too, never only "flagged" (B-1522). On the company server, the ones still checked again after a change of
     # settings show their earlier checks meanwhile, and the page says so (its background process does it, D-155).
     checks, updating = queue_checks(store, [i["id"] for i in pending], settings, recheck=not server_mode(request))
-    parts: dict[int, tuple[str, str, int, int, bool]] = {}
+    parts: dict[int, tuple[str, str, int, int, bool, str]] = {}
     reasons = attention(store, reference, pending, threshold, checks, parts=parts)  # Ready: its Approve is open
     drafts = draft_reasons(request, pending)  # an invoice with edits kept: what its screen says (B-996)
     reasons.update(drafts)

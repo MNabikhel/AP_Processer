@@ -546,6 +546,9 @@ def test_a_line_coded_from_other_vendors_approvals_is_never_approved_without_a_p
     others["line_number"] = 3
     output["line_items"].append({**others, "line_number": 4})
     assert "lines 3 and 4 were coded from other vendors' approvals" in _decide(touchless, path, output=output)["reason"]
+    output["line_items"][1:] = [others, {**others}, {**others, "line_number": 2}]  # a number twice: said once
+    reason = _decide(touchless, path, output=output)["reason"]
+    assert "lines 3 and 2 were coded from other vendors' approvals" in reason, reason
     output["line_items"] = [own]
     assert _decide(touchless, path, output=output)["auto"]
 

@@ -4,8 +4,8 @@ The queue says which invoices look clean by today's checks: those made against o
 centers, tax, JD Edwards) are done again (``issues_today``, B-815). An invoice qualifies only if, re-checked right now
 (duplicates and history may have changed since it was processed), it has no error and no warning, no finding that
 always goes to a person (``ALWAYS_A_PERSON``: some, like a new vendor name, are only info), it is not a credit note (a
-credit is always applied by a person, as the touchless rules say) and the AI's confidence is above the review
-threshold.
+credit is always applied by a person, as the touchless rules say), no line of it was coded from other vendors'
+approvals (D-241, as the touchless rules say too) and the AI's confidence is above the review threshold.
 Everything else is skipped with the reason, and still needs a person.
 
 Entry points: ``sort_for_bulk`` (the queue's clean invoices, and why each other is left), ``queue_checks`` (what the
@@ -28,7 +28,7 @@ from types import MappingProxyType
 from typing import Any
 
 from ..ai.pipeline import finalise_coding
-from ..capture.supplier import ALWAYS_A_PERSON, touchless_gates
+from ..capture.supplier import ALWAYS_A_PERSON, others_coded, others_reason, touchless_gates
 from ..capture.workflow import learn_from_approval
 from ..core.config import Settings
 from ..core.memory import vendor_key
@@ -389,11 +389,11 @@ def sort_for_bulk(
     store: Store, queue: list[dict[str, Any]] | None = None, checks: dict[int, dict[str, Any]] | None = None
 ) -> tuple[list[dict[str, Any]], dict[int, str]]:
     """(``clean_candidates``, why each other invoice of the queue not flagged when processed is left for a person:
-    "credit note", "audit" for one picked for the touchless audit sample, or "warning" for an error, a warning or a
-    finding that always goes to a person). ``queue``: the
-    invoices in review as ``store.list_invoices`` gives them, when the caller has them already. ``checks``:
-    ``queue_checks`` of the queue, when the caller has it already. The checks are today's: an invoice whose stored
-    checks were made against other settings is checked again (B-815)."""
+    "credit note", "audit" for one picked for the touchless audit sample, "others" for a line coded from other
+    vendors' approvals (D-241), or "warning" for an error, a warning or a finding that always goes to a person).
+    ``queue``: the invoices in review as ``store.list_invoices`` gives them, when the caller has them already.
+    ``checks``: ``queue_checks`` of the queue, when the caller has it already. The checks are today's: an invoice
+    whose stored checks were made against other settings is checked again (B-815)."""
     queue = store.list_invoices(REVIEW) if queue is None else queue
     if checks is None:
         checks = queue_checks(store, [i["id"] for i in queue if not i["requires_review"]])[0]
@@ -407,6 +407,8 @@ def sort_for_bulk(
             left[inv["id"]] = "credit note"
         elif facts["q_audit"]:
             left[inv["id"]] = "audit"
+        elif facts.get("q_others"):
+            left[inv["id"]] = "others"
         elif any(needs_a_person(i["severity"], i["code"]) for i in facts["found"]):
             left[inv["id"]] = "warning"
         else:
@@ -418,9 +420,10 @@ def queue_facts(row: Any) -> dict[str, Any]:
     """What the queue reads of an invoice (its columns, the JSON ones decoded), kept in the invoices' summary (D-110,
     D-155): picked for the audit sample; of one in review, also the stamps of its stored checks ("", None without
     stored checks to check again) and of its queue re-check, their findings (``_pairs``; None for a re-check whose
-    coding could not be read), what its lines still need (``codes_to_pick``, without and with cost centers) and what
+    coding could not be read), what its lines still need (``codes_to_pick``, without and with cost centers), what
     its opening Pay from account is chosen from (``banks.opening_choice``: the account, approved before or not, the
-    currency, and the vendor whose last account it is)."""
+    currency, and the vendor whose last account it is) and why its lines coded from other vendors' approvals leave it
+    for a person (``supplier.others_reason``, None: none is, D-241)."""
     validation = row["validation"] or {}
     issues = validation.get("issues") or []
     facts: dict[str, Any] = {"q_audit": int(_audit_pick(row["meta"]))}
@@ -437,7 +440,8 @@ def queue_facts(row: Any) -> dict[str, Any]:
             "r_found": None if recheck.get("issues") is None else _pairs(recheck["issues"]),
             "q_pick": codes_to_pick(lines, False, hint=False).removesuffix(" to approve"),
             "q_pick_cc": codes_to_pick(lines, True, hint=False).removesuffix(" to approve"),
-            "q_pay": json.dumps(pay, separators=(",", ":"))}  # fmt: skip
+            "q_pay": json.dumps(pay, separators=(",", ":")),
+            "q_others": others_reason(others_coded(lines)) or None}  # fmt: skip
 
 
 def bulk_approve(
@@ -503,6 +507,9 @@ def _still_clean(store: Store, reference: ReferenceData, settings: Settings, inv
         return None, "the coding needs fixing by hand"
     if _credit_note(bool((store.get_capture(invoice_id) or {}).get("credit_note")), coding.grand_total):
         return None, "it is a credit note: a credit is always applied by a person"
+    others = others_reason(others_coded(coded.get("line_items")))
+    if others:  # a line coded from other vendors' approvals: a person looks at it (D-241)
+        return None, _plain(others, "")
     moved = moved_off_hold(store, inv["ai_output"], coding) if server else []
     if moved:  # a held vendor's, by the GST/HST number or bank account it shows (B-1551)
         return None, _plain(moved[0][2], moved[0][1])
