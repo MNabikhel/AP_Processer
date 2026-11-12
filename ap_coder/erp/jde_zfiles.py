@@ -246,9 +246,12 @@ def voucher_rows(
             if t["tax_type"] in v.recoverable_types:
                 part = _split(_units(t.get("tax_amount"), v.decimals), carrying(t["tax_type"]), unit)
                 shares = [a + b for a, b in zip(shares, part, strict=True)]
-        on_item = [t for t in v.charged if t["tax_type"] not in v.expensed]
-        widest = max(on_item, key=lambda t: abs(_units(t.get("taxable_amount"), v.decimals)), default=None)
-        base = carrying(widest["tax_type"]) if widest else weights  # the tax whose taxable amount is VLATXA
+        bases: dict[str, int] = {}  # each tax's taxable amount, its lines added up, as VLATXA is (B-923, B-2511)
+        for t in v.charged:
+            if t["tax_type"] not in v.expensed:
+                bases[t["tax_type"]] = bases.get(t["tax_type"], 0) + _units(t.get("taxable_amount"), v.decimals)
+        widest = max(bases, key=lambda tax_type: abs(bases[tax_type]), default=None)
+        base = carrying(widest) if widest else weights  # the tax whose taxable amount is VLATXA
         atxas = _split(v.atxa, base, unit)
         # Half the tax on a meals line is in its expense amount (D-90): not E1's to post, so neither in its share
         # of the recoverable tax nor in its tax.
