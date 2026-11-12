@@ -589,6 +589,21 @@ def test_a_deposit_on_a_taxed_invoice_leaves_the_total_for_a_person_to_check(tmp
     assert f["other_charges"].status not in (VERIFIED, "likely")
 
 
+def test_a_deposit_or_holdback_under_a_printed_total_holds_the_total_for_a_person_to_check(tmp_path):
+    # The totals add up without what is taken off after the printed total; whether the total or the amount due after
+    # it is posted is still AP's call (D-47).
+    for i, label in enumerate(["Deposit received", "Less payment received", "Less 10% holdback", "Holdback 10%",
+                               "Less: Holdback (10%)", "Retenue 10 %", "Less retainage 10%"]):  # fmt: skip
+        f = _totals(tmp_path, [("Subtotal", "550.00"), ("HST 13%", "71.50"), ("Total", "621.50"), (label, "(100.00)"),
+                               ("Balance Due", "521.50")], name=f"d{i}.pdf")  # fmt: skip
+        assert f["grand_total"].value == 621.5, label
+        assert f["grand_total"].status == "check", label
+    # A plain invoice, and a sentence about a holdback with no amount, leave the total as it is.
+    assert _totals(tmp_path, _PLAIN, name="plain.pdf")["grand_total"].status == VERIFIED
+    held = _totals(tmp_path, [*_PLAIN, "Holdback of 10% is payable within 60 days of completion."], name="note.pdf")
+    assert held["grand_total"].status == VERIFIED
+
+
 def test_an_invoice_number_ending_in_a_word_after_a_slash_is_kept_whole(tmp_path):
     head = [x for x in _NORTHWIND if x[2] != "INV-3001"] + [(470, 95, "1234/Revised")]
     assert _totals(tmp_path, _PLAIN, head=head)["invoice_number"].value == "1234/Revised"
