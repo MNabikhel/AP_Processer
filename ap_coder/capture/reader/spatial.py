@@ -196,10 +196,11 @@ def _value_over_label(lines: list[Line], line: Line, hit: _LabelHit) -> Reading 
 
 def _beside_a_label(lines: list[Line], value: Line) -> bool:
     """``value`` printed right of a label on its row, that label's value: "Invoice date | 2026-11-05" over "Terms |
-    Due in 30 days" is not the due date printed over its label "Due" (B-2602)."""
+    Due in 30 days" is not the due date printed over its label "Due" (B-2602). A label on its own: not a name that
+    starts with a label's word ("Total Supply Ltd")."""
     left = (other for other in lines if other is not value and other.box.page == value.box.page
             and other.box.x1 <= value.box.x0 + 0.002 and other.box.y0 < value.box.y1 and value.box.y0 < other.box.y1)  # fmt: skip
-    return any(value in _right_of(lines, other)[:1] and _label_hits(other) for other in left)
+    return any(value in _right_of(lines, other)[:1] and _bare_hits(other) for other in left)
 
 
 def _under_another_label(lines: list[Line], value: Line, label: Line) -> bool:

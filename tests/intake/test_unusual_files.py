@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses as dc
 import io
+import time
 from pathlib import Path
 
 import pymupdf
@@ -157,6 +158,20 @@ def test_a_web_page_starting_with_a_comment_or_declaration_is_refused_too(pipeli
     result = pipe.process(page)
     assert not result.ok
     assert "invoice.pdf is a web page saved with a .pdf name" in result.error
+
+
+def test_a_file_starting_with_many_comments_is_told_apart_at_once(tmp_path):
+    """B-2600: a file whose head held many "<!-- -->" comments and was no web page took twice as long for each one
+    more (the comment pattern tried every way of grouping their ends): 140 of them never finished, the dashboard
+    stalled. A web page after comments is still one."""
+    other = tmp_path / "a.pdf"
+    other.write_bytes(b"<!---->" * 200 + b"<div>x")
+    started = time.monotonic()
+    assert intake.content_kind(other) == ""
+    assert time.monotonic() - started < 1
+    page = tmp_path / "b.pdf"
+    page.write_bytes(b"<!-- a --> <!-- b -->\n<html>")
+    assert intake.content_kind(page) == ".html"
 
 
 # --- B-261: a multi-page TIFF whose last page has a colour palette --------------------------------------------------

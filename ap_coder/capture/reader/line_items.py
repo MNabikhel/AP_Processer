@@ -1106,7 +1106,8 @@ def read_line_items(layout: DocLayout, tables: dict[int, list[Box]] | None = Non
 def _totals_row(line: Line, lines: list[Line]) -> bool:
     """``line`` starts with a subtotal's, a total's or the tax's label: the line table ends at it. Not an item named
     with one's word, priced as the lines are ("Total Station survey rental | 2 | 250.00 | 500.00", B-2603): words
-    that are no label after it, two figures or more beside it."""
+    that are no label after it, and beside it a quantity times a price that make an amount ("Total Units | 4 |
+    200.00" and "Total Current Charges | 200.00 | 10.00 | 210.00" are totals)."""
     p = plain(line.text)
     ends = [(m.end(), f) for f in _TOTAL_LABELS for rx, _ in _LABELS[f] if (m := rx.match(p))]
     if not ends:
@@ -1117,8 +1118,12 @@ def _totals_row(line: Line, lines: list[Line]) -> bool:
         return True  # "Total", "Total: 700.00", "Total hours" (no grand total, still under the lines)
     if any(rx.match(rest) for pats in _LABELS.values() for rx, _ in pats):
         return True  # "Total GST 5%"
-    beside = [o for o in lines if o is not line and abs(o.box.cy - line.box.cy) < 0.006 and o.box.x0 > line.box.x1]
-    return sum(bool(_NUMBER_CELL.match(o.text)) for o in beside) < 2
+    beside = sorted((o for o in lines if o is not line and abs(o.box.cy - line.box.cy) < 0.006
+                     and o.box.x0 > line.box.x1 and _NUMBER_CELL.match(o.text)), key=lambda o: o.box.x0)  # fmt: skip
+    figures = [abs(v) for o in beside for v, _a, _b in _amounts_in(o.text)]
+    return not any(abs(q * price - amount) <= 0.011 and amount
+                   for i, q in enumerate(figures) for j, price in enumerate(figures[i + 1 :], i + 1)
+                   for amount in figures[j + 1 :])  # fmt: skip
 
 
 def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | None = None,

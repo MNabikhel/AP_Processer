@@ -80,8 +80,10 @@ _PICTURE_MAGIC = ((b"\x89PNG\r\n\x1a\n", ".png"), (b"\xff\xd8\xff", ".jpg"), (b"
                   (b"BM", ".bmp"), (b"GIF87a", ".gif"), (b"GIF89a", ".gif"))  # fmt: skip
 _HEIF_BRANDS = (b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"mif1", b"msf1")
 _SAME_KIND = {".jpeg": ".jpg", ".tiff": ".tif", ".heif": ".heic"}
-# A web page's start, after a browser's "saved from" comment, an XML declaration or a doctype's public id (B-2600)
-_WEB_PAGE_START = re.compile(rb"(?:\s|<!--.*?-->|<\?xml[^>]*>)*<(?:!doctype\s+html|html|head|body|meta|title)\b",
+# A web page's start, after a browser's "saved from" comment, an XML declaration or a doctype's public id (B-2600);
+# a comment ends at its first "-->", or a head of many comments takes forever to tell apart
+_WEB_PAGE_START = re.compile(rb"(?:\s|<!--(?:(?!-->).)*-->|<\?xml[^>]*>)*"
+                             rb"<(?:!doctype\s+html|html|head|body|meta|title)\b",
                              re.IGNORECASE | re.DOTALL)  # fmt: skip
 WEB_PAGE = ("{name} is a web page saved with a {ext} name, not the invoice itself: open the vendor's email or portal "
             "and download the invoice again (as a PDF).")  # fmt: skip

@@ -459,3 +459,12 @@ def test_terms_starting_with_due_under_the_invoice_date_do_not_make_it_the_due_d
     fields = _read(_pdf(tmp_path, lines))
     assert fields["invoice_date"].value == "2026-11-05"
     assert fields["due_date"].value != "2026-11-05"
+
+
+def test_a_due_date_over_its_label_beside_a_name_starting_with_a_label_word_is_read(tmp_path):
+    """B-2602: a due date printed over its label "Due Date" was dropped when a name on its row began
+    with a label's word ("Total Supply Ltd | 2026-11-05"): only a label on its own makes the date its value."""
+    lines = [(40, 50, "Kootenay Supply Co."), (40, 80, "Invoice #"), (180, 80, "7788"), (40, 100, "Total Supply Ltd"),
+             (180, 100, "2026-11-05"), (180, 114, "Due Date"), (40, 114, "Vendor"), (350, 300, "Total"),
+             (480, 300, "50.00")]  # fmt: skip
+    assert _read(_pdf(tmp_path, lines))["due_date"].value == "2026-11-05"

@@ -362,3 +362,20 @@ def test_an_item_whose_description_starts_with_a_totals_word_is_a_line():
             got = [a for *_r, a in _read(_words(*HEADINGS, *cells, *totals))]
             want = [float(r[3]) for r in (items if named.startswith("Subtotal") else rows)]
             assert got == want, (named, at, got)
+
+
+def test_a_totals_row_with_a_quantity_or_three_figures_still_ends_the_lines():
+    """B-2603: a totals row named with more words and two figures or more beside it ("Total Units | 4 |
+    200.00", "Total Current Charges | 200.00 | 10.00 | 210.00") read as one more line, the table's total again. An
+    item named with a total's word is priced as the lines are: its quantity times its price is its amount."""
+    items = [("Widget", "1", "100.00", "100.00"), ("Gadget", "1", "50.00", "50.00"), ("Bracket", "2", "25.00", "50.00")]
+    cells = [c for i, r in enumerate(items) for c in _row(0.24 + 0.03 * i, *r)]
+    rows = {"Total Units": [("4", 0.56, 0.58), ("200.00", 0.84, 0.90)],
+            "Total pieces": [("4", 0.56, 0.58), ("200.00", 0.84, 0.90)],
+            "Total Services Rendered": [("4", 0.56, 0.58), ("35.00", 0.70, 0.76), ("200.00", 0.84, 0.90)],
+            "Total Current Charges": [("200.00", 0.60, 0.66), ("10.00", 0.70, 0.76), ("210.00", 0.84, 0.90)],
+            }  # fmt: skip
+    for label, figures in rows.items():
+        totals = [(label, 0.10, 0.10 + 0.008 * len(label), 0.36), *((t, a, b, 0.36) for t, a, b in figures)]
+        got = [a for *_r, a in _read(_words(*HEADINGS, *cells, *totals))]
+        assert got == [100.0, 50.0, 50.0], (label, got)
