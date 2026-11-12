@@ -14,7 +14,7 @@ import os
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -149,6 +149,30 @@ def test_the_runner_points_at_the_folder_and_the_data_folder(data, tmp_path):
     assert "APProcessor 100%%" in text  # a % in a path is doubled in a .cmd file
     python = "Scripts\\python.exe" if os.name == "nt" else "Scripts/python.exe"
     assert python.replace("\\", "/") in text.replace("\\", "/") and "-m ap_coder service run" in text
+
+
+def as_cmd_reads_it(raw: bytes, code_page: str = "cp850") -> str:
+    """The text cmd.exe works with: the file's bytes in the console code page, unless a `chcp 65001` line comes
+    before the line (then UTF-8)."""
+    out, page = [], code_page
+    for line in raw.split(b"\r\n"):
+        text = line.decode(page, errors="replace")
+        out.append(text)
+        if text.strip().lower().startswith("chcp 65001"):
+            page = "utf-8"
+    return "\r\n".join(out)
+
+
+def test_run_cmd_keeps_an_accented_data_folder_and_code_folder():
+    """B-2570: run.cmd is written as UTF-8, but cmd.exe reads a batch file in the console's OEM code page (437 or 850
+    on an English or French Canadian Windows, under Task Scheduler too): "D:\\Données AP" reached `set` and `cd /d`
+    as "D:\\Donn├®es AP". Its second line is `chcp 65001 >nul`, everything before it ASCII."""
+    data, folder = PureWindowsPath(r"D:\Données AP"), PureWindowsPath(r"C:\APCoder\Comptabilité\APProcessor")
+    raw = service.runner_text(folder, data).encode("utf-8")  # what write_runner writes
+    seen = as_cmd_reads_it(raw)
+    assert 'set "AP_PRIVATE_DIR=D:\\Données AP"' in seen, seen
+    assert 'cd /d "C:\\APCoder\\Comptabilité\\APProcessor"' in seen, seen
+    assert raw.split(b"\r\n")[:2] == [b"@echo off", b"chcp 65001 >nul"]
 
 
 class PowerCut(OSError):
