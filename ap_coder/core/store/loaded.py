@@ -172,7 +172,10 @@ def _where(view: View, q: Any, filters: Mapping[str, Any], kept: Mapping[str, An
     filter's column its value exactly (``BLANK``: empty), and, for ``BY_HAND``, the rows ``kept`` names."""
     parts, args = [view.where], []
     for word in str(q or "").split()[:WORDS_MOST]:
-        found = "%" + fold_text(word).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        folded = fold_text(word).strip()  # (a lone accent mark folds to "" or " ": left out, as a space is)
+        if not folded:
+            continue
+        found = "%" + folded.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         parts.append("(" + " OR ".join(f"{dialect.like_folded(column)} ESCAPE '\\'" for column in view.search) + ")")
         args += [found] * len(view.search)
     for column in view.filters:
