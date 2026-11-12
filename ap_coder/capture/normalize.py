@@ -102,6 +102,8 @@ _PST = re.compile(
     r"n°|#)\.?[\s:#]*)*((?:PST|RST)[\s-]?)?(\d[\d-]{4,13}\d)(?![\d.,%])",
     re.I,
 )
+# British Columbia's own shape is a label itself: "PST-1234-5678" printed alone.
+_BC_PST = re.compile(r"(?<![A-Za-z\d-])PST-\d{4}-\d{4}(?![\d.,%-])", re.I)
 
 
 def find_pst_numbers(text: str) -> list[tuple[str, int, int]]:
@@ -109,12 +111,17 @@ def find_pst_numbers(text: str) -> list[tuple[str, int, int]]:
     (its own "PST-" prefix kept); start..end covers the number, not the label."""
     s, spans = _folded(text, _nfkc)
     out = []
+    labelled = []
     for m in _PST.finditer(s):
         if sum(c.isdigit() for c in m.group(2)) < 6:
             continue
         a = m.start(1) if m.group(1) else m.start(2)
         out.append((s[a : m.end()].strip(), *_unfolded(spans, a, m.end())))
-    return out
+        labelled.append(m.span())
+    for m in _BC_PST.finditer(s):
+        if not any(a < m.end() and m.start() < b for a, b in labelled):
+            out.append((m.group(0), *_unfolded(spans, *m.span())))
+    return sorted(out, key=lambda x: x[1])
 
 
 def norm_pst(text: str | None) -> str:
