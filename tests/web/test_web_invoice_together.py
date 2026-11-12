@@ -212,6 +212,33 @@ def test_a_screen_drawn_before_an_approval_was_undone_cannot_approve_over_it(lap
     assert inv["status"] == REVIEW and inv["final_output"]["invoice_number"] == "APPROVED-1"
 
 
+def test_park_or_reject_from_a_screen_drawn_before_the_invoice_changed_is_refused_as_approve_is(laptop, store):
+    """B-2533: Park and Reject posted no revision, so a screen drawn before the invoice was approved and the approval
+    undone (or sent to its manager) parked or rejected it without a word of what had changed. Their forms post the
+    screen's revision and are refused as Approve is (D-184): in the queue, said as its check says it; once it left
+    it, "changed meanwhile"."""
+    inv_id = clean_invoice(laptop, store)
+    page = laptop.get(f"/review/{inv_id}").text
+    old = _screen(page)
+    for action in ("park", "reject"):
+        posted = re.search(rf'action="/review/{inv_id}/{action}">(.*?)</form>', page, re.S)[1]
+        assert f'name="rev" value="{old["rev"]}"' in posted
+    assert laptop.post(f"/review/{inv_id}/approve", data=form_of(store, inv_id), headers=PAGE).json()["ok"]
+    assert laptop.post(f"/review/{inv_id}/undo-approve", headers=PAGE).json()["ok"]
+    for action in ("park", "reject"):
+        answer = laptop.post(f"/review/{inv_id}/{action}", data={"reason": "not ours", "rev": old["rev"]},
+                             headers=PAGE)  # fmt: skip
+        assert answer.status_code == 409 and answer.json()["stale"]["text"].startswith("Reopened by Jordan Lee")
+    assert store.get_invoice(inv_id)["status"] == REVIEW
+    store.park_invoice(inv_id, "Bo Chen", "waiting for the buyer")  # left the queue
+    answer = laptop.post(f"/review/{inv_id}/reject", data={"reason": "not ours", "rev": old["rev"]}, headers=PAGE)
+    assert "changed meanwhile" in flash_text(laptop, answer.json())
+    assert store.get_invoice(inv_id)["status"] != "rejected"
+    store.unpark_invoice(inv_id, "Bo Chen")
+    now = _open(laptop, inv_id)  # brought back: a screen drawn now rejects it
+    assert laptop.post(f"/review/{inv_id}/reject", data={"reason": "x", "rev": now["rev"]}, headers=PAGE).json()["ok"]
+
+
 def test_approve_or_send_to_the_manager_from_a_tab_behind_is_refused_as_its_check_is(laptop, store):
     """B-1936: Approve (or Send to the manager) from a tab behind the other's draft answered "changed meanwhile", a
     redirect to the invoice that the page followed: drawn again from the other tab's draft, what was typed in this
@@ -445,6 +472,24 @@ def test_in_a_browser_typed_then_approved_at_once_from_a_tab_behind_keeps_what_w
     assert store.get_invoice(inv_id)["status"] == REVIEW
     assert store.invoice_draft(inv_id, "")["header"]["po_number"] == "PO-FROM-ONE"
     assert errors_one == [] and errors_two == []
+
+
+def test_in_a_browser_reject_from_a_screen_drawn_before_a_reopen_says_it_is_out_of_date(browser, store):
+    """B-2533: Reject (or Park) from a screen drawn before the invoice was approved and reopened is refused: the
+    screen says so once, as after Approve, and turns read-only."""
+    chromium, base = browser
+    inv_id = clean_invoice(client_for(store), store)
+    page, errors = _tab(chromium.new_context(viewport={"width": 1400, "height": 1000}), base, inv_id)
+    store.approve_invoice(inv_id, dict(store.get_invoice(inv_id)["ai_output"]), "Bo Chen")
+    store.reopen(inv_id, "Bo Chen", "line 1 is the wrong account", only_approved=True)
+    page.click("details[data-reject] > summary")
+    page.fill("details[data-reject] [name=reason]", "not ours")
+    page.click("details[data-reject] button[type=submit]")
+    page.wait_for_selector("[data-stale]", timeout=10000)
+    assert "Reopened by Bo Chen today at" in page.inner_text("[data-stale]")
+    assert page.locator(".inv-actionbar").is_hidden() and page.url == f"{base}/review/{inv_id}"
+    assert store.get_invoice(inv_id)["status"] == REVIEW
+    assert errors == []
 
 
 def test_in_a_browser_an_approval_clicked_while_a_check_runs_waits_for_its_answer(browser, store, monkeypatch):

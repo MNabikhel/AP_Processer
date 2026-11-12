@@ -75,6 +75,23 @@ def test_a_credit_note_adds_up_in_the_negative():
     assert m["ok"]
 
 
+def test_a_credit_notes_subtotal_and_tax_read_as_a_sum_without_a_plus_minus():
+    """B-2535: a credit note's Tax check read "-500.00 + -60.00 = -560.00". Its tax is taken off: "-500.00 - 60.00 =
+    -560.00"; the summary under the amounts reads so too."""
+    from ap_coder.web.invoice_view import _amount_line
+
+    lines = [(-500, ["GST", "PST"])]
+    m = math_check(_coding(lines, [("GST", 0.05, -500, -25.00), ("PST", 0.07, -500, -35.00)]))
+    total = next(r for r in m["rows"] if r["kind"] == "total")
+    assert (total["subtotal"], total["sign"], total["tax"], total["computed"]) == ("-500.00", "-", "60.00", "-560.00")
+    assert total["detail"] == "-500.00 - 60.00 = -560.00; the total is -560.00"
+    line = _amount_line({"subtotal": "-500", "tax_total": "-60", "grand_total": "-560"})
+    assert (line["subtotal"], line["sign"], line["tax"], line["total"]) == ("-500.00", "-", "60.00", "-560.00")
+    invoice = math_check(_coding([(500, ["GST"])], [("GST", 0.05, 500, 25.00)]))
+    assert next(r for r in invoice["rows"] if r["kind"] == "total")["detail"].startswith("500.00 + 25.00 = 525.00")
+    assert _amount_line({"subtotal": "500", "tax_total": "25", "grand_total": "525"})["sign"] == "+"
+
+
 def test_freight_taxed_or_not():
     """Freight is taxed when its line is ticked (GST: yes; BC PST: when the goods are), else not."""
     goods, freight = (1000, ["GST", "PST"]), (50, ["GST"])

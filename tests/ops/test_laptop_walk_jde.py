@@ -138,6 +138,36 @@ def test_a_line_changed_after_a_reopen_is_a_correction_of_what_was_approved_befo
     assert insights.approved_as_coded(store) == (0, 1) and insights.filled_in_count(store) == 0  # corrected
 
 
+def test_a_line_changed_after_a_send_back_is_a_correction_of_what_was_approved_first(tmp_path, ground_truth):
+    """B-2532: sent back by the second approver, a line AP had coded where the AI proposed nothing (6110) and then
+    changed (6100) was recorded as AP's own coding: the second approver read "no changes to the suggested coding".
+    A send-back keeps the coding approved as a reopen does (B-1299, D-112): the change is a correction of it."""
+    import copy
+
+    from ap_coder.core.memory import CORRECTED
+    from ap_coder.core.store import PENDING, Store
+
+    store = Store(tmp_path / "ap.db")
+    store.set_setting("approval_limit", "1")  # every invoice waits for a second approval
+    blank = copy.deepcopy(ground_truth)
+    for li in blank["line_items"]:
+        li["predicted_gl_code"] = "UNASSIGNED"
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", blank, {"requires_review": True})
+    first = copy.deepcopy(ground_truth)
+    first["line_items"][0]["predicted_gl_code"] = "6110"
+    store.approve_invoice(invoice_id, first, "jane")
+    assert store.get_invoice(invoice_id)["status"] == PENDING
+    store.send_back(invoice_id, "ann", "line 1 is the wrong account")
+    again = copy.deepcopy(first)
+    again["line_items"][0]["predicted_gl_code"] = "6100"
+    store.approve_invoice(invoice_id, again, "jane")
+
+    rows = {r["line_number"]: r for r in store.feedback_rows() if r["invoice_id"] == invoice_id}
+    one = rows[first["line_items"][0]["line_number"]]
+    assert (one["outcome"], one["suggested_gl"], one["final_gl"]) == (CORRECTED, "6110", "6100")
+    assert "line_coding" in store.get_invoice(invoice_id)["edits"]
+
+
 # --- 4. The Welcome checklist's JD Edwards line ----------------------------------------------------------------------
 
 

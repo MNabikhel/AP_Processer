@@ -236,6 +236,25 @@ def test_a_header_amount_too_long_to_be_one_is_refused_like_a_word(client, store
     assert store.get_invoice(inv_id)["status"] == REVIEW
 
 
+def test_approve_anyway_and_its_reason_stay_ticked_when_the_invoice_is_opened_again(client, store):
+    """B-2536: "Approve anyway" ticked with its reason was gone once the page was drawn again (a reload, Previous or
+    Next and back): the draft kept neither. They are kept with it, ticked again only while the errors are the same
+    ones (``override_key``); a bare tick keeps nothing (B-825)."""
+    cascade = next(i["id"] for i in store.list_invoices(REVIEW) if "Cascade" in (i["vendor_name"] or ""))
+    data = form_of(store, cascade)
+    key = re.search(r'name="override" value="([0-9a-f]+)"', check(client, cascade, data)["sections"]["bar"])[1]
+    assert not check(client, cascade, {**data, "override": key})["draft"]
+    reason = "US supplier, set up next week"
+    assert check(client, cascade, {**data, "override": key, "override_reason": reason})["allow"]
+    page = client.get(f"/review/{cascade}").text
+    assert re.search(rf'name="override" value="{key}" form="inv" checked', page)
+    assert f'value="{reason}"' in page
+    assert check(client, cascade, {**data, "override": "0" * 10, "override_reason": reason})["draft"]  # other errors'
+    page = client.get(f"/review/{cascade}").text
+    assert not re.search(r'name="override" value="[0-9a-f]+" form="inv" checked', page)
+    assert f'value="{reason}"' not in page
+
+
 def test_errors_need_approve_anyway_with_a_reason_but_not_what_makes_the_voucher_invalid(client, store):
     """D-75: a total that doesn't add up can never be approved anyway; another error (a vendor not in the vendor list)
     can, ticked with a reason, which is kept with the approval."""
@@ -440,6 +459,24 @@ def test_split_a_line(client, store):
     assert page.count('name="line_key" value="r') == len(rows) + 1
     wrong = client.post(f"/review/{inv_id}/split", data={**data, "part_pct": ["60", "30"]}, headers=PAGE)
     assert wrong.status_code == 400 and "100" in wrong.json()["error"]
+
+
+def test_a_gap_left_by_a_line_deleted_on_screen_is_not_said_to_be_a_line_missed(client, store):
+    """B-2531: a line the AI read that a person deleted left its number out, and the checks then warned "The line
+    numbers don't run 1, 2, 3…" of what was done on purpose. A gap the reading had itself, or a number typed in
+    beyond the lines, still warns."""
+    inv_id = next(
+        i["id"]
+        for i in store.list_invoices(REVIEW)
+        if len((store.get_invoice(i["id"])["ai_output"] or {}).get("line_items") or []) >= 3
+    )
+
+    def says(rows_of) -> bool:
+        text = check(client, inv_id, form_of(store, inv_id, rows_of))["sections"]["checks"]
+        return "line numbers don" in text and "run 1, 2, 3" in text
+
+    assert not says(lambda rows: [rows[0]] + rows[2:])  # line 2 deleted
+    assert says(lambda rows: [rows[0], {**rows[1], "line_number": 9}] + rows[2:])  # line 2 numbered 9
 
 
 def test_the_coding_rules_can_be_applied_to_the_lines(client, store):

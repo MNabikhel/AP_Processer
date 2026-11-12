@@ -362,6 +362,39 @@ def test_in_a_browser_duplicate_insert_copy_from_above_and_clear_a_lines_account
     assert errors == []
 
 
+def test_in_a_browser_a_line_added_between_others_leaves_their_numbers_so_approval_learns_them_as_they_were(
+    browser, store
+):
+    """B-2530: a line duplicated or inserted under line 1 renumbered every line under it, and approval pairs the
+    screen's lines with the AI's by number: lines nobody touched were learned as corrections. A new line takes the
+    number after the last; the others keep theirs."""
+    client = TestClient(_app(store), base_url="http://localhost")
+    invoice_id = next(
+        i["id"]
+        for i in store.list_invoices(REVIEW)
+        if [li["line_number"] for li in (store.get_invoice(i["id"])["ai_output"] or {}).get("line_items") or []]
+        in ([1, 2, 3], [1, 2, 3, 4], [1, 2, 3, 4, 5])
+        and check(client, i["id"])["allow"]
+    )
+    page, errors = _review(browser, invoice_id)
+    n = _lines(page).count()
+    _menu(page, _lines(page).first.locator("[data-del-row]"))
+    _item(page, "duplicate").click()
+    _menu(page, _lines(page).first.locator("[data-del-row]"))
+    _item(page, "delete").click()  # the copy stands for line 1 now, under its own number
+    numbers = page.eval_on_selector_all("[data-grid=lines] [name=line_number]", "s => s.map(x => x.value)")
+    assert numbers == [str(n + 1)] + [str(i) for i in range(2, n + 1)], numbers
+    page.wait_for_load_state("networkidle")
+    page.locator("[data-approve]").click()
+    page.wait_for_url(lambda u: "flash" in u or f"/review/{invoice_id}" not in u, timeout=15000)
+    with store._conn() as conn:
+        learned = conn.execute(
+            "SELECT line_number, outcome FROM feedback WHERE invoice_id = ? ORDER BY line_number", (invoice_id,)
+        ).fetchall()
+    assert [tuple(r) for r in learned if r[0] < n + 1] == [(i, "accepted") for i in range(2, n + 1)], learned
+    assert errors == []
+
+
 def test_in_a_browser_a_tax_lines_amount_is_recalculated_from_its_rate(browser, store):
     invoice_id = _with_gst(store)
     page, errors = _review(browser, invoice_id)

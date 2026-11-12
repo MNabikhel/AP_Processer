@@ -54,7 +54,6 @@ from ap_coder.web.invoice_coding import ai_changes, differs_from_stored, learn_t
 from ap_coder.web.invoice_fields import (
     DateCheck,
     code_flags,
-    currency_issues,
     field_flags,
     field_help,
     flag_errors,
@@ -157,6 +156,14 @@ def lines_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
     return changed and abs(sum(now) - cents(coding.subtotal)) <= 1
 
 
+def numbers_deleted(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
+    """Whether the line numbers on screen miss only those of lines the AI read that a person deleted: with them they
+    run 1, 2, 3… (no line was missed, B-2531)."""
+    now = [li.line_number for li in coding.line_items]
+    whole = set(now) | {li.get("line_number") for li in ai.get("line_items") or []}
+    return len(set(now)) == len(now) and sorted(whole) == list(range(1, len(whole) + 1))
+
+
 def received_on(inv: dict[str, Any]) -> dt.date | None:
     """The day the invoice came in (its ``created_at``), None when it can't be read."""
     return _date_or_none(inv.get("created_at"))
@@ -200,6 +207,8 @@ def _findings(store: Store, inv: dict[str, Any], draft: Draft, coding: InvoiceCo
             if code == "LINE_AMOUNTS_TO_CHECK" and lines_settled(coding, ai):  # the lines were made to add up
                 continue
             report.issues.append(Issue(severity, code, message))
+    if numbers_deleted(coding, ai):  # a gap a person left deleting a line the AI read
+        report.issues = [i for i in report.issues if i.code != "LINE_NUMBERING"]
     if draft.absent:  # fields the reviewer said are not on this invoice: nothing asks for them (D-60)
         report.issues = settle_absent(report.issues, draft.absent)
     from_list = sorted((draft.from_vendor.get("fields") or {}).keys())
@@ -207,9 +216,10 @@ def _findings(store: Store, inv: dict[str, Any], draft: Draft, coding: InvoiceCo
     found = identity.person()
     if found is not None and found.user_id:  # the company server: a held vendor's invoice moved (D-142); not a laptop
         report.issues += [Issue(*f) for f in moved_off_hold(store, ai, coding)]
-    typed = dates.issues + currency_issues(coding.currency)  # the dates and the currency as typed (D-75)
+    # The dates and the currency as typed (D-75), said first
+    typed = dates.issues + [i for i in report.issues if i.code == "CURRENCY_UNKNOWN"]
     if typed:
-        report.issues = typed + report.issues
+        report.issues = typed + [i for i in report.issues if i.code != "CURRENCY_UNKNOWN"]
         report.requires_review = True
     if from_list:
         output[FROM_VENDOR_LIST] = from_list  # kept with the coding: the tax return's claims at risk read it
@@ -383,5 +393,5 @@ def _amount_line(header: dict[str, Any]) -> dict[str, Any] | None:
         sub, tax, total = (float(header.get(f) or 0) for f in AMOUNT_FIELDS)
     except (TypeError, ValueError):
         return None
-    return {"subtotal": signed(sub), "tax": signed(tax), "total": signed(total),
+    return {"subtotal": signed(sub), "sign": "-" if tax < 0 else "+", "tax": signed(abs(tax)), "total": signed(total),
             "currency": header.get("currency") or "", "adds_up": abs(sub + tax - total) < 0.015}  # fmt: skip
