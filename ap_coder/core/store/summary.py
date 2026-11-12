@@ -56,7 +56,7 @@ from .rules import RULES_SCHEMA, rule_rows
 
 # What the summary works out, by version: a change to it (a new column, a report's facts read differently, the
 # vendor-matching or invoice-number rules) changes this, and every database builds its summary again once.
-SUMMARY_RULES = "3"  # 2: the review queue's facts (D-155); 3: the tax claimed as posted (D-238)
+SUMMARY_RULES = "4"  # 2: the review queue's facts (D-155); 3: the tax claimed as posted (D-238); 4: q_others (D-241)
 
 # The columns of ``invoices`` the summary keeps as they are, with their declared types (so they compare and sort as
 # the columns of ``invoices`` do).
@@ -128,7 +128,8 @@ COMPUTED = (
     ("w_corrected", "INTEGER"),
     # The review queue (``bulk.queue_facts``): picked for the audit sample; of an invoice in review, the stamps of its
     # stored checks and of its queue re-check and their findings (severity and code, JSON), what its lines still need
-    # (without and with cost centers) and what its Pay from account is chosen from (JSON)
+    # (without and with cost centers), what its Pay from account is chosen from (JSON) and why a line coded from other
+    # vendors' approvals leaves it for a person (D-241)
     ("q_audit", "INTEGER"),
     ("q_stamp", "TEXT"),
     ("q_found", "TEXT"),
@@ -137,6 +138,7 @@ COMPUTED = (
     ("q_pick", "TEXT"),
     ("q_pick_cc", "TEXT"),
     ("q_pay", "TEXT"),
+    ("q_others", "TEXT"),
     # Sales tax (``taxreturn.tax_facts``, ``self_assessment_facts``), JSON
     ("t_facts", "TEXT"),
     ("s_facts", "TEXT"),
@@ -359,7 +361,8 @@ TOPICS: dict[str, Callable[[dict[str, Any] | None], Any]] = {
     # it is read apart with their order at each ask (B-1737).
     "listed": lambda r: tuple(r[c] for c in _LISTED_KEPT) if r and r["status"] in QUEUES else None,
 }
-QUEUE_READ = ("broken", "q_audit", "q_stamp", "q_found", "r_stamp", "r_found", "q_pick", "q_pick_cc", "q_pay")
+QUEUE_READ = ("broken", "q_audit", "q_stamp", "q_found", "r_stamp", "r_found", "q_pick", "q_pick_cc", "q_pay",
+              "q_others")  # fmt: skip
 QUEUES = (REVIEW, PARKED, PENDING)  # the lists the ``listed`` topic covers
 LISTED_COLUMNS = ("id", "file_name", "status", "vendor_name", "invoice_number", "invoice_date", "due_date", "currency",
                   "grand_total", "model_confidence", "adjusted_confidence", "requires_review", "error", "created_at",

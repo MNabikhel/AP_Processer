@@ -5706,6 +5706,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     "offered in Settings → Data & backups only" for that card).
   - (`scripts/launch.py`, `web/core.py`, `web/pages/settings.py` `choose_screens`, `_screens_card.html`,
     `base.html`; docs/PROTOTYPE.md section 1)
+  - **Amended (B-2531, B-2532):** a folder with no invoices but GL accounts, cost centers or a tax setup of its own is
+    asked too, the question saying QST is then added to each expense line; saved JD Edwards settings keep the folder
+    as it is only when really set up (`jde_settings.set_up`: any value not the default but supplier numbers, terms
+    codes, bank accounts and the worksheet's answers), not for one supplier number. With JD Edwards set up the QST
+    never changes: a folder with invoices of its own is asked only "Use the short menu?" (`ASK_SCREENS`), one with
+    none is not asked.
+
 - **D-233** · **CI's tests run in more, even parts side by side; Windows' one 20-minute test runs on main, not in
   a pull request** (`.github/workflows/ci.yml`, `tests/conftest.py`, `tests/times.py`; 11 Nov 2026).
   - **Measured** (the run of pull request 123, 38 minutes, 386 job-minutes in 39 jobs): the slowest job, a Windows
@@ -5814,24 +5821,32 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     "Coffee pods"); `bench coding --quick` and `learn --quick` did not move. Revisit if a pilot's queue fills with
     such holds: a tighter rule (only the name proper's words) was tried and missed the laptop.
 - **D-241** · **A line coded from other vendors' approvals always goes to a person** (`capture/workflow.py`
-  `invoice_gates`, `capture/supplier.py` `touchless_gates`; 12 Nov 2026). The user chose this.
+  `invoice_gates`, `capture/supplier.py` `touchless_gates`, `others_coded`; bulk approval and the queue's Ready,
+  `coding/bulk.py`, `web/pages/review.py`; 12 Nov 2026). The user chose this, as a safety rule.
   - **Why:** in the coding bench (`coding --quick`) the lines other vendors' approvals coded are 87.5% precise (8
     lines, 1 wrong) against 98.6% for the vendor's own (210 lines, 3 wrong); yet an invoice with one such line beside
-    the vendor's own could be approved touchless, nobody looking at it (B-2530).
+    the vendor's own could be approved touchless, nobody looking at it, or in one click in bulk (B-2530). The 87.5%
+    comes from 8 lines: in the full coding bench other vendors' approvals coded 82 lines with 2 wrong (97.6%), and
+    none of the 322 fully coded invoices from #20 on had such a line. So the touchless cost is near zero, but the
+    evidence for the change is thin: the user chose it as a safety rule.
   - **What:** the touchless gate reads each line's `decided_by`: a source in `validation.GUESS_SOURCES` ("model",
     "words", "others") always sends the invoice to a person, as a reasoning that says guess still does (invoices from
     older versions). "Others" lines are named in the reason ("line 2 was coded from other vendors' approvals, not
-    this vendor's"); Settings → Automation lists "An account not learned from this vendor". No check code: the
-    line's own words on the review screen already say where its account came from.
+    this vendor's"), each number once. Bulk approval and the queue's Ready leave such an invoice for a person too,
+    saying the same, from the coding's `decided_by` (the queue reads it from the invoices' summary, `q_others`).
+    Settings → Automation lists "An account not learned from this vendor". No check code: the line's own words on
+    the review screen already say where its account came from.
 - **D-242** · **A statement of open items does not list the invoices already exported as "Not on statement"**
   (`erp/statements.py` `reconcile`'s `open_items`, the tick box on the Statements page; 12 Nov 2026).
   - **Why:** many vendors send only what is unpaid. Every invoice AP Coder exported in the statement's period (an
     export batch: sent to the ERP, or on a JD Edwards keying sheet) was then listed "Not on statement", burying the
     few that matter. Ticked, those are counted in one line instead ("12 invoices already exported are not expected
-    on an open-items statement"); matching, the other lines and the email to the vendor are as before. Unticked,
-    nothing changes.
-  - **Kept:** in the page's address (`open_items=1`) from the upload through the Reconcile form, another sheet, the
-    CSV and Choose another file. Not remembered per vendor: the Statements page keeps nothing per vendor today
+    on an open-items statement", `Reconciliation.exported_note`), and the CSV ends with that line; matching, the
+    other lines and the email to the vendor are as before. Unticked, nothing changes.
+  - **Kept:** in the page's address (`open_items=1`, absent when unticked) from the upload, or a statement received
+    by email, through the Reconcile form, another sheet, the CSV and Choose another file. An emailed statement's
+    Reconcile button takes the choice of the page's address (open with it ticked, as Choose another file leaves it),
+    not the upload box's tick. Not remembered per vendor: the Statements page keeps nothing per vendor today
     (the statement itself is held an hour, never stored), and a table for one tick box would be more than it is
     worth. An exported invoice an undone batch released counts as not exported (its batch is cleared).
 - **D-243** · **The first sign-in is admin / admin, typed on the computer running AP Coder, and the laptop signs in

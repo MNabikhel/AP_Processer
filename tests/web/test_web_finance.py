@@ -657,6 +657,23 @@ def test_an_open_items_statement_counts_the_invoices_exported_instead_of_listing
     assert 'name="open_items" value="1">' in plain
 
 
+def test_the_sheet_picker_keeps_the_open_items_choice_only_when_ticked(client, busy):
+    """D-242: choosing another sheet of a workbook keeps open_items=1 when ticked; unticked, the address gets no empty
+    open_items= at all."""
+    key = busy.vendor_summaries()[0]["vendor_key"]
+    book = openpyxl.Workbook()
+    book.active.append(["Nothing here"])
+    book.create_sheet("Statement").append(["Invoice No", "Amount"])
+    raw = io.BytesIO()
+    book.save(raw)
+    page = follow(client, client.post("/statements/upload", data={"vendor": key},
+                                      files={"file": ("s.xlsx", raw.getvalue(), "application/octet-stream")},
+                                      headers=PAGE))  # fmt: skip
+    assert 'name="sheet" data-autosubmit' in page.text and 'type="hidden" name="open_items"' not in page.text
+    ticked = client.get("/statements", params={**page.url.params, "open_items": "1"}).text
+    assert '<input type="hidden" name="open_items" value="1">' in ticked
+
+
 def test_statement_columns_can_be_picked(client, busy):
     key, content = _statement(busy)
     page = follow(
