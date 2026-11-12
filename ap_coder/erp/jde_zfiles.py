@@ -246,10 +246,7 @@ def voucher_rows(
             if t["tax_type"] in v.recoverable_types:
                 part = _split(_units(t.get("tax_amount"), v.decimals), carrying(t["tax_type"]), unit)
                 shares = [a + b for a, b in zip(shares, part, strict=True)]
-        bases: dict[str, int] = {}  # each tax's taxable amount, its lines added up, as VLATXA is (B-923, B-2487)
-        for t in v.charged:
-            if t["tax_type"] not in v.expensed:
-                bases[t["tax_type"]] = bases.get(t["tax_type"], 0) + _units(t.get("taxable_amount"), v.decimals)
+        bases = _taxable_by_tax(v)
         widest = max(bases, key=lambda tax_type: abs(bases[tax_type]), default=None)
         base = carrying(widest) if widest else weights  # the tax whose taxable amount is VLATXA
         atxas = _split(v.atxa, base, unit)
@@ -273,6 +270,15 @@ def voucher_rows(
         return headers, [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
     header = {**common, "VLEDLN": 1, **amounts(v.gross, v.stam, v.atxa), **extras}
     return [header], [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
+
+
+def _taxable_by_tax(v: _Voucher) -> dict[str, int]:
+    """Each tax's taxable amount on the voucher, its tax lines added up, as VLATXA is (B-923, B-2487)."""
+    bases: dict[str, int] = {}
+    for t in v.charged:
+        if t["tax_type"] not in v.expensed:
+            bases[t["tax_type"]] = bases.get(t["tax_type"], 0) + _units(t.get("taxable_amount"), v.decimals)
+    return bases
 
 
 def _claimed_shares(v: _Voucher) -> list[int] | None:
