@@ -308,3 +308,43 @@ def test_read_only_sees_the_coding_sent_but_no_link_it_cannot_open(server, store
     assert page.status_code == 200 and "Coding sent to Bob" in page.text and f"/manager/{rid}" not in page.text
     assert client.get(f"/manager/{rid}", headers=_as(ro)).status_code == 403
     assert f"/manager/{rid}" in client.get(f"/review/{iid}", headers=_as(tokens["clerk"])).text
+
+
+def _split_form(store):
+    """An invoice of two lines or more coded to CC-200 (its first line) and CC-300 (the others), and its form."""
+
+    def lines(i):
+        inv = store.get_invoice(i["id"])
+        return (inv["final_output"] or inv["ai_output"] or {}).get("line_items") or []
+
+    iid = next(i["id"] for i in store.list_invoices(REVIEW) if len(lines(i)) >= 2)
+    gl = next(a["code"] for a in store.list_accounts("gl_accounts"))
+    with store._conn() as conn:
+        for code in ("CC-200", "CC-300"):
+            conn.execute(
+                "INSERT OR IGNORE INTO cost_centers (code, description, created_at) VALUES (?, '', '')", (code,)
+            )
+
+    def coded(rows):
+        return [{**r, "predicted_gl_code": gl, "predicted_cost_center": "CC-200" if n == 0 else "CC-300"}
+                for n, r in enumerate(rows)]  # fmt: skip
+
+    return iid, form_of(store, iid, coded)
+
+
+def test_remembering_the_manager_does_not_take_another_managers_cost_center(store):
+    """B-2530: "Remember them as the manager of these cost centers" made the person picked the manager of every cost
+    center on the invoice, another manager's too, without a word."""
+    client = client_for(store)
+    iid, form = _split_form(store)
+    store.set_cost_center_manager(["CC-200"], "Ann Site", "ann@example.com", "AP")
+    store.set_cost_center_manager(["CC-300"], "Bob Plant", "bob@example.com", "AP")
+    form = {**form, "manager_name": "Ann Site", "manager_email": "ann.site@example.com", "remember_manager": "1"}
+    answer = client.post(f"/review/{iid}/manager", data=form, headers=PAGE).json()
+    assert answer["ok"], answer
+    assert store.waiting_manager_request(iid)["cost_centers"] == ["CC-200", "CC-300"]
+    known = store.cost_center_managers()
+    assert known["CC-300"] == {"name": "Bob Plant", "email": "bob@example.com"}, known
+    assert known["CC-200"] == {"name": "Ann Site", "email": "ann.site@example.com"}  # the same manager: kept up to date
+    assert "CC-300 keeps its manager, Bob Plant" in client.get(answer["redirect"]).text
+

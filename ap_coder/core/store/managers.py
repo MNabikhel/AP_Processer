@@ -224,3 +224,17 @@ class ManagersMixin:
             if n:
                 self._log(conn, "cost_center_manager_set", None, actor, {"cost_centers": codes, "manager": name})
         return n
+
+    def remember_cost_center_manager(self, codes: list[str], name: str, email: str, actor: str) -> dict[str, str]:
+        """Remember ``name`` as the manager of those of ``codes`` with no manager or this one (its email kept up to
+        date): never another manager's. Returns the others, cost center -> the name of the manager it keeps."""
+        known = self.cost_center_managers()
+        kept = {c: known[c]["name"] for c in codes if c in known and not _same_name(known[c]["name"], name)}
+        if free := [c for c in codes if c not in kept]:
+            self.set_cost_center_manager(free, name, email, actor)
+        return kept
+
+
+def _same_name(one: Any, other: Any) -> bool:
+    """Two names of a manager are one person's when they read the same, spaces and case aside."""
+    return " ".join(str(one or "").split()).casefold() == " ".join(str(other or "").split()).casefold()
