@@ -224,7 +224,7 @@ def test_the_vendor_information_list_is_told_by_its_columns_and_shown_before_it_
     assert "55 suppliers to load: 0 already in the supplier list by their number" in summary
     assert "Left out: 1 row of totals at the end." in summary and "Tax ID: " in summary and "Currency: CAD" in summary
     assert '<b>Tax ID</b> <span class="muted">as</span> “Tax ID”' in summary
-    assert '<b>Business unit</b> <span class="muted">as</span> “Business Unit”' in summary
+    assert '<b>Business unit number</b> <span class="muted">as</span> “Business Unit”' in summary  # (B-2484)
     assert (
         re.search(r"Load [\d,]+ suppliers?</button>", summary) and "/vendors?file=" not in summary
     )  # its columns are not picked
@@ -548,7 +548,7 @@ def test_a_column_name_a_report_has_twice_says_which_and_dates_show_as_dates(cli
     assert ">Number (document type)</span>" in journal and ">Number (supplier number)</span>" in journal
     info = page.split('id="cols-vendor_info"', 1)[1].split("</details>", 1)[0]
     assert (
-        ">Business Unit (the 1st of that name)</span>" in info and ">Business Unit (business unit name)</span>" in info
+        ">Business Unit (business unit number)</span>" in info and ">Business Unit (business unit name)</span>" in info
     )
     assert "Address2" not in info and "<b>Address line 2</b>" in info
     token = _token(_send(client, "/jde-files/journal/upload", exports, made.JOURNAL_FILE))
@@ -1334,3 +1334,19 @@ def test_in_a_browser_each_cards_load_is_in_view_after_check_on_a_laptop(chromiu
                 load.click()
                 page.wait_for_selector(f"#{card}-said")
             page.close()
+
+
+def test_the_vendor_information_lists_two_business_unit_columns_say_number_and_name(client, exports):
+    """B-2484: the vendor information list's two "Business Unit" chips read "Business Unit (the 1st of that name)"
+    and "Business Unit (business unit name)": the first is the business unit's number, and says so. The columns read
+    are the same: the first by that name the number, the second the name."""
+    from ap_coder.coding import vendor_info
+
+    info = client.get("/jde-files").text.split('id="cols-vendor_info"', 1)[1].split("</details>", 1)[0]
+    assert ">Business Unit (business unit number)</span>" in info and "(the 1st of that name)" not in info
+    assert ">Business Unit (business unit name)</span>" in info
+    assert vendor_info.positions(["Internal Supplier Number", "Business Unit", "Tax ID", "Business Unit"]) == {
+        "erp_id": 0, "business_unit": 1, "tax_id": 2, "business_unit_name": 3}  # fmt: skip
+    token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.VENDOR_INFO_FILE))
+    summary = _summary(client, token)
+    assert '<b>Business unit number</b> <span class="muted">as</span> “Business Unit”' in summary

@@ -215,8 +215,9 @@ VENDOR_INFO = ImportSpec(
     columns=_columns({f: (vendor_info.COLUMNS[vendor_info.SECOND.get(f, f)],)
                       for f in (*vendor_info.COLUMNS, *vendor_info.SECOND)}, vendor_info.NEEDS,
                      {f: (vendor_info.LABELS.get(f, f.replace("_", " ").capitalize()), header)
-                      for f, header in _INFO_HEADERS.items()} | {"business_unit_name": ("Business unit name",
-                                                                                         "Business Unit")}
+                      for f, header in _INFO_HEADERS.items()}
+                     | {"business_unit": ("Business unit number", "Business Unit"),  # (the first of the two: B-2484)
+                        "business_unit_name": ("Business unit name", "Business Unit")}
                      | {f"address{n}": (f"Address line {n}", f"Address Line {n}") for n in range(1, 5)},
                      _INFO_ABOUT),
     find=_info_find,
