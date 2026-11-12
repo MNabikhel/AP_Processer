@@ -263,8 +263,10 @@ def test_the_doctor_fails_a_server_whose_only_admin_can_no_longer_log_in(store, 
     from ap_coder.core.store import users
     from ap_coder.ops.doctor import FAIL, PASS
 
-    store.add_user("boss", "a long admin password 1", role="admin")  # as `users add --admin`: temporary
+    boss = store.add_user("boss", "a long admin password 1", role="admin")  # as `users add --admin`: temporary
     store.add_user("carl", "a long clerk password 1", role="clerk", must_change=False)
+    with store._conn() as conn:  # signed in before (B-2533: a first Admin's lasts until then)
+        conn.execute("UPDATE users SET last_login = '2026-11-01T09:00:00' WHERE id = ?", (boss,))
     assert _server_accounts(store).status == PASS
     later = time.time() + users.TEMPORARY_SECONDS + 60
     monkeypatch.setattr(users.time, "time", lambda: later)

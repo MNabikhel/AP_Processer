@@ -52,7 +52,7 @@ from typing import Any
 
 from .. import authenticator
 from ._base import _now
-from .dialect import begin_write
+from .dialect import begin_write, json_get
 
 READONLY, CLERK, APPROVER, ADMIN = "readonly", "clerk", "approver", "admin"
 MANAGER = "manager"  # confirms the cost allocation of the invoices sent to them, nothing else (D-138)
@@ -686,20 +686,21 @@ class UsersMixin:
         return float(last) + min(60.0 * 2 ** min(count - ACCOUNT_FAILURES, 10), LOCK_SECONDS)
 
     def _temporary_expired(self, row: Any) -> bool:
-        """Whether ``row``'s temporary password was given over ``TEMPORARY_SECONDS`` ago (its last ``user_added``
-        or ``password_reset`` event; else the account's creation)."""
-        with self._conn() as conn:
-            given = conn.execute(
-                "SELECT MAX(created_at) FROM events WHERE action IN ('user_added', 'password_reset') "
-                "AND json_extract(detail, '$.username') = ?",
+        """Whether ``row``'s temporary password was given over ``TEMPORARY_SECONDS`` ago (its last ``user_added`` or
+        ``password_reset`` event; else its creation); not the only Admin's from the console till a sign-in (B-2533)."""
+        with self._conn() as conn:  # (no Admin gave it, ``share`` did: nobody else could give it a new one)
+            given, by = conn.execute(
+                f"SELECT created_at, {json_get('detail', '$.by_user')} FROM events WHERE action IN ('user_added', "
+                f"'password_reset') AND {json_get('detail', '$.username')} = ? ORDER BY created_at DESC, id DESC",
                 (row["username"],),
-            ).fetchone()[0]
-
+            ).fetchone() or (None, None)
+            first = by is None and row["role"] == ADMIN and row["active"] and self._active_admins(conn) == 1 and not (
+                conn.execute("SELECT 1 FROM users WHERE last_login IS NOT NULL").fetchone())  # fmt: skip
         try:
             when = dt.datetime.fromisoformat(given or row["created_at"]).timestamp()
         except (TypeError, ValueError):
             return False
-        return time.time() - when > TEMPORARY_SECONDS  # (the events' own clock)
+        return not first and time.time() - when > TEMPORARY_SECONDS  # (the events' own clock)
 
     def _locked(self, conn: Any, key: str, ip: str, now: float, console: bool) -> bool:
         """Whether logins are paused for ``key`` (a username, or ``UNKNOWN`` and its hash) from ``ip``, or from

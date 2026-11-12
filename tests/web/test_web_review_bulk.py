@@ -4,12 +4,14 @@ far it got; safe to leave and come back, one at a time a person, each invoice ap
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import threading
 import time
 
 from fastapi.testclient import TestClient
+from markupsafe import escape
 
 from ap_coder.coding import bulk
 from ap_coder.core.store import APPROVED, REVIEW, Store, bulk_jobs
@@ -517,3 +519,24 @@ def test_in_a_browser_the_bulk_approvals_page_says_how_far_it_got_then_what_was_
         gate.go.set()
         page.wait_for_selector("text=Done: 6 of 6 approved, 0 need a look.", timeout=15000)
         assert page.locator("[data-job-status]").count() == 0 and errors == []
+
+
+def test_an_invoice_with_a_line_coded_from_other_vendors_approvals_is_neither_ready_nor_approved_in_bulk(store):
+    """B-2530, D-241: touchless processing leaves an invoice with a line other vendors' approvals coded (``decided_by``
+    "others") for a person, but the queue called it Ready and bulk approval took it in one click. Both say why."""
+    ids = _clean(store, 3)
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET ai_output = json_set(ai_output, '$.line_items[0].decided_by', json(?)) "
+                     "WHERE id = ?", (json.dumps({"source": "others"}), ids[0]))  # fmt: skip
+    why = "Line 1 was coded from other vendors' approvals, not this vendor's"
+    pending = store.list_invoices(REVIEW)
+    assert review.attention(store, store.reference_data(), pending).get(ids[0]) == why
+    candidates, _ = bulk.sort_for_bulk(store)
+    assert {c["id"] for c in candidates} == set(ids[1:])
+    shown = str(escape(why))  # as the page writes it
+    page = client_for(store).get("/review?show=ready").text
+    assert "Ready · 2" in page and shown not in page
+    assert f'<div class="why">{shown}</div>' in client_for(store).get("/review?show=attention").text
+    out = bulk.bulk_approve(store, store.reference_data(), web_settings(), ids, "Pat")
+    assert out["approved"] == ids[1:] and out["skipped"] == [(ids[0], why)]
+    assert store.get_invoice(ids[0])["status"] == REVIEW

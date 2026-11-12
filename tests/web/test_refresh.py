@@ -138,6 +138,7 @@ def test_two_processes_one_works_the_answers_out_again_and_the_other_waits_for_o
                       again=[])  # fmt: skip
         store.want_answer("slow", reports.asked_key(None), [], _db(store))
         lease = f"answer/slow/{reports.asked_key(None)}"
+        ends = time.monotonic() + 30  # (each wait its own 30 s: a busy Windows runner took the whole of one, B-2534)
         while not store._lease_held(lease) and time.monotonic() < ends:
             time.sleep(0.05)
         assert store._lease_held(lease)  # (it works it out: 3 s, its hold renewed)
@@ -1538,7 +1539,8 @@ def test_the_servers_start_stops_working_the_views_out_at_its_bound_and_goes_on_
 ):
     """D-204: the start's work is bounded (``PREPARE_MOST``, looked at before each view): past it the server answers
     and the rest is left to the background process's refresher, said so. A view whose work fails, or whose arguments
-    can't be found, is logged and the next goes on."""
+    can't be found, is logged and the next goes on. B-2534: the bound is 3 s (it was 1 s, which a busy Windows runner
+    passed before "next" began)."""
     store = _server(Store(tmp_path / "ap.db"), monkeypatch)
     order = []
 
@@ -1562,7 +1564,7 @@ def test_the_servers_start_stops_working_the_views_out_at_its_bound_and_goes_on_
         ("fails", answer("fails", fails=True)),
         ("unasked", answer("unasked")),
         ("slow", answer("slow", 0.3)),
-        ("next", answer("next", 1.0)),
+        ("next", answer("next", 3.0)),
         ("left", answer("left")),
     ):
         monkeypatch.setitem(refresh.ANSWERS, name, work)
@@ -1571,13 +1573,13 @@ def test_the_servers_start_stops_working_the_views_out_at_its_bound_and_goes_on_
                                               ("left", lambda s: [4]), ("left", lambda s: [5])))  # fmt: skip
     said = []
     with caplog.at_level(logging.WARNING, logger="ap_coder.web.refresh"):
-        made, left, seconds = refresh.prepare(store, said.append, most=1.0)  # ("next" begins at 0.3 s, ends at 1.3)
-    assert order == ["fails", "slow", "next"] and (made, left) == (2, 2) and 1.3 <= seconds < 10
+        made, left, seconds = refresh.prepare(store, said.append, most=3.0)  # ("next" begins at 0.3 s, ends at 3.3)
+    assert order == ["fails", "slow", "next"] and (made, left) == (2, 2) and 3.3 <= seconds < 20
     warned = [r.getMessage() for r in caplog.records]
     assert warned == ["the fails answer's default view was not worked out ahead of its page",
                       "the unasked answer's default view was not worked out ahead of its page"]  # fmt: skip
     assert re.fullmatch(r"The reports' default views worked out before the dashboard answers: 2 of 6, in [\d.]+ s; "
-                        r"past 1 s, 2 left to the background process\.", said[-1]), said  # fmt: skip
+                        r"past 3 s, 2 left to the background process\.", said[-1]), said  # fmt: skip
     assert store.answer_made("slow", reports.asked_key([2])) and store.answer_made("left", reports.asked_key([4])) is (
         None)  # fmt: skip
 

@@ -1004,8 +1004,9 @@ def _unless_another_kind(description: str, ordered: list[Candidate], prior: Prio
     supplier's own words that say nothing of any account ("waybill 77812") are no other kind: the line is coded.
 
     ``listed``: a vendor's usual account of the plain lists (B-2520), whose descriptions go on with details ("Office
-    Supplies - paper; toner; ..."): no meal (coffee pods are an office supplier's), and a kind named only by a word of
-    the account's name proper (``_own_name``), not one of its details (paper towels are a cleaning company's)."""
+    Supplies - paper; toner; ..."): a telling word of a description is enough (paper towels on a cleaning company's
+    invoice are held too: the user chose flagging over fewer holds, D-240), and the account is said by its name
+    proper (``_own_name``)."""
     top, usual = ordered[0], prior.accounts[0]
     likeness = alike(prior, usual, description, reference)
     if likeness >= SAID_ALIKE:
@@ -1015,7 +1016,7 @@ def _unless_another_kind(description: str, ordered: list[Candidate], prior: Prio
     meals = frozenset(getattr(getattr(reference, "tax", None), "meals_gl_codes", None) or ())
     known = " ".join([top.name or account_name(reference, top.business_unit, top.code),
                       *(r.example for r in usual.remarks)])  # fmt: skip
-    if not listed and _MEAL_WORDS.search(description) and top.code not in meals and not _MEAL_WORDS.search(known):
+    if _MEAL_WORDS.search(description) and top.code not in meals and not _MEAL_WORDS.search(known):
         said, others = "a meal", _meal_accounts(line, reference, meals, rest, units)
     else:
         other = max(rest, key=lambda c: similarity(line, name_words(reference, c.business_unit, c.code)), default=None)
@@ -1056,19 +1057,20 @@ def _another_kind(line: frozenset[str], likeness: float, top: Candidate, usual: 
     have, and it is ``KIND_ALIKE`` alike to that name, more than to the supplier's account. "Insurance premium -
     cargo policy" names an insurance account on a courier's invoice; "Ergonomic office chair" says only the "office"
     of many names, and is the courier's. The most alike first, then the one whose word fewer accounts have.
-    ``listed`` (``_unless_another_kind``'s): the word is one of the name proper's, however alike the line is."""
+    ``listed`` (``_unless_another_kind``'s): however alike the line is, an account whose name proper has the word
+    first."""
     have = name_words(reference, top.business_unit, top.code).union(*usual.remark_keys, *usual.line_keys)
     counts = names_with(reference)
-    best, most = None, (0.0, 0)
+    best, most = None, (False, 0.0, 0)
     for c in offered:
         words = name_words(reference, c.business_unit, c.code)
-        named = keys(_own_name(reference, c.code)) if listed else words
-        telling = [counts.get(w, 0) for w in line & named - have if counts.get(w, 0) <= KIND_NAMES]
+        telling = [counts.get(w, 0) for w in line & words - have if counts.get(w, 0) <= KIND_NAMES]
         score = similarity(line, words)
         if c.code == top.code or not telling or score < (0.0 if listed else KIND_ALIKE) or score <= likeness:
             continue
-        if (score, -min(telling)) > most:
-            best, most = c, (score, -min(telling))
+        proper = listed and bool(line & keys(_own_name(reference, c.code)) - have)  # (its name proper says it)
+        if (proper, score, -min(telling)) > most:
+            best, most = c, (proper, score, -min(telling))
     return best
 
 

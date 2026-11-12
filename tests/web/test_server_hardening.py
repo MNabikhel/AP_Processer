@@ -741,13 +741,37 @@ def test_a_temporary_password_expires_after_3_days(tmp_path):
     assert store.authenticate("ann", "another good secret", "10.0.0.5")
 
 
+@pytest.mark.parametrize("gone", ["turned off", "made a clerk", "never signed in"])
+def test_an_expired_temporary_password_never_works_again_when_the_admin_who_gave_it_goes(tmp_path, gone):
+    """B-2533, reviewed: a first Admin's temporary password lasts until a first sign-in while it is the only Admin,
+    so another Admin's, expired, worked again on day 30 once the Admin who had signed in and given it was turned off
+    or made a clerk. Only the console's (no Admin gave it), while nobody has ever signed in, lasts."""
+    from ap_coder.core.store.users import TEMPORARY_EXPIRED, LoginRefused
+
+    store = Store(tmp_path / "ap_coder.db")
+    anna = store.add_user("anna", GOOD, role="admin", must_change=False)
+    if gone != "never signed in":
+        with store._conn() as conn:
+            conn.execute("UPDATE users SET last_login = '2026-11-01T09:00:00' WHERE id = ?", (anna,))
+    store.add_user("bob", GOOD, role="admin", by_user=anna)  # given by anna
+    with store._conn() as conn:
+        conn.execute("UPDATE events SET created_at = '2000-01-01T00:00:00' WHERE action = 'user_added'")
+    if gone == "turned off":
+        store.deactivate_user(anna, actor="anna")
+    else:
+        store.set_role(anna, "clerk", actor="anna")
+    with pytest.raises(LoginRefused, match=TEMPORARY_EXPIRED[:30]):
+        store.authenticate("bob", GOOD, "10.0.0.5")
+
+
 def test_the_only_admin_whose_temporary_password_expired_is_told_the_command_that_resets_it(web):
     """B-2525: the only Admin was told to "ask an Admin for a new one": there is none to ask."""
     from tests.web.test_server_security import log_in
 
     store = web["store"]
     store.add_user("boss", GOOD, role="admin")  # as `users add --admin`: temporary
-    with store._conn() as conn:
+    with store._conn() as conn:  # signed in before (B-2533: a first Admin's lasts until then), then reset
+        conn.execute("UPDATE users SET last_login = '2000-01-01T00:00:00' WHERE username = 'boss'")
         conn.execute("UPDATE events SET created_at = '2000-01-01T00:00:00' WHERE action = 'user_added'")
     said = log_in(web["client"](), "boss").json()["error"]
     assert "only Admin" in said and "python -m ap_coder users reset boss" in said and "ask an Admin" not in said

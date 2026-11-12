@@ -36,6 +36,7 @@ from .supplier import (
     confirmed_values,
     judged_stats,
     learn,
+    others_coded,
     outcome_rows,
     should_auto_approve,
     touchless_gates,
@@ -303,7 +304,8 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     by the page reader, or not every page of it (``pages_read``: the pages it read, at most
     AP_PAGE_READER_MAX_PAGES), nor by the local readers (a file longer than 60 pages), a text file the page reader
     cannot look at (``no_page``), or a line of ``output`` whose account only the local chat model chose (``inference.MODEL_SUGGESTED``) or a weak match coded
-    (``offline_coder.WEAK_MATCH``: an account's name, the vendor's default, an account AP moved away from)."""
+    (``offline_coder.WEAK_MATCH``: an account's name, the vendor's default, an account AP moved away from), or that
+    its ``decided_by`` calls a guess (``validation.GUESS_SOURCES``: other vendors' approvals among them, D-241)."""
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]
     coding = _amounts(capture, output)
     over_limit = store.touchless_limit() if store.over_touchless_limit(coding) else None
@@ -311,12 +313,17 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     currency = str(coding["currency"]).strip().upper()
     no_rate = "" if currency in store.fx_rates() else currency  # the limit is in CAD: unknown without a rate
     from ..ai.offline_coder import guessed as is_guess
+    from ..coding.validation import GUESS_SOURCES
 
-    guessed = sum(1 for li in (output or {}).get("line_items") or [] if is_guess(li.get("reasoning_justification")))
+    lines = (output or {}).get("line_items") or []
+    guessed = sum(1 for li in lines if (source := (li.get("decided_by") or {}).get("source")) != "others" and
+                  (source in GUESS_SOURCES or is_guess(li.get("reasoning_justification"))))  # fmt: skip
+    others = others_coded(lines)
     return touchless_gates(issues, grand_total=coding["grand_total"], over_limit=over_limit,
                            over_approval_limit=store.over_approval_limit(coding),
                            awaiting_page_reader=awaiting_page_reader, pages_unread=unread,
                            no_rate_for=no_rate, no_page=no_page, model_coded_lines=guessed,
+                           lines_from_others=others,
                            credit_note=capture is not None and capture.credit_note,
                            pages_left_out=capture.pages_left_out if capture is not None else 0)  # fmt: skip
 

@@ -4,7 +4,8 @@ The statement is uploaded (``POST /statements/upload``, or picked from the email
 ``POST /statements/emailed/<entry>/<n>``) and waits an hour (``files.keep_upload``: never kept with the invoices), then
 ``GET /statements?vendor=&file=&col_<field>=`` shows its columns and the reconciliation, the email asking the vendor
 for what is missing (``&lang=``) and ``GET /statements/reconciliation.csv`` (same address) downloads
-``statements.to_csv``.
+``statements.to_csv``. ``&open_items=1``: the statement lists only unpaid invoices, ticked on the upload and kept in
+each address after it (D-242).
 """
 
 from __future__ import annotations
@@ -69,20 +70,28 @@ def mapping_ready(chosen: dict[str, str]) -> bool:
     return not unpicked(STATEMENTS, chosen)
 
 
-def reconciliation(store: Store, vendor: str, records: list[dict[str, Any]], chosen: dict[str, str]) -> Any:
-    return stm.reconcile(records, chosen, store.vendor_invoices(vendor))
+def reconciliation(
+    store: Store, vendor: str, records: list[dict[str, Any]], chosen: dict[str, str], open_items: bool = False
+) -> Any:
+    return stm.reconcile(records, chosen, store.vendor_invoices(vendor), open_items)
 
 
 @router.get("/statements", response_class=HTMLResponse)
 def statements_page(
-    request: Request, vendor: str = "", file: str = "", sheet: str = "", lang: str = vendor_mail.ENGLISH
+    request: Request,
+    vendor: str = "",
+    file: str = "",
+    sheet: str = "",
+    lang: str = vendor_mail.ENGLISH,
+    open_items: str = "",
 ) -> HTMLResponse:
     store = get_store(request)
     vendors = sorted(store.vendor_summaries(), key=lambda v: v["vendor_name"] or "")
     names = {v["vendor_key"]: v["vendor_name"] for v in vendors}
     vendor = vendor if vendor in names else (next(iter(names)) if names else "")
     context: dict[str, Any] = {"names": names, "vendor": vendor, "s": None, "error": "", "rec": None,
-                               "emailed": inbox.statements(store, invoice_dir(store)), "spec": STATEMENTS}  # fmt: skip
+                               "emailed": inbox.statements(store, invoice_dir(store)), "spec": STATEMENTS,
+                               "open_items": bool(open_items)}  # fmt: skip
     if file and names:
         try:
             upload, df, sheets = read_upload(file, sheet or None)
@@ -95,7 +104,7 @@ def statements_page(
             if not df.empty and not mapping_ready(chosen):  # (no rows: the file as shown says so, spec_sheet)
                 context["error"] = "Pick the invoice number column and an amount or balance column."
             elif not df.empty:
-                rec = reconciliation(store, vendor, df.to_dict("records"), chosen)
+                rec = reconciliation(store, vendor, df.to_dict("records"), chosen, bool(open_items))
                 by_id = {i["id"]: i for i in store.vendor_invoices(vendor)}
                 keying = jde_keying.keying_batches(store)
                 lang = lang if lang in vendor_mail.LANGUAGES else vendor_mail.ENGLISH
@@ -139,16 +148,24 @@ def statements_page(
 
 
 @router.post("/statements/upload")
-async def statements_upload(request: Request, vendor: str = Form(""), file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
+async def statements_upload(
+    request: Request,
+    vendor: str = Form(""),
+    open_items: str = Form(""),
+    file: UploadFile = File(...),  # noqa: B008
+) -> JSONResponse:
     """Keep the statement for the page (an hour, ``files.keep_upload``) and show its reconciliation."""
     token, problem = await receive_sheet(file)
     if problem:
         return refuse(problem)
-    return done(request, "/statements?" + urlencode({"vendor": vendor, "file": token}))
+    ticked = {"open_items": "1"} if open_items else {}
+    return done(request, "/statements?" + urlencode({"vendor": vendor, "file": token, **ticked}))
 
 
 @router.post("/statements/emailed/{entry_id}/{n}")
-def statements_emailed(request: Request, entry_id: str, n: int, vendor: str = Form("")) -> JSONResponse:
+def statements_emailed(
+    request: Request, entry_id: str, n: int, vendor: str = Form(""), open_items: str = Form("")
+) -> JSONResponse:
     """Reconcile a statement spreadsheet that arrived by email (triage put it in ``statements/``)."""
     path = inbox.file_of(invoice_dir(get_store(request)), entry_id, n)
     if path is None:
@@ -161,11 +178,16 @@ def statements_emailed(request: Request, entry_id: str, n: int, vendor: str = Fo
         read_sheet(path.name, content)
     except SheetError as exc:
         return refuse(str(exc))
-    return done(request, "/statements?" + urlencode({"vendor": vendor, "file": keep_upload(path.name, content)}))
+    ticked = {"open_items": "1"} if open_items else {}
+    return done(
+        request, "/statements?" + urlencode({"vendor": vendor, "file": keep_upload(path.name, content), **ticked})
+    )
 
 
 @router.get("/statements/reconciliation.csv")
-def reconciliation_csv(request: Request, vendor: str = "", file: str = "", sheet: str = "") -> Response:
+def reconciliation_csv(
+    request: Request, vendor: str = "", file: str = "", sheet: str = "", open_items: str = ""
+) -> Response:
     store = get_store(request)
     try:
         _upload, df, _sheets = read_upload(file, sheet or None)
@@ -175,5 +197,5 @@ def reconciliation_csv(request: Request, vendor: str = "", file: str = "", sheet
     chosen = picked_columns(request.query_params, stm.COLUMN_ALIASES, columns, stm.map_columns(columns))
     if not mapping_ready(chosen):
         raise HTTPException(status_code=400, detail="Pick the invoice number column and an amount or balance column.")
-    rec = reconciliation(store, vendor, df.to_dict("records"), chosen)
+    rec = reconciliation(store, vendor, df.to_dict("records"), chosen, bool(open_items))
     return download(stm.to_csv(rec), "statement_reconciliation.csv", "text/csv")

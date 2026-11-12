@@ -7,7 +7,8 @@ the invoices AP Coder holds for that vendor, by invoice number (compared the way
 * matched: same number, same amount
 * amount differs: same number, different amount
 * not received: on the statement but not in AP Coder (ask the vendor for a copy)
-* not on statement: in AP Coder for the statement period but not on the statement
+* not on statement: in AP Coder for the statement period but not on the statement (on a statement of open items,
+  the invoices exported are counted instead: they are paid or on their way, D-242)
 * payment / credit: without a number, or with an invoice's number and the opposite sign: shown for information
 
 Entry points: ``map_columns``, ``reconcile`` (a ``Reconciliation``) and ``to_csv``.
@@ -122,6 +123,17 @@ class Reconciliation:
     # The statement's dates read either way (day or month first) and nothing told which: its period is unknown, so
     # the invoices it leaves out may not all be listed "Not on statement".
     period_unknown: bool = False
+    # An open-items statement (``reconcile``'s ``open_items``): the invoices exported it leaves out, counted.
+    exported_left_out: int = 0
+
+    @property
+    def exported_note(self) -> str:
+        """``exported_left_out`` in a sentence, as the page and the CSV say it; "" when none."""
+        n = self.exported_left_out
+        if not n:
+            return ""
+        invoices, are = ("invoice", "is") if n == 1 else ("invoices", "are")
+        return f"{n:,} {invoices} already exported {are} not expected on an open-items statement."
 
     def count(self, status: str) -> int:
         return sum(1 for li in self.lines if li.status == status)
@@ -130,9 +142,13 @@ class Reconciliation:
         return round(sum((li.statement_amount or li.ap_amount or 0) for li in self.lines if li.status == status), 2)
 
 
-def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: list[dict[str, Any]]) -> Reconciliation:
+def reconcile(
+    records: list[dict[str, Any]], columns: dict[str, str], invoices: list[dict[str, Any]], open_items: bool = False
+) -> Reconciliation:
     """``records``: statement rows; ``columns``: ``map_columns`` output (number and amount or balance needed);
-    ``invoices``: ``Store.vendor_invoices`` rows (id, invoice_number, invoice_date, grand_total, status)."""
+    ``invoices``: ``Store.vendor_invoices`` rows (id, invoice_number, invoice_date, grand_total, status,
+    export_batch); ``open_items``: the statement lists only unpaid invoices, so the ones exported (an export batch:
+    sent to the ERP or on a keying sheet) it leaves out are counted in ``exported_left_out``, not listed (D-242)."""
 
     def get(rec: dict[str, Any], key: str) -> Any:
         return rec.get(columns[key]) if key in columns else None
@@ -204,7 +220,12 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
             li.date = read_date(li.date, day_first)
         dates = [read_date(d, day_first) for d in dates]
     result.period_unknown = any(_EITHER_WAY.fullmatch(d) for d in dates)
-    result.lines += _not_on_statement(_period(dates), invoices, seen)
+    left_out = _not_on_statement(_period(dates), invoices, seen)
+    if open_items:
+        exported = {inv["id"] for inv in invoices if inv.get("export_batch")}
+        result.exported_left_out = sum(1 for li in left_out if li.invoice_id in exported)
+        left_out = [li for li in left_out if li.invoice_id not in exported]
+    result.lines += left_out
     order = {DIFFERS: 0, NOT_RECEIVED: 1, NOT_ON_STATEMENT: 2, MATCHED: 3, PAYMENT: 4}
     result.lines.sort(key=lambda li: (order[li.status], li.date, li.number))
     return result
@@ -286,4 +307,6 @@ def to_csv(rec: Reconciliation) -> bytes:
             "" if li.difference is None else f"{li.difference:.2f}",
             li.invoice_id or "", li.ap_status, li.note,
         ]))  # fmt: skip
+    if rec.exported_note:  # an open-items statement: the invoices exported are left out, and the file says so
+        writer.writerow([rec.exported_note] + [""] * 8)
     return ("\ufeff" + out.getvalue()).encode("utf-8")

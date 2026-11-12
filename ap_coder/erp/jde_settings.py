@@ -255,6 +255,18 @@ def load(store: Any) -> JdeSettings:
     return JdeSettings.from_json(store.get_setting(SETTING_KEY))
 
 
+# What a save may hold and still be no JD Edwards setup (``set_up``): the keying set-up keeps them as they are.
+NO_SETUP = ("an8_overrides", "terms_codes", "payment_terms_code", "answers", "bank_glba")
+
+
+def set_up(settings: JdeSettings) -> bool:
+    """Whether saved settings are a JD Edwards setup someone made, which the keying set-up leaves as it is
+    (``web.core.keying_to_set_up``, B-2532, B-2378): any value not the default (the department's own too: keying set
+    up already) but supplier numbers, terms codes, the bank accounts and the worksheet's answers (``NO_SETUP``)."""
+    mine, default = asdict(settings), asdict(JdeSettings())
+    return any(mine[name] != default[name] for name in mine if name not in NO_SETUP)
+
+
 def save(store: Any, settings: JdeSettings, actor: str | None = None) -> bool:
     """Save to the store's settings table; True when something changed (and is logged)."""
     text = settings.to_json()

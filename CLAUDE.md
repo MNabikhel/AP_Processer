@@ -13,7 +13,7 @@ code in, the connection points, the company's information to gather, and the ord
 Code: `ap_coder/` (`core` store and settings, `ai` pipeline and models, `coding` tax and checks, `erp` exports and
 reports, `intake` pictures and emails, `ops` command line and doctor, `capture` document reading, `web` the dashboard,
 `bench` the accuracy benchmark). `scripts/`: launcher, installer, update, offline bundle. `tests/`: pytest. `docs/`:
-guides, the bug log (BUGS.md) and decisions (decisions.md), their older entries in full in `docs/archive/`. Search the code to find things; the code is the reference.
+guides, the bug log (BUGS.md), decisions (decisions.md) and the owner's to-do list (TODO.md), their older entries in full in `docs/archive/`. Search the code to find things; the code is the reference.
 
 ## Where things live
 - One invoice, start to end: `ai/pipeline.py` (`finalise_coding`); the schema: `core/schema.py`. Reading: the rule

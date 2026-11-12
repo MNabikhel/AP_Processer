@@ -225,3 +225,47 @@ def test_a_line_whose_date_reads_both_ways_takes_the_invoice_of_either_reading_f
                 _doc(1, "1001", "2025-10-05", 80.0, batch=1)]  # fmt: skip
     rec = stm.reconcile(records, cols, invoices)
     assert next(li.invoice_id for li in rec.lines if li.number == "1001") == 5
+
+
+def test_an_open_items_statement_counts_the_invoices_exported_rather_than_listing_them():
+    """D-242: a statement of open items leaves out what is paid. Ticked, the invoices AP Coder exported (an export
+    batch: sent to the ERP or on a keying sheet) that it leaves out are counted, not listed "Not on statement"; the
+    rest of the comparison is as without it."""
+    cols = {"number": "No", "date": "Date", "amount": "Amount"}
+    records = [{"No": "1001", "Date": "2026-10-01", "Amount": "100.00"},
+               {"No": "1009", "Date": "2026-10-31", "Amount": "9.00"}]  # fmt: skip
+    invoices = [_doc(4, "1004", "2026-10-20", 40.0, "review"), _doc(3, "1003", "2026-10-10", 30.0, batch=4),
+                _doc(2, "1002", "2026-10-05", 20.0, batch=3), _doc(1, "1001", "2026-10-01", 100, batch=3)]  # fmt: skip
+
+    def left_out(rec):
+        return [li.invoice_id for li in rec.lines if li.status == stm.NOT_ON_STATEMENT]
+
+    def the_rest(rec):
+        return [(li.status, li.number, li.invoice_id) for li in rec.lines if li.status != stm.NOT_ON_STATEMENT]
+
+    plain = stm.reconcile(records, cols, invoices)
+    assert left_out(plain) == [2, 3, 4] and plain.exported_left_out == 0
+    rec = stm.reconcile(records, cols, invoices, open_items=True)
+    assert left_out(rec) == [4] and rec.exported_left_out == 2
+    assert the_rest(rec) == the_rest(plain) == [(stm.NOT_RECEIVED, "1009", None), (stm.MATCHED, "1001", 1)]
+
+
+def test_the_csv_of_an_open_items_statement_says_how_many_exported_invoices_it_leaves_out():
+    """D-242: the CSV leaves the exported invoices out as the page does, and says so in a last row, worded as on the
+    page; with none left out (or unticked), no such row."""
+    cols = {"number": "No", "date": "Date", "amount": "Amount"}
+    records = [{"No": "1001", "Date": "2026-10-01", "Amount": "100.00"},
+               {"No": "1009", "Date": "2026-10-31", "Amount": "9.00"}]  # fmt: skip
+    invoices = [_doc(3, "1003", "2026-10-10", 30.0, batch=4), _doc(1, "1001", "2026-10-01", 100.0, batch=3)]
+
+    def rows(rec):
+        return list(csv.reader(stm.to_csv(rec).decode("utf-8-sig").splitlines()))
+
+    ticked = stm.reconcile(records, cols, invoices, open_items=True)
+    assert ticked.exported_note == "1 invoice already exported is not expected on an open-items statement."
+    assert rows(ticked)[-1] == [ticked.exported_note] + [""] * 8 and len(rows(ticked)) == 4  # header, 2 lines, note
+    plain = stm.reconcile(records, cols, invoices)
+    assert plain.exported_note == "" and [r[0] for r in rows(plain)[1:]] == ["Not received", "Not on statement",
+                                                                              "Matched"]  # fmt: skip
+    two = stm.reconcile(records, cols, [*invoices, _doc(2, "1002", "2026-10-05", 20.0, batch=3)], open_items=True)
+    assert two.exported_note == "2 invoices already exported are not expected on an open-items statement."

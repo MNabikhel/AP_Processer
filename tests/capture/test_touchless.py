@@ -1,13 +1,16 @@
 """Touchless processing: one company-wide switch, one bar for every vendor reached by itself, the invoices that always
 go to a person, and what the clerk's corrections teach."""
 
+import datetime as dt
 import json
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
 from ap_coder.ai.offline_coder import code_from_capture
 from ap_coder.ai.pipeline import finalise_coding
+from ap_coder.bench.coding import _capture as coding_capture
 from ap_coder.capture.supplier import (
     ALWAYS_A_PERSON,
     AUTONOMOUS,
@@ -527,6 +530,67 @@ def test_a_line_coded_from_a_weak_match_is_never_approved_without_a_person(touch
     output = {"grand_total": 1050.0, "currency": "CAD", "line_items": [line]}
     decision = _decide(touchless, path, output=output)
     assert not decision["auto"] and "weak match" in decision["reason"]
+
+
+def test_a_line_coded_from_other_vendors_approvals_is_never_approved_without_a_person(touchless, path):
+    """The user's choice (D-241): a line whose account other vendors' approvals decided (``decided_by`` "others",
+    87.5% right in the coding bench against 98.6% for the vendor's own) goes to a person, whatever its reasoning
+    says, and the reason names the line."""
+    own = {"line_number": 1, "predicted_gl_code": "6000", "reasoning_justification": "Approved 4 times for this vendor",
+           "decided_by": {"source": "vendor"}}  # fmt: skip
+    others = {"line_number": 2, "predicted_gl_code": "6220", "decided_by": {"source": "others"},
+              "reasoning_justification": "used for similar lines from 2 other vendors"}  # fmt: skip
+    output = {"grand_total": 1050.0, "currency": "CAD", "line_items": [own, others]}
+    decision = _decide(touchless, path, output=output)
+    assert not decision["auto"] and "line 2 was coded from other vendors' approvals" in decision["reason"]
+    others["line_number"] = 3
+    output["line_items"].append({**others, "line_number": 4})
+    assert "lines 3 and 4 were coded from other vendors' approvals" in _decide(touchless, path, output=output)["reason"]
+    output["line_items"][1:] = [others, {**others}, {**others, "line_number": 2}]  # a number twice: said once
+    reason = _decide(touchless, path, output=output)["reason"]
+    assert "lines 3 and 2 were coded from other vendors' approvals" in reason, reason
+    output["line_items"] = [own]
+    assert _decide(touchless, path, output=output)["auto"]
+
+
+def _read(vendor, number, *texts):
+    lines = [SimpleNamespace(text=t, quantity=1.0, unit_price=100.0, amount=100.0) for t in texts]
+    return coding_capture(vendor, number, dt.date(2026, 1, 20), lines)
+
+
+def _approve(store, tmp_path, reference, vendor, number, accounts, *texts):
+    coding = code_from_capture(_read(vendor, number, *texts), reference, store.feedback_rows(), store).coding
+    output = coding.model_dump(mode="json")
+    iid = store.add_invoice(tmp_path / f"{number}.pdf", output, None)
+    for li, gl in zip(output["line_items"], accounts, strict=True):
+        li["predicted_gl_code"], li["predicted_cost_center"] = gl, "CC100"
+    store.approve_invoice(iid, output, "pat")
+
+
+def test_a_line_coded_alone_from_other_vendors_lines_stops_a_touchless_invoice(tmp_path, reference, path, monkeypatch):
+    """Probe, end to end with plain GL lists: one line coded from the vendor's own approvals, the other from other
+    vendors' lines only. The coder's reasoning for that one is not a guess (``offline_coder.guessed``), so the
+    invoice was approved with nobody looking at the line."""
+    store = Store(tmp_path / "s.db")
+    for n, vendor in enumerate(["Kingsway Mechanical Inc.", "Summit Industrial Supply LP"]):
+        _approve(store, tmp_path, reference, vendor, f"O-{n}", ["6220"], "Hydraulic hose assembly 1/2 in")
+    for n in range(4):
+        _approve(store, tmp_path, reference, "Northwind Supply Ltd.", f"N-{n}", ["6000"], "Copy paper case of 10")
+    capture = _read("Northwind Supply Ltd.", "N-99", "Copy paper case of 10", "Hydraulic hose assembly 1/2 in")
+    coding = code_from_capture(capture, reference, store.feedback_rows(), store).coding
+    capture.checks = [{"code": "TOTALS_ADD_UP", "ok": True, "detail": ""}]  # the money proven, as on a clean read
+    lines = coding.line_items
+    assert lines[1].predicted_gl_code == "6220" and lines[1].decided_by.get("source") == "others"  # set-up holds
+    _, report = finalise_coding(coding, reference, Settings(), store=store)
+    from ap_coder.capture import workflow
+
+    monkeypatch.setattr(store, "touchless_enabled", lambda: True)  # Northwind is touchless
+    monkeypatch.setattr(workflow, "autonomy_status", lambda *a, **k: ("autonomous", "", ""))
+    monkeypatch.setattr(store, "sync_autonomy", lambda key: None)
+    decision = autonomy_decision(store, "name:northwind supply", {"state": "autonomous"}, capture, report, path,
+                                 output=coding.to_output(), pages_read=1)  # fmt: skip
+    assert not decision["auto"], "a line other vendors' approvals coded was approved with no one looking at it"
+    assert "line 2 was coded from other vendors' approvals" in decision["reason"]
 
 
 def test_several_gates_are_all_named():
