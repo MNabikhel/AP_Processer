@@ -1565,11 +1565,17 @@ def desktop() -> Path | None:
     return Path(folder) if folder else None
 
 
+def ps_quoted(text: str) -> str:
+    """``text`` inside a PowerShell single-quoted string: each quote PowerShell ends one at (' and the typographic
+    ‘ ’ ‚ ‛) doubled, its own rule (B-2571)."""
+    return re.sub("['\u2018\u2019\u201a\u201b]", lambda quote: quote.group() * 2, text)
+
+
 def write_shortcut(folder: Path) -> bool:
     """One 'AP Coder' shortcut to APProcessor.bat: written over in place, never a second copy."""
-    target = str(ROOT / "APProcessor.bat").replace("'", "''")
-    workdir = str(ROOT).replace("'", "''")
-    link = str(folder / SHORTCUT).replace("'", "''")
+    target = ps_quoted(str(ROOT / "APProcessor.bat"))
+    workdir = ps_quoted(str(ROOT))
+    link = ps_quoted(str(folder / SHORTCUT))
     script = (
         f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{link}');"
         f"$s.TargetPath='{target}';$s.WorkingDirectory='{workdir}';"
@@ -1651,7 +1657,7 @@ def old_shortcut_folder() -> str:
     folder = desktop()
     if folder is None or not (folder / SHORTCUT).exists():
         return ""
-    link = str(folder / SHORTCUT).replace("'", "''")
+    link = ps_quoted(str(folder / SHORTCUT))
     target = running.powershell(f"(New-Object -ComObject WScript.Shell).CreateShortcut('{link}').TargetPath", 60)
     return str(Path(target).parent) if target else ""
 
