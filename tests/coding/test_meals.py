@@ -334,6 +334,51 @@ def test_a_tip_written_another_way_carries_no_tax():
     assert _split(dist)[0] == [(MEALS, 6.50, 106.50), ("6900", 0.0, 15.0)]
 
 
+def test_a_line_that_only_uses_a_tip_word_is_not_a_tip():
+    """B-2620: "Excel tips workshop", "Thank you cards" or a vendor named Merci, marked with the tax, take their
+    share of it (the PST kept in the expense is posted to their account), and a "Thank you lunch" on the meals
+    account has half its HST expensed; a line that is only a tip ("Gratuity 18%", "Driver tip") is still a tip."""
+    from types import SimpleNamespace
+
+    from ap_coder.coding.tax import is_tip
+
+    words = ("Excel tips workshop", "Thank you cards for staff", "Merci Boutique - gift baskets", "Livraison gratuite")
+    assert not any(is_tip(SimpleNamespace(description=text)) for text in words)
+    tips = ("Tip", "Tips", "Server - thank you", "Gratuity 18%", "Driver tip", "Pourboire - merci!", "Gratuité")
+    assert all(is_tip(SimpleNamespace(description=text)) for text in tips)
+    for text in words[:3]:
+        doc = _on([(100.0, "6100", text), (100.0, "6200", "Printer paper")], 0.0)
+        for line in doc["line_items"]:
+            line.update(taxes_applied=["GST", "PST"], tax_exempt=[], tax_status="")
+        doc.update(supplier_province="BC", ship_to_province="BC", tax_total=24.0, grand_total=224.0, tax_lines=[
+            {"tax_type": "GST", "province": "", "rate": 0.05, "taxable_amount": 200.0, "tax_amount": 10.0},
+            {"tax_type": "PST", "province": "BC", "rate": 0.07, "taxable_amount": 200.0, "tax_amount": 14.0},
+        ])  # fmt: skip
+        assert _split(_dist(doc, _setup(meals=())))[0] == [("6100", 7.0, 107.0), ("6200", 7.0, 107.0)]
+    dist = _dist(_on([(100.0, MEALS, "Thank you lunch for the team"), (100.0, "6200", "Paper cups")], 26.0))
+    assert _split(dist) == ([(MEALS, 6.50, 106.50), ("6200", 0.0, 100.0)], [("2310", 19.50)])
+
+
+def test_a_tip_line_with_more_words_is_still_a_tip():
+    """B-2620: "Tip amount", "Tip - Visa" or "Pourboire inclus" are tips: they carry none of the HST, so the claim
+    on the meal stays half of its HST, not more."""
+    from types import SimpleNamespace
+
+    from ap_coder.coding.tax import is_tip
+
+    tips = (
+        "Tip amount", "Tip total", "Tip - Visa", "Credit card tip", "Tip (cash)", "Tip: Server John", "Tip for Maria",
+        "Tip to driver", "Tip per server", "Gratuity - Table 5", "Pourboire - Table 12", "Pourboire inclus",
+        "Pourboire facultatif", "Pourboire pour le serveur", "Pourboire du personnel", "Gratuité incluse",
+        "Gratuité suggérée", "Merci beaucoup", "Auto-gratuity 18% large party", "Driver tip - Uber Eats",
+        "Thank you for your business", "18% gratuity", "Tip $5.00",
+    )  # fmt: skip
+    assert [text for text in tips if not is_tip(SimpleNamespace(description=text))] == []
+    for text in ("Tip amount", "Pourboire inclus", "Merci beaucoup"):
+        dist = _dist(_on([(100.0, MEALS, "Dinner for 4"), (15.0, "6900", text)], 13.0))
+        assert _split(dist) == ([(MEALS, 6.50, 106.50), ("6900", 0.0, 15.0)], [("2310", 6.50)]), text
+
+
 def test_the_excel_and_csv_lines_carry_the_meals_half():
     inv = _jde_invoice()
     rows = exports.line_rows([inv])

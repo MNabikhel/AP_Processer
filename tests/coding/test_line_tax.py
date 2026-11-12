@@ -211,6 +211,17 @@ def test_a_printed_tax_cell(cell, legend, charged, read):
     assert read_flags(cell, codes, charged) == read
 
 
+def test_a_rate_printed_with_one_decimal_is_not_zero_rated():
+    """B-2621: the "0%" at the end of "5.0%" or "13.0%" read as zero-rated, so a legend "G = GST 5.0%" gave every
+    line the code ZERO; a rate of 0% or 0.0% still is zero-rated."""
+    assert parse_legend("Tax codes: G = GST 5.0%, P = PST 7.0%") == {"G": ("GST",), "P": ("PST",)}
+    for cell in ("13.0%", "GST 5.0%", "TPS 5,0 %", "20.0%", "10%"):
+        assert read_flags(cell, None, ["HST"]) != ([], "zero_rated"), cell
+    assert parse_legend("Tax codes: G = GST 5%, Z = Zero-rated 0%") == {"G": ("GST",), "Z": "zero_rated"}
+    for cell in ("0.0%", "0,0 %", "GST 0%", "0 %", "5%,0%", "GST 5%,0%"):
+        assert read_flags(cell, None, ["GST"]) == ([], "zero_rated"), cell
+
+
 def test_codes_at_the_end_of_a_description_with_a_legend():
     legend = parse_legend("Tax codes: G = GST 5%, P = BC PST 7%")
     assert line_tax.codes_in_description("HP 26X toner cartridges (G, P)", legend) == "G, P"

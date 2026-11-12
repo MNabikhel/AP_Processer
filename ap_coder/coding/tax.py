@@ -866,8 +866,14 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
 # them (Quebec's QST Act does the same for the QST input tax refunds). PST is never recoverable: nothing to halve.
 MEALS_RESTRICTED = ("GST", "HST", "QST")
 MEALS_NOTE = "Meals: 50% of the {taxes} is claimable. Billed to a client or a staff event? Use the other account."
-# A tip or gratuity line: a voluntary tip is not taxed, so none of the tax printed is on it.
-_TIP = re.compile(r"\b(tips?|gratuit(?:y|ies|[ée]s?)|pourboires?|thank\s*you|merci)\b", re.I)
+# A tip or gratuity line: a voluntary tip is not taxed, so none of the tax printed is on it. A tip word opens or ends
+# the description or a part of it ("Tip amount", "Pourboire inclus", "Credit card tip", "Server - thank you"), and a
+# thanks is followed only by courtesy ("Merci beaucoup"): "Excel tips workshop", "Thank you cards", "Merci Boutique"
+# or "Livraison gratuite" (free delivery) are not tips (B-2620).
+_TIP_WORDS = {"tip", "tips", "gratuity", "gratuities", "gratuité", "gratuités", "pourboire", "pourboires"}
+_THANKS = re.compile(r"(?i)^\s*(?:thank\s*you|merci)\b")
+_COURTESY = {"beaucoup", "for", "your", "business", "visit", "order", "so", "much", "very", "again", "pour", "votre",
+             "visite", "commande", "de", "encore", "bien", "à", "la", "prochaine", "bientôt"}  # fmt: skip
 
 
 def meals_note(province: str) -> str:
@@ -927,7 +933,17 @@ def _lines_of_its_rate(lines: list[Any], tax_line: Any, tax_lines: Any) -> list[
 
 
 def is_tip(line: Any) -> bool:
-    return bool(_TIP.search(str(getattr(line, "description", "") or "")))
+    def words(text: str) -> list[str]:
+        return re.findall(r"[^\W\d_]+", text.lower())
+
+    for part in re.split(r"[-–—:()\[\]/,;|+!]+", str(getattr(line, "description", "") or "")):
+        named = words(part)
+        if named and (named[0] in _TIP_WORDS or named[-1] in _TIP_WORDS):
+            return True
+        thanks = _THANKS.match(part)
+        if thanks and set(words(part[thanks.end() :])) <= _COURTESY:
+            return True
+    return False
 
 
 def meals_parts(lines: list[Any], tax_line: Any, meals_gl_codes: Any, places: int = 2,
