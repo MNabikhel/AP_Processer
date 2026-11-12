@@ -1059,3 +1059,58 @@ def test_with_a_chart_loaded_and_a_list_imported_too_the_page_counts_what_came_f
     form = page.text.split('id="pick-gl_accounts"', 1)[1].split("</form>", 1)[0]
     assert f"Those not in it are removed, though the chart of accounts loaded on JD Edwards files gives {gl:,}." in form
     assert f"files gives {gl:,} of the {gl + 2:,} GL accounts listed now" in form
+
+
+@pytest.mark.parametrize(
+    ("spec", "rows"),
+    [
+        ("STATEMENTS", [["Txn No.", "Posted On", "Txn Type", "Charge"], ["88231", "2026-09-01", "Invoice", "100.00"],
+                        ["88232", "2026-09-04", "Credit", "-20.00"]]),
+        ("STATEMENTS", [["N° pièce", "Émis le", "Nature", "Somme"], ["88231", "2026-09-01", "Facture", "100.00"],
+                        ["88232", "2026-09-04", "Facture", "20.00"]]),
+        ("PURCHASE_ORDERS", [["Ref", "Item", "Value", "Stage"], ["PO-9001", "Service", "2000.00", "Received"],
+                             ["PO-9002", "Laptops", "900.00", "Open"]]),
+        ("ERP_REGISTER", [["Entry", "Posted", "Kind", "Gross"], ["E1", "2026-01-05", "Invoice", "100.00"],
+                          ["E2", "2026-01-06", "Invoice", "50.00"]]),
+    ],
+)  # fmt: skip
+def test_a_data_cell_that_is_a_column_name_does_not_take_the_header(spec, rows):
+    """B-2642: with a page's spec given, a header none of whose names were known lost to the first data row when a
+    cell of it was a column's name ("Invoice" in a Type column): the real names and the first line were gone."""
+    from ap_coder.erp import import_specs
+    from ap_coder.web.files import read_sheet
+
+    for name, content in (("s.csv", "\n".join(",".join(r) for r in rows).encode()), ("s.xlsx", xlsx(rows))):
+        df, _ = read_sheet(name, content, specs=[getattr(import_specs, spec)])
+        assert list(df.columns) == rows[0] and df.values.tolist() == rows[1:], name
+
+
+def test_a_statement_whose_column_names_are_not_known_keeps_them_to_pick_from(client, busy):
+    """B-2642, on the page: the column picker offers the statement's own names and the preview shows both lines."""
+    key = busy.vendor_summaries()[0]["vendor_key"]
+    content = b"Txn No.,Posted On,Txn Type,Charge\n88231,2026-09-01,Invoice,100.00\n88232,2026-09-04,Credit,-20.00\n"
+    page = follow(client, client.post("/statements/upload", data={"vendor": key},
+                                      files={"file": ("s.csv", content, "text/csv")}, headers=PAGE))  # fmt: skip
+    assert 'value="Txn No."' in page.text and 'value="Txn Type"' in page.text
+    assert 'value="88231"' not in page.text
+
+
+def test_a_row_with_more_cells_than_the_header_is_refused_not_cut():
+    """B-2641: an unquoted comma in a cell ("Acme, Inc.") gave the row a cell more than the header; with the extra
+    cell dropped, its amount was lost silently. Only an empty extra cell (a trailing delimiter) is dropped."""
+    from ap_coder.web.files import SheetError, read_sheet
+
+    content = b"Invoice,Vendor,Amount\n1001,Acme, Inc.,250.00\n1002,Acme,100.00\n"
+    with pytest.raises(SheetError, match="more cells than"):
+        read_sheet("statement.csv", content)
+
+
+@pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be"])
+def test_a_utf16_csv_without_its_mark_is_read_as_its_text(encoding):
+    """B-2644: UTF-16 with no byte-order mark decoded as UTF-8, a NUL between every letter, and no column matched."""
+    from ap_coder.web.files import read_sheet
+
+    content = "Invoice,Date,Amount\r\nINV-1,2026-09-01,100.00\r\n".encode(encoding)
+    df, _ = read_sheet("statement.csv", content)
+    assert list(df.columns) == ["Invoice", "Date", "Amount"]
+    assert df.values.tolist() == [["INV-1", "2026-09-01", "100.00"]]

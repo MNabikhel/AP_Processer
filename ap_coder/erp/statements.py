@@ -117,6 +117,16 @@ class Line:
         return round(self.statement_amount - self.ap_amount, 2)
 
 
+PERIOD_UNKNOWN = (
+    "The statement's dates read either way (day or month first), so its period is unknown: the invoices "
+    "it leaves out may not be listed as Not on statement."
+)
+DATES_UNREAD = (
+    "The statement's dates could not be read (or no date column is picked), so its period is unknown: the "
+    "invoices it leaves out are not listed as Not on statement."
+)
+
+
 @dataclass
 class Reconciliation:
     lines: list[Line] = field(default_factory=list)
@@ -186,6 +196,8 @@ def reconcile(
             continue  # blank or subtotal row
         if date:
             dates.append(date)
+        # A date not read is shown as written ("1 sept. 2026"), not cut at its first word (B-2640)
+        shown = date if _ISO.fullmatch(date) or _EITHER_WAY.fullmatch(date) else str(get(rec, "date") or "").strip()
         key = norm_invoice_number(raw_number)
         same_number = by_number.get(key, [])
 
@@ -202,13 +214,13 @@ def reconcile(
             # again). With no amount, a payment only when every invoice with that number is matched already.
             paid = amount is None and all(i["id"] in seen for i in same_number)
         if not key or paid:
-            result.lines.append(Line(PAYMENT, raw_number, date, amount, note=kind_text or "no invoice number"))
+            result.lines.append(Line(PAYMENT, raw_number, shown, amount, note=kind_text or "no invoice number"))
             continue
         # Never a document of the opposite sign: a credit line does not take the invoice, nor an invoice the credit.
         candidates = [i for i in same_number if i["id"] not in seen and not opposite(i)]
         candidates.sort(key=lambda i, date=date: _of_the_line(i, date, period))  # (then ``_first_to_match``)
         if not candidates:
-            result.lines.append(Line(NOT_RECEIVED, raw_number, date, amount))
+            result.lines.append(Line(NOT_RECEIVED, raw_number, shown, amount))
             continue
         # (a float a hair over the cent is still the cent: 100.01 - 100.00 is 0.010000000000005116, B-1371)
         same = [i for i in candidates
@@ -216,11 +228,12 @@ def reconcile(
         inv = (same or candidates)[0]
         seen.add(inv["id"])
         status = MATCHED if same else DIFFERS
-        result.lines.append(Line(status, raw_number, date, amount, inv["grand_total"], inv["id"], inv["status"]))
+        result.lines.append(Line(status, raw_number, shown, amount, inv["grand_total"], inv["id"], inv["status"]))
     if day_first is None:  # every date read both ways: the matched invoices' own dates may tell the order
         day_first = _order_of_matches(result.lines, invoices)
         for li in result.lines:
-            li.date = read_date(li.date, day_first)
+            if _EITHER_WAY.fullmatch(li.date):
+                li.date = read_date(li.date, day_first)
         dates = [read_date(d, day_first) for d in dates]
     result.period_unknown = any(_EITHER_WAY.fullmatch(d) for d in dates)
     result.dates_unread = bool(result.lines) and _period(dates) is None and not result.period_unknown
@@ -243,7 +256,7 @@ def _first_to_match(inv: dict[str, Any]) -> tuple[bool, bool, int]:
 
 def _period(dates: list[str]) -> tuple[str, str] | None:
     """(the first, the last) of the statement's dates read (YYYY-MM-DD); None when none was."""
-    read = [d for d in dates if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d)]
+    read = [d for d in dates if _ISO.fullmatch(d)]
     return (min(read), max(read)) if read else None
 
 
@@ -258,6 +271,7 @@ def _of_the_line(inv: dict[str, Any], date: str, period: tuple[str, str] | None)
 
 
 _EITHER_WAY = re.compile(r"\d{1,2}[/-]\d{1,2}[/-]\d{4}")  # a date not read: day or month first
+_ISO = re.compile(r"\d{4}-\d{2}-\d{2}")  # a date read
 
 
 def _order_of_matches(lines: list[Line], invoices: list[dict[str, Any]]) -> bool | None:
@@ -313,4 +327,6 @@ def to_csv(rec: Reconciliation) -> bytes:
         ]))  # fmt: skip
     if rec.exported_note:  # an open-items statement: the invoices exported are left out, and the file says so
         writer.writerow([rec.exported_note] + [""] * 8)
+    if rec.period_unknown or rec.dates_unread:  # as the page warns: what is Not on statement is not all there
+        writer.writerow([PERIOD_UNKNOWN if rec.period_unknown else DATES_UNREAD] + [""] * 8)
     return ("\ufeff" + out.getvalue()).encode("utf-8")
