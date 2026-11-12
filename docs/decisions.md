@@ -5797,5 +5797,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     account raised no VENDOR_BANK_CHANGED, and AP's hold stayed on the old name (B-2517).
   - **What:** D-222's amendment stands (a renamed supplier is a second vendor row, its lessons under the new name);
     the vendor checks read the invoices of every vendor master row with the same supplier number, and a hold AP put
-    on any of them holds the others (not a hold for the retired marker of an old name). VENDOR_NEW still skips a
-    vendor in the master: the master vouches for the name, and the old name's approvals are the supplier's.
+    on any of them holds the others. That excludes a hold for the retired marker of an old name, a number of zeros
+    (no supplier number), and a row whose GST/HST number belongs to another Business Number (a rename keeps its
+    own). VENDOR_NEW still skips a vendor in the master: the master vouches for the name, and the old name's
+    approvals are the supplier's.
