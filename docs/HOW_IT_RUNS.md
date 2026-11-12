@@ -323,7 +323,10 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
 * **Address** (`ap_coder/ops/offline.py:dashboard_address`): `127.0.0.1`, unless `AP_DASHBOARD_ADDRESS` (or
   `--address`) says otherwise; listening beyond this computer prints a warning. On a laptop shared that way there
   are no passwords: a colleague gives their name once ("Who are you?", `ap_coder/web/identity.py`) and their changes
-  are recorded under it. Logins with passwords and roles are server mode's (below, and [SERVER.md](SERVER.md)).
+  are recorded under it, but only while the laptop's sign-in is off (D-243): with it on, its Admin signs in on the
+  laptop itself (`ap_coder/web/identity.py` `Identity._laptop`, its database's `sign_in` setting), and other
+  computers are refused. Logins with passwords and roles for a team are server mode's (below, and
+  [SERVER.md](SERVER.md)).
 * **Server** (`ap_coder/web/server.py:serve`): uvicorn in that process; a random token; the server file
   `<data>/.ap_coder_server.json` (`pid`, `port`, `folder`, `version`, `token`, `user`, `started`; mode 0600 on macOS/Linux),
   removed when it stops if it is still its own.

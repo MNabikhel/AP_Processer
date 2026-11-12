@@ -485,6 +485,8 @@ section (the Azure check, the finance hub feed, the JD Edwards connection or ser
   opening it from another computer is asked "Who are you?" once: their approvals, rejections and other
   changes are then recorded in their name, with their computer's address, so they can give the second
   approval of an invoice someone else approved first. After AP Coder restarts, they give their name again.
+  This is for a laptop whose sign-in is off (`users sign-in off`, D-243): with the laptop's sign-in on (the
+  default), other computers are refused, and colleagues come in with `python -m ap_coder share` instead.
 - The dashboard is AP Coder's own small web server (FastAPI): no usage statistics, no outside service;
   fonts, icons and scripts come from the app, not the internet. It answers only requests addressed to this
   laptop and changes nothing for a page that is not its own.

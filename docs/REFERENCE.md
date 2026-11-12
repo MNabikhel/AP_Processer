@@ -247,7 +247,8 @@ The dashboard is a local web app, hosted the same way as CloseDesk: a small Fast
 this computer, at `http://127.0.0.1:8501`, opened in your usual browser. Nothing is installed in the browser and
 nothing is served to the network: it listens on `127.0.0.1` only (set `AP_DASHBOARD_ADDRESS=0.0.0.0` to let
 colleagues on the office network open it; each of them gives their name once, on a "Who are you?" page, and their
-approvals and changes are recorded in that name and with their computer's address), refuses requests addressed to
+approvals and changes are recorded in that name and with their computer's address, while the laptop's sign-in is
+off: with it on, its Admin signs in, at the laptop only, D-243), refuses requests addressed to
 any other name, and only its own pages can change anything. The launcher starts it (`python -m ap_coder serve`), opens the browser once it answers, and
 on the next double-click finds it through `GET /healthz` and opens it instead of starting a second copy. An update
 stops the running one cleanly (`POST /shutdown`, with a token only this computer's data folder holds) before the new

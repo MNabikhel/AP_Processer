@@ -397,8 +397,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   server. A key lost while its accounts are kept: each code refused in words, an Admin resets each app. **The QR
   code**: Project Nayuki's QR Code generator (MIT, one pure-Python file, standard library only), vendored unchanged
   as `web/qrcodegen.py` (1.8.0, the wheel's SHA-256 of it checked; left out of ruff), drawn as an SVG on the server:
-  no new dependency to bundle, no JavaScript. The laptop is unchanged. Entra ID sign-in remains a possible later
-  option (HANDOFF.md 6.10). (`core/authenticator.py`, `core/store/users.py`, `core/store/backup_files.py`,
+  no new dependency to bundle, no JavaScript. The laptop is unchanged (replaced by D-243). Entra ID sign-in remains a
+  possible later option (HANDOFF.md 6.10). (`core/authenticator.py`, `core/store/users.py`,
+  `core/store/backup_files.py`,
   `web/pages/login.py`, `web/templates/login_step.html`, `web/identity.py`, `web/roles.py`, `web/pages/users.py`,
   `ops/cli.py`; `tests/core/test_authenticator.py`, `tests/core/test_users.py`, `tests/core/test_backups.py`,
   `tests/web/test_server_two_step.py`, `tests/web/test_server_browser.py`, `tests/ops/test_users_cli.py`)
@@ -5833,3 +5834,36 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     CSV and Choose another file. Not remembered per vendor: the Statements page keeps nothing per vendor today
     (the statement itself is held an hour, never stored), and a table for one tick box would be more than it is
     worth. An exported invoice an undone batch released counts as not exported (its batch is cleared).
+- **D-243** · **The first sign-in is admin / admin, typed on the computer running AP Coder, and the laptop signs in
+  too** (`web/pages/login.py` `first_sign_in_here`, `/login/first`; `core/store/sign_in.py`; `web/identity.py`
+  `Identity._laptop`; `ops/safety.py` `laptop_sign_in`, `team_server`; 12 Nov 2026). The user asked for it ("for
+  the first user make the user admin and pass admin, and have it set up 2FA right when logging in for the first
+  time"), on the server and on the laptop. Changes D-146's "The laptop is unchanged" and D-97's "nobody can sign up
+  from a browser".
+  - **The first sign-in:** while the database has no account at all, the username admin and the password admin
+    lead to `/login/first`: the person's name (on a laptop, the one on its approvals so far) and their own password
+    (the usual rules: 12 characters, not "admin" nor holding it, not the name) make the first Admin, `admin`; then
+    the authenticator app is set up as for anyone (D-146), and only then is there a session. admin / admin is never
+    kept as a password: it opens nothing once an account exists, which is from the moment the password is saved
+    (a browser closed before the app is set up signs in with that password, straight to the app's step). No
+    recovery codes (D-146): the set-up page tells the only Admin the console's `users reset-2fa admin`.
+  - **Only from that computer:** the connection's own address is loopback, no `--proxy` is set, the request carries
+    nothing a reverse proxy adds (X-Forwarded-For, Forwarded, X-Real-IP, Via, X-Original-URL, X-ARR-...), and its
+    Host is a loopback name. Anything else is refused before the password is read or the try counted, so no one on
+    the network can pause the first sign-in. Not covered: a proxy on the server itself that adds none of those and
+    rewrites the Host to 127.0.0.1; SERVER.md already requires `--proxy` behind one, with which this path is off.
+    `users add --admin` at the console stays, beside it; a server or shared laptop with accounts is unchanged.
+  - **The laptop:** the database's `sign_in` setting. `laptop` is set at the first start of a data folder that
+    never decided and shows nothing of a team (no account, no codes' key, no server.json): new folders and older
+    laptop ones alike; a team's opened with `--without-sign-in` keeps its accounts as a team's. Then every page
+    waits for the Admin's sign-in (an Admin only), from this computer only: another computer gets neither the "Who
+    are you?" page nor the login (D-34 is off; colleagues come in with `share`). Signing in only guards the door:
+    `PERSON` stays None, so the saved name, the computer's login, the drafts and the full folders are as before. A
+    session ends after 8 hours unused (the server's 30 minutes and 12 hours stay). The way out at the console:
+    `--without-sign-in` for one start, `users sign-in off` (and `on`) for good; `demo --company` is off (made-up
+    data). D-211 reads the setting without a Store: the laptop's own account and key no longer mark a team's
+    folder; a start in server mode sets `team`, and `share` takes the laptop's Admin as its first. A laptop's
+    restore keeps its account and the setting, as the server keeps its accounts (D-101); a new name in Settings
+    renames the account, so `share` later knows the approvals for the owner's.
+  - **Left out:** more than one account and a Users page on the laptop, a Settings switch, choosing another
+    username than admin, admin / admin through `share` (its console still asks), the browser path behind `--proxy`.

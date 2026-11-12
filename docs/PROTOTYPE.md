@@ -39,6 +39,18 @@ It learns from last year's voucher journal before the first invoice, and from ev
 Every day after that: start LM Studio (*Developer* → *Start server*), then double-click *AP Coder*. Keep the black
 window open: closing it stops AP Coder.
 
+**Signing in.** The dashboard opens on *Log in* (D-243). The first time, type the username **admin** and the
+password **admin**: it works only in a browser on this laptop, and only until you have chosen your own password.
+AP Coder then asks for your name (filled in with the one on your approvals) and your own password (at least 12
+characters, not "admin" and not your name), and sets up an authenticator app on your phone: scan the QR code, type
+the 6-digit code it shows. After that you log in as **admin** with your password and a code from the app; left
+unused for 8 hours, it asks again. Colleagues on other computers can't open it: to let them in, see "Several
+people" at the end. No
+phone at hand, or lost it: in `scripts\terminal.bat`, `python -m ap_coder users reset-2fa admin` gives a temporary
+password to log in with (you set the app up again), or `python -m ap_coder users sign-in off` opens AP Coder
+without signing in from its next start (`users sign-in on` turns it back on). A laptop that ran an earlier AP Coder
+asks for this sign-in too, at its first start after the update: its invoices, approvals and settings are all kept.
+
 A new installation shows the short menu ("Simple screens"): **To review**, **Add invoices**, **To key into JDE**,
 **Find an invoice**, **What was learned**, **Rules**, and under **Setup**: GL accounts & tax, JD Edwards files,
 Vendors, Activity, Settings; then Help. **Settings → About → Screens** (*Everything*) shows every page again.
@@ -73,10 +85,10 @@ python -m ap_coder serve
 ```
 
 Type these in `scripts\terminal.bat`. `demo --company` loads a made-up chart, suppliers, last year's journal and
-seven invoices to review; `serve` opens them in the browser (on the next free port while your own AP Coder is open:
-the window says "AP Coder is running at ..."). When you are done, press Ctrl+C in that window, close it (it still
-points at the made-up company) and delete `C:\APCoder\try`. Your own data folder (`C:\Users\<you>\APCoder`) is never
-touched.
+seven invoices to review; `serve` opens them in the browser, without signing in (the data is made up), on the next
+free port while your own AP Coder is open (the window says "AP Coder is running at ..."). When you are done, press
+Ctrl+C in that window, close it (it still points at the made-up company) and delete `C:\APCoder\try`. Your own data
+folder (`C:\Users\<you>\APCoder`) is never touched.
 
 ## 3. Load your JD Edwards files (once, about 15 minutes)
 
@@ -228,7 +240,7 @@ that may not be an invoice, pages it could not read.
 
 - **Several people.** This page is one person on one laptop. The same laptop can serve a few colleagues with
   sign-in during working hours: `python -m ap_coder share` in `scripts\terminal.bat` checks what is missing, says each
-  next step (the certificate, your own Admin account, the firewall rule), then serves until you close its window;
+  next step (the certificate, the firewall rule; your own account `admin` is its first Admin), then serves until you close its window;
   the day's backup is made at the time set on *Settings* → *Data & backups* (17:30 unless you change it), so leave
   the window open until then or press *Back up now* first. Two steps are not yours alone: the firewall rule needs
   administrator rights, and the Windows licence is IT's to confirm ([SERVER.md](SERVER.md), "From one person's

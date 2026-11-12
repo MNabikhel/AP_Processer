@@ -505,7 +505,18 @@ on purpose: `python -m ap_coder serve --without-sign-in`, only while the server 
 
 ## 7. The first admin
 
-On the server's console (nobody can sign up from a browser):
+Two ways, both on the server itself (nobody can sign up from another computer):
+
+**In a browser on the server** (D-243): while there is no account at all, open `https://127.0.0.1:8501` on the
+server and log in with the username **admin** and the password **admin**. AP Coder asks for your name (the one on
+your approvals) and your own password (at least 12 characters, not "admin" and not your name), then sets up the
+authenticator app on your phone (a QR code to scan, then a code from the app: *Sign-in codes*, step 10). From the
+moment that password is saved, admin / admin no longer works; your account is `admin`. admin / admin is refused from
+any other computer, and through a reverse proxy: with `--proxy` (behind IIS) this way is off, so make the first Admin
+before putting the proxy in front, or use the console below. A proxy on this server must always be named with
+`--proxy` (step 4): one that is not, and passes no forwarding header, makes every browser look like the server's own.
+
+**At the server's console**:
 
 ```bat
 .venv\Scripts\python.exe -m ap_coder users add --admin jsmith
@@ -516,6 +527,8 @@ works for 3 days): tell it to the person, who signs in at `https://apcoder.compa
 else, chooses their own password, then sets up an authenticator app on their phone (a QR code to scan, then a code
 from the app: *Sign-in codes*, step 10). The first Admin does this too: every account signs in with a code. They
 then add everyone else (step 10).
+
+A server that already has accounts is unchanged: admin / admin works only while there is none.
 
 ## 8. LM Studio on the same server
 
@@ -1744,8 +1757,8 @@ night's backup is in `backups` and on the share (step 9) and that the disk keeps
 
 ## 16. From one person's laptop to a few people on the same laptop
 
-A prototype often starts as one person's AP Coder on a Windows 11 laptop (laptop mode: no logins, 127.0.0.1) and
-then lets a few colleagues in, from the same laptop and the same data folder, during working hours. This section
+A prototype often starts as one person's AP Coder on a Windows 11 laptop (laptop mode: its owner alone signs in, at
+127.0.0.1, D-243) and then lets a few colleagues in, from the same laptop and the same data folder, during working hours. This section
 is that path. It is a prototype's set-up: the licence question of section 1 comes first, and a server of its own
 (the rest of this guide) comes after.
 
@@ -1755,7 +1768,9 @@ first Admin signs in. The names on past approvals stay as they were written ("Ap
 whose name is the same is taken for that person (their approvals of the day count as theirs, and they may undo
 them), so give the laptop's owner an account with the name they used in laptop mode. The same holds the other way:
 the data folder opens in laptop mode again with everything done in server mode, the accounts left in the database,
-unused (`serve --without-sign-in`, below).
+unused (`serve --without-sign-in`, below). When the laptop's owner already signs in on the laptop (its account
+`admin`, with the name of their approvals and their authenticator app), `share` takes that account as the first
+Admin: nothing is asked, and they sign in to the shared laptop as before.
 
 **The one thing lost.** What was typed on a review screen in laptop mode and not yet saved (a draft, kept for "this
 computer") is shown to nobody in server mode, where drafts belong to accounts. It is not deleted, and shows again in
@@ -1790,7 +1805,7 @@ What it does, and what it leaves to a person:
 | What sharing needs | What `share` does |
 |---|---|
 | A certificate (step 3 below) | Uses `server.json`'s, else `tls\apcoder.pem` and `tls\apcoder.key.pem` in the data folder, else makes that self-signed one for the laptop's name when the laptop has `openssl` (Git for Windows brings it). Without `openssl` it says so, with the command: **this step cannot be made simpler**, Windows has no tool of its own that writes the two files, and installing Git needs administrator rights on most company laptops. |
-| The first Admin (step 6) | Asks for the owner's name (the one on their approvals), a username and a password, and makes the account. A scripted set-up gives the three on its input, one a line: `share --admin-from-stdin` (Windows' password question reads only the keyboard). |
+| The first Admin (step 6) | The laptop's own Admin when its owner signs in on it already (D-243). Otherwise asks for the owner's name (the one on their approvals), a username and a password, and makes the account. A scripted set-up gives the three on its input, one a line: `share --admin-from-stdin` (Windows' password question reads only the keyboard). |
 | `server.json` (step 4) | Writes the certificate's two files and the port, once the first Admin is there. From then on a double-click on AP Coder's own shortcut refuses to open this data without sign-in (D-211). |
 | The second backup folder (step 7) | The first time, allows the folder chosen in laptop mode; later `share --allow-folder "<folder>"` allows another, also while AP Coder is being shared (no restart). |
 | The firewall (step 5) | **Never changes it**: the rule needs administrator rights. It looks whether the rule "AP Coder" is there and, when it is not, prints the command to run once in an administrator Command Prompt (ask IT without those rights). It starts all the same: the owner can sign in on the laptop. |

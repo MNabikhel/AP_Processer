@@ -16,6 +16,20 @@ For AP Coder on a laptop, and AP staff on the company server (where the pilot ru
 - Double-click *AP Coder* on the desktop. A black window opens, then the dashboard.
 - Keep the black window open: closing it stops AP Coder.
 
+## Sign in on the laptop
+
+- The dashboard opens on **Log in**. The first time: username **admin**, password **admin** (only in a browser on
+  this laptop, and only until you have chosen your own password).
+- Check your name (the one on your approvals: it is filled in) and choose your own password: at least 12
+  characters, not "admin" and not your name.
+- Set up your authenticator app: install one on your phone if you have none (Microsoft Authenticator, Google
+  Authenticator or any other), scan the QR code AP Coder shows, and type the 6-digit code the app shows. From then
+  on: username **admin**, your password, then a code from the app. Left unused for 8 hours, AP Coder asks again.
+- No phone at hand, or lost it? Double-click `scripts\terminal.bat` in AP Coder's folder and type
+  `python -m ap_coder users reset-2fa admin`: it shows a temporary password to log in with, then you choose your
+  own and set the app up again. Or `python -m ap_coder users sign-in off`, then start AP Coder again: it opens
+  without signing in (`python -m ap_coder users sign-in on` turns it back on).
+
 ## The first steps
 
 The welcome page's checklist ticks off its ten rows (eleven with JD Edwards), LM Studio first; *Next step* says
