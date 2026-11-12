@@ -70,6 +70,8 @@ _INVOICE_TITLE = _any(
     r"numero de facture",
 )
 _CREDIT_TITLE = _any(*CREDIT_TITLES)  # the same titles capture reads a credit note by
+_CREDIT_WORDS = _any(*(t for t in CREDIT_TITLES if t != "avoir"))  # found anywhere near the top
+_AVOIR = _any("avoir")  # a word of French sentences too: a title only starting a line or in the file name
 _STATEMENT_TITLE = _any(
     r"statement of account",
     r"account statement",
@@ -273,13 +275,17 @@ def classify_document(doc: Document, email_text: str = "") -> Decision:
         1 for line in fold(doc.text[:MAX_TEXT].replace("\n", "\x00")).split("\x00") if _INVOICE_REF.search(line)
     )
     listing = statement and (listed >= 3 or (listed >= 2 and _find(_AGING, text))) and not _find(_UTILITY, text)
-    # A credit note's title is in the file name or starts a line: not "Merci de nous avoir choisi", nor a credit memo
-    # a statement lists under its own title ("Credit Memo CM-1002 -50.00").
-    lines = [fold(line) for line in doc.text[:TOP_CHARS].splitlines()]
-    at = next((i for i, line in enumerate(lines) if _CREDIT_TITLE.match(line)), None)
+    # A credit note's title anywhere near the top ("Northwind Supply Ltd.   CREDIT MEMO"), but a bare "avoir" only in
+    # the file name or starting a line (not "Merci de nous avoir choisi"); and not a credit memo a statement lists
+    # under its own title ("Credit Memo CM-1002 -50.00").
     credit = _find(_CREDIT_TITLE, name)
-    if not credit and at is not None and not (listing and _find(_STATEMENT_TITLE, " ".join(lines[:at]))):
-        credit = _find(_CREDIT_TITLE, lines[at])
+    lines = [fold(line) for line in doc.text[:TOP_CHARS].splitlines()]
+    for i, line in enumerate(lines):
+        m = _CREDIT_WORDS.search(line) or _AVOIR.match(line)
+        if m:
+            listed_credit = listing and _find(_STATEMENT_TITLE, " ".join([*lines[:i], line[: m.start()]]))
+            credit = credit or ("" if listed_credit else m.group(0))
+            break
     if credit:
         return Decision(CREDIT, f'it says "{credit}"')
     if listing:

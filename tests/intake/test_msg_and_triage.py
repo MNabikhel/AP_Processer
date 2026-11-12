@@ -230,6 +230,24 @@ def test_a_credit_memo_a_statement_lists_or_avoir_in_a_sentence_is_no_credit_not
     )
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Northwind Supply Ltd.          CREDIT MEMO\nCredit # CM-1002\nReturn of goods shipped on packing slip PS-5521\n"
+        "Total credit -56.50",
+        "Northwind Supply Ltd.   CREDIT MEMO\nRMA 5521 - Purchase order 4410\nTotal -56.50",
+        "Northwind Supply Ltd.   Credit Note\nRe: order confirmation 4410\nTotal -56.50",
+        "Northwind Supply Ltd. | Credit Note No. CN-55 | 2026-10-01\nTotal -56.50",
+        "Page 1 of 1 Credit Memo\nNorthwind\nAmount -56.50",
+        "Fournisseur Inc. NOTE DE CRÉDIT No 55\nTotal -56,50",
+    ],
+)
+def test_a_credit_title_on_a_line_with_other_words_is_still_a_credit_note(text):
+    """B-2522 read a credit title only at the start of a line: one beside the supplier's name was lost, and with a
+    packing slip or an order mentioned the credit note was kept out of the queue."""
+    assert triage.classify_document(triage.Document("scan0001.pdf", text)).kind == triage.CREDIT
+
+
 def test_kinds_in_english_and_french():
     assert _kind("Statement", "", ("soa.pdf", STATEMENT)).kind == triage.STATEMENT
     assert (
