@@ -55,14 +55,15 @@ _LABEL_END = r"\s*(?:no\.?|n°|#)?\s*[:.#]?\s*"
 # What changes from one voucher to the next in a remark, as ``remark_shape`` takes it out: an invoice number after
 # "INV" (five digits or more: "invoice 410 Elm" ends with an office), a month (with the year written after it), a
 # quarter, a whole date (left as written: its month and day can't follow), a month as a number beside its year
-# ("2025-11", "11/2025"), a year, a number of five digits or more.
+# ("2025-11", "11/2025"; ``_month_number``), a year, a number of five digits or more. A number of letters and digits
+# ("job 2025-07A", "A-11/2025") is none of them.
 _VARYING = re.compile(
     rf"{_NOT_AFTER}(?:(?P<label>(?:invoice|inv|facture|fact|fac){_LABEL_END})(?P<labelled>\d{{5,}}[\w-]*)"
     rf"|(?P<month>{_MONTH}){_NOT_LETTER}(?:(?P<gap>\.?\s*[/'-]?\s*)(?P<month_year>(?:20)?\d\d)(?!\d))?"
     r"|(?P<q>q)(?P<quarter>[1-4])(?![^\W_])"
-    r"|(?P<date>(?:19|20)\d\d[/-]\d\d?[/-]\d\d?|\d\d?[/-]\d\d?[/-](?:19|20)\d\d)(?!\d)"
-    r"|(?P<ym_year>(?:19|20)\d\d)(?P<ym_sep>[/-])(?P<ym_month>1[0-2]|0?[1-9])(?!\d)"
-    r"|(?<!\d[/-])(?P<my_month>1[0-2]|0?[1-9])(?P<my_sep>[/-])(?P<my_year>(?:19|20)\d\d)(?!\d)"
+    r"|(?P<date>(?:19|20)\d\d[/-]\d\d?[/-]\d\d?|\d\d?[/-]\d\d?[/-](?:19|20)\d\d)(?!\w)"
+    r"|(?P<ym_year>(?:19|20)\d\d)(?P<ym_sep>[/-])(?P<ym_month>\d\d?)(?![\w/-])"
+    r"|(?<!\w[/-])(?P<my_month>\d\d?)(?P<my_sep>[/-])(?P<my_year>(?:19|20)\d\d)(?![\w/-])"
     rf"|(?P<year>(?:19|20)\d\d)(?!\d)|(?P<number>\d{{5,}}))",
     re.IGNORECASE,
 )
@@ -210,13 +211,15 @@ def _month_like(written: str, month: int, plain: bool) -> str:
 
 
 def _month_number(found: re.Match[str], period: Period | None, year: bool) -> str:
-    """A month written as a number beside its year ("2025-11", "11/2025"), as ``period``'s, in as many digits; left
-    as written when that is no year (``year``), taken out with no ``period``."""
-    if not year:
+    """A month written as a number beside its year ("2025-11", "11/2025", "3/2025"), as ``period``'s, in as many
+    digits; taken out with no ``period``. Left as written when that is no year (``year``), no month (13), or one digit
+    but in "3/2025" ("lot 3-2025", "ref 2025/1": a lot or a reference as likely)."""
+    digits = found["ym_month"] or found["my_month"]
+    one_digit = len(digits) == 1 and not (found["my_month"] and found["my_sep"] == "/")
+    if not year or not 1 <= int(digits) <= 12 or one_digit:
         return found[0]
     if period is None:
         return ""
-    digits = found["ym_month"] or found["my_month"]
     month = f"{period.month:0{len(digits)}d}"
     return f"{period.year}{found['ym_sep']}{month}" if found["ym_year"] else f"{month}{found['my_sep']}{period.year}"
 

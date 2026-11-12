@@ -33,7 +33,7 @@ from ..core.safe import csv_row
 from ..core.schema import FROM_VENDOR_LIST
 from ..core.store import APPROVED, PARKED, PENDING, REVIEW, Store
 from ..core.store.summary import broken, computed
-from .money import half_up, times
+from .money import half_up, nil, times
 from .tax import (
     DEFAULT_TREATMENTS,
     RECOVERABLE,
@@ -367,7 +367,8 @@ def posted_recoverable(doc: dict[str, Any]) -> dict[int, bool] | None:
     """{tax line position: whether it was posted recoverable} by the invoice's stored GL distribution, as
     ``tax.build_gl_distribution`` made it when the invoice was approved (D-238): each tax line posted to a tax account
     has a tax entry of its own, in order, recoverable or not; one expensed into the lines has none, nor one wholly on
-    meals (recoverable: its meals lines keep it). None when no distribution was kept (coded by an older version)."""
+    meals (recoverable: its meals lines keep it), nor one of nothing (not in the answer). None when no distribution was
+    kept (coded by an older version)."""
     entries = [e for e in doc.get("gl_distribution") or [] if isinstance(e, dict)]
     if not entries:
         return None
@@ -375,14 +376,16 @@ def posted_recoverable(doc: dict[str, Any]) -> dict[int, bool] | None:
     meals = meals_by_tax_line(doc)
     out: dict[int, bool] = {}
     for position, tl in enumerate(doc.get("tax_lines") or []):
-        rate = _float_or(tl.get("rate") or 0)
-        if not isinstance(rate, float):
+        rate, amount = _float_or(tl.get("rate") or 0), _float_or(tl.get("tax_amount") or 0)
+        if not isinstance(rate, float) or not isinstance(amount, float) or nil(amount):
             continue
         place = f" {tl['province']}" if tl.get("province") else ""
         label = f"{tl.get('tax_type')}{place} {rate * 100:.6g}% ("  # the tax entry's description begins so
         entry = next((e for e in taxes if e.get("tax_line") == position), None)
-        if entry is None and taxes and str(taxes[0].get("description") or "").startswith(label):
-            entry = taxes[0]
+        # (by its label only an entry that names no tax line: one that does is that line's)
+        unnamed = taxes[0] if taxes and taxes[0].get("tax_line") is None else {}
+        if entry is None and str(unnamed.get("description") or "").startswith(label):
+            entry = unnamed
         if entry is None:
             out[position] = position in meals
             continue

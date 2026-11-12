@@ -152,6 +152,15 @@ def test_the_hub_gives_the_same_vendor_erp_id_as_the_export(store, tmp_path):
     assert {r["invoice_id"]: r["vendor_erp_id"] for r in tables.invoices(store, tables.Context())} == exported
 
 
+def test_the_hubs_vendor_erp_id_is_found_by_the_invoices_own_vendor_name_when_its_coding_has_none(store):
+    """B-2513: an invoice whose coding names no vendor (none read yet) is still its vendor's, by the name it is
+    listed under, as ``vendor_name`` in the same row is."""
+    store.import_vendor_master([{"vendor_name": "Northwind IT Solutions Inc.", "erp_id": "4001"}])
+    row = {"id": 7, "status": "failed", "vendor_name": "Northwind IT Solutions Inc.", "ai_output": {}, "meta": {}}
+    (hub,) = tables.invoices(store, tables.Context(batches={}), rows=[row])
+    assert (hub["vendor_name"], hub["vendor_erp_id"]) == ("Northwind IT Solutions Inc.", "4001")
+
+
 def test_a_reopened_approval_is_marked_withdrawn(store, tmp_path):
     invoice_id = _approved(store, tmp_path, grand_total=500.0)
     store.reopen(invoice_id, "Jane", "wrong account")
