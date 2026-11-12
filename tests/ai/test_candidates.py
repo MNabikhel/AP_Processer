@@ -7,8 +7,10 @@ import json
 from ap_coder.ai.offline_coder import NO_HISTORY, code_from_capture
 from ap_coder.ai.suggest import candidates, complete_pair, suggest_gl
 from ap_coder.ai.supplier_prior import prior_for
+from ap_coder.core.chart import BuRow
 from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.schema import InvoiceCoding
+from tests import books
 from tests.books import CLOSED, FACILITIES, IT, MAIN, RETIRED, approve, captured, load_chart, load_journal, monthly
 
 JANITOR = f"{MAIN}.7340.3307"
@@ -184,3 +186,21 @@ def test_an_invoice_stored_before_reads_and_is_stored_unchanged(ground_truth):
     coding = InvoiceCoding.model_validate(ground_truth)
     assert all(li.candidates == [] and li.decided_by == {} for li in coding.line_items)
     assert coding.model_dump(mode="json")["line_items"][0].keys() == ground_truth["line_items"][0].keys()
+
+
+def test_lines_learned_on_a_closed_business_unit_are_not_coded_alone_to_another_unit(store, tmp_path):
+    """B-2541: AP coded a vendor's courier lines to Facilities; Facilities closes. The account was coded alone on the
+    only other business unit that has it, which nobody ever chose for the vendor: now offered there for a person."""
+    reference = load_chart(store)
+    for n in range(3):
+        approve(store, tmp_path, _line(store, reference, "Courier charges overnight", "Rapidway Courier Ltd.",
+                                       f"INV-{n}").coding, [f"{FACILITIES}.7420.4207"])  # fmt: skip
+    line = _line(store, reference, "Courier charges overnight", "Rapidway Courier Ltd.", "INV-9").coding.line_items[0]
+    assert (line.predicted_cost_center, line.predicted_gl_code) == (FACILITIES, "7420.4207")  # learned
+    store.import_business_units([BuRow(code, name, "00310", "IS", "INA" if code == FACILITIES else status)
+                                 for code, (name, status) in books.UNITS.items()])  # fmt: skip
+    line = _line(store, store.reference_data(), "Courier charges overnight", "Rapidway Courier Ltd.",
+                 "INV-10").coding.line_items[0]  # fmt: skip
+    assert line.predicted_gl_code == UNASSIGNED
+    assert (line.candidates[0]["business_unit"], line.candidates[0]["code"]) == (MAIN, "7420.4207")
+    assert f"business unit {FACILITIES} is no longer active: offered on {MAIN}" in line.candidates[0]["reason"]

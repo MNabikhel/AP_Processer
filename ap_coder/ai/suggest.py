@@ -777,13 +777,15 @@ def complete_pair(reference: ReferenceData, code: str, unit: str = "",
 def _placed(reference: ReferenceData, code: str, unit: str, units: list[str], source: str, score: float,
             reasons: list[str], **more: Any) -> Candidate | None:  # fmt: skip
     """A candidate for ``code``, completed as a pair that may be offered (None when there is none). When the
-    business unit is not the one the evidence had, the reason says so."""
+    business unit is not the one the evidence had, the reason says so, and a person picks: nobody chose that business
+    unit for these lines (B-2541)."""
     found = complete_pair(reference, code, unit, units)
     if found is None:
         return None
     placed, guess = found
     reasons = list(reasons)
     if unit and placed != unit:
+        guess = True
         reasons.append(f"{status_said(reference, unit, code)}: offered on {placed}")
     elif guess:
         reasons.append(f"nothing says which business unit: {placed} is a guess")
