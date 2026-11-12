@@ -1982,6 +1982,21 @@ def someone_elses(port: int) -> SetupError:
                       "Coder again.")  # fmt: skip
 
 
+def open_elsewhere(rest: list[str], state: dict) -> SetupError | None:
+    """What a start says when this folder's own AP Coder (this version) is open on another data folder (scripts/
+    demo.bat's APCoder-demo, a guide's made-up company), else None: its start holds this folder's lock while it runs,
+    so waiting for it would last half an hour (B-2572)."""
+    ident = identity()
+    for server in running.find(candidate_ports(rest, state), paths.private_dir()):
+        if (running.judge(server, ROOT, ident["version"], ident["code"], paths.private_dir()) == "elsewhere"
+                and paths.same_folder(server.folder, ROOT) and server.version == ident["version"]):  # fmt: skip
+            return SetupError(f"AP Coder is already open from this folder on another data folder, {server.data} "
+                              f"(port {server.port}): one AP Coder at a time runs from this folder.",
+                              "Close that AP Coder window (the demo's, for example), then start AP Coder "
+                              "again.")  # fmt: skip
+    return None
+
+
 def dashboard_url(port: int) -> str:
     """The address the browser opens: the one the dashboard listens on (127.0.0.1 by default). Never "localhost": a
     Mac or Windows browser tries it as ::1 first, where another program may answer."""
@@ -2098,6 +2113,9 @@ def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: floa
         return blocked
     if take_lock():
         return None
+    beside = open_elsewhere(argv, load_state())
+    if beside:
+        return failed(beside)
     say("AP Coder is being set up or started in another window: waiting for it to open the dashboard...")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -2108,6 +2126,9 @@ def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: floa
         theirs = other_users_dashboard(argv, load_state())
         if theirs:
             return failed(someone_elses(theirs))
+        beside = open_elsewhere(argv, load_state())
+        if beside:
+            return failed(beside)
         if take_lock():
             return None
     say("The other AP Coder window has not opened the dashboard yet: look at that window, or close it and start "
