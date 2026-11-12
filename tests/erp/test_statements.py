@@ -3,6 +3,8 @@
 import csv
 import json
 
+import pytest
+
 from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.core.config import Settings
 from ap_coder.core.memory import vendor_key
@@ -176,3 +178,37 @@ def test_a_statement_whose_dates_read_both_ways_still_lists_what_it_leaves_out()
     # Nothing matched to tell by: the period is unknown, and the page says so rather than looking clean.
     rec = stm.reconcile(records, stm.map_columns(list(records[0])), [_inv(3, "1003", 300.0, "2026-09-08")])
     assert rec.period_unknown and rec.count(stm.NOT_ON_STATEMENT) == 0
+
+
+def _doc(i, number, date, total, status="approved", batch=None):
+    return {**_inv(i, number, total, date, status), "export_batch": batch}
+
+
+@pytest.mark.parametrize("left_over", [(-100.0, None), (250.0, 4)], ids=["credit note", "number used again"])
+def test_a_credit_note_or_a_reused_number_left_over_is_still_not_on_statement(left_over):
+    """B-2510: only a copy of the invoice a line took (same number, same total) is left out of "Not on statement": a
+    credit note numbered as its invoice, or another bill under a number the vendor used again, is still listed."""
+    cols = {"number": "No", "date": "Date", "amount": "Amount"}
+    records = [{"No": "1009", "Date": "2026-10-01", "Amount": "5.00"},
+               {"No": "1010", "Date": "2026-10-31", "Amount": "6.00"},
+               {"No": "1001", "Date": "2026-10-05", "Amount": "100.00"}]  # fmt: skip
+    invoices = [_doc(22, "1001", "2026-10-20", left_over[0], batch=left_over[1]),
+                _doc(21, "1001", "2026-10-05", 100.0, batch=3), _doc(20, "1010", "2026-10-31", 6.0, batch=3),
+                _doc(19, "1009", "2026-10-01", 5.0, batch=3)]  # fmt: skip
+    rec = stm.reconcile(records, cols, invoices)
+    assert [li.invoice_id for li in rec.lines if li.status == stm.NOT_ON_STATEMENT] == [22]
+    assert {li.invoice_id for li in rec.lines if li.status == stm.MATCHED} == {19, 20, 21}
+
+
+@pytest.mark.parametrize("amount, older, status", [("60.00", 80.0, "review"), ("100.00", 100.0, "approved")],
+                         ids=["a balance", "the same amount"])  # fmt: skip
+def test_a_line_takes_the_invoice_of_its_own_date_before_an_older_one_exported(amount, older, status):
+    """B-2510: #1001 of 2025 (exported) never takes the 2026-10-05 line from #1001 of 2026, whether the statement's
+    amount is a balance (it differs from both) or both bills have the same amount (a monthly fee)."""
+    cols = {"number": "No", "date": "Date", "amount": "Amount"}
+    records = [{"No": "1001", "Date": "2026-10-05", "Amount": amount},
+               {"No": "1002", "Date": "2026-10-30", "Amount": "5.00"}]  # fmt: skip
+    invoices = [_doc(9, "1002", "2026-10-30", 5.0), _doc(5, "1001", "2026-10-05", 100.0, status),
+                _doc(1, "1001", "2025-10-05", older, batch=1)]  # fmt: skip
+    rec = stm.reconcile(records, cols, invoices)
+    assert next(li.invoice_id for li in rec.lines if li.number == "1001") == 5

@@ -146,6 +146,7 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
     seen: set[int] = set()
     dates = []
     day_first = day_first_order([str(get(rec, "date") or "") for rec in records])
+    period = _period([read_date(get(rec, "date"), day_first) for rec in records])
     # A description is free text ("14/2 NMD90 wire", "Brass check valves"): a payment word in it makes a line a
     # payment only when no invoice has its number, or the amount's sign says so (below). A Type column is believed.
     free_text = "type" in columns and _norm(columns["type"]) not in TYPE_HEADERS
@@ -186,6 +187,7 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
             continue
         # Never a document of the opposite sign: a credit line does not take the invoice, nor an invoice the credit.
         candidates = [i for i in same_number if i["id"] not in seen and not opposite(i)]
+        candidates.sort(key=lambda i, date=date: _of_the_line(i, date, period))  # (then ``_first_to_match``)
         if not candidates:
             result.lines.append(Line(NOT_RECEIVED, raw_number, date, amount))
             continue
@@ -202,8 +204,7 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
             li.date = read_date(li.date, day_first)
         dates = [read_date(d, day_first) for d in dates]
     result.period_unknown = any(_EITHER_WAY.fullmatch(d) for d in dates)
-    matched = {norm_invoice_number(li.number) for li in result.lines if li.invoice_id}
-    result.lines += _not_on_statement(dates, invoices, seen, matched)
+    result.lines += _not_on_statement(_period(dates), invoices, seen)
     order = {DIFFERS: 0, NOT_RECEIVED: 1, NOT_ON_STATEMENT: 2, MATCHED: 3, PAYMENT: 4}
     result.lines.sort(key=lambda li: (order[li.status], li.date, li.number))
     return result
@@ -213,6 +214,19 @@ def _first_to_match(inv: dict[str, Any]) -> tuple[bool, bool, int]:
     """Of the invoices with one number (a bill sent again), the one a statement line takes first: approved (or at its
     second approval) and exported, then the oldest (``Store.vendor_invoices`` is newest first)."""
     return inv.get("status") not in ("approved", "pending_approval"), not inv.get("export_batch"), inv["id"]
+
+
+def _period(dates: list[str]) -> tuple[str, str] | None:
+    """(the first, the last) of the statement's dates read (YYYY-MM-DD); None when none was."""
+    read = [d for d in dates if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d)]
+    return (min(read), max(read)) if read else None
+
+
+def _of_the_line(inv: dict[str, Any], date: str, period: tuple[str, str] | None) -> tuple[bool, bool]:
+    """How an invoice with a statement line's number fits the line: dated as the line is, then in the statement's
+    period (#1001 of this year before #1001 of last year, exported or not)."""
+    on = str(inv.get("invoice_date") or "")
+    return on != date, not (period and period[0] <= on <= period[1])
 
 
 _EITHER_WAY = re.compile(r"\d{1,2}[/-]\d{1,2}[/-]\d{4}")  # a date not read: day or month first
@@ -232,24 +246,28 @@ def _order_of_matches(lines: list[Line], invoices: list[dict[str, Any]]) -> bool
     return orders.pop() if len(orders) == 1 else None
 
 
-def _not_on_statement(
-    dates: list[str], invoices: list[dict[str, Any]], seen: set[int], matched: set[str]
-) -> list[Line]:
-    """The invoices AP Coder holds for the statement's period (its ``dates``) that no line took, but a copy of one
-    whose number a line took (``matched``: the bill sent again)."""
-    period = [d for d in dates if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d)]
-    if not period:
+def _not_on_statement(period: tuple[str, str] | None, invoices: list[dict[str, Any]], seen: set[int]) -> list[Line]:
+    """The invoices AP Coder holds for the statement's ``period`` that no line took, but a copy of one a line took
+    (the bill sent again: its number and its total). A credit note numbered as its invoice, or another bill under a
+    number the vendor used again, is listed."""
+    if period is None:
         return []
-    first, last = min(period), max(period)
+    first, last = period
+    taken = {_copy_key(inv) for inv in invoices if inv["id"] in seen}
     lines = []
     for inv in invoices:
         date = str(inv.get("invoice_date") or "")
         if inv["id"] in seen or inv.get("status") in ("failed", "rejected") or not first <= date <= last:
             continue
-        if norm_invoice_number(inv.get("invoice_number")) not in matched:
+        if _copy_key(inv) not in taken:
             lines.append(Line(NOT_ON_STATEMENT, inv.get("invoice_number") or "", date, None, inv["grand_total"],
                               inv["id"], inv["status"]))  # fmt: skip
     return lines
+
+
+def _copy_key(inv: dict[str, Any]) -> tuple[str, float]:
+    """What a bill sent again shares with the one first received: its number (as people mean it) and its total."""
+    return norm_invoice_number(inv.get("invoice_number")), round(inv.get("grand_total") or 0, 2)
 
 
 def to_csv(rec: Reconciliation) -> bytes:
