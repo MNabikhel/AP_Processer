@@ -119,6 +119,9 @@ class Line:
 @dataclass
 class Reconciliation:
     lines: list[Line] = field(default_factory=list)
+    # The statement's dates read either way (day or month first) and nothing told which: its period is unknown, so
+    # the invoices it leaves out may not all be listed "Not on statement".
+    period_unknown: bool = False
 
     def count(self, status: str) -> int:
         return sum(1 for li in self.lines if li.status == status)
@@ -135,7 +138,7 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
         return rec.get(columns[key]) if key in columns else None
 
     by_number: dict[str, list[dict[str, Any]]] = {}
-    for inv in invoices:
+    for inv in sorted(invoices, key=_first_to_match):
         if inv.get("status") in ("failed", "rejected"):
             continue
         by_number.setdefault(norm_invoice_number(inv.get("invoice_number")), []).append(inv)
@@ -193,27 +196,60 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
         seen.add(inv["id"])
         status = MATCHED if same else DIFFERS
         result.lines.append(Line(status, raw_number, date, amount, inv["grand_total"], inv["id"], inv["status"]))
-    period = [d for d in dates if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d)]
-    if period:
-        first, last = min(period), max(period)
-        for inv in invoices:
-            date = str(inv.get("invoice_date") or "")
-            if inv["id"] in seen or inv.get("status") in ("failed", "rejected") or not first <= date <= last:
-                continue
-            result.lines.append(
-                Line(
-                    NOT_ON_STATEMENT,
-                    inv.get("invoice_number") or "",
-                    date,
-                    None,
-                    inv["grand_total"],
-                    inv["id"],
-                    inv["status"],
-                )  # fmt: skip
-            )
+    if day_first is None:  # every date read both ways: the matched invoices' own dates may tell the order
+        day_first = _order_of_matches(result.lines, invoices)
+        for li in result.lines:
+            li.date = read_date(li.date, day_first)
+        dates = [read_date(d, day_first) for d in dates]
+    result.period_unknown = any(_EITHER_WAY.fullmatch(d) for d in dates)
+    matched = {norm_invoice_number(li.number) for li in result.lines if li.invoice_id}
+    result.lines += _not_on_statement(dates, invoices, seen, matched)
     order = {DIFFERS: 0, NOT_RECEIVED: 1, NOT_ON_STATEMENT: 2, MATCHED: 3, PAYMENT: 4}
     result.lines.sort(key=lambda li: (order[li.status], li.date, li.number))
     return result
+
+
+def _first_to_match(inv: dict[str, Any]) -> tuple[bool, bool, int]:
+    """Of the invoices with one number (a bill sent again), the one a statement line takes first: approved (or at its
+    second approval) and exported, then the oldest (``Store.vendor_invoices`` is newest first)."""
+    return inv.get("status") not in ("approved", "pending_approval"), not inv.get("export_batch"), inv["id"]
+
+
+_EITHER_WAY = re.compile(r"\d{1,2}[/-]\d{1,2}[/-]\d{4}")  # a date not read: day or month first
+
+
+def _order_of_matches(lines: list[Line], invoices: list[dict[str, Any]]) -> bool | None:
+    """True (day first) or False (month first) when the statement dates of the matched lines read as their invoices'
+    own dates one way only; None when they don't tell."""
+    dates = {inv["id"]: str(inv.get("invoice_date") or "") for inv in invoices}
+    orders = set()
+    for li in lines:
+        if li.invoice_id is None or not _EITHER_WAY.fullmatch(li.date):
+            continue
+        day, month = read_date(li.date, True), read_date(li.date, False)
+        if day != month and dates.get(li.invoice_id) in (day, month):
+            orders.add(dates[li.invoice_id] == day)
+    return orders.pop() if len(orders) == 1 else None
+
+
+def _not_on_statement(
+    dates: list[str], invoices: list[dict[str, Any]], seen: set[int], matched: set[str]
+) -> list[Line]:
+    """The invoices AP Coder holds for the statement's period (its ``dates``) that no line took, but a copy of one
+    whose number a line took (``matched``: the bill sent again)."""
+    period = [d for d in dates if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d)]
+    if not period:
+        return []
+    first, last = min(period), max(period)
+    lines = []
+    for inv in invoices:
+        date = str(inv.get("invoice_date") or "")
+        if inv["id"] in seen or inv.get("status") in ("failed", "rejected") or not first <= date <= last:
+            continue
+        if norm_invoice_number(inv.get("invoice_number")) not in matched:
+            lines.append(Line(NOT_ON_STATEMENT, inv.get("invoice_number") or "", date, None, inv["grand_total"],
+                              inv["id"], inv["status"]))  # fmt: skip
+    return lines
 
 
 def to_csv(rec: Reconciliation) -> bytes:

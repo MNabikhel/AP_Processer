@@ -1,10 +1,15 @@
 """Vendor statement reconciliation."""
 
 import csv
+import json
 
+from ap_coder.ai.pipeline import finalise_coding
+from ap_coder.core.config import Settings
 from ap_coder.core.memory import vendor_key
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import load_sample_setup
 from ap_coder.erp import statements as stm
-from tests.conftest import DATA, copy_database
+from tests.conftest import DATA, SAMPLES, copy_database
 
 
 def _inv(i, number, total, date="2026-09-10", status="approved"):
@@ -134,3 +139,40 @@ def test_a_payment_line_carrying_the_invoice_number_never_takes_the_invoice():
     # A credit note AP holds under the same number still matches the credit line.
     rec = stm.reconcile(debit_credit, stm.map_columns(list(debit_credit[0])), [*invoices, _inv(3, "1001", -500.0)])
     assert {(li.status, li.invoice_id) for li in rec.lines} == {(stm.MATCHED, 1), (stm.MATCHED, 2), (stm.MATCHED, 3)}
+
+
+def _coded(store, stem):
+    doc = json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text())
+    out, _ = finalise_coding(InvoiceCoding.model_validate(doc), store.reference_data(), Settings(), store=store)
+    return out
+
+
+def test_a_statement_line_matches_the_approved_invoice_not_a_resent_copy_in_review(store, tmp_path):
+    """The vendor sent the bill again: its copy in review (the newest) never takes the statement line from the
+    approved, exported original, and is not listed "Not on statement" once its number matched."""
+    load_sample_setup(store)
+    out = _coded(store, "northwind_ON_HST_NW-2026-0912")
+    original = store.add_invoice(tmp_path / "NW-2026-0912.pdf", out, {})
+    store.approve_invoice(original, out, "Jane")
+    store.create_export_batch([original], "csv")
+    store.add_invoice(tmp_path / "copy.pdf", _coded(store, "northwind_ON_HST_NW-2026-0912"), {})
+    records = [{"Invoice": "NW-2026-0912", "Date": "2026-09-12", "Amount": "18,017.85"}]
+    key = store.get_invoice(original)["vendor_key"]
+    rec = stm.reconcile(records, stm.map_columns(list(records[0])), store.vendor_invoices(key))
+    assert [(li.status, li.invoice_id) for li in rec.lines] == [(stm.MATCHED, original)]
+
+
+def test_a_statement_whose_dates_read_both_ways_still_lists_what_it_leaves_out():
+    """Every day 12 or less: the matched invoices' own dates tell the order (month first here)."""
+    invoices = [_inv(1, "1001", 100.0, "2026-09-02"), _inv(2, "1002", 200.0, "2026-09-05"),
+                _inv(3, "1003", 300.0, "2026-09-08")]  # fmt: skip
+    records = [{"Invoice": "1001", "Date": "09/02/2026", "Amount": "100.00"},
+               {"Invoice": "1002", "Date": "09/05/2026", "Amount": "200.00"},
+               {"Invoice": "1004", "Date": "09/10/2026", "Amount": "50.00"}]  # fmt: skip
+    rec = stm.reconcile(records, stm.map_columns(list(records[0])), invoices)
+    assert [li.invoice_id for li in rec.lines if li.status == stm.NOT_ON_STATEMENT] == [3]
+    assert {li.date for li in rec.lines} == {"2026-09-02", "2026-09-05", "2026-09-08", "2026-09-10"}
+    assert not rec.period_unknown
+    # Nothing matched to tell by: the period is unknown, and the page says so rather than looking clean.
+    rec = stm.reconcile(records, stm.map_columns(list(records[0])), [_inv(3, "1003", 300.0, "2026-09-08")])
+    assert rec.period_unknown and rec.count(stm.NOT_ON_STATEMENT) == 0

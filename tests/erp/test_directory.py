@@ -231,6 +231,14 @@ def test_export_has_the_columns_shown_and_every_row_kept(store):
     assert [c.value for c in sheet[1]] == ["Vendor", "Total", "Status"] and sheet.max_row == len(approved) + 1
 
 
+def test_the_directorys_excel_export_writes_approved_on_and_received_as_dates(store):
+    """Real dates Excel sorts and filters, not text ("2026-11-12T09:05:04"), as the invoice and due dates are."""
+    query = "col=vendor&col=reviewed_at&col=received&f_status=approved"
+    sheet = load_workbook(io.BytesIO(client_for(store).get(f"/search/export.xlsx?{query}").content)).active
+    assert [c.value for c in sheet[1]] == ["Vendor", "Approved on", "Received"] and sheet.max_row > 1
+    assert {tuple(c.data_type for c in row) for row in sheet.iter_rows(min_row=2)} == {("s", "d", "d")}
+
+
 def _cells(content: bytes) -> list:
     """What a workbook's first sheet shows: its title, frozen panes, filter, column widths and every cell's value,
     type and look."""

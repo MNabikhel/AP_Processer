@@ -57,8 +57,32 @@ def test_period_status_and_treatment(tmp_path):
     assert report.claims == [] and report.not_approved == 1  # the approved one is dated after the quarter
     assert len(taxreturn.build(store, dt.date(2026, 10, 1), dt.date(2026, 12, 31)).claims) == 1
     store.set_tax_treatment("HST", EXPENSE_TO_LINE)
+    later, _ = _approved(store, tmp_path, "harbourview_NS_HST_HPS-2026-0347", invoice_date="2026-10-05")
     report = taxreturn.build(store, dt.date(2026, 10, 1), dt.date(2026, 12, 31))
-    assert report.claims == [] and "HST" in report.not_recoverable
+    # The HST approved after the change is expensed into the lines: not claimed (the one posted before still is, D-239)
+    assert later not in {c.invoice_id for c in report.claims} and len(report.claims) == 1
+    assert "HST" in report.not_recoverable
+
+
+def test_the_itr_report_claims_the_qst_as_it_was_posted_not_by_todays_setup(tmp_path):
+    """QST expensed into the lines when the invoice was approved and exported is never claimed once the QST is set
+    recoverable, and QST posted recoverable is still claimed once it is set expensed (D-239)."""
+    from ap_coder.core.tax_setup import RECOVERABLE
+    from ap_coder.erp import exports
+
+    store = Store(tmp_path / "t.db")
+    load_sample_setup(store)
+    store.set_tax_treatment("QST", EXPENSE_TO_LINE, "")
+    expensed, _ = _approved(store, tmp_path, "laurentides_QC_TPS_TVQ_SIL-4471")
+    posted = exports.distribution(store.get_invoice(expensed)["final_output"])
+    assert not [e for e in posted if e["kind"] == "tax" and "QST" in e["description"]]  # in the expense lines
+    store.set_tax_treatment("QST", RECOVERABLE, "2210")
+    assert taxreturn.build(store, *YEAR).totals()[taxreturn.ITR] == {}
+    claimed, qc = _approved(store, tmp_path, "montroyal_QC_TPS_TVQ_ACMR-2026-1187")
+    store.set_tax_treatment("QST", EXPENSE_TO_LINE, "")
+    report = taxreturn.build(store, *YEAR)
+    assert {c.invoice_id for c in report.claims if c.tax_type == "QST"} == {claimed}
+    assert report.totals()[taxreturn.ITR] == {"CAD": round(qc["tax_lines"][1]["tax_amount"] - 127.18, 2)}
 
 
 def test_claims_to_check(tmp_path):

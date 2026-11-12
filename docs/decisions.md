@@ -5781,3 +5781,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Amended (B-2481):** not on Windows. There CI's server load test left requests unanswered and a failover
     timing test ran over with it, on both runs; Windows keeps Python's 5 ms. The page's one-query count (B-2436)
     is what keeps JD Edwards files quick there.
+- **D-239** · **The Sales tax report claims each tax line as it was posted, not as the tax setup treats it today**
+  (`coding/taxreturn.py` `posted_recoverable`, kept in the invoices' summary by `tax_facts`; 12 Nov 2026).
+  - **Why:** the claim follows the books. A QST expensed into the lines when the invoice was approved and exported is
+    in the expense accounts, not the ITR account: claiming it once the setup is changed to recoverable claims tax
+    never booked as recoverable (and the reverse drops tax that was). The approved invoice's GL distribution, kept
+    with it (D-90), says per tax line which it was.
+  - **Fallback:** an invoice coded by an older version, with no distribution kept, is claimed by today's setup, as
+    its posting lines are built with it (`exports.distribution`). A setup change still shows on the report as the
+    taxes not recoverable today.
