@@ -686,13 +686,10 @@ class UsersMixin:
         return float(last) + min(60.0 * 2 ** min(count - ACCOUNT_FAILURES, 10), LOCK_SECONDS)
 
     def _temporary_expired(self, row: Any) -> bool:
-        """Whether ``row``'s temporary password was given over ``TEMPORARY_SECONDS`` ago (its last ``user_added``
-        or ``password_reset`` event; else the account's creation). Never for the only active Admin before its first
-        sign-in (the first Admin, made at the console: ``share``, ``users add --admin``): nobody else could give it
-        a new one (B-2542)."""
-        with self._conn() as conn:
-            if row["role"] == ADMIN and row["active"] and not row["last_login"] and self._active_admins(conn) == 1:
-                return False
+        """Whether ``row``'s temporary password was given over ``TEMPORARY_SECONDS`` ago (its last ``user_added`` or
+        ``password_reset`` event; else its creation); never the only active Admin's before a first sign-in (B-2542)."""
+        with self._conn() as conn:  # (that first Admin, made by ``share``, has no other to give it a new one)
+            first = row["role"] == ADMIN and row["active"] and not row["last_login"] and self._active_admins(conn) == 1
             given = conn.execute(
                 "SELECT MAX(created_at) FROM events WHERE action IN ('user_added', 'password_reset') "
                 "AND json_extract(detail, '$.username') = ?",
@@ -703,7 +700,7 @@ class UsersMixin:
             when = dt.datetime.fromisoformat(given or row["created_at"]).timestamp()
         except (TypeError, ValueError):
             return False
-        return time.time() - when > TEMPORARY_SECONDS  # (the events' own clock)
+        return not first and time.time() - when > TEMPORARY_SECONDS  # (the events' own clock)
 
     def _locked(self, conn: Any, key: str, ip: str, now: float, console: bool) -> bool:
         """Whether logins are paused for ``key`` (a username, or ``UNKNOWN`` and its hash) from ``ip``, or from
