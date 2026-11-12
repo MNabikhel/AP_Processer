@@ -366,8 +366,8 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float, reas
 
 
 def today_pills(store: Store, invoices: list[dict[str, Any]], may_second: bool = True) -> list[tuple[str, str]]:
-    """What needs doing today beyond the queue itself, as (text, tone) chips (none when all is calm); the second
-    approvals waiting only for who ``may_second`` (give them: B-2531)."""
+    """What needs doing today beyond the queue itself, as (text, tone) chips (none when all is calm). The second
+    approvals waiting are counted only when this person ``may_second`` (may give one, B-2531)."""
     today = dt.date.today().isoformat()
     soon = (dt.date.today() + dt.timedelta(days=DUE_SOON_DAYS)).isoformat()
     # Credit notes are not paid, so they are never past due (as on the queue rows).
