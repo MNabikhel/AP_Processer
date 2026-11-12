@@ -972,3 +972,26 @@ def test_no_bank_accounts_yet_says_what_this_person_can_do(store):
     assert "An Approver or an Admin adds them" in said["clerk"] and "grid" not in said["clerk"]
     assert "Type them in the grid below." in said["approver"] and "Import" not in said["approver"]
     assert "Import them above, or type them in the grid below." in said["admin"]
+
+
+def test_with_a_chart_loaded_and_a_list_imported_too_the_page_counts_what_came_from_where(chart_company_client,
+                                                                                         chart_company):  # fmt: skip
+    """B-2479: with the chart loaded and then two GL accounts (and two cost centers) imported here on top, GL accounts
+    & tax still said "These 119 GL accounts come from the chart of accounts" and "These 16 cost centers come from the
+    20 business units": two of each came from the file imported here."""
+    client, store = chart_company_client, chart_company.store
+    gl, cc = len(store.list_accounts("gl_accounts")), len(store.list_accounts("cost_centers"))
+    for table, rows in (("gl_accounts", [["Code", "Name"], ["9991", "Paper"], ["9992", "Ink"]]),
+                        ("cost_centers", [["Code", "Name"], ["CC991", "Lab"], ["CC992", "Shop"]])):  # fmt: skip
+        token = upload(client, f"/accounts/{table}/upload", "two.xlsx", xlsx(rows)).url.params["file"]
+        data = {"file": token, "col_code": "Code", "col_description": "Name"}
+        page = follow(client, client.post(f"/accounts/{table}/import", data=data, headers=PAGE))
+        assert "Imported: 2 added" in page.text
+    for tab, noun, before in (("gl", "GL accounts", gl), ("cc", "cost centers", cc)):
+        said = re.sub(r"\s+", " ", client.get(f"/accounts?tab={tab}").text).split('id="from-chart"', 1)[1][:400]
+        assert f"{before:,} of these {before + 2:,} {noun} come from the" in said, said
+        assert "the other 2 were added on this page" in said and "These " not in said
+    page = upload(client, "/accounts/gl_accounts/upload", "more.xlsx", xlsx([["Code", "Name"], ["9993", "Toner"]]))
+    form = page.text.split('id="pick-gl_accounts"', 1)[1].split("</form>", 1)[0]
+    assert f"Those not in it are removed, though the chart of accounts loaded on JD Edwards files gives {gl:,}." in form
+    assert f"files gives {gl:,} of the {gl + 2:,} GL accounts listed now" in form
