@@ -163,7 +163,9 @@ async def statements_upload(
 
 
 @router.post("/statements/emailed/{entry_id}/{n}")
-def statements_emailed(request: Request, entry_id: str, n: int, vendor: str = Form("")) -> JSONResponse:
+def statements_emailed(
+    request: Request, entry_id: str, n: int, vendor: str = Form(""), open_items: str = Form("")
+) -> JSONResponse:
     """Reconcile a statement spreadsheet that arrived by email (triage put it in ``statements/``)."""
     path = inbox.file_of(invoice_dir(get_store(request)), entry_id, n)
     if path is None:
@@ -176,7 +178,10 @@ def statements_emailed(request: Request, entry_id: str, n: int, vendor: str = Fo
         read_sheet(path.name, content)
     except SheetError as exc:
         return refuse(str(exc))
-    return done(request, "/statements?" + urlencode({"vendor": vendor, "file": keep_upload(path.name, content)}))
+    ticked = {"open_items": "1"} if open_items else {}
+    return done(
+        request, "/statements?" + urlencode({"vendor": vendor, "file": keep_upload(path.name, content), **ticked})
+    )
 
 
 @router.get("/statements/reconciliation.csv")

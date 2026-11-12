@@ -5827,9 +5827,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Why:** many vendors send only what is unpaid. Every invoice AP Coder exported in the statement's period (an
     export batch: sent to the ERP, or on a JD Edwards keying sheet) was then listed "Not on statement", burying the
     few that matter. Ticked, those are counted in one line instead ("12 invoices already exported are not expected
-    on an open-items statement"); matching, the other lines and the email to the vendor are as before. Unticked,
-    nothing changes.
-  - **Kept:** in the page's address (`open_items=1`) from the upload through the Reconcile form, another sheet, the
-    CSV and Choose another file. Not remembered per vendor: the Statements page keeps nothing per vendor today
+    on an open-items statement", `Reconciliation.exported_note`), and the CSV ends with that line; matching, the
+    other lines and the email to the vendor are as before. Unticked, nothing changes.
+  - **Kept:** in the page's address (`open_items=1`, absent when unticked) from the upload, or a statement received
+    by email, through the Reconcile form, another sheet, the CSV and Choose another file. An emailed statement's
+    Reconcile button takes the choice of the page's address (open with it ticked, as Choose another file leaves it),
+    not the upload box's tick. Not remembered per vendor: the Statements page keeps nothing per vendor today
     (the statement itself is held an hour, never stored), and a table for one tick box would be more than it is
     worth. An exported invoice an undone batch released counts as not exported (its batch is cleared).
