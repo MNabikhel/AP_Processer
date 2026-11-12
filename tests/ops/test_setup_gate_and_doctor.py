@@ -90,6 +90,7 @@ def test_the_doctor_checks_the_server_accounts_the_jd_edwards_api_and_the_hub_fe
     out = capsys.readouterr().out
     assert "[FAIL] server accounts" in out and "python -m ap_coder users add --admin <name>" in out
     assert "username admin and the password admin, in a browser on this server" in out  # the first sign-in (D-243)
+    assert f"setup code {store.first_setup_code()}" in out  # (made by the doctor when the server has none yet)
     assert "[SKIP] JD Edwards API" in out and "[SKIP] finance hub feed" in out
 
     store.add_user("jsmith", "a long enough password 1", role="admin")

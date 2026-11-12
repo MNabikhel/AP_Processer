@@ -44,12 +44,21 @@ password **admin**: it works only in a browser on this laptop, and only until yo
 AP Coder then asks for your name (filled in with the one on your approvals) and your own password (at least 12
 characters, not "admin" and not your name), and sets up an authenticator app on your phone: scan the QR code, type
 the 6-digit code it shows. After that you log in as **admin** with your password and a code from the app; left
-unused for 8 hours, it asks again. Colleagues on other computers can't open it: to let them in, see "Several
-people" at the end. No
-phone at hand, or lost it: in `scripts\terminal.bat`, `python -m ap_coder users reset-2fa admin` gives a temporary
-password to log in with (you set the app up again), or `python -m ap_coder users sign-in off` opens AP Coder
-without signing in from its next start (`users sign-in on` turns it back on). A laptop that ran an earlier AP Coder
-asks for this sign-in too, at its first start after the update: its invoices, approvals and settings are all kept.
+unused for 8 hours, or after 12 hours in all, it asks again. A code refused again and again: check that the laptop's
+clock and the phone's show the right time. Colleagues on other computers can't open it: to let them in, see
+"Several people" at the end. A laptop that ran an earlier AP Coder asks for this sign-in too, at its first start
+after the update: its invoices, approvals and settings are all kept.
+
+If you can't sign in, **close AP Coder's black window first** (these commands apply when AP Coder starts again),
+double-click `scripts\terminal.bat` in AP Coder's folder, type one of these, then double-click *AP Coder* again:
+
+- forgot your password, lost or changed your phone: `python -m ap_coder users reset-2fa admin`. It shows a
+  temporary password: log in as admin with it, choose your own again and set the app up again;
+- no phone at hand at all: `python -m ap_coder users sign-in off`. AP Coder then opens without signing in, for
+  whoever uses this laptop; `python -m ap_coder users sign-in on` turns it back on.
+
+Going back to the older AP Coder (the version before this sign-in): it refuses this data folder at each start, as a
+team's; it opens it only with `APProcessor.bat --without-sign-in`, typed at every start.
 
 A new installation shows the short menu ("Simple screens"): **To review**, **Add invoices**, **To key into JDE**,
 **Find an invoice**, **What was learned**, **Rules**, and under **Setup**: GL accounts & tax, JD Edwards files,

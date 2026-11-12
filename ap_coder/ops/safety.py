@@ -305,27 +305,33 @@ LAPTOP_SIGN_IN = ("laptop", "off")
 def sign_in_setting(db: Path) -> str:
     """The database ``db``'s sign-in setting ("" when it has none, is not there, or can't be read), read without a
     Store (``core/store/peek.py``, loaded by its path: the launcher's first phase can't import the store package)."""
+    return _peek(db, SIGN_IN_SETTING)
+
+
+def _peek(db: Path, key: str) -> str:
+    """``core/store/peek.py``'s ``setting``, the module loaded by its path."""
     path = Path(__file__).resolve().parents[1] / "core" / "store" / "peek.py"
     spec = importlib.util.spec_from_file_location("ap_coder_store_peek", path)
     if spec is None or spec.loader is None:
         return ""
     peek = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(peek)
-    return peek.setting(db, SIGN_IN_SETTING)
+    return peek.setting(db, key)
 
 
 def laptop_sign_in(store: Any, data: Path) -> bool:
     """Whether a laptop-mode start's Admin signs in (D-243). A data folder that never decided is given sign-in now,
     but only one that shows nothing of a team (no account, no codes' key, no server.json): a team's data opened on
     purpose without sign-in (``--without-sign-in``) is never made a laptop's, which would undo D-211."""
-    from ..core.store.sign_in import LAPTOP, SIGN_IN
+    from ..core.store.sign_in import LAPTOP, OFF, SIGN_IN
     from . import service
 
     said = store.get_setting(SIGN_IN)
     team = store.user_count() or (data / "authenticator.key").is_file() or service.config_path(data).is_file()
     if not said and not team:
-        store.set_setting(SIGN_IN, LAPTOP)
-        said = LAPTOP
+        # scripts/demo.bat's folder (AP_DEMO=1): a presenter's demo, opened without signing in, as the made-up company
+        said = OFF if os.environ.get("AP_DEMO", "").strip() == "1" else LAPTOP
+        store.set_setting(SIGN_IN, said)
     return said == LAPTOP
 
 
@@ -347,6 +353,7 @@ class TeamServer:
     settings: str  # its server.json ("": none)
     key: bool = False  # the sign-in codes' key is in the data folder: someone set up their authenticator app
     service: bool = True  # this computer's service is installed (False: a laptop shared with ``share``, D-218)
+    unreadable: str = ""  # the key alone tells, and the database can't be read (missing, damaged): its path
 
     @property
     def signs(self) -> str:
@@ -371,6 +378,13 @@ class TeamServer:
                     + (f": {WITHOUT_SIGN_IN} works only once the server is stopped" if on_purpose else ""))  # fmt: skip
         if on_purpose:
             return "", ""
+        if self.unreadable:  # a laptop signed into (D-243), or a team's: which, its database would have said
+            return (f"AP Coder can't read this data folder's database ({self.unreadable}): it is missing or damaged, "
+                    "though the folder holds the sign-in codes' key (authenticator.key), so people signed in here. "
+                    "It was not started.",
+                    "Copy the database back if it was moved, or restore the newest backup: python -m ap_coder backup "
+                    "list, then python -m ap_coder backup restore <name>. To open the folder anyway, with no sign-in: "
+                    f"python -m ap_coder serve {WITHOUT_SIGN_IN}")  # fmt: skip
         at = f", then sign in at {self.address}" if self.address else ""
         start = "Start the server again (python -m ap_coder service start, or the way it is started here)"
         if not self.service:  # a laptop shared with ``share`` (D-218)
@@ -422,7 +436,9 @@ def team_server(data: Path, db: Path) -> TeamServer | None:
     name = settings.allowed_hosts[0] if settings and settings.allowed_hosts else socket.gethostname()
     address = f"{scheme}://{name or '127.0.0.1'}:{port}" if scheme else ""
     installed = running or service.installed(settings or service.ServerSettings())  # (asked only once stopped)
-    return TeamServer(running, address, accounts, str(marker) if marker.is_file() else "", key, installed)
+    unreadable = key and not accounts and not running and not marker.is_file() and not _peek(db, "schema_version")
+    return TeamServer(running, address, accounts, str(marker) if marker.is_file() else "", key, installed,
+                      str(db) if unreadable else "")  # fmt: skip
 
 
 def open_here(data: Path) -> str:

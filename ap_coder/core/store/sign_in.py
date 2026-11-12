@@ -5,11 +5,23 @@ session (``web/pages/login.py``). The store's clock is ``users._clock`` (the tes
 
 from __future__ import annotations
 
+import contextlib
+import hmac
+import os
 import secrets
 from typing import Any
 
 from . import users
-from .users import _USER_COLUMNS, FIRST_KIND, PENDING_KIND, PENDING_SECONDS, TOKEN_BYTES, _public, token_hash
+from .users import (
+    _USER_COLUMNS,
+    FIRST_KIND,
+    PENDING_KIND,
+    PENDING_SECONDS,
+    SETUP_CODE_FILE,
+    TOKEN_BYTES,
+    _public,
+    token_hash,
+)
 
 # Sign-in on the laptop (D-243): the database's setting ``SIGN_IN``. ``LAPTOP``: its Admin signs in on this computer,
 # set when a laptop's data folder first starts with no sign-in decided (ops/safety.py ``laptop_sign_in``); ``OFF``:
@@ -79,6 +91,38 @@ class SignInMixin:
             row = conn.execute("SELECT expires_at FROM ephemeral WHERE kind = ? AND token = ?",
                                (FIRST_KIND, token_hash(token))).fetchone()  # fmt: skip
         return row is not None and row["expires_at"] >= users._clock()
+
+    def first_setup_code(self) -> str:
+        """The server's setup code for the first sign-in (``users.SETUP_CODE_FILE``): while there is no account, the
+        one in the data folder, made now when there is none (readable by this account only; two web workers making it
+        at once keep the first). Once there is an account, "" and the file removed."""
+        path = self.path.parent / SETUP_CODE_FILE
+        if self.user_count():
+            path.unlink(missing_ok=True)
+            return ""
+        if not path.exists():
+            part = path.with_name(f".{SETUP_CODE_FILE}.{secrets.token_hex(4)}.part")
+            handle = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(handle, "w", encoding="ascii") as out:
+                    out.write(users.temporary_password() + "\n")
+                with contextlib.suppress(FileExistsError):
+                    os.link(part, path)  # never over one there
+            finally:
+                part.unlink(missing_ok=True)
+        try:
+            return path.read_text(encoding="ascii").strip()
+        except (OSError, UnicodeDecodeError):
+            return ""
+
+    def setup_code_matches(self, typed: str) -> bool:
+        """Whether ``typed`` is the server's setup code (case, spaces and dashes aside: as read off a screen)."""
+        kept = self.first_setup_code()
+
+        def plain(text: str) -> bytes:
+            return "".join(c for c in str(text or "").lower() if c.isalnum()).encode("ascii", "replace")
+
+        return bool(kept) and hmac.compare_digest(plain(typed), plain(kept))
 
     def end_first_sign_in(self, token: str | None) -> None:
         with self._conn() as conn:

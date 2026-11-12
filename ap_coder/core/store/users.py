@@ -11,7 +11,8 @@ that did not match.
   for that username from that address for 15 minutes; 30 from one address, whatever the usernames, pause that
   address (a shared NAT, RDS or proxy address is not paused by five people mistyping); from the 10th within an hour
   from anywhere, a username's logins pause for 1 minute, then longer, from every address but those it logged in from
-  lately (D-109). Someone elsewhere can't lock a person out; the server's own console is never paused by address. An
+  lately (D-109). Someone elsewhere can't lock a person out; the server's own console is never paused by address
+  nor account-wide (D-243). An
   unknown username is counted the same way (by a hash: the text typed is never kept), and every refusal says the same
   words, so nothing tells whether a username exists. A try is recorded before its password is checked, in one
   transaction with the check of the pause, so guesses sent in parallel get no more checks than guesses sent one by one.
@@ -96,9 +97,17 @@ LOCKED = (
     "Too many tries that didn't match: logging in from this computer is paused for 15 minutes. Wait, then try "
     "again, or ask an Admin to reset your password."
 )
+# An account's logins paused from anywhere (D-109): its own words, since it is no address's doing; never at the
+# server's own console (D-243: the first Admin is "admin" for anyone on the network to guess at).
+ACCOUNT_PAUSED = (
+    "Too many tries that didn't match for this username, from other computers: logging in with it is paused for a few "
+    "minutes, except where it logged in lately and on the computer running AP Coder. Wait, then try again, or ask an "
+    "Admin."
+)
 LAST_ADMIN = "AP Coder needs at least one active Admin: make another person an Admin first."
 WRONG_CODE = ("That code doesn't match, or it was used already. Type the 6 digits your authenticator app shows now "
-              "(a new code every 30 seconds).")  # fmt: skip
+              "(a new code every 30 seconds). Refused again? Check that this computer's clock and your phone's show "
+              "the right time: a minute off and the codes don't match.")  # fmt: skip
 CODE_WHY = "authenticator code"  # login_failed's why: the code didn't match (D-146)
 KEY_WHY = "authenticator key missing"
 KEY_MISSING = (
@@ -114,6 +123,13 @@ PENDING_SECONDS = 15 * 60  # time to change a password and set an app up; the co
 FIRST_USERNAME, FIRST_PASSWORD = "admin", "admin"
 FIRST_KIND = "first-sign-in"  # in the short-lived table, as a login half way is (never a session)
 FIRST_ACTOR = "the first sign-in on this computer"
+# On the server, the first sign-in also needs a setup code (D-243): a forwarder on the server (netsh portproxy, ssh -L,
+# socat, a proxy that adds nothing) brings any browser in from 127.0.0.1, so the address can't prove who is at it. Made
+# while there is no account, in the data folder, readable by the service's account only, said in its window (and so
+# its service log) and by the doctor; gone with the first account (``SignInMixin.first_setup_code``).
+SETUP_CODE_FILE = "first_sign_in.code"
+SETUP_CODE_WRONG = ("That setup code doesn't match. On the server it is in AP Coder's window and in its service log "
+                    "(logs\\service.log in the data folder), and python -m ap_coder doctor shows it.")  # fmt: skip
 FIRST_HERE_ONLY = ("No one can sign in yet: the first sign-in is made in a browser on the computer running AP Coder "
                    "(not through another computer or a proxy).")  # fmt: skip
 FIRST_DONE = ("The first sign-in was just finished in another browser: log in with that account (or ask the person "
@@ -354,7 +370,7 @@ def carry_accounts(conn: Any, saved: dict[str, tuple[list[str], list[str], list[
     if "sessions" in tables or "sessions" in saved:
         conn.execute("DELETE FROM sessions")
     if "ephemeral" in tables:  # and no login half way (D-146)
-        conn.execute("DELETE FROM ephemeral WHERE kind = ?", (PENDING_KIND,))
+        conn.execute("DELETE FROM ephemeral WHERE kind IN (?, ?)", (PENDING_KIND, FIRST_KIND))  # nor a first sign-in
 
 
 class UsersMixin:
@@ -404,8 +420,10 @@ class UsersMixin:
         """The first account (D-243): ``FIRST_USERNAME``, an Admin, with the password its person chose at the first
         sign-in (their own: nothing to change at the next login; the authenticator app still to set up). ValueError
         when an account was made meanwhile (``FIRST_DONE``) or the policy refuses the password."""
-        return self.add_user(FIRST_USERNAME, password, role=ADMIN, display_name=display_name, actor=FIRST_ACTOR,
+        made = self.add_user(FIRST_USERNAME, password, role=ADMIN, display_name=display_name, actor=FIRST_ACTOR,
                              must_change=False, only_first=True)  # fmt: skip
+        (self.path.parent / SETUP_CODE_FILE).unlink(missing_ok=True)  # the server's setup code: used
+        return made
 
     def user(self, user_id: int) -> dict[str, Any] | None:
         with self._conn() as conn:
@@ -728,24 +746,25 @@ class UsersMixin:
             return False
         return time.time() - when > TEMPORARY_SECONDS  # (the events' own clock)
 
-    def _locked(self, conn: Any, key: str, ip: str, now: float, console: bool) -> bool:
-        """Whether logins are paused for ``key`` (a username, or ``UNKNOWN`` and its hash) from ``ip``, or from
-        ``ip`` whatever the username (never for the server's own console), or for ``key`` from anywhere. An address
-        ``key`` logged in from lately is paused for it by its own tries only: neither a shared address paused by
-        others' tries nor an account-wide pause by tries elsewhere keeps a person out of their own office (D-109)."""
+    def _locked(self, conn: Any, key: str, ip: str, now: float, console: bool) -> str:
+        """Why logins are paused for ``key`` (a username, or ``UNKNOWN`` and its hash) now ("" when they are not):
+        from ``ip`` (``LOCKED``), or from ``ip`` whatever the username (``LOCKED``), or for ``key`` from anywhere
+        (``ACCOUNT_PAUSED``); neither of the last two for the server's own console (D-243). An address ``key`` logged
+        in from lately is paused for it by its own tries only: neither a shared address paused by others' tries nor an
+        account-wide pause by tries elsewhere keeps a person out of their own office (D-109)."""
         found = conn.execute("SELECT MAX(user_locked_until) FROM login_attempts WHERE username = ? AND ip = ?",
                              (key, ip))  # fmt: skip
         if (found.fetchone()[0] or 0) > now:
-            return True
-        if self._known(conn, key, ip, now):
-            return False
+            return LOCKED
+        if console or self._known(conn, key, ip, now):
+            return ""
         if self._account_paused_until(conn, key, now) > now:
-            return True
-        if ip and not console:
+            return ACCOUNT_PAUSED
+        if ip:
             found = conn.execute("SELECT MAX(ip_locked_until) FROM login_attempts WHERE ip = ?", (ip,))
             if (found.fetchone()[0] or 0) > now:
-                return True
-        return False
+                return LOCKED
+        return ""
 
     def _count_try(self, conn: Any, key: str, ip: str, now: float, console: bool) -> tuple[int, tuple[bool, ...]]:
         """A try recorded as one that did not match before what was typed is checked, in the transaction that checked
@@ -774,7 +793,8 @@ class UsersMixin:
             "VALUES (?, ?, ?, 0, ?, ?)",
             (key, ip, now, now + LOCK_SECONDS if lock_pair else None, now + LOCK_SECONDS if lock_ip else None),
         ).lastrowid
-        lock_account = not self._known(conn, key, ip, now) and self._account_paused_until(conn, key, now) > now
+        lock_account = (not console and not self._known(conn, key, ip, now)
+                        and self._account_paused_until(conn, key, now) > now)  # fmt: skip
         return int(attempt), (lock_pair, lock_ip, lock_account)
 
     def _refused(self, conn: Any, who: dict[str, Any], ip: str, locks: tuple[bool, ...], why: str = "") -> str:
@@ -786,7 +806,7 @@ class UsersMixin:
             return ""
         by = "username" if lock_pair else "address" if lock_ip else "account"
         self._log(conn, "login_locked", None, None, {**who, "by": by, "address": ip})
-        return LOCKED
+        return ACCOUNT_PAUSED if by == "account" else LOCKED
 
     def authenticate(self, username: str, password: str, ip: str = "", *, console: bool = False) -> dict[str, Any]:
         """The first step of a login: the account whose username and password these are; ``LoginRefused`` otherwise,
@@ -804,8 +824,9 @@ class UsersMixin:
             self._begin_alone(conn, "authenticate")
             row = conn.execute("SELECT * FROM users WHERE username = ?", (name,)).fetchone()
             key = name if row is not None else UNKNOWN + token_hash(name)[:32]  # the text typed is not kept
-            if self._locked(conn, key, ip, now, console):
-                raise LoginRefused(LOCKED)
+            paused = self._locked(conn, key, ip, now, console)
+            if paused:
+                raise LoginRefused(paused)
             attempt, locks = self._count_try(conn, key, ip, now, console)
         matches = verify_password(password, row["pw_hash"] if row is not None else _dummy_hash())
         if row is not None and row["active"] and matches and row["must_change"] and self._temporary_expired(row):
@@ -860,8 +881,9 @@ class UsersMixin:
             self._begin_alone(conn, "check_code")
             row = self._account(conn, user_id)
             name = row["username"]
-            if self._locked(conn, name, ip, now, console):
-                raise LoginRefused(LOCKED)
+            paused = self._locked(conn, name, ip, now, console)
+            if paused:
+                raise LoginRefused(paused)
             secret = authenticator.open_secret(key, row["totp_secret"])
             if secret is None and row["totp_on"]:
                 self._log(conn, "login_failed", None, None, {"username": name, "why": KEY_WHY})

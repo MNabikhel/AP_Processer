@@ -108,3 +108,13 @@ def test_a_teams_sign_in_is_never_turned_off(db, capsys):
     assert Store(db).get_setting(SIGN_IN) == "" and "serves a team" in capsys.readouterr().err
     Store(db).set_setting(SIGN_IN, TEAM)
     assert cli.main(["--db", db, "users", "sign-in", "off"]) == 1 and Store(db).get_setting(SIGN_IN) == TEAM
+
+
+def test_sign_in_on_names_admin_admin_only_before_the_first_account(db, capsys):
+    from ap_coder.core.store.sign_in import OFF, SIGN_IN
+
+    Store(db).set_setting(SIGN_IN, OFF)
+    Store(db).add_first_admin(GOOD, "Pat Lee")
+    assert cli.main(["--db", db, "users", "sign-in", "on"]) == 0
+    said = capsys.readouterr().out
+    assert "password admin" not in said and "your own password" in said

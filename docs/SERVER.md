@@ -509,12 +509,19 @@ Two ways, both on the server itself (nobody can sign up from another computer):
 
 **In a browser on the server** (D-243): while there is no account at all, open `https://127.0.0.1:8501` on the
 server and log in with the username **admin** and the password **admin**. AP Coder asks for your name (the one on
-your approvals) and your own password (at least 12 characters, not "admin" and not your name), then sets up the
-authenticator app on your phone (a QR code to scan, then a code from the app: *Sign-in codes*, step 10). From the
+your approvals), your own password (at least 12 characters, not "admin" and not your name) and the **setup code**,
+then sets up the authenticator app on your phone (a QR code to scan, then a code from the app: *Sign-in codes*, step 10). From the
 moment that password is saved, admin / admin no longer works; your account is `admin`. admin / admin is refused from
 any other computer, and through a reverse proxy: with `--proxy` (behind IIS) this way is off, so make the first Admin
 before putting the proxy in front, or use the console below. A proxy on this server must always be named with
 `--proxy` (step 4): one that is not, and passes no forwarding header, makes every browser look like the server's own.
+
+The setup code is what proves you are at the server: any program on it that passes connections on (a port forward
+with `netsh interface portproxy`, `ssh -L`, socat, nginx's default `proxy_pass`) brings other computers' browsers in
+from 127.0.0.1, under any name they give. While there is no account, the service makes a one-time code (four groups
+of four letters and digits) in `D:\APCoderData\first_sign_in.code`, readable by the service's account only, and
+says it in its log (`logs\service.log`: "No account yet ... this setup code: ..."). `python -m ap_coder doctor`,
+run as the service's account, shows it too. It works once: with the first account the file is removed.
 
 **At the server's console**:
 
@@ -1771,6 +1778,15 @@ the data folder opens in laptop mode again with everything done in server mode, 
 unused (`serve --without-sign-in`, below). When the laptop's owner already signs in on the laptop (its account
 `admin`, with the name of their approvals and their authenticator app), `share` takes that account as the first
 Admin: nothing is asked, and they sign in to the shared laptop as before.
+
+**What the laptop's own sign-in does not stop** (D-243). It keeps out other computers, and anyone at the laptop
+without the password and the phone; not another program or Windows account on the laptop itself. Such a program can
+read the data folder anyway, if Windows lets it; it can also send wrong passwords for admin from 127.0.0.1 and pause
+the owner's logins from this computer for 15 minutes, since the owner's browser comes from the same address (the
+account-wide pause never applies there, the one for an address and a username does). And the browser sends the
+laptop's sign-in cookie (`ap_session`, plain HTTP on 127.0.0.1) to every program listening on another port of
+this computer, as browsers do with cookies of `localhost`. On a laptop shared by several Windows users, or running
+programs one doesn't trust, use `share` with HTTPS, or a server of its own.
 
 **The one thing lost.** What was typed on a review screen in laptop mode and not yet saved (a draft, kept for "this
 computer") is shown to nobody in server mode, where drafts belong to accounts. It is not deleted, and shows again in

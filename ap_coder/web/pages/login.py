@@ -37,6 +37,7 @@ from markupsafe import Markup
 
 from ap_coder.core import authenticator
 from ap_coder.core.store.users import (
+    ACCOUNT_PAUSED,
     ADMIN,
     FIRST_HERE_ONLY,
     FIRST_PASSWORD,
@@ -44,6 +45,7 @@ from ap_coder.core.store.users import (
     KEY_MISSING,
     LOCKED,
     MANAGER,
+    SETUP_CODE_WRONG,
     TEMPORARY_EXPIRED,
     LoginRefused,
     fold_username,
@@ -74,12 +76,13 @@ TOO_LONG = "Your login took too long, or it ended: log in again."
 OUT_OF_STEP = "That isn't the next step of your login: reload the page."
 SIX_DIGITS = "Type the six digits your authenticator app shows (spaces don't matter)."
 ONLY_ADMIN = ("Your temporary password has expired (it lasts 3 days). You are the only Admin: for a new one, run "
-              "python -m ap_coder users reset {username} on the server.")  # fmt: skip
+              "python -m ap_coder users reset {username} {where}.")  # fmt: skip
 QUIET = 4  # modules of white around a QR code, as the standard asks
 # What a reverse proxy adds to the requests it passes on: one on this computer makes every browser arrive from 127.0.0.1
 # (D-243). IIS's ARR adds X-ARR-SSL, X-ARR-LOG-ID and the like too (``X_ARR``).
 FORWARDING = ("x-forwarded-for", "forwarded", "x-real-ip", "x-forwarded-host", "x-forwarded-proto", "via",
-              "x-original-url", "x-original-host")  # fmt: skip
+              "x-original-url", "x-original-host", "x-client-ip", "true-client-ip", "cf-connecting-ip",
+              "x-forwarded-server", "x-cluster-client-ip", "fastly-client-ip")  # fmt: skip
 X_ARR = "x-arr-"
 LAPTOP_ADMIN_ONLY = ("On this laptop AP Coder opens for its Admin only. To let colleagues in with their own accounts, "
                      "its owner runs python -m ap_coder share (docs/SERVER.md, section 16).")  # fmt: skip
@@ -123,12 +126,27 @@ def _loopback_name(host: str) -> bool:
     return name == "localhost" or (ip is not None and ip.is_loopback)
 
 
+def _here_only(request: Request) -> str:
+    """``FIRST_HERE_ONLY``, with the address to open on the computer running AP Coder."""
+    port = request.url.port or (443 if request.url.scheme == "https" else 80)
+    return f"{FIRST_HERE_ONLY} On that computer, open {request.url.scheme}://127.0.0.1:{port}."
+
+
 def first_sign_in_here(request: Request) -> bool:
     """Whether admin / admin may start the first sign-in from this request (D-243): a browser on the computer running
-    AP Coder, opened at its own loopback name, with no reverse proxy between (no ``--proxy``, nothing a proxy adds)."""
-    if not from_console(request) or not _loopback_name(request.headers.get("host", "")):
+    AP Coder, opened at its own loopback name, with no reverse proxy between (no ``--proxy``, nothing a proxy adds).
+    On a laptop listening on its own network address only (``AP_DASHBOARD_ADDRESS``), also its own browser there: the
+    connection from that same address, opened at it (``identity.from_this_computer``)."""
+    if getattr(request.app.state, "proxy", None):
         return False
-    return not any(k in FORWARDING or k.startswith(X_ARR) for k in (key.lower() for key in request.headers.keys()))
+    if any(k in FORWARDING or k.startswith(X_ARR) for k in (key.lower() for key in request.headers.keys())):
+        return False
+    if from_console(request) and _loopback_name(request.headers.get("host", "")):
+        return True
+    own = (request.scope.get("server") or ("", 0))[0] or ""
+    host = request.headers.get("host", "").strip().lower()
+    named = host.rsplit(":", 1)[0].strip("[]") if host.count(":") <= 1 or host.startswith("[") else host
+    return not server_mode(request) and identity.from_this_computer(request.scope) and named == own.lower()
 
 
 def _pending(request: Request) -> str:
@@ -175,6 +193,7 @@ def login_page(request: Request, next: str = HOME) -> Response:  # noqa: A002 - 
     store = get_store(request)
     first = store.user_count() == 0
     context = {"next": _next(next), "first_admin": first, "first_here": first and first_sign_in_here(request),
+               "server_mode": server_mode(request),
                "flashes": take_flash(request.query_params.get("flash")), "title": "Log in"}  # fmt: skip
     response = templates.TemplateResponse(request, "login.html", context)
     response.headers["Cache-Control"] = "no-store"
@@ -197,7 +216,7 @@ def login_save(request: Request, username: str = Form(""), password: str = Form(
     try:
         user = store.authenticate(username, password, ip, console=from_console(request))
     except LoginRefused as exc:
-        return refuse(_refusal(store, str(exc), username), 401)
+        return refuse(_refusal(store, str(exc), username, server_mode(request)), 401)
     if not server_mode(request) and user["role"] != ADMIN:  # a laptop opens for its Admin (D-243)
         return refuse(LAPTOP_ADMIN_ONLY, 403)
     store.end_session(_token(request))  # whatever session this browser had before: never carried over
@@ -221,7 +240,7 @@ def _first_sign_in(request: Request, password: str, next: str) -> JSONResponse |
     the login half way's, which opens only ``FIRST_PATH``); from anywhere else, refused before the password is looked
     at or the try counted. None: another password typed here, an ordinary login that doesn't match."""
     if not first_sign_in_here(request):
-        return refuse(FIRST_HERE_ONLY, 403)
+        return refuse(_here_only(request), 403)
     if not hmac.compare_digest(password.encode("utf-8"), FIRST_PASSWORD.encode("utf-8")):
         return None
     store = get_store(request)
@@ -235,14 +254,15 @@ def _first_sign_in(request: Request, password: str, next: str) -> JSONResponse |
 # --- The steps after the password (D-146) -----------------------------------------------------------------------------
 
 
-def _refusal(store: Any, said: str, username: str) -> str:
+def _refusal(store: Any, said: str, username: str, server: bool = True) -> str:
     """What a login refused says; to the only active Admin, whose temporary password expired, the command that gives
     a new one: there is no other Admin to ask (B-2525). (Said only once the password matched.)"""
     if said != TEMPORARY_EXPIRED:
         return said
     account = store.find_user(username) or {}
     admins = [u["id"] for u in store.list_users() if u["role"] == ADMIN and u["active"]]
-    return ONLY_ADMIN.format(username=account["username"]) if admins == [account.get("id")] else said
+    where = "on the server" if server else "in scripts\\terminal.bat on this computer"
+    return ONLY_ADMIN.format(username=account["username"], where=where) if admins == [account.get("id")] else said
 
 
 def qr_svg(text: str) -> str:
@@ -274,9 +294,9 @@ def _step_page(request: Request, step: str, next: str) -> Response:  # noqa: A00
                "flashes": take_flash(request.query_params.get("flash")), "error": "",
                "title": {identity.NEW_PASSWORD_PATH: "Your password", identity.SET_UP_PATH: "Set up your "
                          "authenticator app"}.get(step, "Your code")}  # fmt: skip
+    admins = [u["id"] for u in store.list_users() if u["role"] == ADMIN and u["active"]]
+    context["only_admin"] = admins == [user["id"]]  # their lost phone: the console's command, no Admin to ask
     if step == identity.SET_UP_PATH:
-        admins = [u["id"] for u in store.list_users() if u["role"] == ADMIN and u["active"]]
-        context["only_admin"] = admins == [user["id"]]  # their lost phone: the console's command, no Admin to ask
         try:
             secret = store.authenticator_secret(user["id"])
         except ValueError as exc:  # the key file damaged: never made again over it
@@ -370,7 +390,10 @@ def first_page(request: Request, next: str = HOME) -> Response:  # noqa: A002
     if not (first_sign_in_here(request) and store.user_count() == 0 and store.first_sign_in_open(_pending(request))):
         return RedirectResponse(_again(wanted), status_code=303)
     name = "" if server_mode(request) else reviewer()  # a laptop's: the name on its approvals so far
+    if server_mode(request):
+        store.first_setup_code()  # (made at the server's start; here too, should it not be there)
     context = {"step": identity.FIRST_PATH, "next": wanted, "username": FIRST_USERNAME, "name": name, "error": "",
+               "needs_code": server_mode(request),
                "flashes": take_flash(request.query_params.get("flash")),
                "title": "Make this account yours"}  # fmt: skip
     response = templates.TemplateResponse(request, "login_step.html", context)
@@ -380,17 +403,21 @@ def first_page(request: Request, next: str = HOME) -> Response:  # noqa: A002
 
 @router.post(identity.FIRST_PATH)
 def first_save(request: Request, name: str = Form(""), new: str = Form(""), again: str = Form(""),
-               next: str = Form(HOME)) -> JSONResponse:  # noqa: A002  # fmt: skip
+               code: str = Form(""), next: str = Form(HOME)) -> JSONResponse:  # noqa: A002  # fmt: skip
     """The first Admin made, with the name and password typed (``add_first_admin``: only while there is no account);
-    the first sign-in goes on as a login half way, to the authenticator app's set-up."""
+    the first sign-in goes on as a login half way, to the authenticator app's set-up. On the server, with its setup
+    code too (``users.SETUP_CODE_FILE``): no address proves the person is at the server (a forwarder on it)."""
     if not signs_in(request):
         return refuse(NO_LOGINS)
     if not first_sign_in_here(request):
-        return refuse(FIRST_HERE_ONLY, 403)
+        return refuse(_here_only(request), 403)
     store, token = get_store(request), _pending(request)
     if not store.first_sign_in_open(token):
         again = with_flash(_again(next), [flash_message(TOO_LONG, "info", icon="schedule")])
         return refuse(TOO_LONG, 401, redirect=again)
+    # (an account made meanwhile: refused below, by ``add_first_admin``'s FIRST_DONE)
+    if server_mode(request) and store.user_count() == 0 and not store.setup_code_matches(code):
+        return refuse(SETUP_CODE_WRONG, 403)
     if new != again:
         return refuse("The two new passwords are not the same: type it twice the same way.")
     shown = identity.clean_name(name)
@@ -420,7 +447,7 @@ def _second_step(request: Request, step: str, code: str, next: str) -> Response:
     try:
         found = store.check_code(user["id"], typed, ip, console=from_console(request))
     except LoginRefused as exc:
-        if str(exc) in (LOCKED, KEY_MISSING):
+        if str(exc) in (LOCKED, ACCOUNT_PAUSED, KEY_MISSING):
             return _back_to_login(request, str(exc), next)
         return refuse(str(exc), 401)
     store.end_pending(_pending(request))

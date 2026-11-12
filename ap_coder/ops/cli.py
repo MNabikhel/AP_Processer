@@ -522,6 +522,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
         from .safety import mark_team
 
         mark_team(store)  # its accounts are a team's from now on (D-211, D-243)
+        code = store.first_setup_code()  # no account yet: the first sign-in needs it (D-243)
+        if code:
+            scheme = "https" if certfile and keyfile else "http"
+            print(f"No account yet. The first Admin signs in in a browser on this server, at {scheme}://127.0.0.1:"
+                  f"{port}, with the username admin, the password admin and this setup code: {code} (it works once; "
+                  "python -m ap_coder doctor shows it again).", file=sys.stderr)  # fmt: skip
     else:
         extra |= _laptop_sign_in(args, store, host)
     return server.serve(host, port, open_browser=not args.no_browser, store=store, **extra)
@@ -1212,8 +1218,13 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
         print(f"Removed {remove_demo(store)} demo invoice(s) and what was learned from them.", file=sys.stderr)
         return 0
     if args.company:
+        from ..core.store.sign_in import SIGN_IN
         from .demo import COMPANY_FOLDER, load_company
 
+        if store.user_count() or store.get_setting(SIGN_IN):  # it turns sign-in off: never a laptop's nor a team's
+            print("Not loaded: the made-up company is loaded into a new data folder only (set AP_PRIVATE_DIR to a new "
+                  "folder first): this one has sign-in accounts, or its sign-in is set.", file=sys.stderr)  # fmt: skip
+            return 1
         try:
             made = load_company(store, settings)
         except ValueError as exc:
@@ -1337,7 +1348,10 @@ def _sign_in_command(store: Store, on: bool, actor: str) -> int:
     store.set_setting(SIGN_IN, LAPTOP if on else OFF)
     change = {"from": said, "to": LAPTOP if on else OFF}  # in the Activity log: "Sign in (laptop → off)"
     store.log_event("settings_changed", actor=actor, detail={"keys": [SIGN_IN], "changes": {SIGN_IN: change}})
-    if on:
+    if on and store.user_count():
+        print("Sign-in on this laptop is on from its next start: its Admin signs in with your own password and a code "
+              "from the authenticator app.")  # fmt: skip
+    elif on:
         print("Sign-in on this laptop is on from its next start: its Admin signs in (the first time: username admin, "
               "password admin, in a browser on this computer).")  # fmt: skip
     else:

@@ -95,3 +95,19 @@ def test_demo_company_command(tmp_path, capsys):
     assert cli.main(["--db", str(db), "demo", "--company"]) == 1
     assert "Not loaded: The made-up company is loaded into a new database only" in capsys.readouterr().err
     assert len(Store(db).list_invoices()) == 7
+
+
+@pytest.mark.parametrize("sign_in", ["laptop", "team", "off"])
+def test_the_made_up_company_never_goes_into_a_folder_whose_sign_in_is_decided(tmp_path, capsys, sign_in):
+    """D-243: ``demo --company`` turns its folder's sign-in off: into a laptop's own (or a team's, whose D-211 guard
+    it would undo) it is refused, before anything is loaded."""
+    db = tmp_path / "private" / "ap_coder.db"
+    Store(db).set_setting("sign_in", sign_in)
+    assert cli.main(["--db", str(db), "demo", "--company"]) == 1
+    assert "new data folder" in capsys.readouterr().err and Store(db).get_setting("sign_in") == sign_in
+
+
+def test_the_made_up_company_never_goes_into_a_folder_with_accounts(tmp_path, capsys):
+    db = tmp_path / "private" / "ap_coder.db"
+    Store(db).add_user("boss", "correct horse battery", role="admin")
+    assert cli.main(["--db", str(db), "demo", "--company"]) == 1 and Store(db).get_setting("sign_in") == ""

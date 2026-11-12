@@ -33,6 +33,14 @@
           <input type="password" name="new" autocomplete="new-password" minlength="12" required></label>
         <label class="field">New password again
           <input type="password" name="again" autocomplete="new-password" minlength="12" required></label>
+        {% if needs_code %}
+        <label class="field">Setup code
+          <input type="text" name="code" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="40"
+                 required></label>
+        <p class="muted">The setup code proves you are at the server. It is in AP Coder's window on the server and in its
+          service log (<code>logs\service.log</code> in the data folder); <code>python -m ap_coder doctor</code>, typed
+          on the server, shows it too. It works once, for this first account.</p>
+        {% endif %}
         <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save the password</button>
       </form>
       <p class="muted">Next you set up an authenticator app on your phone, for a code at every login. From then on you
@@ -95,7 +103,13 @@
                  maxlength="8" required autofocus></label>
         <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">login</span>Log in</button>
       </form>
+      {% if only_admin %}
+      <p class="muted">Lost your phone, or got a new one? You are the only Admin: type
+        <code>python -m ap_coder users reset-2fa {{ username }}</code> in a command window on the computer running AP
+        Coder (on a laptop, <code>scripts\terminal.bat</code> in the AP Coder folder, its black window closed first).</p>
+      {% else %}
       <p class="muted">Lost your phone, or got a new one? Ask an Admin to reset your authenticator.</p>
+      {% endif %}
       {% endif %}
       <p class="muted"><a href="/login">Not you? Log in again.</a></p>
     </section>

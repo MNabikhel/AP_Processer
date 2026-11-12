@@ -33,14 +33,21 @@
       </form>
       {% if first_here %}
       <p>No one has an account yet. First time here: log in with the
-        username <b>admin</b> and the password <b>admin</b>, then choose your own password and set up an authenticator
-        app on your phone.</p>
+        username <b>admin</b> and the password <b>admin</b>, then choose your own password{% if server_mode %} (with
+        the setup code shown in AP Coder's window on the server){% endif %} and set up an authenticator app on your
+        phone.</p>
       {% elif first_admin %}
       <p class="muted">No one has an account yet. The first login is made in a browser on the computer running AP Coder;
         or the first Admin is added there in a command window:
         <code>python -m ap_coder users add --admin &lt;username&gt;</code></p>
       {% else %}
+      {% if server_mode %}
       <p class="muted">Forgot your password? Ask an Admin to reset it.</p>
+      {% else %}
+      <p class="muted">Forgot your password, or lost your phone? Close AP Coder's black window, double-click
+        <code>scripts\terminal.bat</code> in AP Coder's folder and type
+        <code>python -m ap_coder users reset-2fa admin</code>: it gives a temporary password and sets up the app again.</p>
+      {% endif %}
       {% endif %}
     </section>
   </main>

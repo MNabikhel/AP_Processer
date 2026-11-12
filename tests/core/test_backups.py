@@ -1400,3 +1400,12 @@ def test_a_laptops_restore_keeps_its_own_admin_and_sign_in_when_asked(tmp_path, 
     assert store.get_setting("sign_in") == "laptop" and store.user(uid)["name"] == "Pat Lee"
     store.restore_state(backup)  # (the default: the backup's, nothing kept)
     assert store.get_setting("sign_in") == "" and store.user_count() == 0
+
+
+def test_a_restore_ends_a_first_sign_in_under_way(tmp_path, ground_truth):
+    """As a login half way does (D-146): a first sign-in begun before a restore opens nothing after it (D-243)."""
+    store, _data = _data_folder(tmp_path, ground_truth)
+    backup = store.backup_now()
+    token = store.start_first_sign_in()
+    store.restore_state(backup, keep_accounts=True)
+    assert not store.first_sign_in_open(token)

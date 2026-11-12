@@ -136,3 +136,33 @@ def test_a_restore_on_settings_keeps_the_laptops_admin_and_its_sign_in(store, ow
     answer = client.post("/settings/data/restore", data={"name": backup.name, "confirm": "RESTORE"}, headers=PAGE)
     assert answer.json()["ok"], answer.text
     assert store.get_setting(SIGN_IN) == LAPTOP and store.find_user("admin")["name"] == "Pat Lee"
+
+
+def test_the_who_are_you_page_shows_nothing_before_the_sign_in(store, owner):
+    """Open to anyone (roles.OPEN), the "Who are you?" page showed the owner's name and the menu without a session."""
+    client = browser(laptop(store))
+    page = client.get("/who")
+    assert page.status_code == 303 and page.headers["location"] == "/login" and "Pat Lee" not in page.text
+    assert client.post("/who", data={"name": "Someone"}, headers=PAGE).status_code == 403
+
+
+def test_a_laptop_listening_on_its_own_address_signs_in_from_its_own_browser(store, owner):
+    """AP_DASHBOARD_ADDRESS set to the laptop's own address: 127.0.0.1 doesn't answer, its own browser comes from that
+    address (identity.from_this_computer), and the first sign-in is made there."""
+    app = laptop(store, address="192.168.1.20")
+    own = TestClient(app, base_url="http://192.168.1.20:8501", client=("192.168.1.20", 50000), follow_redirects=False)
+    first_sign_in(own)
+    assert own.get("/review").status_code == 200
+
+
+def test_the_laptops_words_name_the_console_not_an_admin_to_ask(store, owner):
+    client = browser(laptop(store))
+    first_sign_in(client)
+    client.post("/logout", headers=PAGE)
+    page = client.get("/login").text
+    assert "Ask an Admin" not in page and "users reset-2fa admin" in page
+    answer = client.post("/login", data={"username": "admin", "password": CHOSEN, "next": "/review"}, headers=PAGE)
+    code = client.get(answer.json()["redirect"]).text
+    assert "Ask an Admin" not in code and "users reset-2fa admin" in code
+    refused = client.post("/login/code", data={"code": "000000", "next": "/review"}, headers=PAGE).json()["error"]
+    assert "clock" in refused

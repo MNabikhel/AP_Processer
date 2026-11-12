@@ -325,22 +325,43 @@ def _fail(store, username, ip, times=1):
 
 
 def test_guesses_at_one_account_from_many_addresses_pause_it(tmp_path, clock):
-    from ap_coder.core.store.users import LOCKED, LoginRefused
+    from ap_coder.core.store.users import ACCOUNT_PAUSED, LoginRefused
 
     store = Store(tmp_path / "ap_coder.db")
     store.add_user("boss", GOOD, role="admin", must_change=False)
-    for n in range(10):  # 10 addresses, one guess each: no address is paused for it, the account is
+    for n in range(9):  # 10 addresses, one guess each: no address is paused for it, the account is
         _fail(store, "boss", f"10.9.0.{n}")
-    with pytest.raises(LoginRefused, match=LOCKED[:20]):
+    with pytest.raises(LoginRefused) as tenth:
+        store.authenticate("boss", "wrong wrong wrong", "10.9.0.9")
+    assert str(tenth.value) == ACCOUNT_PAUSED  # its own words: not "from this computer" (D-243)
+    with pytest.raises(LoginRefused, match=ACCOUNT_PAUSED[:40]):
         store.authenticate("boss", GOOD, "10.9.1.1")
     assert any(e["action"] == "login_locked" and e["detail"].get("by") == "account" for e in store.events())
     clock.now += 61  # a minute, then twice as long after each further guess
     _fail(store, "boss", "10.9.1.2")
     clock.now += 61
-    with pytest.raises(LoginRefused, match=LOCKED[:20]):
+    with pytest.raises(LoginRefused, match=ACCOUNT_PAUSED[:40]):
         store.authenticate("boss", GOOD, "10.9.1.3")
     clock.now += 60
     assert store.authenticate("boss", GOOD, "10.9.1.3")["username"] == "boss"
+
+
+def test_an_account_paused_from_anywhere_never_pauses_the_servers_own_console(tmp_path, clock):
+    """D-243: the first Admin is "admin" for everyone to guess at: guesses from the network must not keep its person
+    out at the server itself (nor at the laptop's own browser), as the address pause never does."""
+    from tests.webclient import authenticator_code, enrol
+
+    store = Store(tmp_path / "ap_coder.db")
+    uid = store.add_user("admin", GOOD, role="admin", must_change=False)
+    enrol(store, uid)
+    from ap_coder.core.store.users import ACCOUNT_PAUSED, LoginRefused
+
+    for n in range(14):
+        _fail(store, "admin", f"203.0.113.{n}")
+    with pytest.raises(LoginRefused, match=ACCOUNT_PAUSED[:40]):  # paused from anywhere else
+        store.authenticate("admin", GOOD, "10.0.0.7")
+    found = store.authenticate("admin", GOOD, "127.0.0.1", console=True)
+    assert store.check_code(found["id"], authenticator_code(store, "admin"), "127.0.0.1", console=True)
 
 
 def _logged_in(store: Store, username: str, ip: str) -> dict:

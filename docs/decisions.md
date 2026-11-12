@@ -5849,10 +5849,17 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     recovery codes (D-146): the set-up page tells the only Admin the console's `users reset-2fa admin`.
   - **Only from that computer:** the connection's own address is loopback, no `--proxy` is set, the request carries
     nothing a reverse proxy adds (X-Forwarded-For, Forwarded, X-Real-IP, Via, X-Original-URL, X-ARR-...), and its
-    Host is a loopback name. Anything else is refused before the password is read or the try counted, so no one on
-    the network can pause the first sign-in. Not covered: a proxy on the server itself that adds none of those and
-    rewrites the Host to 127.0.0.1; SERVER.md already requires `--proxy` behind one, with which this path is off.
-    `users add --admin` at the console stays, beside it; a server or shared laptop with accounts is unchanged.
+    Host is a loopback name (or, on a laptop listening on its own network address only, its own browser at that
+    address). Anything else is refused before the password is read or the try counted, so no one on the network
+    can pause the first sign-in. On the server that is not enough (the security review): any forwarder on it
+    (`netsh portproxy`, `ssh -L`, socat, nginx's default `proxy_pass`) brings anyone in from 127.0.0.1 with a Host
+    they write. So the server's first sign-in also needs a one-time setup code, made while there is no account in
+    `first_sign_in.code` in the data folder (readable by the service's account only), said in the server's window
+    and so its service log, and by the doctor; removed with the first account. The laptop needs none, as the user
+    asked: it listens on 127.0.0.1, and a forwarder there is a program on the laptop, which can read the database
+    anyway. `users add --admin` at the console stays, beside it; a server or shared laptop with accounts is
+    unchanged. The account-wide pause (D-109) never applies at the console, as the address pause doesn't, with words
+    of its own: the first Admin is `admin` for anyone to guess at.
   - **The laptop:** the database's `sign_in` setting. `laptop` is set at the first start of a data folder that
     never decided and shows nothing of a team (no account, no codes' key, no server.json): new folders and older
     laptop ones alike; a team's opened with `--without-sign-in` keeps its accounts as a team's. Then every page
@@ -5864,6 +5871,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     data). D-211 reads the setting without a Store: the laptop's own account and key no longer mark a team's
     folder; a start in server mode sets `team`, and `share` takes the laptop's Admin as its first. A laptop's
     restore keeps its account and the setting, as the server keeps its accounts (D-101); a new name in Settings
-    renames the account, so `share` later knows the approvals for the owner's.
+    renames the account (so `share` later knows for the owner's the approvals made under the account's name: those
+    made under an older name, before a rename, keep that name). A new demo folder (`scripts/demo.bat`, AP_DEMO=1)
+    and `demo --company` are off; `demo --company` is refused on a folder with accounts or a sign-in set. A session
+    still ends after 12 hours in all. Not stopped (SERVER.md section 16): another program on the laptop pausing the
+    owner's logins from 127.0.0.1 with wrong passwords (the pause for one address and username stays, or guesses
+    there would be unlimited), and the browser sending `ap_session` to every port of localhost. The older version
+    refuses a signed-in laptop folder (its D-211 doesn't know the setting): `--without-sign-in` at every start.
   - **Left out:** more than one account and a Users page on the laptop, a Settings switch, choosing another
     username than admin, admin / admin through `share` (its console still asks), the browser path behind `--proxy`.

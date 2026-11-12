@@ -445,6 +445,19 @@ def test_server_mode_makes_a_laptops_folder_a_teams(laptop, started, capsys):
     assert serve(db) == 2
 
 
+def test_a_server_with_no_account_says_its_setup_code_at_its_start(laptop, started, capsys):
+    """D-243: the first sign-in on the server needs the setup code, said in its window (and so its service log)."""
+    data, db = laptop
+    service.write_config(data, port=8599)
+    assert serve(db, "--server", "--insecure-http") == 0
+    code = Store(db).first_setup_code()
+    said = capsys.readouterr().err
+    assert code and f"setup code: {code}" in said and "admin" in said
+    Store(db).add_first_admin(GOOD, "Pat Lee")
+    assert serve(db, "--server", "--insecure-http") == 0 and "setup code" not in capsys.readouterr().err
+    assert not (data / "first_sign_in.code").exists()  # an account: the code is gone
+
+
 def test_without_sign_in_on_a_laptops_folder_opens_it_this_once(laptop, started, capsys):
     data, db = laptop
     serve(db)
@@ -507,3 +520,25 @@ def test_a_second_laptop_mode_serve_on_the_same_data_is_refused(laptop, started,
         first.wait(10)
     # left by one that was killed: no longer refused
     assert cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser"]) == 0 and len(started) == 1
+
+
+def test_a_new_demo_folder_opens_without_sign_in(laptop, started, monkeypatch):
+    """scripts/demo.bat (AP_DEMO=1, a folder of its own): a presenter's demo asks for no admin / admin nor phone, as
+    the made-up company doesn't (D-243); a folder whose sign-in is set keeps it."""
+    data, db = laptop
+    monkeypatch.setenv("AP_DEMO", "1")
+    assert serve(db) == 0 and Store(db).get_setting(SIGN_IN) == OFF
+    Store(db).set_setting(SIGN_IN, LAPTOP)
+    assert serve(db) == 0 and Store(db).get_setting(SIGN_IN) == LAPTOP
+
+
+def test_a_laptops_database_that_cant_be_read_beside_its_codes_key_is_said_so(laptop, started, capsys):
+    """A laptop signed into (its authenticator.key) whose database is missing or damaged: not "use share"."""
+    from ap_coder.core import authenticator
+
+    data, db = laptop
+    authenticator.load_key(data, create=True)
+    db.write_bytes(b"not a database")
+    assert serve(db) == 2 and started == []
+    said = capsys.readouterr().err
+    assert "can't read" in said and "backup restore" in said and "share" not in said
