@@ -457,11 +457,15 @@ def _lines_marked_with_a_tax_not_charged(check: _TaxCheck) -> None:
 
 
 def _qst_before_gst(check: _TaxCheck) -> None:
-    """QST is calculated on the price excluding GST (no tax-on-tax since 2013)."""
-    gst = next((t for t in check.tax_lines if t.tax_type == "GST"), None)
-    qst = next((t for t in check.tax_lines if t.tax_type == "QST"), None)
-    if gst and qst and not within(qst.taxable_amount, gst.taxable_amount, check.tol):
-        if within(qst.taxable_amount, gst.taxable_amount + gst.tax_amount, check.tol):
+    """QST is calculated on the price excluding GST (no tax-on-tax since 2013): every QST line's base against every
+    GST line's, each tax printed on goods and on freight alike (B-2501)."""
+    gst = [t for t in check.tax_lines if t.tax_type == "GST" and not nil(t.tax_amount)]
+    qst = [t for t in check.tax_lines if t.tax_type == "QST" and not nil(t.tax_amount)]
+    if not gst or not qst:
+        return
+    gst_base, qst_base = add_up(t.taxable_amount for t in gst), add_up(t.taxable_amount for t in qst)
+    if not within(qst_base, gst_base, check.tol):
+        if within(qst_base, add_up([gst_base, *(t.tax_amount for t in gst)]), check.tol):
             check.add(ERROR, "QST_ON_GST_INCLUSIVE",
                       "QST was calculated on the GST-inclusive amount; it must exclude GST")  # fmt: skip
 

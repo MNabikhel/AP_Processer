@@ -17,6 +17,7 @@ from ap_coder.coding.tax import (
 )
 from ap_coder.coding.validation import validate_coding
 from ap_coder.core.schema import InvoiceCoding
+from tests.erp.test_jde_gl_mode import doc, line, tl
 from tests.webclient import gt as _gt
 
 QC = "laurentides_QC_TPS_TVQ_SIL-4471"
@@ -126,6 +127,25 @@ def test_qst_on_gst_inclusive_amount_is_an_error(reference):
     qst.update(taxable_amount=2520.00, tax_amount=251.37)
     gt["tax_total"], gt["grand_total"] = 371.37, 2771.37
     assert "QST_ON_GST_INCLUSIVE" in _codes(gt, reference)
+
+
+def _findings(d, reference):
+    return {(f.code, f.severity) for f in check_taxes(InvoiceCoding.model_validate(d), reference.tax, None)}
+
+
+def test_qst_is_held_to_every_gst_line_not_only_the_first(reference):
+    """B-2501: the QST's base was held to the first GST line only. GST 50.00 on goods 1,000.00 and 2.50 on freight
+    50.00, QST 104.74 on 1,050.00 (right: the price before GST) was an error, QST_ON_GST_INCLUSIVE, and QST 109.97 on
+    1,102.50 (the GST-inclusive price) was not said. Every GST line is added up, and every QST line."""
+    goods = [line(1, 1000.0, "5100", ["GST", "QST"]), line(2, 50.0, "5200", ["GST", "QST"], desc="Freight")]
+    gst = [tl("GST", "", 0.05, 1000.0, 50.0), tl("GST", "", 0.05, 50.0, 2.5)]
+    right = doc(goods, [*gst, tl("QST", "QC", 0.09975, 1050.0, 104.74)], prov="QC",
+                qst_registration_number="1234567890TQ0001")  # fmt: skip
+    assert not [c for c, s in _findings(right, reference) if s == "error"]
+    assert "QST_ON_GST_INCLUSIVE" not in {c for c, _ in _findings(right, reference)}
+    on_gst = doc(goods, [*gst, tl("QST", "QC", 0.09975, 1102.5, 109.97)], prov="QC",
+                 qst_registration_number="1234567890TQ0001")  # fmt: skip
+    assert ("QST_ON_GST_INCLUSIVE", "error") in _findings(on_gst, reference)
 
 
 def test_missing_pst_suggests_self_assessment(reference):
