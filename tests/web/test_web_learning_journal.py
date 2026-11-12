@@ -59,7 +59,7 @@ def test_a_journal_is_summarised_loaded_listed_and_forgotten(store, data, truth,
     words = _text(page)
     shown = "R09321.csv · JD Edwards' Transaction Journal (report R09321) · 405 lines on 120 vouchers."
     assert f"{shown} Nothing is loaded yet." in words and all(line in words for line in seen.brief)
-    assert len(seen.said) == 21 and all(line.strip() in words for line in seen.said)
+    assert len(seen.said) == 20 and all(line.strip() in words for line in seen.said)
     assert "Read: 120 vouchers with 405 lines, G/L dates 2024-01-15 to 2024-12-30." in words
     assert "Learned from: 154 coding lines on 103 vouchers." in words
     assert "Kept but not learned from: 16 affiliates' vouchers and 1 voucher that does not balance." in words

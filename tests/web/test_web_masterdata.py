@@ -1149,6 +1149,20 @@ def test_a_data_cell_that_is_a_column_name_does_not_take_the_header(spec, rows):
         assert list(df.columns) == rows[0] and df.values.tolist() == rows[1:], name
 
 
+@pytest.mark.parametrize("spec", ["STATEMENTS", "ERP_REGISTER"])
+@pytest.mark.parametrize("header", [["Invoice", "Foo", "Bar"], ["Invoice", "Date", "2025"]])
+def test_column_names_under_a_two_cell_line_are_taken_with_one_known_or_a_number(spec, header):
+    """B-2546: under a title and a "Statement date | 2026-09-30" line, column names with only one of the page's
+    ("Invoice | Foo | Bar") or a number among them ("Invoice | Date | 2025") were left a row of data, the two-cell
+    line taken for the names."""
+    from ap_coder.erp import import_specs
+    from ap_coder.web.files import read_sheet
+
+    content = xlsx([["Acme Ltd statement"], ["Statement date", "2026-09-30"], header, ["A1", "x", "y"]])
+    df, _ = read_sheet("s.xlsx", content, specs=[getattr(import_specs, spec)])
+    assert list(df.columns) == header and df.values.tolist() == [["A1", "x", "y"]]
+
+
 def test_a_statement_whose_column_names_are_not_known_keeps_them_to_pick_from(client, busy):
     """B-2546, on the page: the column picker offers the statement's own names and the preview shows both lines."""
     key = busy.vendor_summaries()[0]["vendor_key"]

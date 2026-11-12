@@ -564,7 +564,6 @@ def _dated(*dates):
 
 @pytest.mark.parametrize(("dates", "said"), [
     (("25/03/2026", "03/04/2026"), "read day first (03/04/2026: 3 April 2026), as 25/03/2026 in the file says."),
-    (("03/25/2026", "03/04/2026"), "read month first (03/04/2026: 4 March 2026), as 03/25/2026 in the file says."),
     (("03/04/2026",), "read month first (03/04/2026: 4 March 2026): no date in the file tells the order, as a day "
                       "after the 12th would."),
     (("25/03/2026", "03/25/2026", "03/04/2026"), "read month first (03/04/2026: 4 March 2026): the file has dates "
@@ -576,6 +575,8 @@ def test_the_notes_say_which_way_the_dates_that_read_two_ways_were_read(dates, s
 
 
 def test_no_note_on_the_order_when_no_date_reads_two_ways(journal):
+    """B-2543: nor when the file says it prints month first, as AP Coder always read a journal: 3/7/2025 reads one
+    way only beside 11/30/2025, and an ordinary journal is not given a note of it."""
     assert not any("two ways" in note for note in _dated("25/03/2026", "2026-04-03").notes)
-    assert ("Dates that read two ways were read month first (3/7/2025: 7 March 2025), as 11/30/2025 in the file says."
-            in journal.notes)  # fmt: skip
+    assert not any("two ways" in note for note in _dated("03/25/2026", "03/04/2026").notes)
+    assert journal.vouchers[0].gl_date == "2025-03-07" and not any("two ways" in note for note in journal.notes)

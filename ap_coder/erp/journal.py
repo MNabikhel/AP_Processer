@@ -124,6 +124,7 @@ class Journal:
     vouchers: tuple[Voucher, ...]
     notes: tuple[str, ...]  # for a person: what was read, what was left out and why
     totals: Totals
+    day_first: bool = False  # its G/L dates that read two ways read day first (03/04/2026: 3 April, B-2543)
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,12 +276,14 @@ def _voucher(draft: _Draft, intercompany: frozenset[str]) -> Voucher:
 def _date_order(rows: list[list[str]], pos: dict[str, int]) -> tuple[bool, str]:
     """How the file prints its G/L dates, from the vouchers' ones that read one way only (25/03/2026: day first),
     month first when none tells (or they mix); and, when a date reads two ways, the note that says how it was read
-    and why (a wrong guess can be seen)."""
+    and why (a wrong guess can be seen); no note when the file says it prints month first, as journals always read."""
     dates = dict.fromkeys(_cell(row, pos["gl_date"]) for row in rows if SEPARATOR in _cell(row, pos["account"]))
     told: dict[bool | None, str] = {}
     for text in dates:
         told.setdefault(infer_day_first(text), text)
     day_first = True in told and False not in told
+    if False in told and True not in told:
+        return False, ""
     two_ways = next((text for text in dates if parse_date(text) is None and parse_date(text, day_first=True)), "")
     read = parse_date(two_ways, day_first=day_first)
     if read is None:
@@ -289,8 +292,8 @@ def _date_order(rows: list[list[str]], pos: dict[str, int]) -> tuple[bool, str]:
             f"{calendar.month_name[read.month]} {read.year})")  # fmt: skip
     if True in told and False in told:
         return day_first, f"{said}: the file has dates printed both ways ({told[True]} and {told[False]})."
-    if day_first or False in told:
-        return day_first, f"{said}, as {told[day_first]} in the file says."
+    if day_first:
+        return day_first, f"{said}, as {told[True]} in the file says."
     return day_first, f"{said}: no date in the file tells the order, as a day after the 12th would."
 
 
@@ -335,7 +338,7 @@ def read_journal(data: bytes, *, payable_objects: PayableObjects, tax_objects: I
         seen.credit += credit
     vouchers = tuple(_voucher(draft, intercompany) for draft in drafts if draft.lines)
     totals = _totals(vouchers, seen)
-    return Journal(vouchers, tuple(_notes(vouchers, totals, seen)), totals)
+    return Journal(vouchers, tuple(_notes(vouchers, totals, seen)), totals, day_first)
 
 
 def _totals(vouchers: tuple[Voucher, ...], seen: _Seen) -> Totals:

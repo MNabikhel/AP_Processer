@@ -379,6 +379,22 @@ def test_a_tip_line_with_more_words_is_still_a_tip():
         assert _split(dist) == ([(MEALS, 6.50, 106.50), ("6900", 0.0, 15.0)], [("2310", 6.50)]), text
 
 
+def test_a_tip_word_in_the_middle_of_a_tip_line_is_still_a_tip():
+    """B-2540: a tip word followed by who or what it is for ("Cash tip for Maria", "Included gratuity at 15%") is a
+    tip, as one that opens or ends the line is; one followed by another noun ("Excel tips workshop") is not."""
+    from types import SimpleNamespace
+
+    from ap_coder.coding.tax import is_tip
+
+    tips = ("Cash tip for Maria", "Staff tips for December", "Driver tip for delivery", "Included gratuity at 15%",
+            "Mandatory gratuity for large party", "Server tip included", "Le pourboire pour Marie")  # fmt: skip
+    assert [text for text in tips if not is_tip(SimpleNamespace(description=text))] == []
+    words = ("Excel tips workshop", "Pro tips and tricks book", "Free gratuity cards set")
+    assert [text for text in words if is_tip(SimpleNamespace(description=text))] == []
+    dist = _dist(_on([(100.0, MEALS, "Dinner for 4"), (15.0, "6900", "Cash tip for Maria")], 13.0))
+    assert _split(dist) == ([(MEALS, 6.50, 106.50), ("6900", 0.0, 15.0)], [("2310", 6.50)])
+
+
 def test_the_excel_and_csv_lines_carry_the_meals_half():
     inv = _jde_invoice()
     rows = exports.line_rows([inv])

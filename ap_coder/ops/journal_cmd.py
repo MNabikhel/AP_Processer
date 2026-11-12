@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -170,7 +170,28 @@ def _kept_said(store: Store, journal: jr.Journal, learned: list[jr.CodingLine], 
     if already:
         said.append(f"{plural(already, 'voucher')} of this file {'is' if already == 1 else 'are'} there already "
                     "from a file loaded before: kept with this file too, never counted twice.")  # fmt: skip
+    if otherwise := 0 if same_file else _dated_otherwise(store, journal):
+        one = otherwise == 1
+        said.append(f"{plural(otherwise, 'voucher')} of this file {'is' if one else 'are'} there already from a "
+                    "journal loaded before this version of AP Coder, which read "
+                    f"{'its G/L date' if one else 'their G/L dates'} the other way round (month first), so "
+                    f"{'it' if one else 'they'} would be counted twice. Forget that journal and load it again, then "
+                    "load this file.")  # fmt: skip
     return said
+
+
+def _dated_otherwise(store: Store, journal: jr.Journal) -> int:
+    """How many vouchers of a journal read day first are there already, counted, with their G/L date read month
+    first (03/04/2024 as 4 March): from a journal printed day first loaded before its dates were read so (B-2543),
+    whose ``voucher_identity`` holds the other date, so these would be counted twice."""
+    if not journal.day_first:
+        return 0
+    swapped = []
+    for voucher in journal.vouchers:
+        year, month, day = (voucher.gl_date or "--").split("-")
+        if day and int(day) <= 12 and day != month:
+            swapped.append(replace(voucher, gl_date=f"{year}-{day}-{month}"))
+    return store.journal_already(jr.journal_of(swapped)) if swapped else 0
 
 
 def _brief(store: Store, journal: jr.Journal, learned: list[jr.CodingLine]) -> tuple[str, ...]:
@@ -195,6 +216,9 @@ def _brief(store: Store, journal: jr.Journal, learned: list[jr.CodingLine]) -> t
     if unbalanced:
         check.append(f"{plural(unbalanced, 'voucher')} that {'does' if unbalanced == 1 else 'do'} not balance "
                      "(kept, not learned from)")  # fmt: skip
+    if otherwise := _dated_otherwise(store, journal):
+        check.append(f"a journal loaded before this version of AP Coder read {otherwise} of these vouchers' dates "
+                     "otherwise: forget it and load it again first, or they are counted twice")  # fmt: skip
     known = {supplier_key(erp_id) for _, erp_id in store.master_vendor_ids() if supplier_key(erp_id)}
     if learned and not known:
         check.append("no supplier master is loaded to look the suppliers up in")

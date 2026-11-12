@@ -867,10 +867,12 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
 MEALS_RESTRICTED = ("GST", "HST", "QST")
 MEALS_NOTE = "Meals: 50% of the {taxes} is claimable. Billed to a client or a staff event? Use the other account."
 # A tip or gratuity line: a voluntary tip is not taxed, so none of the tax printed is on it. A tip word opens or ends
-# the description or a part of it ("Tip amount", "Pourboire inclus", "Credit card tip", "Server - thank you"), and a
-# thanks is followed only by courtesy ("Merci beaucoup"): "Excel tips workshop", "Thank you cards", "Merci Boutique"
-# or "Livraison gratuite" (free delivery) are not tips (B-2540).
+# the description or a part of it ("Tip amount", "Pourboire inclus", "Credit card tip", "Server - thank you"), or is
+# followed by who or what it is for ("Cash tip for Maria", "Included gratuity at 15%"), and a thanks is followed only
+# by courtesy ("Merci beaucoup"): "Excel tips workshop", "Thank you cards", "Merci Boutique" or "Livraison gratuite"
+# (free delivery) are not tips (B-2540).
 _TIP_WORDS = {"tip", "tips", "gratuity", "gratuities", "gratuité", "gratuités", "pourboire", "pourboires"}
+_TIP_FOR = {"for", "at", "to", "of", "per", "de", "du", "des", "pour", "à", "included", "inclus", "incluse", "added"}
 _THANKS = re.compile(r"(?i)^\s*(?:thank\s*you|merci)\b")
 _COURTESY = {"beaucoup", "for", "your", "business", "visit", "order", "so", "much", "very", "again", "pour", "votre",
              "visite", "commande", "de", "encore", "bien", "à", "la", "prochaine", "bientôt"}  # fmt: skip
@@ -938,7 +940,7 @@ def is_tip(line: Any) -> bool:
 
     for part in re.split(r"[-–—:()\[\]/,;|+!]+", str(getattr(line, "description", "") or "")):
         named = words(part)
-        if named and (named[0] in _TIP_WORDS or named[-1] in _TIP_WORDS):
+        if any(w in _TIP_WORDS and (i in (0, len(named) - 1) or named[i + 1] in _TIP_FOR) for i, w in enumerate(named)):
             return True
         thanks = _THANKS.match(part)
         if thanks and set(words(part[thanks.end() :])) <= _COURTESY:

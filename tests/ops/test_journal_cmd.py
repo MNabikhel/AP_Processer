@@ -7,6 +7,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import re
 import time
 from dataclasses import replace
 
@@ -48,7 +49,6 @@ def test_the_small_journal_is_loaded_and_what_was_read_is_said(tmp_path, capsys,
         "Read: 120 vouchers with 405 lines, G/L dates 2024-01-15 to 2024-12-30.",
         "The lines by kind: 195 coding (what AP chose), 129 payable and 81 tax (what JD Edwards added).",
         "Skipped: 7 title or page header rows and 2 total rows.",
-        "Dates that read two ways were read month first (2/1/2024: 1 February 2024), as 1/15/2024 in the file says.",
         "16 vouchers with an intercompany payable line (an affiliate's).",
         "1 voucher with a negative amount (a credit).",
         "1 voucher where the debits and the credits are not the same amount (kept and marked): row 12 (740075 "
@@ -115,6 +115,35 @@ def test_a_file_loaded_when_it_read_otherwise_says_so_and_reads_as_now_once_forg
     assert journal_cmd.load(store, data, "R09321.csv")[0] == journal_cmd.DONE
     assert min(v["gl_date"] for v in store.journal_vouchers()) == "2024-01-15"
     assert journal_cmd.load(store, data, "R09321.csv")[1][-1].endswith("forget it first.")  # as it reads: nothing new
+
+
+def _day_first(data: bytes) -> bytes:
+    """A journal file as JD Edwards prints it day first: 1/15/2024 as 15/1/2024."""
+    text = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", r"\2/\1/\3", data.decode("utf-8-sig"))
+    return text.encode("utf-8-sig")
+
+
+def test_a_file_overlapping_one_loaded_when_its_dates_read_otherwise_says_to_load_that_one_again(tmp_path, truth):
+    """B-2543: a journal printed day first, loaded before its dates were read so, kept 03/04/2024 as 4 March; another
+    file with the same vouchers read them as 3 April, other vouchers by their date, counted twice without a word."""
+    first = _day_first(jde_exports.journal_csv(replace(truth, vouchers=truth.vouchers[:80])))
+    second = _day_first(jde_exports.journal_csv(replace(truth, vouchers=truth.vouchers[40:])))
+    store = _store(tmp_path)
+    now = journal_cmd.look(store, first, "to August.csv").journal
+    two_ways = [i for i, v in enumerate(now.vouchers) if int(v.gl_date[8:]) <= 12 and v.gl_date[5:7] != v.gl_date[8:]]
+    old = [
+        replace(v, gl_date=f"{v.gl_date[:5]}{v.gl_date[8:]}-{v.gl_date[5:7]}") if i in two_ways else v
+        for i, v in enumerate(now.vouchers)
+    ]  # as an older reader read them: month first
+    store.import_journal(replace(now, vouchers=tuple(old)), source_name="to August.csv",
+                         source_hash=hashlib.sha256(first).hexdigest())  # fmt: skip
+    seen = journal_cmd.look(store, second, "from May.csv")
+    n = sum(1 for i in two_ways if i >= 40)
+    assert n and f"a journal loaded before this version of AP Coder read {n} of these vouchers' dates" in seen.brief[2]
+    assert (f"{n} vouchers of this file are there already from a journal loaded before this version of AP Coder, "
+            "which read their G/L dates the other way round (month first), so they would be counted twice. Forget "
+            "that journal and load it again, then load this file.") in seen.said  # fmt: skip
+    assert not any("this version" in line for line in journal_cmd.look(Store(tmp_path / "b.db"), second, "b").said)
 
 
 def test_two_files_that_overlap_say_how_many_vouchers_were_there(tmp_path, capsys, truth):
