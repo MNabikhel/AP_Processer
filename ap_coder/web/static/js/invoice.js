@@ -1274,11 +1274,13 @@ vendorAdd?.querySelector("[data-new-go]")?.addEventListener("click", async (e) =
     toast({ text: answer.error || "That didn't work.", tone: "err" }, 9000);
     return;
   }
-  const added = { name: answer.vendor, key: answer.key ?? vendorKey(answer.vendor), id: "", gst: body.get("gst"), qst: body.get("qst"), pst: body.get("pst"), added: true };
+  // its numbers as kept: a box left blank keeps the ones AP gave it on the Vendors page (B-2650)
+  const added = { name: answer.vendor, key: answer.key ?? vendorKey(answer.vendor), id: "", gst: answer.gst ?? "", qst: answer.qst ?? "", pst: answer.pst ?? "", added: true };
   vendors.list = vendors.list.filter((v) => v.key !== added.key).concat([added]); // the vendor field offers it now
   addedHere.push(added); // and still once the list comes
   vendorAdd.removeAttribute("open");
   if (answer.toast) toast(answer.toast);
+  setFromVendor({ fields: stillFilled(fromVendor()) }); // new to the list: its numbers fill the blank boxes now
   setVendor(added.name);
 });
 
