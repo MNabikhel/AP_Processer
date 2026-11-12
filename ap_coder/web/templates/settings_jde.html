@@ -263,7 +263,7 @@
   {% endcall %}
   {% else %}
   {% if look %}<div class="flash err" role="alert"><span class="ms" aria-hidden="true">error</span><div>{{ look.problem }}</div></div>{% endif %}
-  {{ imp.file_box("/settings/jde/gl-map/upload", gl_map_spec.accept, "A CSV or Excel file (.csv, .xlsx or .xls), a row for each GL account", "Reading…") }}
+  {{ imp.file_box("/settings/jde/gl-map/upload", gl_map_spec.accept, "A CSV or Excel file (.csv or .xlsx), a row for each GL account", "Reading…") }}
   {% endif %}
   </div>
 </section>

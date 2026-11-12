@@ -66,6 +66,7 @@ from ap_coder.web.files import (
     TOO_BIG,
     SheetError,
     Upload,
+    cannot_read,
     pick_refusal,
     picked_columns,
     read_capped,
@@ -185,10 +186,7 @@ def read_sheets(name: str, data: bytes) -> dict[str, tuple[list[str], list[dict[
     except SheetError:  # a workbook that unzips to too much, a CSV in no encoding it reads: its message says so
         raise
     except Exception as exc:  # noqa: BLE001 - empty, damaged or not a spreadsheet at all
-        raise ValueError(
-            "This file could not be read as a spreadsheet: it may be empty, damaged or another format. In Excel, save "
-            "it as CSV UTF-8 or Excel Workbook (.xlsx) and upload it again."
-        ) from exc
+        raise ValueError(cannot_read(data)) from exc
     if not frames:
         raise ValueError("Could not read this file. In Excel, use Save As → CSV UTF-8 and upload it again.")
     sheets = {}

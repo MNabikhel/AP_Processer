@@ -679,7 +679,7 @@ def _register_view(store: Store, register: str, sheet: str) -> tuple[dict[str, A
         reg["vouchers"], head = read["said"], [reg["columns"], *read["head"]]
     else:
         try:
-            upload, df, sheets = read_upload(register, sheet or None)
+            upload, df, sheets = read_upload(register, sheet or None, [ERP_REGISTER])
         except SheetError as exc:
             return None, str(exc)
         reg = spec_sheet(register, upload, df, sheets, sheet, ERP_REGISTER, accept=REGISTER_JDE)
@@ -791,7 +791,7 @@ def _register_import(request: Request, form: Any) -> JSONResponse:
         items = [dict(zip(used, item, strict=True)) for item in read["items"]]
         return _vouchers_import(request, form, token, *named_vouchers(store, items, read["columns"]))
     try:
-        _upload, df, _sheets = read_upload(token, sheet or None)
+        _upload, df, _sheets = read_upload(token, sheet or None, [ERP_REGISTER])
     except SheetError as exc:
         return refuse(str(exc))
     if refusal := jde_refusal(first_rows(df), REGISTER_JDE):

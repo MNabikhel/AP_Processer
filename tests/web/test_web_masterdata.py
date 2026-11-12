@@ -918,6 +918,70 @@ def test_a_sheet_whose_first_row_is_its_column_names_is_read_as_before():
     assert list(df.columns)[:2] == ["Code", "Description"] and df["Code"].tolist() == ["CC100", "CC200"]
 
 
+def test_a_csv_whose_rows_end_with_a_delimiter_its_header_lacks_keeps_its_columns():
+    """B-2641: every data row ended with a comma the header line has not: pandas took the first column for the rows'
+    index and dropped it, so "Invoice" held the dates and "Amount" nothing, under names that still matched."""
+    from ap_coder.web.files import read_sheet
+
+    content = b"Invoice,Date,Amount\nINV-1,2026-09-01,100.00,\nINV-2,2026-09-05,50.00,\n"
+    df, _ = read_sheet("statement.csv", content)
+    assert list(df.columns) == ["Invoice", "Date", "Amount"]
+    assert df.values.tolist() == [["INV-1", "2026-09-01", "100.00"], ["INV-2", "2026-09-05", "50.00"]]
+
+
+@pytest.mark.parametrize(
+    ("url", "preface", "header", "row"),
+    [
+        ("/statements/upload", ["Statement date", "2026-09-30"], ["Invoice number", "Date", "Amount"],
+         ["INV-1", "2026-09-01", "100.00"]),
+        ("/purchase-orders/upload", ["Vendor", "Acme Ltd"], ["PO Number", "Description", "Amount"],
+         ["PO-9001", "Laptops", "2000"]),
+        ("/exports/register/upload", ["Company", "Fabrikam Canada"], ["Vendor", "Invoice number", "Date", "Total"],
+         ["Acme Ltd", "A-1", "2026-01-05", "100.00"]),
+    ],
+)  # fmt: skip
+def test_a_two_cell_line_above_the_column_names_is_not_taken_for_them(client, busy, url, preface, header, row):
+    """B-2642: a statement's "Statement date | 2026-09-30" (or "Vendor | Acme Ltd") under its title was taken for the
+    column names, the real ones a row of data: nothing was guessed and no column could be picked."""
+    data = {"vendor": busy.vendor_summaries()[0]["vendor_key"]} if url.startswith("/statements") else {}
+    content = xlsx([["Statement of account"], preface, [], header, row])
+    mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    page = follow(client, client.post(url, data=data, files={"file": ("s.xlsx", content, mime)}, headers=PAGE))
+    assert all(f'<option value="{name}" selected>' in page.text for name in header)
+    assert f'value="{preface[0]}"' not in page.text
+
+
+def test_an_old_excel_file_is_refused_saying_so(client, busy):
+    """B-2643: the import pages said a .xls was read, but an old Excel file (no reader for it is installed) was
+    refused as "empty, damaged or another format"; it is named, and the pages ask for .csv or .xlsx."""
+    from ap_coder.web.files import SheetError, read_sheet
+    from ap_coder.web.pages import learning
+
+    old = bytes.fromhex("D0CF11E0A1B11AE1") + b"\0" * 504
+    with pytest.raises(SheetError, match=r"older Excel file \(\.xls\)"):
+        read_sheet("statement.xls", old)
+    with pytest.raises(ValueError, match=r"older Excel file \(\.xls\)"):
+        learning.read_sheets("history.xls", old)
+    answer = client.post("/statements/upload", files={"file": ("s.xls", old, "application/vnd.ms-excel")}, headers=PAGE)
+    assert answer.status_code == 400 and "save it as Excel Workbook (.xlsx)" in answer.json()["error"]
+    for page in ("/statements", "/purchase-orders", "/vendors", "/accounts", "/exports", "/learning"):
+        assert "xlsx or .xls" not in client.get(page).text, page
+
+
+@pytest.mark.parametrize("sep", [",", "\t"])
+def test_a_utf16_csv_is_read_as_its_text(sep):
+    """B-2644: a CSV saved as UTF-16 (PowerShell's Out-File, Excel's "Unicode Text") was read as Windows-1252: its
+    byte-order mark and a NUL between every letter in each column name and cell, so no column matched."""
+    from ap_coder.web.files import read_sheet
+
+    text = "\r\n".join(sep.join(r) for r in [["Invoice", "Date", "Amount"], ["INV-1", "2026-09-01", "100.00"]])
+    for encoding in ("utf-16", "utf-16-be"):
+        content = (b"\xfe\xff" if encoding == "utf-16-be" else b"") + text.encode(encoding)
+        df, _ = read_sheet("statement.csv", content)
+        assert list(df.columns) == ["Invoice", "Date", "Amount"], encoding
+        assert df.values.tolist() == [["INV-1", "2026-09-01", "100.00"]], encoding
+
+
 def test_names_typed_in_are_cleaned_as_the_who_page_cleans_them(client, store):
     """B-1531: Settings → Review's "Your name" and the review screen's "Add new vendor" kept any length and control or
     format characters (a bell, a right-to-left override that shows an approver's name reversed in the audit trail);
@@ -995,3 +1059,58 @@ def test_with_a_chart_loaded_and_a_list_imported_too_the_page_counts_what_came_f
     form = page.text.split('id="pick-gl_accounts"', 1)[1].split("</form>", 1)[0]
     assert f"Those not in it are removed, though the chart of accounts loaded on JD Edwards files gives {gl:,}." in form
     assert f"files gives {gl:,} of the {gl + 2:,} GL accounts listed now" in form
+
+
+@pytest.mark.parametrize(
+    ("spec", "rows"),
+    [
+        ("STATEMENTS", [["Txn No.", "Posted On", "Txn Type", "Charge"], ["88231", "2026-09-01", "Invoice", "100.00"],
+                        ["88232", "2026-09-04", "Credit", "-20.00"]]),
+        ("STATEMENTS", [["N° pièce", "Émis le", "Nature", "Somme"], ["88231", "2026-09-01", "Facture", "100.00"],
+                        ["88232", "2026-09-04", "Facture", "20.00"]]),
+        ("PURCHASE_ORDERS", [["Ref", "Item", "Value", "Stage"], ["PO-9001", "Service", "2000.00", "Received"],
+                             ["PO-9002", "Laptops", "900.00", "Open"]]),
+        ("ERP_REGISTER", [["Entry", "Posted", "Kind", "Gross"], ["E1", "2026-01-05", "Invoice", "100.00"],
+                          ["E2", "2026-01-06", "Invoice", "50.00"]]),
+    ],
+)  # fmt: skip
+def test_a_data_cell_that_is_a_column_name_does_not_take_the_header(spec, rows):
+    """B-2642: with a page's spec given, a header none of whose names were known lost to the first data row when a
+    cell of it was a column's name ("Invoice" in a Type column): the real names and the first line were gone."""
+    from ap_coder.erp import import_specs
+    from ap_coder.web.files import read_sheet
+
+    for name, content in (("s.csv", "\n".join(",".join(r) for r in rows).encode()), ("s.xlsx", xlsx(rows))):
+        df, _ = read_sheet(name, content, specs=[getattr(import_specs, spec)])
+        assert list(df.columns) == rows[0] and df.values.tolist() == rows[1:], name
+
+
+def test_a_statement_whose_column_names_are_not_known_keeps_them_to_pick_from(client, busy):
+    """B-2642, on the page: the column picker offers the statement's own names and the preview shows both lines."""
+    key = busy.vendor_summaries()[0]["vendor_key"]
+    content = b"Txn No.,Posted On,Txn Type,Charge\n88231,2026-09-01,Invoice,100.00\n88232,2026-09-04,Credit,-20.00\n"
+    page = follow(client, client.post("/statements/upload", data={"vendor": key},
+                                      files={"file": ("s.csv", content, "text/csv")}, headers=PAGE))  # fmt: skip
+    assert 'value="Txn No."' in page.text and 'value="Txn Type"' in page.text
+    assert 'value="88231"' not in page.text
+
+
+def test_a_row_with_more_cells_than_the_header_is_refused_not_cut():
+    """B-2641: an unquoted comma in a cell ("Acme, Inc.") gave the row a cell more than the header; with the extra
+    cell dropped, its amount was lost silently. Only an empty extra cell (a trailing delimiter) is dropped."""
+    from ap_coder.web.files import SheetError, read_sheet
+
+    content = b"Invoice,Vendor,Amount\n1001,Acme, Inc.,250.00\n1002,Acme,100.00\n"
+    with pytest.raises(SheetError, match="more cells than"):
+        read_sheet("statement.csv", content)
+
+
+@pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be"])
+def test_a_utf16_csv_without_its_mark_is_read_as_its_text(encoding):
+    """B-2644: UTF-16 with no byte-order mark decoded as UTF-8, a NUL between every letter, and no column matched."""
+    from ap_coder.web.files import read_sheet
+
+    content = "Invoice,Date,Amount\r\nINV-1,2026-09-01,100.00\r\n".encode(encoding)
+    df, _ = read_sheet("statement.csv", content)
+    assert list(df.columns) == ["Invoice", "Date", "Amount"]
+    assert df.values.tolist() == [["INV-1", "2026-09-01", "100.00"]]

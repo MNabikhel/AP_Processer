@@ -195,7 +195,7 @@ def purchase_orders_page(
     imp, imp_error = None, ""
     if file:
         try:
-            upload, df, sheets = read_upload(file, sheet or None)
+            upload, df, sheets = read_upload(file, sheet or None, [PURCHASE_ORDERS])
             imp = spec_sheet(file, upload, df, sheets, sheet, PURCHASE_ORDERS)
         except SheetError as exc:
             imp_error = str(exc)
@@ -259,7 +259,7 @@ def _po_import(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
     token, sheet = str(form.get("file") or ""), str(form.get("sheet") or "")
     try:
-        _upload, df, _sheets = read_upload(token, sheet or None)
+        _upload, df, _sheets = read_upload(token, sheet or None, [PURCHASE_ORDERS])
     except SheetError as exc:
         return refuse(str(exc))
     if refusal := jde_refusal(first_rows(df)):  # (JD Edwards' own reports: on JD Edwards files only, B-2463)
