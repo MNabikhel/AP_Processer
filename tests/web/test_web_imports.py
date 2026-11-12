@@ -91,8 +91,11 @@ def _import(client, key: str, token: str, html: str):
 
 
 def _check(html: str, key: str) -> str:
-    """The header check of the file shown (``_import.html``'s preview)."""
-    return html.split(f'aria-label="The columns of {escape(SPECS[key].title)} in this file"', 1)[1].split("</ul>", 1)[0]
+    """The header check of the file shown (``_import.html``'s preview), named by its spec's title or, on Exports,
+    the page's own name of the list (B-2473)."""
+    title = re.escape(str(escape(SPECS[key].title)))
+    head = re.search(rf'aria-label="The columns of ({title}|Invoices already in [^"]+) in this file"', html)
+    return html[head.end() :].split("</ul>", 1)[0]
 
 
 @pytest.mark.parametrize("key", list(PAGES))
@@ -759,3 +762,21 @@ def test_every_import_says_loaded_in_its_results_refusals_titles_and_buttons(cli
     refused = post(client, "/accounts/gl_accounts/import", {"file": _upload(client, "gl_accounts", [["Description"],
                                                                                                    ["Paper"]])[1]})
     assert refused.json()["error"] == "Pick the column for: Code. Nothing was loaded."
+
+
+def test_exports_names_the_invoices_already_in_the_erp_as_its_section_does(client, store):
+    """B-2473: with JD Edwards in use Exports' section said "Invoices already in JD Edwards" but the file shown was
+    "Invoices already in the ERP", the file box "The ERP's invoice list" and the duplicate audit "the ERP invoice
+    register". One name, as B-2425 gave the section: JD Edwards' when it is in use, else "your ERP"."""
+    from ap_coder.web.core import SHOW_JDE
+
+    for shown, erp in (("1", "JD Edwards"), ("0", "your ERP")):
+        store.set_setting(SHOW_JDE, shown)
+        page = " ".join(client.get("/exports").text.split())
+        assert "ERP invoice register" not in page and "The ERP&#39;s invoice list" not in page, erp
+        assert "in the ERP" not in page.split('id="register"', 1)[1].split('id="audit"', 1)[0], erp
+        assert f"the invoices already in {erp} when loaded" in page.split('id="audit"', 1)[1], erp
+        html, _token = _upload(client, "erp_register", PAGES["erp_register"][5])
+        pill = html.split('class="imp-is"', 1)[1].split("</span></span>", 1)[0]
+        assert f"Invoices already in {erp}" in pill, (erp, pill)
+        assert "already in the ERP" not in html.split('id="register"', 1)[1].split('id="audit"', 1)[0], erp

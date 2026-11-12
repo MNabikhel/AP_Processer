@@ -224,7 +224,12 @@ def batch_file(store: Store, batch: int, fmt: str) -> tuple[bytes, str, str]:
 
 def register_name(store: Store) -> str:
     """The list's one name, as JD Edwards files' card 5 names it (another system's: "your ERP")."""
-    return "Invoices already in " + ("JD Edwards" if jde_shown(store) else "your ERP")
+    return "Invoices already in " + register_erp(store)
+
+
+def register_erp(store: Store) -> str:
+    """The ERP the list comes from, as the page names it wherever it says the list (B-2473)."""
+    return "JD Edwards" if jde_shown(store) else "your ERP"
 
 
 def bank_accounts(store: Store) -> dict[str, dict[str, Any]]:
@@ -421,6 +426,7 @@ def exports_page(
         csv_preview=layout_preview(store, current, ready),
         register_count=store.erp_register_count(),
         register_name=register_name(store),
+        register_erp=register_erp(store),
         reg=reg,
         reg_error=reg_error,
         register_spec=ERP_REGISTER,
@@ -678,6 +684,7 @@ def _register_view(store: Store, register: str, sheet: str) -> tuple[dict[str, A
         found = jde_vouchers(store, df)
         reg["vouchers"] = registers.vouchers_said(found[1]) if found else ""
         head = [reg["columns"], *df.head(import_specs.PREVIEW_ROWS).values.tolist()]
+    reg["look"]["title"] = register_name(store)  # (the section's name, B-2473)
     if reg["vouchers"]:
         check = import_specs.check(VOUCHERS, reg["columns"])
         reg["look"] |= {"spec": VOUCHERS, "check": check, "pick": False,

@@ -145,8 +145,9 @@
 {% if can("/exports/register/upload") %}{# the office network: this computer's alone (B-2430) #}
 <details class="card expander" id="register"{% if reg or reg_error %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">receipt_long</span>{{ register_name }}{% if register_count %} ({{ register_count | num }} known){% endif %}</summary>
-  <p class="muted">Load the ERP's AP invoice list (vendor, invoice number, date, total), e.g. the last 18 months.
-    Invoices processed in AP Coder are then also checked against the invoices already entered or paid in the ERP.
+  <p class="muted">Load the list of AP invoices in {{ register_erp }} (vendor, invoice number, date, total), e.g. the
+    last 18 months. Invoices processed in AP Coder are then also checked against the invoices already entered or paid
+    in {{ register_erp }}.
     JD Edwards' voucher list (Supplier Ledger Inquiry, exported to Excel) is read as it comes.</p>
   <div class="stack imp-pane">
   {{ imp.report(register_spec) }}
@@ -168,7 +169,7 @@
     </div>
   </form>
   {% else %}
-  {{ imp.file_box("/exports/register/upload", register_spec.accept, "The ERP's invoice list, a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…") }}
+  {{ imp.file_box("/exports/register/upload", register_spec.accept, "The list of " ~ register_name[:1] | lower ~ register_name[1:] ~ ", a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…") }}
   {% endif %}
   {% if register_count %}
   <form method="post" action="/exports/register/clear" data-confirm="Clear the {{ register_count | plural('invoice') }} of “{{ register_name }}”? Invoices are then no longer checked against them.">
@@ -332,8 +333,9 @@
 <section class="card" id="audit">
   <div class="card-head">
     <div><h4>Duplicate payment audit</h4>
-      <p class="muted">Bills that may have been approved, or posted in the ERP, twice: number typos, the same bill under two
-        vendor names, the same amount days apart. Includes the ERP invoice register when imported (above).</p></div>
+      <p class="muted">Bills that may have been approved, or posted in {{ register_erp }}, twice: number typos, the same
+        bill under two vendor names, the same amount days apart. Includes the invoices already in
+        {{ register_erp }} when loaded (above).</p></div>
     <a class="btn" href="/exports?audit=1&fmt={{ fmt }}#audit"><span class="ms" aria-hidden="true">search</span>Run the audit</a>
   </div>
   {% if pairs is not none %}

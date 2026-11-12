@@ -89,11 +89,12 @@
    (``look.unfound``), as is a needed one whose name the file has twice (``look.twice``), and its first rows are shown
    in every column, to pick from. ``look.done`` and ``look.go``: what
    the page does with it, when it is not imported ("compared", "reconcile"); ``look.compared``: what it was compared
-   with, once it was. The verdict takes the focus when the page opens on it (imports.js). #}
+   with, once it was; ``look.title``: the report's name as the page names it, when not its spec's title. The verdict
+   takes the focus when the page opens on it (imports.js). #}
 {% macro preview(look, card_id) %}
 <div class="imp-preview stack" id="{{ card_id }}-summary">
   <p class="imp-file"><span class="ms" aria-hidden="true">description</span><b>{{ look.name }}</b>{% if look.size %} · {{ look.size }}{% elif look.count is number %} · {{ look.count | plural("row") }}{% endif %} · {% if look.already %}loaded already.{% elif look.compared %}{{ look.compared }}{% else %}this file is not {{ look.done or "loaded" }} yet.{% endif %}
-    {% if look.spec and not look.belongs and look.check and look.check.found %}<span class="imp-is">{{ ui.pill(look.spec.title, "info") }}</span>{% endif %}</p>
+    {% if look.spec and not look.belongs and look.check and look.check.found %}<span class="imp-is">{{ ui.pill(look.title or look.spec.title, "info") }}</span>{% endif %}</p>
   {% if look.problem %}
   <div class="flash err imp-verdict" tabindex="-1" role="alert"><span class="ms" aria-hidden="true">block</span><div>{{ look.problem }}</div></div>
   {% elif look.pick and (look.unfound or look.twice) %}{% set n = (look.unfound | length) + (look.twice | default([]) | length) %}
@@ -108,7 +109,7 @@
   {{ caller() }}
   {% if look.check %}
   <{{ sub_h() }} class="imp-sub">Columns</{{ sub_h() }}>
-  <ul class="imp-check" aria-label="The columns of {{ look.spec.title }} in this file">
+  <ul class="imp-check" aria-label="The columns of {{ look.title or look.spec.title }} in this file">
     {% for item in look.check.rows() %}{% set c = item.column %}
     {% set state = "ok" if item.header else ("miss" if c.required or (c.field in look.spec.one_of and look.check.none_of) else "opt") %}
     <li class="{{ state }}"><span class="ms" aria-hidden="true">{{ {"ok": "check_circle", "miss": "cancel", "opt": "remove"}[state] }}</span>
