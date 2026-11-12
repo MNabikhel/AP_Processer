@@ -85,6 +85,34 @@ def test_the_itr_report_claims_the_qst_as_it_was_posted_not_by_todays_setup(tmp_
     assert report.totals()[taxreturn.ITR] == {"CAD": round(qc["tax_lines"][1]["tax_amount"] - 127.18, 2)}
 
 
+def test_a_tax_line_of_nothing_never_takes_the_tax_entry_of_the_next():
+    """B-2511: with tax lines GST 5% $0.00 then GST 5% $5.00, the $0.00 one (no posting line of its own, as
+    ``build_gl_distribution`` skips it) took the $5.00 one's entry: the real $5 ITC was left out."""
+    from ap_coder.coding.tax import RECOVERABLE, TaxRateTable, TaxSetup, TaxTreatment, build_gl_distribution
+
+    lines = [{"line_number": 1, "description": "Supplies", "quantity": 1, "unit_price": 100, "amount": 100,
+              "predicted_gl_code": "6000"}]  # fmt: skip
+    taxes = [{"tax_type": "GST", "rate": 0.05, "tax_amount": amount, "taxable_amount": 100} for amount in (0, 5)]
+    coding = InvoiceCoding(vendor_name="V", invoice_number="1", invoice_date="2026-10-01", currency="CAD",
+                           subtotal=100, tax_lines=taxes, tax_total=5, grand_total=105, confidence_score=0.9,
+                           line_items=lines)  # fmt: skip
+    doc = coding.to_output()
+    doc["gl_distribution"] = build_gl_distribution(coding, TaxSetup(TaxRateTable(()), {"GST": TaxTreatment(
+        "GST", RECOVERABLE, "2200")}))  # fmt: skip
+    assert taxreturn.posted_recoverable(doc) == {1: True}
+    assert [line[1] for line in taxreturn.tax_facts({"final_output": doc}, None)["lines"]] == [5.0]
+
+
+def test_a_tax_entry_of_another_tax_line_is_never_taken_by_its_label():
+    """B-2511: an entry that says which tax line it is (its meals' half, ``tax_line``) is that line's, though an
+    earlier line of the same tax and rate reads the same."""
+    taxes = [{"tax_type": "GST", "rate": 0.05, "tax_amount": 5} for _ in range(2)]
+    entry = {"kind": "tax", "description": "GST 5% (recoverable, less 50% on meals)", "non_recoverable_tax": 0.0,
+             "amount": 2.5, "meals_tax": 2.5, "tax_line": 1}  # fmt: skip
+    doc = {"tax_lines": taxes, "gl_distribution": [{"kind": "expense", "amount": 102.5}, entry]}
+    assert taxreturn.posted_recoverable(doc) == {0: False, 1: True}
+
+
 def test_claims_to_check(tmp_path):
     store = Store(tmp_path / "t.db")
     load_sample_setup(store)
