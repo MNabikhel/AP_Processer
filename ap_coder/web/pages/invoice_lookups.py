@@ -229,6 +229,8 @@ def add_vendor(
         settings.an8_overrides = {**settings.an8_overrides, vendor_key(name): an8}
         jde_settings.save(store, settings, actor=reviewer())
         said += f", with JD Edwards address number {an8}"
+    kept = store.get_vendor(vendor_key(name)) or {}  # a number left blank keeps the one AP gave it (B-2650)
     return message(f"{said}. Set it up in JD Edwards before it is paid: until then a person approves each of its "
-                   "invoices with “Approve anyway”.", "ok", icon="person_add", vendor=name,
-                   key=vendor_key(name))  # fmt: skip
+                   "invoices with “Approve anyway”.", "ok", icon="person_add", vendor=name, key=vendor_key(name),
+                   gst=kept.get("expected_gst") or "", qst=kept.get("qst_number") or "",
+                   pst=kept.get("pst_number") or "")  # fmt: skip

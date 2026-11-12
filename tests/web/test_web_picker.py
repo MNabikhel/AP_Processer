@@ -850,6 +850,32 @@ def test_in_a_browser_a_vendor_added_before_the_vendor_list_came_is_kept_when_it
     assert errors == []
 
 
+def test_in_a_browser_add_new_vendor_fills_the_tax_numbers_ap_gave_the_vendor(browser, store):
+    """B-2650: Add new vendor keeps the GST/HST, QST and PST numbers AP gave the vendor on the Vendors page where the
+    dialog's boxes are blank, but the screen took the dialog's blank boxes as the vendor's and, the vendor typed
+    already, filled nothing: the numbers kept showed only once the invoice was opened again. They fill the blank
+    boxes at once now."""
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    blank = dict.fromkeys(("gst_hst_registration_number", "qst_registration_number", "pst_registration_number"), "")
+    _set_output(store, invoice_id, {**store.get_invoice(invoice_id)["ai_output"], **blank,
+                                    "vendor_name": "Unlisted Supply Co"})  # fmt: skip
+    store.save_vendor("cascade cloudworks", "Cascade Cloudworks", expected_gst="123456789RT0001",
+                      qst_number="1234567890TQ0001", pst_number="PST-1", province="QC")  # fmt: skip
+    page, errors = _review(browser, invoice_id)
+    page.fill("#vendor-name", "Cascade Cloudworks")
+    page.dispatch_event("#vendor-name", "change")  # the name typed and left: not in the vendor list
+    page.keyboard.press("Escape")
+    page.wait_for_load_state("networkidle")
+    assert [page.input_value(f"[name={n}]") for n in blank] == ["", "", ""]
+    page.click("[data-vendor-add] > summary")
+    assert page.input_value("[data-new=name]") == "Cascade Cloudworks" and page.input_value("[data-new=gst]") == ""
+    page.click("[data-new-go]")
+    wait_until(page, lambda: "Added here" in page.locator(SAID).inner_text())
+    wait_until(page, lambda: page.input_value("[name=gst_hst_registration_number]") != "")
+    assert [page.input_value(f"[name={n}]") for n in blank] == ["123456789RT0001", "1234567890TQ0001", "PST-1"]
+    assert errors == []
+
+
 @pytest.mark.parametrize("failure", ["dropped", "500", "502", "503"])
 def test_in_a_browser_a_vendor_list_that_did_not_come_is_asked_for_again_at_the_next_need(browser, store, failure):
     """A fetch that failed (dropped, an error, the company server's proxy busy) left the screen with only the
