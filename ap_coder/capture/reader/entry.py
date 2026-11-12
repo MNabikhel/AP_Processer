@@ -24,6 +24,7 @@ from ..types import (
     UNMEASURED,
     DocLayout,
     Line,
+    LineReading,
     PageLayout,
     Reading,
 )
@@ -704,9 +705,21 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         cands["currency"] = [Reading("currency", "USD", "$", [], 0.8, "us-supplier" + UNMEASURED)]
     items = read_line_items(layout)
     line_sum = round(sum(i.amount for i in items if i.amount is not None), 2) if items else None
-    # A deposit or holdback printed, before or after a printed total: the totals may add up without it, and it is
-    # dropped, but whether the total before or after it is posted is still AP's call (D-47). Not a line item's own
-    # words ("Holdback release - Phase 1"), nor a row of nothing taken off ("Holdback 0.00").
+    cands = _solved_totals(cands, line_sum, items)
+    _tax_named_by_page(cands, plain(layout.text()))
+    for field, readings in cands.items():
+        readings.sort(key=lambda r: -r.score) if field not in AMOUNT_FIELDS else None
+        cands[field] = _dedupe(readings)
+    return cands
+
+
+def _solved_totals(
+    cands: dict[str, list[Reading]], line_sum: float | None, items: list[LineReading]
+) -> dict[str, list[Reading]]:
+    """``_solve_totals``, then every total held to check (``TAKEN_OFF``) when a deposit, a prepayment or a holdback is
+    printed, before or after a printed total: the totals may add up without it, and it is dropped, but whether the
+    total before or after it is posted is still AP's call (D-47). Not a line item's own words ("Holdback release -
+    Phase 1"), nor a row of nothing taken off ("Holdback 0.00")."""
     rows = [b for item in items for b in item.boxes]
     taken_off = any(
         TAKEN_OFF in r.method
@@ -718,11 +731,7 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
     if taken_off or any(TAKEN_OFF in r.method for r in cands.get("other_charges", [])):
         for r in cands.get("grand_total", []):
             if TAKEN_OFF not in r.method:
-                r.method += TAKEN_OFF  # a deposit printed: whether the total before or after it is posted is AP's call
-    _tax_named_by_page(cands, plain(layout.text()))
-    for field, readings in cands.items():
-        readings.sort(key=lambda r: -r.score) if field not in AMOUNT_FIELDS else None
-        cands[field] = _dedupe(readings)
+                r.method += TAKEN_OFF
     return cands
 
 
