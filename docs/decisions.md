@@ -5705,6 +5705,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     "offered in Settings → Data & backups only" for that card).
   - (`scripts/launch.py`, `web/core.py`, `web/pages/settings.py` `choose_screens`, `_screens_card.html`,
     `base.html`; docs/PROTOTYPE.md section 1)
+  - **Amended (B-2531, B-2532):** a folder with no invoices but GL accounts, cost centers or a tax setup of its own is
+    asked too, the question saying QST is then added to each expense line; saved JD Edwards settings keep the folder
+    as it is only when really set up (`jde_settings.set_up`), not for one supplier number.
+
 - **D-233** · **CI's tests run in more, even parts side by side; Windows' one 20-minute test runs on main, not in
   a pull request** (`.github/workflows/ci.yml`, `tests/conftest.py`, `tests/times.py`; 11 Nov 2026).
   - **Measured** (the run of pull request 123, 38 minutes, 386 job-minutes in 39 jobs): the slowest job, a Windows

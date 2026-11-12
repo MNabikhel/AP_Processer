@@ -747,7 +747,8 @@ def test_the_only_admin_whose_temporary_password_expired_is_told_the_command_tha
 
     store = web["store"]
     store.add_user("boss", GOOD, role="admin")  # as `users add --admin`: temporary
-    with store._conn() as conn:
+    with store._conn() as conn:  # signed in before (B-2533: a first Admin's lasts until then), then reset
+        conn.execute("UPDATE users SET last_login = '2000-01-01T00:00:00' WHERE username = 'boss'")
         conn.execute("UPDATE events SET created_at = '2000-01-01T00:00:00' WHERE action = 'user_added'")
     said = log_in(web["client"](), "boss").json()["error"]
     assert "only Admin" in said and "python -m ap_coder users reset boss" in said and "ask an Admin" not in said

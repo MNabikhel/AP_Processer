@@ -727,17 +727,20 @@ def first_run(db: Path, *, server: bool) -> Store:
 
 
 def keying_to_set_up(store: Store) -> bool:
-    """Whether JD Edwards keying is still to be set up the department's way: no JD Edwards settings saved yet."""
+    """Whether JD Edwards keying is still to be set up the department's way: no JD Edwards settings saved yet, or
+    saved ones that are no setup (a supplier number alone: ``jde_settings.set_up``, B-2532)."""
     from ap_coder.erp import jde_settings
 
-    return not store.get_setting(jde_settings.SETTING_KEY)
+    saved = store.get_setting(jde_settings.SETTING_KEY)
+    return not saved or not jde_settings.set_up(jde_settings.JdeSettings.from_json(saved))
 
 
 def use_simple(store: Store, actor: str | None = None) -> bool:
     """The Simple screens chosen on an older data folder: the short menu, and the department's JD Edwards set-up
-    (``use_prototype``, as a new folder's) when no JD Edwards settings were saved; saved ones are never touched
-    (B-2378). True when JD Edwards keying was set up. The screens are saved last: a set-up that fails leaves the
-    choice unmade, so the card and the next start still offer it."""
+    (``use_prototype``, as a new folder's, keeping what was saved besides) when no JD Edwards setup was saved
+    (``keying_to_set_up``); a setup someone made is never touched (B-2378). True when JD Edwards keying was set up.
+    The screens are saved last: a set-up that fails leaves the choice unmade, so the card and the next start still
+    offer it."""
     keyed = keying_to_set_up(store)
     if keyed:
         from ap_coder.erp import jde_prototype
@@ -748,17 +751,18 @@ def use_simple(store: Store, actor: str | None = None) -> bool:
 
 
 PILOT_SETUP = "pilot_setup"  # an older laptop data folder set up at a start (D-232): "done", or "declined"
-ASK_SIMPLE = ("Use the short menu and set up JD Edwards keying (the keying sheet)? Your invoices and settings are "
-              "kept. [Y/n] ")  # fmt: skip
+ASK_SIMPLE = ("Use the short menu and set up JD Edwards keying (the keying sheet)? Your invoices are kept; QST "
+              "is then added to each expense line, as JD Edwards posts it. [Y/n] ")  # fmt: skip
 
 
 def older_folder_start(db: Path, ask: Callable[[str], bool] | None = None) -> str:
     """A laptop's data folder an earlier AP Coder made, set up the department's way at a start, once (D-232; the
     launcher, before it serves; never the company server's). Holding no invoices but the demo's (or none): as a new
-    folder, the demo invoices removed (``remove_demo``: what it loaded with them too), the Simple screens and JD
-    Edwards keying (``use_simple``), no question. Holding invoices of its own: ``ask`` (the question ``ASK_SIMPLE``,
-    True for yes) decides; yes does what the queue's card's "Use the simple screens" does, no is recorded (the card
-    still asks); no ``ask`` (nobody at the window), nothing is done or recorded. A folder whose screens were chosen
+    folder, the demo invoices removed (``_demo_removed``), the Simple screens and JD Edwards keying (``use_simple``),
+    no question. Holding invoices of its own, or GL accounts or a tax setup of its own (``setup_of_its_own``, B-2531):
+    ``ask`` (the question ``ASK_SIMPLE``, True for yes) decides; yes does what the queue's card's "Use the simple
+    screens" does, no is recorded (the card still asks); no ``ask`` (nobody at the window), nothing more is done or
+    recorded. A folder whose screens were chosen
     already is left as it is, but one: Simple chosen with JD Edwards keying never set up (chosen before that set it
     up, B-2382) is set up as one whose screens were never chosen. Returns what to say ("" for nothing)."""
     if not db.is_file():
@@ -767,21 +771,13 @@ def older_folder_start(db: Path, ask: Callable[[str], bool] | None = None) -> st
     screens = store.get_setting(SCREENS)
     if store.get_setting(PILOT_SETUP) or (screens and (screens != SIMPLE or not keying_to_set_up(store))):
         return ""
-    demo = store.demo_count()
-    removed = 0
-    if sum(store.status_counts().values()) > demo:  # invoices of its own
-        if ask is None:
-            return ""
-        if not ask(ASK_SIMPLE):
-            store.set_setting(PILOT_SETUP, "declined")
-            return ""
-    else:
-        from ap_coder.erp.jde_settings import EXPORT_FORMAT
-        from ap_coder.ops.demo import remove_demo
-
-        removed = remove_demo(store) if demo else 0
-        if store.get_setting(EXPORT_FORMAT) and not store.export_batches():
-            store.set_setting(EXPORT_FORMAT, "")  # a removed batch's format is no one's choice (B-2383)
+    own = sum(store.status_counts().values()) > store.demo_count()  # invoices of its own
+    removed = 0 if own else _demo_removed(store)
+    if own or setup_of_its_own(store):  # (the keying changes how its QST is coded: B-2531)
+        if ask is None or not ask(ASK_SIMPLE):
+            if ask is not None:
+                store.set_setting(PILOT_SETUP, "declined")
+            return "The demo invoices were removed." if removed else ""
     keyed = use_simple(store)
     store.set_setting(PILOT_SETUP, "done")
     store.log_event("settings_changed", detail={"keys": [SCREENS, PILOT_SETUP]})
@@ -789,6 +785,29 @@ def older_folder_start(db: Path, ask: Callable[[str], bool] | None = None) -> st
         "the keying sheet" if keyed else "your JD Edwards settings kept as they are"
     )
     return said + ("; the demo invoices removed." if removed else ".")
+
+
+def _demo_removed(store: Store) -> int:
+    """A folder with no invoices of its own begins as a new one: its demo invoices removed (``remove_demo``: what it
+    loaded with them too), and a removed batch's format, which is no one's choice (B-2383). How many went."""
+    from ap_coder.erp.jde_settings import EXPORT_FORMAT
+    from ap_coder.ops.demo import remove_demo
+
+    removed = remove_demo(store) if store.demo_count() else 0
+    if store.get_setting(EXPORT_FORMAT) and not store.export_batches():
+        store.set_setting(EXPORT_FORMAT, "")
+    return removed
+
+
+def setup_of_its_own(store: Store) -> bool:
+    """Whether a folder holds a setup someone made, which the JD Edwards keying changes (the QST added to the expense
+    line): GL accounts or cost centers, or a tax setup other than the default (B-2531). The demo's sample setup is
+    not one once the demo is removed (``remove_demo`` puts back what was there before)."""
+    from ap_coder.core.tax_setup import DEFAULT_TREATMENTS
+
+    if store.list_accounts("gl_accounts") or store.list_accounts("cost_centers"):
+        return True
+    return any((t.treatment, t.gl_code) != (DEFAULT_TREATMENTS[k], "") for k, t in store.tax_treatments().items())
 
 
 def developer_env_on() -> bool:

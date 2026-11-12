@@ -50,8 +50,9 @@ double-click it in AP Coder's folder for a command prompt there with AP Coder's 
 A laptop that ran an earlier AP Coder keeps its data folder (`%USERPROFILE%\APCoder`). The double-click sets it up
 by itself, once, before the dashboard opens. With no invoices in it but the demo invoices: as a new installation,
 the demo invoices removed, the short menu and the keying sheet, said in one line in the black window. With invoices
-of your own: it asks *Use the short menu and set up JD Edwards keying (the keying sheet)? [Y/n]* (Enter for yes);
-your invoices and settings are kept either way, and JD Edwards settings already saved are never changed. A folder
+of your own, or GL accounts or a tax setup of your own: it asks *Use the short menu and set up JD Edwards keying (the
+keying sheet)? [Y/n]* (Enter for yes); your invoices and settings are kept either way, and JD Edwards settings
+already set up (a company, an open period, account mappings or tax areas) are never changed. A folder
 where the simple screens were chosen before they set up keying is set up the same way. If the set-up cannot be
 done, the black window says so in one line, AP Coder starts as it was, and the next double-click tries again.
 
