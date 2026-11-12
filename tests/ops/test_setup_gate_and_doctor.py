@@ -4,6 +4,8 @@ activity."""
 
 from __future__ import annotations
 
+import re
+
 from ap_coder.erp import exports, jde, jde_accounts, jde_settings, jde_zfiles
 from tests.conftest import copy_database
 from tests.erp.test_jde import AN8, ON, _files, _invoice
@@ -245,3 +247,33 @@ def test_the_doctor_fails_a_server_whose_only_admin_can_no_longer_log_in(store, 
     line = _server_accounts(store)
     assert line.status == FAIL and "python -m ap_coder users reset boss" in line.detail, line
 
+
+def test_the_web_setup_report_says_what_the_doctor_says_of_the_taxes_jde_posts(tmp_path, monkeypatch, capsys):
+    """B-2533: Help → Report a problem's setup report still warned "tax GST ... no GL account mapped yet (invoices with
+    it will error)" where `python -m ap_coder doctor` passes it: the page made its own report, without what JD Edwards
+    posts itself and without the database's own lines."""
+    from ap_coder.bench import jde_exports
+    from ap_coder.ops import chart_cmd, cli
+    from ap_coder.web.core import first_run
+    from ap_coder.web.pages import help as help_page
+
+    data = tmp_path / "data"
+    data.mkdir()
+    db = data / "ap_coder.db"
+    store = first_run(db, server=False)
+    jde_exports.write_all(tmp_path / "jde")
+    chart_cmd.import_files(store, tmp_path / "jde" / jde_exports.CHART_FILE, tmp_path / "jde" / jde_exports.UNITS_FILE)
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    monkeypatch.setenv("AP_ENV_FILE", str(tmp_path / "none.env"))
+    cli.main(["--env-file", str(tmp_path / "none.env"), "--db", str(db), "doctor"])
+    doctor = [line for line in capsys.readouterr().out.splitlines() if line.startswith("[")]
+    help_page.forget_setup_report()
+    report = help_page.setup_report(store)
+    gst = next(line for line in report.splitlines() if "tax GST " in line)
+    assert "will error" not in gst and "JD Edwards posts it" in gst, gst
+    assert "finance hub feed" in report and "reference data source:" in report
+
+    def areas(lines):
+        return [re.split(r"\s{2,}", line, maxsplit=1)[0].split("] ", 1)[1] for line in lines if line.startswith("[")]
+
+    assert areas(report.splitlines()) == areas(doctor)  # the same checks, in the same order
