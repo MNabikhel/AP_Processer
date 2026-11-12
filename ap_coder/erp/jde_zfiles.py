@@ -296,7 +296,7 @@ def _claimed_shares(v: _Voucher) -> list[int] | None:
     for tl in coding.tax_lines:
         if tl.tax_type not in v.recoverable_types or abs(tl.tax_amount) < 0.005:
             continue
-        for idx, share in tax_shares(coding.line_items, tl, places):
+        for idx, share in tax_shares(coding.line_items, tl, places, coding.tax_lines):
             meal = is_meals(coding.line_items[idx].predicted_gl_code, meals_codes)
             per_line[idx] += _units(half_down(share, places) if meal else share, v.decimals)
     shares = [per_line[i] if i is not None else 0 for i in lines]

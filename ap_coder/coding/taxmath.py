@@ -549,9 +549,9 @@ def _posted(items: list[Any], tax_lines: list[Any], setup: TaxSetup, places: int
         part = _PARTS.index(_WHERE[setup.treatment(tl.tax_type).treatment])
         meals: dict[int, float] = {}
         if part == 0 and tl.tax_type in MEALS_RESTRICTED and setup.meals_gl_codes:
-            meals = dict(meals_parts(items, tl, setup.meals_gl_codes, places))
+            meals = dict(meals_parts(items, tl, setup.meals_gl_codes, places, tax_lines))
         of_tax = out.setdefault(tl.tax_type, {})
-        for idx, share in tax_shares(items, tl, places):
+        for idx, share in tax_shares(items, tl, places, tax_lines):
             parts = of_tax.setdefault(idx, [0.0, 0.0, 0.0])
             kept = meals.get(idx, 0.0)
             parts[part] = half_up(parts[part] + share - kept)

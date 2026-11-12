@@ -543,6 +543,27 @@ def test_hst_at_two_rates_one_of_them_wrong_shows_that_rate_on_its_lines():
     assert (found.check[0].ok, found.check[0].how, found.check[0].difference) == (False, RATE, 5.0)
 
 
+def test_a_tax_kept_in_the_expense_at_two_rates_posts_each_rate_on_the_lines_it_was_charged_on():
+    """B-2500: each tax line of a tax kept in the expense was spread by amount over every line marked with that tax:
+    BC food 1,000.00 (PST 7%, 70.00) and wine 200.00 (PST 10%, 20.00) posted 1,075.00 and 215.00. The lines' amounts
+    tell which rate is on which line, so each line takes its own rate's tax: 1,070.00 and 220.00."""
+    d = doc([line(1, 1000.0, "5100", ["GST", "PST"], desc="Catering - food"),
+             line(2, 200.0, "5300", ["GST", "PST"], desc="Wine")],
+            [tl("GST", "", 0.05, 1200.0, 60.0), tl("PST", "BC", 0.07, 1000.0, 70.0),
+             tl("PST", "BC", 0.10, 200.0, 20.0)], prov="BC")  # fmt: skip
+    found = _taxes(d)
+    posting = build_gl_distribution(InvoiceCoding.model_validate(d), _setup())
+    assert [(e["gl_code"], e["non_recoverable_tax"], e["amount"]) for e in posting if e["kind"] == "expense"] == [
+        ("5100", 70.0, 1070.0), ("5300", 20.0, 220.0),
+    ]  # fmt: skip
+    assert [ln.keyed for ln in found.lines] == [1070.0, 220.0]
+    # Lines of the same amount at the two rates can't be told apart: shared by amount over both, as before
+    same = doc([line(1, 500.0, "5100", ["GST", "PST"]), line(2, 500.0, "5300", ["GST", "PST"])],
+               [tl("GST", "", 0.05, 1000.0, 50.0), tl("PST", "BC", 0.07, 500.0, 35.0),
+                tl("PST", "BC", 0.10, 500.0, 50.0)], prov="BC")  # fmt: skip
+    assert [ln.keyed for ln in _taxes(same).lines] == [542.5, 542.5]
+
+
 def test_hst_at_two_rates_on_lines_of_the_same_amount_is_reported_without_guessing_which_is_which():
     d = doc([line(1, 500.0, "7430", ["HST"]), line(2, 500.0, "7430", ["HST"])],
             [tl("HST", "ON", 0.13, 500.0, 65.0), tl("HST", "NB", 0.15, 500.0, 75.0)], prov="ON")  # fmt: skip

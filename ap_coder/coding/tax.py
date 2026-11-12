@@ -778,7 +778,7 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
         t = setup.treatment(tl.tax_type)
         label = f"{tl.tax_type}{' ' + tl.province if tl.province else ''} {tl.rate * 100:.6g}%"  # QST 9.975%
         if t.treatment == EXPENSE_TO_LINE and coding.line_items:
-            for idx, share in tax_shares(coding.line_items, tl, places):  # a tip takes none of it (B-2169)
+            for idx, share in tax_shares(coding.line_items, tl, places, coding.tax_lines):  # a tip takes none (B-2169)
                 e = entries[idx]
                 e["non_recoverable_tax"] = half_up(e["non_recoverable_tax"] + share)
                 e["amount"] = half_up(e["amount"] + share)
@@ -786,7 +786,7 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
         moved = 0.0
         parts: list[tuple[dict[str, Any], float]] = []
         if t.treatment == RECOVERABLE and tl.tax_type in MEALS_RESTRICTED and setup.meals_gl_codes:
-            for idx, part in meals_parts(coding.line_items, tl, setup.meals_gl_codes, places):
+            for idx, part in meals_parts(coding.line_items, tl, setup.meals_gl_codes, places, coding.tax_lines):
                 e = entries[idx]
                 e["non_recoverable_tax"] = half_up(e["non_recoverable_tax"] + part)
                 e["amount"] = half_up(e["amount"] + part)
@@ -846,11 +846,12 @@ def half_down(amount: float, places: int = 2) -> float:
     return float((Decimal(str(amount)) / 2).quantize(unit, rounding=ROUND_DOWN))
 
 
-def tax_shares(lines: list[Any], tax_line: Any, places: int = 2) -> list[tuple[int, float]]:
+def tax_shares(lines: list[Any], tax_line: Any, places: int = 2, tax_lines: Any = ()) -> list[tuple[int, float]]:
     """(line position, its share of ``tax_line``'s tax): spread over the lines that carry it, tip lines left out (a
     voluntary tip is not taxed), in cents. A tax kept in the expense is added to the lines by these shares
     (``build_gl_distribution``, B-2169), and the JD Edwards pay items take the same (B-867; a pay item per line, by
-    the same rule, B-1889)."""
+    the same rule, B-1889). ``tax_lines``, the invoice's: a tax printed at two rates or for two provinces is spread
+    over the lines its rate was charged on, when their amounts tell which (``taxmath._lines_of_each_rate``, B-2500)."""
     items = list(enumerate(lines))
     tax_type = tax_line.tax_type
     # The lines whose tax code carries it; none marked: the lines not marked exempt, zero-rated or out of scope
@@ -860,23 +861,42 @@ def tax_shares(lines: list[Any], tax_line: Any, places: int = 2) -> list[tuple[i
         or [(i, li) for i, li in items if tax_state(li, tax_type) != NOT_DUE]
         or items
     )
+    own = _lines_of_its_rate(lines, tax_line, tax_lines)
+    if own is not None:
+        targets = [(i, lines[i]) for i in own]
     untipped = [(i, li) for i, li in targets if not is_tip(li)]
     targets = untipped or targets
     shares = split(tax_line.tax_amount, [li.amount for _, li in targets], places)
     return [(idx, share) for (idx, _li), share in zip(targets, shares, strict=True)]
 
 
+def _lines_of_its_rate(lines: list[Any], tax_line: Any, tax_lines: Any) -> list[int] | None:
+    """The positions of the lines ``tax_line`` was charged on, when its tax is printed at two rates or for two
+    provinces among ``tax_lines`` and the lines marked with it tell which (the Tax check's rule); else None."""
+    from .taxmath import _lines_of_each_rate, _rate_groups
+
+    groups = _rate_groups([t for t in tax_lines if t.tax_type == tax_line.tax_type])
+    if len(groups) < 2:
+        return None
+    marked = [i for i, li in enumerate(lines) if tax_line.tax_type in li.taxes_applied]
+    told = _lines_of_each_rate(lines, marked, groups)
+    if told is None:
+        return None
+    return next((mine for taxes, mine in zip(groups, told, strict=True) if any(t is tax_line for t in taxes)), None)
+
+
 def is_tip(line: Any) -> bool:
     return bool(_TIP.search(str(getattr(line, "description", "") or "")))
 
 
-def meals_parts(lines: list[Any], tax_line: Any, meals_gl_codes: Any, places: int = 2) -> list[tuple[int, float]]:
+def meals_parts(lines: list[Any], tax_line: Any, meals_gl_codes: Any, places: int = 2,
+                tax_lines: Any = ()) -> list[tuple[int, float]]:  # fmt: skip
     """(line position, the tax not claimable) of each meals line for one recoverable tax line: half of each meals
     line's share (``tax_shares``), rounded so the claim is never more than half, is not claimable."""
     if not any(is_meals(getattr(li, "predicted_gl_code", ""), meals_gl_codes) for li in lines):
         return []
     out = []
-    for idx, share in tax_shares(lines, tax_line, places):
+    for idx, share in tax_shares(lines, tax_line, places, tax_lines):
         if is_meals(lines[idx].predicted_gl_code, meals_gl_codes) and not nil(share):
             out.append((idx, half_up(share - half_down(share, places))))
     return out
