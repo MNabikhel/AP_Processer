@@ -216,6 +216,17 @@ _COMPANY = re.compile(r"\b(inc|lnc|ltd|ltee|itee|limited|limitee|llc|llp|lp|l\.p
                       r"group|groupe|services|solutions|supply|supplies|industries|technologies|consulting|"
                       r"distribution|holdings|partners|associates|enterprises|entreprises)\b\.?", re.I)  # fmt: skip
 
+# A company's legal form ending its name: "... Mechanical Contracting Services Ltd.", "... et Associés Ltée".
+_LEGAL_END = re.compile(r"(?<![a-z])(?:inc|incorporated|ltd|ltee|limited|limitee|corp|corporation|co|company|cie|llc|llp|"
+                        r"lp|ulc|plc|enr|s\.?e\.?n\.?c(?:\.?r\.?l)?)\.?$")  # fmt: skip
+
+
+def _long_name(text: str) -> bool:
+    """``text`` may be a long company name rather than a sentence: its legal form at the end and every word of four
+    letters or more capitalised ("Western Canada Industrial Maintenance and Mechanical Contracting Services Ltd.", not
+    "Please make cheques payable to Western Canada Maintenance Ltd.")."""
+    return bool(_LEGAL_END.search(plain(text).strip())) and all(w[:1].isupper() for w in text.split() if len(w) > 3)
+
 _NOT_NAME = re.compile(r"^(invoice|facture|credit\s*memo|debit\s*(?:note|memo)|avis\s*de\s*credit|(?:sales|tax|commercial|proforma|pro\s*forma)\s*invoice|please\s*pay|your\b|votre\b|credit\s*note|note\s*de\s*credit|statement|page\b|date|bill|"
                        r"ship|sold|remit|total|amount|description|qty|www\.|http|tel|phone|fax|email|courriel|"
                        r"gst|hst|tps|tvq|qst|po\b|p\.o|account|terms|due|original|copy|duplicata|paid|"
@@ -411,7 +422,7 @@ def _not_a_name(text: str) -> bool:
     if any(len(w) > 14 for w in p.split()) and _GLUED_TITLE_WORDS.search(p):
         return True  # OCR's words run together: "Questionsaboutyourinvoice/account", "Renseignementsgeneraux"
     words = p.split()
-    if len(words) > 8:
+    if len(words) > 8 and not (len(words) <= 12 and _long_name(text)):
         return True  # a sentence of the page's notes, not a name
     if _NOT_A_PARTY.search(p):
         return True  # a subject line, a salutation, a column's label, a month, opening hours
@@ -617,7 +628,8 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
             continue
         if _over_attention(page.lines, line):
             continue  # "Groupe Boisvert ltée" over "Attn: Accounts Payable": the customer, its "Bill To" unread
-        if len(text) < 3 or len(text) > 70 or _NOT_NAME.match(p) or sum(c.isdigit() for c in text) > 3:
+        longest = 100 if _long_name(text) else 70
+        if len(text) < 3 or len(text) > longest or _NOT_NAME.match(p) or sum(c.isdigit() for c in text) > 3:
             continue
         if _not_a_name(text) or _SELLER_LABEL.fullmatch(p):
             continue  # a title, heading, placeholder, staff line, place, or the seller's label itself
