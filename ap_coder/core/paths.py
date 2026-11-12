@@ -24,6 +24,9 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
 DEFAULT_DATA_DIR_NAME = "APCoder"  # ~/APCoder: the data folder unless another one is recorded
+# Windows refuses a rename over a file another process has open (the dashboard, an antivirus): tried again for a
+# moment (as service.write_whole, B-1962). Elsewhere such a rename never fails.
+REPLACE_WAITS = (0.05, 0.1, 0.2, 0.4, 0.8) if os.name == "nt" else ()
 
 
 def default_data_dir() -> Path:
@@ -52,6 +55,12 @@ def write_user_settings(**values: object) -> Path:
     settings = {**read_user_settings(), **values}
     part = path.with_name(f"{path.name}.{os.getpid()}.part")
     part.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    for wait in REPLACE_WAITS:  # (another process has it open: B-2573)
+        try:
+            os.replace(part, path)
+            return path
+        except PermissionError:
+            time.sleep(wait)
     os.replace(part, path)
     return path
 
