@@ -587,6 +587,10 @@ def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory
     """``suggest_gl`` worked out."""
     found: dict[str, Suggestion] = {}
     strong: dict[str, int] = {}  # account -> the highest priority of a source strong enough to code with it
+    # the cost centers still listed, on plain lists (a business unit of a chart is placed by ``complete_pair``): not
+    # one taken out of the list since (B-2545)
+    listed = reference.line_cost_centers() if reference.pairs is None else None
+    centers = None if listed is None else frozenset([*listed, UNASSIGNED])
 
     def add(gl: str, score: float, reason: str, source: str, auto: bool = False, cc: str = "") -> None:
         if gl not in valid:
@@ -594,7 +598,7 @@ def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory
         s = found.setdefault(gl, Suggestion(gl))
         if score > s.score:
             s.score, s.source = score, source
-            if cc:
+            if cc and (centers is None or cc in centers):
                 s.cost_center = cc
             if reason in s.reasons:
                 s.reasons.remove(reason)

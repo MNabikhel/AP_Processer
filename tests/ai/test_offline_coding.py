@@ -208,3 +208,25 @@ def test_the_vendors_usual_account_does_not_code_a_line_of_another_kind(tmp_path
     )
     assert [c["code"] for c in line.candidates[:2]] == ["1500", "6230"]
     assert _plain_line(store, reference, "B-10", "Floor stripping and waxing").line_items[0].predicted_gl_code == "6230"
+
+
+def test_a_cost_center_no_longer_in_the_list_is_not_proposed(tmp_path, reference):
+    """B-2545: on plain lists, a cost center taken out of the cost center list was still proposed with the line, from
+    the vendor's past approvals (then CC_UNKNOWN), where a GL account taken out of the list never is."""
+    from ap_coder.core.reference_data import load_reference_data
+    from tests.conftest import DATA
+
+    store = Store(tmp_path / "s.db")
+    for n in range(3):
+        out = _plain_line(store, reference, f"N-{n}", "Copy paper case of 10", "Northwind Supply Ltd.").model_dump(
+            mode="json")  # fmt: skip
+        out["line_items"][0].update(predicted_gl_code="6000", predicted_cost_center="CC200")
+        store.approve_invoice(store.add_invoice(tmp_path / f"{n}.pdf", out, None), out, "pat")
+    line = _plain_line(store, reference, "N-8", "Copy paper case of 10", "Northwind Supply Ltd.").line_items[0]
+    assert (line.predicted_gl_code, line.predicted_cost_center) == ("6000", "CC200")
+    centers = (DATA / "cost_centers.csv").read_text().splitlines()
+    (tmp_path / "cc.csv").write_text("\n".join(r for r in centers if not r.startswith("CC200")) + "\n")
+    retired = load_reference_data(DATA / "chart_of_accounts.csv", tmp_path / "cc.csv", DATA / "tax_gl_mapping.csv",
+                                  DATA / "coding_policy.md")  # fmt: skip
+    line = _plain_line(store, retired, "N-9", "Copy paper case of 10", "Northwind Supply Ltd.").line_items[0]
+    assert (line.predicted_gl_code, line.predicted_cost_center) == ("6000", UNASSIGNED)
