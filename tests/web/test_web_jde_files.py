@@ -1231,3 +1231,27 @@ def test_getting_started_is_not_ticked_while_the_business_units_offer_another_co
     assert state == "todo" and company in text and "JD Edwards files" in text, text
     follow(client, client.post("/jde-files/company", headers=PAGE))
     assert step()[0] == "ok"
+
+
+def test_vendors_says_its_suppliers_came_from_jd_edwards_files_and_warns_before_a_list_on_top(client, store, exports):
+    """B-2480: after the suppliers were loaded on JD Edwards files, Vendors said "55 vendors in the vendor master ·
+    Imported from the ERP" with no link there, and its own import added another list on top without a word, where GL
+    accounts & tax warns first."""
+    token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.SUPPLIERS_FILE))
+    follow(client, client.post("/jde-files/suppliers/load", data={"token": token}, headers=PAGE))
+    count = store.master_vendor_count()
+    page = re.sub(r"\s+", " ", client.get("/vendors").text)
+    said = page.split('id="from-jde"', 1)[1].split("</p>", 1)[0]
+    assert f"The {count:,} vendors in the vendor master were loaded on" in said
+    assert '<a href="/jde-files#suppliers">JD Edwards files</a>' in said
+    assert "Imported from the ERP" not in page
+    grid = io.BytesIO()
+    book = openpyxl.Workbook()
+    book.active.append(["Vendor Name", "Vendor ID"])
+    book.active.append(["Another Supply Ltd", "99001"])
+    book.save(grid)
+    answer = client.post("/vendors/master/upload", files={"file": ("vendors.xlsx", grid.getvalue())}, headers=PAGE)
+    form = client.get(answer.json()["redirect"]).text.split('id="pick-vendor_master"', 1)[1].split("</form>", 1)[0]
+    form = re.sub(r"\s+", " ", form)
+    assert f"The suppliers loaded on JD Edwards files give the {count:,} vendors in the vendor master now" in form
+    assert "a list loaded here is added on top of them" in form

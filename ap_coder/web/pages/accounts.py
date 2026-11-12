@@ -129,7 +129,8 @@ def _from_chart(store: Store, table: str, listed: list[dict[str, Any]]) -> dict[
     units = store.business_units()
     accounts, centers = chart.account_lists(rows, units, store.chart_settings())
     given = accounts if table == "gl_accounts" else centers
-    return {"accounts": sum(1 for row in rows if not row.is_header), "units": len(units) or len({row.bu for row in rows}),
+    return {"accounts": sum(1 for row in rows if not row.is_header),
+            "units": len(units) or len({row.bu for row in rows}),
             "given": sum(1 for row in listed if row["code"] in given)}  # fmt: skip
 
 

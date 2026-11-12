@@ -40,7 +40,7 @@ from ap_coder.coding.vendors import master_columns, master_rows
 from ap_coder.core import chart, chart_file, ui
 from ap_coder.core.reference_data import reads_like_meals
 from ap_coder.core.store import Store
-from ap_coder.core.store.vendor_master import name_marker
+from ap_coder.core.store.vendor_master import JDE_FILES, name_marker
 from ap_coder.erp import import_specs, jde_settings, journal, registers
 from ap_coder.erp.import_specs import SPECS, ImportSpec
 from ap_coder.erp.journal import looks_like_journal
@@ -796,7 +796,7 @@ def _suppliers_load(request: Request, token: str) -> JSONResponse:
             return refuse(problem)
         columns = master_columns(list(df.columns))
         result = store.import_vendor_master(master_rows(df.to_dict("records"), columns), actor=reviewer(),
-                                            by_erp_id=True)  # fmt: skip
+                                            by_erp_id=True, where=JDE_FILES)  # fmt: skip
         drop_upload(token)
         said = [f"Suppliers: {result['added']:,} added, {result['updated']:,} updated."]
     _loaded(token)

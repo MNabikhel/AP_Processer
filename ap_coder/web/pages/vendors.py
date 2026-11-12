@@ -35,7 +35,7 @@ from ap_coder.coding.vendors import (
 )
 from ap_coder.core import ui
 from ap_coder.core.store import PARKED, REVIEW, Store, reports
-from ap_coder.core.store.vendor_master import PAYMENTS_ONLY, stops_vouchers
+from ap_coder.core.store.vendor_master import JDE_FILES, PAYMENTS_ONLY, stops_vouchers
 from ap_coder.core.store.vendors import HOLD_CODES_SETTING, SKIP_WORDS_SETTING, listed
 from ap_coder.erp import recurring
 from ap_coder.erp.import_specs import VENDOR_MASTER
@@ -294,6 +294,7 @@ def vendors_page(
         list_query=urlencode(keep),
         has_master=store.has_vendor_master(),
         master_count=0 if vendors else len(store.master_vendors()),  # imported, no invoice yet (B-1008)
+        from_jde=master_from_jde(store),
         spend_items=spend_items,
         target=TARGET,
         master=master,
@@ -410,6 +411,15 @@ def _master_import(request: Request, form: Any) -> JSONResponse:
     result = store.import_vendor_master(master_rows(df.to_dict("records"), chosen), actor=reviewer())
     drop_upload(token)
     return done(request, "/vendors", *import_notes(result))
+
+
+def master_from_jde(store: Store) -> dict[str, Any] | None:
+    """The vendor master loaded on JD Edwards files (its events say where, B-2480): how many vendors it has, and
+    whether a list loaded elsewhere (this page, the sync, the sample) added to it; None when none was loaded there."""
+    wheres = {event["detail"].get("where", "") for event in store.events(actions=["vendors_imported"])}
+    if JDE_FILES not in wheres:
+        return None
+    return {"count": store.master_vendor_count(), "others": bool(wheres - {JDE_FILES})}
 
 
 def import_notes(result: dict[str, Any]) -> list[Any]:

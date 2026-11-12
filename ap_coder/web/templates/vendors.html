@@ -7,12 +7,18 @@
 {% macro spend(v) %}{% for cur, t in spend_items(v) %}{{ t | money }} <span class="muted">{{ cur }}</span>{% if not loop.last %} · {% endif %}{% else %}<span class="muted">—</span>{% endfor %}{% endmacro %}
 {% macro accuracy(value) %}{% if value is none %}<span class="muted">—</span>{% else %}<b class="{{ 'ok' if value >= target else 'warn-text' }}">{{ value | pct }}</b>{% endif %}{% endmacro %}
 {% macro status_pills(v) %}{{ ui.pill("On hold", "warn", "front_hand") if v.status == on_hold else ui.pill("On hold in JD Edwards", "warn", "front_hand") if v.erp_hold and v.erp_hold not in payments_only else ui.pill("Payments held in JD Edwards", "warn", "payments") if v.erp_hold else ui.pill("Active", "ok") }}{% if number_problems(v) %} {{ ui.pill("Tax number to check", "warn", "warning") }}{% endif %}{% if v.added_here %} {{ ui.pill("Added here: set up in JD Edwards", "warn", "person_add") }}{% elif has_master and not v.in_master %} {{ ui.pill("Not in master", "warn", "gpp_maybe") }}{% endif %}{% endmacro %}
+{# the vendor master loaded on JD Edwards files says so, with the link (B-2480) #}
+{% macro from_jde_note() %}{% set n = from_jde.count %}<p class="imp-then" id="from-jde"><span class="ms" aria-hidden="true">storefront</span><span>The
+  {{ n | plural("vendor") }} in the vendor master {{ "was" if n == 1 else "were" }} loaded on
+  <a href="/jde-files#suppliers">JD Edwards files</a>{% if from_jde.others %}, some from another list too{% endif %}. A newer
+  supplier list loaded there updates them.</span></p>{% endmacro %}
 {% block content %}
 <details class="card expander" id="import"{% if master or master_error or setup %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">upload</span>Vendor master from the ERP{% if has_master %} (imported){% endif %}</summary>
   <p class="muted">Import the ERP's vendor list (CSV or Excel). Exports then carry each vendor's ERP ID, invoices from a
     vendor that is not in the list are flagged, the vendor's payment terms set the due date when the invoice shows none,
     and its default GL account is offered for uncoded lines. Import again any time: vendors are matched by name.</p>
+  {% if from_jde and vendors %}{{ from_jde_note() }}{% endif %}
   <div class="stack imp-pane">
   {% if can("/vendors/master/upload") %}{{ imp.report(vendor_spec) }}{% endif %}
   {% if master_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ master_error }}</div></div>{% endif %}
@@ -22,6 +28,12 @@
   {% if can("/vendors/master/import") %}{# a Clerk opening an Admin's preview: the rows, no Load (B-2431) #}
   <form method="post" action="/vendors/master/import" class="stack" data-busy="Loading…" data-long id="pick-vendor_master">
     {{ columns(master) }}
+    {% if from_jde %}<p class="imp-then"><span class="ms" aria-hidden="true">warning</span><span>{% if from_jde.others %}The
+      {{ from_jde.count | plural("vendor") }} in the vendor master came from the suppliers loaded on JD Edwards files and
+      another list{% else %}The suppliers loaded on JD Edwards files give the {{ from_jde.count | plural("vendor") }} in
+      the vendor master now{% endif %}: a list loaded here is added on top of them, each vendor matched by its name (not
+      by its supplier number, as there), so a supplier named otherwise in it is listed twice. A newer list from JD
+      Edwards goes on JD Edwards files.</span></p>{% endif %}
     <div class="map-grid">
       <label class="field">{{ master.hold_codes_label }}
         <input type="text" name="hold_codes" value="{{ master.hold_codes }}" maxlength="60" title="JD Edwards' hold payment codes that put a supplier on hold, with commas between them. N and blank never hold."></label>
@@ -47,7 +59,7 @@
 </details>
 
 {% if not vendors %}
-<section class="card">{% if master_count %}{{ ui.empty_state((master_count | plural("vendor")) ~ " in the vendor master", "Imported from the ERP. Each vendor appears here, with its invoices and spend, once its first invoice is processed.") }}{% else %}{{ ui.empty_state("No vendors yet", "Vendors appear here once invoices have been processed, or import the vendor master above.") }}{% endif %}</section>
+<section class="card">{% if master_count %}{{ ui.empty_state((master_count | plural("vendor")) ~ " in the vendor master", ("" if from_jde else "Imported from the ERP. ") ~ "Each vendor appears here, with its invoices and spend, once its first invoice is processed.") }}{% if from_jde %}{{ from_jde_note() }}{% endif %}{% else %}{{ ui.empty_state("No vendors yet", "Vendors appear here once invoices have been processed, or import the vendor master above.") }}{% endif %}</section>
 {% else %}
 {{ tile_row(tiles) }}
 
