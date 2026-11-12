@@ -7,6 +7,7 @@ import functools
 import re
 import unicodedata
 
+from ...core.schema import _US_NAMES
 from ..types import (
     TAKEN_OFF,
     Line,
@@ -71,7 +72,9 @@ _ID_LABEL_WORDS = (
 _US_ADDRESS = re.compile(
     r"(?:^\s*|,\s*|(?<![A-Za-z])(?!(?i:" + _ID_LABEL_WORDS + r")\s)[A-Za-z][A-Za-z.'-]*\s+)"
     r"(?:A[LKZR]|C[AOT]|D[CE]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])"
-    r"\s+\d{5}(?:-\d{4})?\b",
+    r"\s+\d{5}(?:-\d{4})?\b"
+    # A state spelled out after its city's comma: "Buffalo, New York 14202", "Cupertino, California 95014".
+    r"|,\s*(?i:" + "|".join(r"\s+".join(name) for name in _US_NAMES if len(" ".join(name)) > 3) + r"),?\s+\d{5}(?:-\d{4})?\b",
     re.M,
 )
 

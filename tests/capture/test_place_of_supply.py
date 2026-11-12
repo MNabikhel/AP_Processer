@@ -67,6 +67,21 @@ def test_service_address_is_a_ship_to():
     assert provinces("Vendor\nKelowna, BC V1Y 1A1\nService address:\nPlant 2\nRegina, SK S4P 3Y2\n") == ("BC", "SK")
 
 
+def test_a_province_spelled_out_or_abbreviated_with_dots_is_read():
+    from ap_coder.coding.tax import OUTSIDE_CANADA
+
+    for supplier, code in [
+        ("77 Marine Dr, Burnaby, British Columbia V5H 1A1", "BC"), ("Toronto, Ontario M5V 2T6", "ON"),
+        ("Québec (Québec) G1V 2M2", "QC"), ("Montreal, Quebec", "QC"), ("Vancouver, B.C.", "BC"),
+        ("Regina, Sask.", "SK"), ("Montréal, Québec, Canada", "QC"), ("1200 Main St, Buffalo, New York 14202",
+        OUTSIDE_CANADA), ("1 Infinite Loop, Cupertino, California 95014", OUTSIDE_CANADA),
+    ]:  # fmt: skip
+        text = f"Coastal Supply Ltd.\n{supplier}\nShip to:\nMadeup Constructors\nVancouver, British Columbia V6B 1A1\n"
+        assert provinces(text) == (code, "BC"), supplier
+    # A bare code still needs its postal code, and a province named in a sentence is no address.
+    assert provinces("Coastal Supply Ltd.\nVancouver, BC\nProudly serving British Columbia\n") == ("", "")
+
+
 def test_an_inferred_tax_line_follows_the_place_of_supply_changed():
     from ap_coder.web.invoice_form import Draft
 
