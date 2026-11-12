@@ -442,6 +442,24 @@ def test_split_a_line(client, store):
     assert wrong.status_code == 400 and "100" in wrong.json()["error"]
 
 
+def test_a_gap_left_by_a_line_deleted_on_screen_is_not_said_to_be_a_line_missed(client, store):
+    """B-2531: a line the AI read that a person deleted left its number out, and the checks then warned "The line
+    numbers don't run 1, 2, 3…" of what was done on purpose. A gap the reading had itself, or a number typed in
+    beyond the lines, still warns."""
+    inv_id = next(
+        i["id"]
+        for i in store.list_invoices(REVIEW)
+        if len((store.get_invoice(i["id"])["ai_output"] or {}).get("line_items") or []) >= 3
+    )
+
+    def says(rows_of) -> bool:
+        text = check(client, inv_id, form_of(store, inv_id, rows_of))["sections"]["checks"]
+        return "line numbers don" in text and "run 1, 2, 3" in text
+
+    assert not says(lambda rows: [rows[0]] + rows[2:])  # line 2 deleted
+    assert says(lambda rows: [rows[0], {**rows[1], "line_number": 9}] + rows[2:])  # line 2 numbered 9
+
+
 def test_the_coding_rules_can_be_applied_to_the_lines(client, store):
     inv_id = clean_invoice(client, store)
     inv = store.get_invoice(inv_id)

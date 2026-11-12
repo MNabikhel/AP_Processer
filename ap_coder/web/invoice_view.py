@@ -157,6 +157,14 @@ def lines_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
     return changed and abs(sum(now) - cents(coding.subtotal)) <= 1
 
 
+def numbers_deleted(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
+    """Whether the line numbers on screen miss only those of lines the AI read that a person deleted: with them they
+    run 1, 2, 3… (no line was missed, B-2531)."""
+    now = [li.line_number for li in coding.line_items]
+    whole = set(now) | {li.get("line_number") for li in ai.get("line_items") or []}
+    return len(set(now)) == len(now) and sorted(whole) == list(range(1, len(whole) + 1))
+
+
 def received_on(inv: dict[str, Any]) -> dt.date | None:
     """The day the invoice came in (its ``created_at``), None when it can't be read."""
     return _date_or_none(inv.get("created_at"))
@@ -200,6 +208,8 @@ def _findings(store: Store, inv: dict[str, Any], draft: Draft, coding: InvoiceCo
             if code == "LINE_AMOUNTS_TO_CHECK" and lines_settled(coding, ai):  # the lines were made to add up
                 continue
             report.issues.append(Issue(severity, code, message))
+    if numbers_deleted(coding, ai):  # a gap a person left deleting a line the AI read
+        report.issues = [i for i in report.issues if i.code != "LINE_NUMBERING"]
     if draft.absent:  # fields the reviewer said are not on this invoice: nothing asks for them (D-60)
         report.issues = settle_absent(report.issues, draft.absent)
     from_list = sorted((draft.from_vendor.get("fields") or {}).keys())

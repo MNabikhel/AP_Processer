@@ -2259,14 +2259,12 @@ function lineName(tr) {
   return n ? `Line ${n}` : "The line";
 }
 
-/** The lines numbered 1, 2, 3… stay so when one is added between them; otherwise a new line takes the next number. */
+/** A new line takes the number after the last, wherever it is put: the others keep theirs, since approval pairs the
+    lines with the AI's by number (B-2530; a split's parts too, B-1188). */
 function numberNew(tr) {
   const rows = gridRows();
-  const others = rows.filter((r) => r !== tr);
-  const numbers = others.map((r) => Number(lineNo(r)));
-  const inOrder = numbers.every((n, i) => n === i + 1);
-  if (inOrder) rows.forEach((r, i) => (r.querySelector('[name="line_number"]').value = String(i + 1)));
-  else tr.querySelector('[name="line_number"]').value = String(Math.max(0, ...numbers.filter(Number.isFinite)) + 1);
+  const numbers = rows.filter((r) => r !== tr).map((r) => Number(lineNo(r)));
+  tr.querySelector('[name="line_number"]').value = String(Math.max(0, ...numbers.filter(Number.isFinite)) + 1);
   rows.forEach((r) => {  // a row that shows its number as text (one Account box a line)
     const shown = r.querySelector("[data-line-no]");
     if (shown) shown.textContent = lineNo(r);
