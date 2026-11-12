@@ -855,6 +855,7 @@ def candidates(description: str, vendor_name: str, feedback: list[dict[str, Any]
         kept.reasons += [r for r in other.reasons if r not in kept.reasons]
         kept.reason = "; ".join(kept.reasons)
         kept.check = kept.check or other.check
+        kept.guess = kept.guess and other.guess  # the business unit known from either source is known (B-2518)
         if not kept.of and other.of:
             kept.lines, kept.of, kept.share, kept.example = other.lines, other.of, other.share, other.example
         offered[c.account] = (best, kept)
