@@ -579,12 +579,14 @@ def test_a_start_beside_the_demos_dashboard_stops_at_once_naming_it(lock, tmp_pa
     """B-2508: scripts/demo.bat starts AP Coder from this folder with a data folder of its own (APCoder-demo), and
     its start holds this folder's lock while its dashboard runs. A double-click for the person's own data found that
     dashboard serving another data folder (never opened, B-2350) but waited for the lock half an hour, saying "being
-    set up or started in another window". It stops at once, naming that data folder and port: close that window."""
+    set up or started in another window". It stops at once, naming that data folder and port: close that window. (The
+    lock file says the data folder its holder serves: only that one stops this start.)"""
     launch = lock
     mine, demo = tmp_path / "APCoder", tmp_path / "APCoder-demo"
+    monkeypatch.setattr(launch.paths, "private_dir", lambda: demo)
+    demos_start = _other_start_holds_the_lock(launch)
     monkeypatch.setattr(launch.paths, "private_dir", lambda: mine)
     ident = launch.identity()
-    demos_start = _other_start_holds_the_lock(launch)
     server = launch.running.Server(8501, ident["version"], str(launch.ROOT), 4242, build=ident["code"],
                                    user=launch.running.this_user(), data=str(demo))  # fmt: skip
     monkeypatch.setattr(launch.running, "find", lambda ports, data: [server])
@@ -596,6 +598,33 @@ def test_a_start_beside_the_demos_dashboard_stops_at_once_naming_it(lock, tmp_pa
     demos_start.close()
     assert time.monotonic() - started < 2 and "being set up or started in another window" not in out, out
     assert f"{demo} (port 8501)" in out and "Close that AP Coder window" in out, out
+
+
+def test_a_second_start_beside_a_made_up_company_waits_for_the_first_ones_dashboard(lock, tmp_path, monkeypatch):
+    """The guide's made-up company runs by `python -m ap_coder serve` (docs/PROTOTYPE.md): no launch lock, so the
+    person's own AP Coder starts beside it (B-2350). A second double-click while the first one's dashboard starts
+    (that start holds the lock, for the person's own data) found the made-up company and stopped at once, "Close that
+    AP Coder window" (B-2508 took any AP Coder on another data folder for the lock's holder). It waits, and opens the
+    person's own dashboard."""
+    launch = lock
+    mine, company = tmp_path / "APCoder", tmp_path / "try"
+    monkeypatch.setattr(launch.paths, "private_dir", lambda: mine)
+    ident = launch.identity()
+    first_start = _other_start_holds_the_lock(launch)  # the first double-click: starting its dashboard
+    other, own = (launch.running.Server(port, ident["version"], str(launch.ROOT), pid, build=ident["code"],
+                                        user=launch.running.this_user(), data=str(data))
+                  for port, pid, data in ((8501, 4242, company), (8502, 4243, mine)))  # fmt: skip
+    finds: list[int] = []
+
+    def find(ports, data):  # the person's own dashboard is up after a few looks
+        finds.append(1)
+        return [other, own] if len(finds) > 3 else [other]
+
+    monkeypatch.setattr(launch.running, "find", find)
+    opened: list[int] = []
+    monkeypatch.setattr(launch, "open_running", lambda port: opened.append(port) or 0)
+    assert launch.wait_for_other([], timeout=3, every=0.01) == 0 and opened == [8502]
+    first_start.close()
 
 
 def test_main_waits_instead_of_setting_up_twice(lock, monkeypatch):

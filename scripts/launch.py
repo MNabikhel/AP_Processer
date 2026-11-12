@@ -1985,11 +1985,17 @@ def someone_elses(port: int) -> SetupError:
 def open_elsewhere(rest: list[str], state: dict) -> SetupError | None:
     """What a start says when this folder's own AP Coder (this version) is open on another data folder (scripts/
     demo.bat's APCoder-demo, a guide's made-up company), else None: its start holds this folder's lock while it runs,
-    so waiting for it would last half an hour (B-2508)."""
+    so waiting for it would last half an hour (B-2508). Only the one serving the data folder the lock's holder
+    wrote (``lock_holders_data``): a made-up company started by hand holds no lock, and this folder's own start
+    beside it is waited for."""
+    holder = lock_holders_data()
+    if not holder:
+        return None
     ident = identity()
     for server in running.find(candidate_ports(rest, state), paths.private_dir()):
         if (running.judge(server, ROOT, ident["version"], ident["code"], paths.private_dir()) == "elsewhere"
-                and paths.same_folder(server.folder, ROOT) and server.version == ident["version"]):  # fmt: skip
+                and paths.same_folder(server.folder, ROOT) and server.version == ident["version"]
+                and paths.same_folder(server.data, holder)):  # fmt: skip
             return SetupError(f"AP Coder is already open from this folder on another data folder, {server.data} "
                               f"(port {server.port}): one AP Coder at a time runs from this folder.",
                               "Close that AP Coder window (the demo's, for example), then start AP Coder "
@@ -2091,7 +2097,35 @@ def take_lock() -> bool:
         handle.close()
         return not upgrade.lock_busy(exc)
     _held.append(handle)
+    note_holder(handle)
     return True
+
+
+def note_holder(handle: Any) -> None:
+    """The data folder this start serves, written into the lock file once it holds the lock, after its first byte
+    (the one locked: on Windows no other process can read it) for a start that finds the lock held
+    (``lock_holders_data``, B-2508). Never a reason to stop: a start that can't write it is waited for, as before."""
+    try:
+        handle.truncate(0)
+    except Exception:  # noqa: BLE001 - kept short only; the newest line is the one read
+        pass
+    try:
+        handle.write(b"\n" + str(paths.private_dir()).encode("utf-8") + b"\n")  # (opened to append: at the end)
+        handle.flush()
+    except Exception:  # noqa: BLE001 - never stops the start
+        pass
+
+
+def lock_holders_data() -> str:
+    """The data folder the start holding the lock serves, as it wrote it (``note_holder``): "" when not said (an
+    older AP Coder's start, a lock file that can't be read)."""
+    try:
+        with open(LOCK, "rb", buffering=0) as f:
+            f.seek(1)  # (past the locked byte)
+            lines = f.readall().decode("utf-8").splitlines()
+    except (OSError, ValueError):
+        return ""
+    return next((line for line in reversed(lines) if line.strip()), "")
 
 
 def release_lock() -> None:
