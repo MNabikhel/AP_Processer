@@ -10,6 +10,11 @@
    cards are h2 sets ``sub_level = 3`` before importing these; the others' cards are h4. #}
 {% macro sub_h() %}h{{ sub_level | default(5) }}{% endmacro %}
 
+{# Who does what this person may not, in a sentence: on the company server the roles' words (``server``); on the laptop
+   shared on the office network, which has no sign-in and so no Admin, the computer running AP Coder (``here``: "These
+   files are loaded", B-2481). #}
+{% macro done_by(server, here) %}{{ server if server_mode else here ~ " on the computer running AP Coder." }}{% endmacro %}
+
 {# 1st, 2nd, 3rd, 4th... #}
 {% macro nth(n) %}{{ n }}{{ {1: "st", 2: "nd", 3: "rd"}.get(n, "th") }}{% endmacro %}
 

@@ -80,6 +80,8 @@
   </details>
   {% endif %}
 
+  {% if not edit %}<p class="muted">{{ imp.done_by("An Admin imports and changes the " ~ a.noun ~ "s.", "The " ~ a.noun ~ "s are imported and changed") }}</p>{% endif %}
+
   {% if not a.rows %}
   {{ ui.empty_note("No " ~ a.noun ~ "s yet", " Import them from a CSV or Excel file above.", "upload_file") }}
   {% else %}
@@ -192,7 +194,7 @@
     screen). Each invoice takes the default account of its currency, or the one this vendor was last paid from. Only the
     last 4 digits of an account number are ever shown. Optional: without bank accounts, nothing asks for one.</p>
   {% endif %}
-  {% if not edit %}<p class="muted">An Approver or an Admin adds, changes and removes bank accounts.</p>{% endif %}
+  {% if not edit %}<p class="muted">{{ imp.done_by("An Approver or an Admin adds, changes and removes bank accounts.", "Bank accounts are added, changed and removed") }}</p>{% endif %}
 
   {% if can("/accounts/bank/import") and not short %}
   <details class="expander" id="import"{% if not b.rows or b.imp or b.imp_error %} open{% endif %}>
@@ -222,7 +224,7 @@
 
   {% if not b.rows %}
   {# what this person can do about it: import (an Admin), type them in (an Approver), or nothing (the others) #}
-  {{ ui.empty_note("No bank accounts yet", (" Import them above, or type them in the grid below." if can("/accounts/bank/import") and not short else " Type them in the grid below.") if edit else " An Approver or an Admin adds them; until then nothing asks for one.", "account_balance") }}
+  {{ ui.empty_note("No bank accounts yet", (" Import them above, or type them in the grid below." if can("/accounts/bank/import") and not short else " Type them in the grid below.") if edit else " An Approver or an Admin adds them; until then nothing asks for one." if server_mode else " They are added on the computer running AP Coder; until then nothing asks for one.", "account_balance") }}
   {% endif %}
   <form{% if edit %} method="post" action="/accounts/bank/save"{% endif %} class="stack" data-busy="Saving…" id="bank-form"><fieldset class="ro-fieldset"{% if not edit %} disabled{% endif %}>
     <input type="hidden" name="version" value="{{ b.version }}">

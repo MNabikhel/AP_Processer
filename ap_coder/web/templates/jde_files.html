@@ -65,7 +65,7 @@
     {% endfor %}
   </ol>
   <details class="imp-more"><summary>Why this order</summary><p class="muted">{{ order }}</p></details>
-  {% if not can("/jde-files/chart/upload") %}<p class="muted">An Admin loads these files.</p>{% endif %}
+  {% if not can("/jde-files/chart/upload") %}<p class="muted">{{ imp.done_by("An Admin loads these files.", "These files are loaded") }}</p>{% endif %}
   {% if upload_gone %}{{ ui.empty_note("That upload is no longer here", ": an upload is kept for an hour, and only your last 24. Upload the file again.", "warning") }}{% endif %}
 </section>
 

@@ -177,7 +177,12 @@
   {% endif %}
   </div>
 </details>
+{% else %}{# who loads it, where it can't be loaded from here (B-2481) #}
+<section class="card" id="register"><p class="muted"><b>{{ register_name }}</b>{% if register_count %} ({{ register_count | num }} known){% endif %}:
+  {{ imp.done_by("An Admin loads the ERP's invoice list.", "The ERP's invoice list is loaded") }}</p></section>
 {% endif %}
+{% else %}
+<section class="card" id="register"><p class="muted">{{ imp.done_by("An Admin sets the ERP layout and loads the ERP's invoice list.", "The ERP layout and the ERP's invoice list are set") }}</p></section>
 {% endif %}
 
 <section class="card" id="batches">
