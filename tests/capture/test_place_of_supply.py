@@ -82,6 +82,34 @@ def test_a_province_spelled_out_or_abbreviated_with_dots_is_read():
     assert provinces("Coastal Supply Ltd.\nVancouver, BC\nProudly serving British Columbia\n") == ("", "")
 
 
+def test_a_word_or_a_tagline_or_a_line_item_naming_a_province_is_no_address():
+    """B-2521 read a province named with no postal code too widely: "Labour (man)" as Manitoba, a tagline over the
+    letterhead ("Proudly serving Ottawa, Gatineau, Quebec") over the address with its postal code, a line item ("Hotel
+    stay - Montreal, Quebec") as the supplier's."""
+    from ap_coder.ai.offline_coder import _province_of, addresses
+
+    for text in ["Labour (man)", "Smith, Ont", "Delivery to site, Que", "Paper, Man", "Thanks, Labrador"]:
+        assert _province_of(text) == "", text
+    for text, code in [
+        ("Hours, Man.", "MB"),
+        ("Toronto, Ont.", "ON"),
+        ("Regina, Sask.", "SK"),
+        ("Montreal, Quebec", "QC"),
+    ]:
+        assert _province_of(text) == code, text
+    ship = "Ship to:\nFoo\nOttawa, ON K1A 0B1\n"
+    assert (
+        addresses(
+            f"Acme Supply Ltd.\nProudly serving Ottawa, Gatineau, Quebec\n123 Bank St, Ottawa, ON K1P 1J9\n{ship}"
+        )[0]
+        == "ON"
+    )
+    assert addresses(f"Okanagan Fruit Ltd.\nPremium fruit, B.C.\n123 Main St, Calgary, AB T2P 1J9\n{ship}")[0] == "AB"
+    assert addresses("Acme Supply Ltd.\n123 Bank St\nOttawa ON\nDescription\nHotel stay - Montreal, Quebec\n")[0] == ""
+    # A letterhead naming its province, no postal code, is still read.
+    assert addresses("Coastal Supply Ltd.\n77 Marine Dr, Burnaby, British Columbia\nINVOICE\n")[0] == "BC"
+
+
 def test_an_inferred_tax_line_follows_the_place_of_supply_changed():
     from ap_coder.web.invoice_form import Draft
 
