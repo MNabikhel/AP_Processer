@@ -514,17 +514,20 @@ def line_guessed(suggestion: dict[str, Any] | None, rule: dict[str, Any] | None 
     return bool(suggestion) and guessed((suggestion or {}).get("reasoning_justification"))
 
 
+_LIGATURES = str.maketrans({"œ": "oe", "æ": "ae"})  # one letter each that NFKD leaves whole (B-2664)
+
+
 def fold_text(value: Any) -> Any:
-    """The SQL function ``ap_fold(x)``: text without accents and its case folded ("Énergir" -> "energir"), so a
-    filter compares names as people read them. SQLite's own lower() and LIKE fold only A to Z (B-04). Plain ASCII,
-    most of what it sees, takes the quick way."""
+    """The SQL function ``ap_fold(x)``: text without accents and its case folded ("Énergir" -> "energir", "Œuvres"
+    -> "oeuvres"), so a filter compares names as people read them. SQLite's own lower() and LIKE fold only A to Z
+    (B-04). Plain ASCII, most of what it sees, takes the quick way."""
     if value is None:
         return None
     text = str(value)
     if text.isascii():
         return text.lower()
     decomposed = unicodedata.normalize("NFKD", text)
-    return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold().translate(_LIGATURES)
 
 
 class ApprovedAgain(ValueError):

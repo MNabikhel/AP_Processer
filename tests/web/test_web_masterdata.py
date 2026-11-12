@@ -124,6 +124,20 @@ def test_the_vendor_search_and_name_sort_ignore_accents(store):
     assert [r["vendor_name"] for r in sort_vendors(rows, "name")] == ["Alpha", "Éclair Ltée", "Énergir", "Zed Inc"]
 
 
+def test_the_vendor_search_and_name_sort_read_a_ligature_as_its_two_letters(store):
+    """Œ and Æ, one letter each that NFKD leaves whole, are OE and AE: "oeuvre" finds Œuvres Ltée, which sorts
+    among the O names, not after Zed."""
+    from ap_coder.web.pages.vendors import sort_vendors
+
+    add_clean(store, vendor_name="Œuvres Ltée")
+    client = client_for(store)
+    for q in ("oeuvre", "OEUVRES"):
+        assert "Œuvres Ltée" in client.get("/vendors", params={"q": q}).text.split("<main", 1)[-1]
+    rows = [{"vendor_name": n} for n in ("Zed Inc", "Æther", "Œuvres Ltée", "Alpha", "Omega")]
+    assert [r["vendor_name"] for r in sort_vendors(rows, "name")] == ["Æther", "Alpha", "Œuvres Ltée", "Omega",
+                                                                      "Zed Inc"]  # fmt: skip
+
+
 def test_a_vendor_is_put_on_hold_and_given_its_gst_number(client, busy):
     v = busy.vendor_summaries()[0]
     assert client.post("/vendors/save", data={"key": v["vendor_key"], "status": ON_HOLD}).status_code == 403
@@ -498,6 +512,29 @@ def test_a_bank_code_typed_in_another_case_is_the_same_account(client, store):
     load(b"Code,Name\ncad-op,Operating again\n")
     accounts = [(a["code"], a["name"], a["is_default"], a["account_number"]) for a in store.bank_accounts()]
     assert accounts == [("CAD-OP", "Operating again", True, "1234567")]
+
+
+def test_an_exact_bank_code_is_its_own_account_when_a_database_holds_both_spellings(client, store):
+    """A database from before B-2661 can hold CAD-OP and cad-op: the code typed exactly is that account, in the
+    Store, the import (its unpicked columns) and the grid (a blank account number), whichever sorts last."""
+    from ap_coder.coding import banks
+
+    rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "A upper", "currency": "CAD", "account_number": "1111111"}])
+    store.save_bank_accounts([*rows, {**rows[0], "code": "cad-op", "name": "B lower", "account_number": "2222222"}])
+
+    def kept() -> list[tuple[str, str, str]]:
+        return sorted((a["code"], a["name"], a["account_number"]) for a in store.bank_accounts())
+
+    assert store.save_bank_accounts([{**rows[0], "name": "Changed"}]) == {"added": 0, "updated": 1}
+    assert kept() == [("CAD-OP", "Changed", "1111111"), ("cad-op", "B lower", "2222222")]
+    page = upload(client, "/accounts/bank/upload", "b.csv", b"Code,Name\nCAD-OP,Imported\n")
+    data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in guessed(page.text).items()}}
+    follow(client, client.post("/accounts/bank/import", data=data, headers=PAGE))
+    assert kept() == [("CAD-OP", "Imported", "1111111"), ("cad-op", "B lower", "2222222")]
+    form = {"code": ["CAD-OP"], "name": ["Typed"], "currency": ["CAD"], "institution": [""], "transit": [""],
+            "account_number": [""], "gl_account": [""], "active": ["0"]}  # fmt: skip
+    follow(client, client.post("/accounts/bank/save", data=form, headers=PAGE))
+    assert kept() == [("CAD-OP", "Typed", "1111111"), ("cad-op", "B lower", "2222222")]
 
 
 def test_the_sample_vendor_master_is_imported_by_the_page_as_the_sample_loader_does(client, store, tmp_path):

@@ -479,7 +479,8 @@ def save_preset(store: Any, name: str, query_string: str, make_default: bool = F
     kept.append({"name": name, "query": _clean(query_string)})
     store.set_setting(_keys(owner)[0], json.dumps(kept))
     default = store.get_setting(_keys(owner)[1]) or ""
-    if make_default or default.lower() == name.lower():  # (the default retyped in another case stays the default)
+    if make_default or (default != STANDARD and default.lower() == name.lower()):  # (the default retyped in another
+        # case stays the default; a person's choice of the standard layout is not a layout's name)
         store.set_setting(_keys(owner)[1], name)
     return name
 

@@ -193,6 +193,13 @@ def test_a_default_layout_saved_again_in_another_case_stays_the_default(store):
     assert d.default_preset(store) == {"name": "month end", "query": d._clean("f_status=approved"), "shared": False}
 
 
+def test_a_layout_named_standard_leaves_a_choice_of_the_standard_layout_alone(store):
+    """A person who chose the standard layout saves one named "(Standard)": their choice stays the standard one."""
+    d.set_default(store, "", "user:1")
+    d.save_preset(store, d.STANDARD.title(), "f_status=approved", owner="user:1")
+    assert d.default_preset(store, "user:1") is None
+
+
 # --- The page ---------------------------------------------------------------------------------------------------------
 
 

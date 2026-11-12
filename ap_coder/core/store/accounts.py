@@ -472,7 +472,10 @@ class AccountsMixin:
         account made the default of its currency is the only one. Returns {"added", "updated"}."""
         before = {r["code"]: r for r in self.bank_accounts()}
         spelled = {code.upper(): code for code in before}  # "cad-op" is CAD-OP, as banks.clean_rows has it
-        rows = [{**row, "code": spelled.get(row["code"].upper(), row["code"])} for row in rows]
+        rows = [
+            {**row, "code": row["code"] if row["code"] in before else spelled.get(row["code"].upper(), row["code"])}
+            for row in rows
+        ]  # (an exact code first: an older database can hold both spellings)
         added = updated = 0
         now = _now()
         upsert = (
