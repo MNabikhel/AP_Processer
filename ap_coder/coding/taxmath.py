@@ -312,10 +312,12 @@ def _total_row(coding: InvoiceCoding, taxes_total: float) -> dict[str, Any]:
     adds_up = within(diff, 0, CENT) or cash
     taxes_agree = within(taxes_total, coding.tax_total, CENT)
     shown = diff if not adds_up else half_up(coding.grand_total - half_up(coding.subtotal + taxes_total))
+    sign = "-" if coding.tax_total < 0 else "+"  # a credit's tax is taken off: -500.00 - 60.00, not + -60.00 (B-2535)
+    tax = money(abs(coding.tax_total))
     row = {"kind": "total", "what": "Subtotal + tax = total", "ok": adds_up and taxes_agree,
            "diff": "" if adds_up and taxes_agree else money(shown), "subtotal": money(coding.subtotal),
-           "tax": money(coding.tax_total), "computed": money(computed), "total": money(coding.grand_total),
-           "detail": f"{money(coding.subtotal)} + {money(coding.tax_total)} = {money(computed)}; the total is "
+           "sign": sign, "tax": tax, "computed": money(computed), "total": money(coding.grand_total),
+           "detail": f"{money(coding.subtotal)} {sign} {tax} = {money(computed)}; the total is "
                      f"{money(coding.grand_total)}", "lines": []}  # fmt: skip
     hints = [f"Rounded to the nickel for cash: the rounding, {money(diff)}, is a line of its own."] if cash else []
     if not taxes_agree:

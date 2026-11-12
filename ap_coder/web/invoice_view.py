@@ -393,5 +393,5 @@ def _amount_line(header: dict[str, Any]) -> dict[str, Any] | None:
         sub, tax, total = (float(header.get(f) or 0) for f in AMOUNT_FIELDS)
     except (TypeError, ValueError):
         return None
-    return {"subtotal": signed(sub), "tax": signed(tax), "total": signed(total),
+    return {"subtotal": signed(sub), "sign": "-" if tax < 0 else "+", "tax": signed(abs(tax)), "total": signed(total),
             "currency": header.get("currency") or "", "adds_up": abs(sub + tax - total) < 0.015}  # fmt: skip
