@@ -272,12 +272,12 @@ def _po_import(request: Request, form: Any) -> JSONResponse:
     rows, skipped = po_mod.rows_from_records(df.to_dict("records"), chosen)
     if not rows:  # "Replace" would delete every PO (B-1406)
         return refuse(f"No row has a PO number and a description in the columns picked ({skipped} skipped): nothing "
-                      "was imported, the purchase orders are as they were.")  # fmt: skip
+                      "was loaded, the purchase orders are as they were.")  # fmt: skip
     result = store.import_purchase_orders(rows, replace_all=bool(form.get("replace")), actor=reviewer())
     drop_upload(token)
     text = (
-        f"Imported {ui.plural(result['orders'], 'PO')} with {ui.plural(result['lines'], 'line')}: "
-        f"{result['added']} new, {result['updated']} updated"
+        f"Loaded: {result['added']} added, {result['updated']} updated "
+        f"({ui.plural(result['orders'], 'PO')} with {ui.plural(result['lines'], 'line')})"
         + (f", {ui.plural(skipped, 'row')} skipped (no PO number or description)." if skipped else ".")
     )
     return done(request, "/purchase-orders", flash_message(text, "ok", icon="shopping_cart"))

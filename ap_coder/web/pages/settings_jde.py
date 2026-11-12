@@ -341,7 +341,8 @@ def _import_gl_map(request: Request, token: str, replace: str) -> JSONResponse:
     new.gl_map = [m for m in kept if (m.gl_code.upper(), m.cost_center.upper()) not in keys] + rows
     jde_settings.save(store, new, actor=reviewer())
     drop_upload(token)
-    return done(request, URL + "#gl-map", f"{ui.plural(len(rows), 'mapping row')} imported.")
+    updated = len(keys & {(m.gl_code.upper(), m.cost_center.upper()) for m in kept})
+    return done(request, URL + "#gl-map", f"Loaded: {len(rows) - updated} added, {updated} updated.")
 
 
 @router.post("/settings/jde/tax-map")

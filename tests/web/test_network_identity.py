@@ -317,7 +317,7 @@ def test_a_colleague_is_offered_no_form_this_computer_alone_may_send(app, store)
 
 
 def test_a_colleague_is_told_the_setup_is_changed_on_the_computer_running_ap_coder_not_by_an_admin(app, store):
-    """B-2481: a colleague on the laptop shared on the office network (no sign-in, so no Admin) was told "An Admin
+    """B-2477: a colleague on the laptop shared on the office network (no sign-in, so no Admin) was told "An Admin
     loads these files" on JD Edwards files, "An Admin imports the purchase orders / the vendor master / the past
     coding", "An Approver or an Admin adds them" of the bank accounts; GL accounts and Exports said nothing of who
     changes them. Each says it is done on the computer running AP Coder (the server keeps its roles' words)."""
@@ -325,11 +325,11 @@ def test_a_colleague_is_told_the_setup_is_changed_on_the_computer_running_ap_cod
 
     store.set_setting(SHOW_JDE, "1")
     ana = colleague(app, "10.0.0.5", "Ana")
-    pages = {"/jde-files": "These files are loaded", "/purchase-orders": "The purchase orders are imported",
-             "/vendors": "The vendor master is imported", "/learning": "The past coding is imported",
+    pages = {"/jde-files": "These files are loaded", "/purchase-orders": "The purchase orders are loaded",
+             "/vendors": "The vendor master is loaded", "/learning": "The past coding is loaded",
              "/accounts?tab=bank": "Bank accounts are added, changed and removed",
-             "/accounts?tab=gl": "The GL accounts are imported and changed",
-             "/accounts?tab=cc": "The cost centers are imported and changed",
+             "/accounts?tab=gl": "The GL accounts are loaded and changed",
+             "/accounts?tab=cc": "The cost centers are loaded and changed",
              "/exports": "The ERP's invoice list is loaded"}  # fmt: skip
     for page, said in pages.items():
         text = html.unescape(re.sub(r"\s+", " ", ana.get(page).text))
@@ -340,8 +340,8 @@ def test_a_colleague_is_told_the_setup_is_changed_on_the_computer_running_ap_cod
     account(store, "clerk", "clerk")
     clerk = server_client(store)
     log_in(clerk, "clerk")
-    pages = {"/jde-files": "An Admin loads these files.", "/purchase-orders": "An Admin imports the purchase orders.",
-             "/accounts?tab=gl": "An Admin imports and changes the GL accounts.",
+    pages = {"/jde-files": "An Admin loads these files.", "/purchase-orders": "An Admin loads the purchase orders.",
+             "/accounts?tab=gl": "An Admin loads and changes the GL accounts.",
              "/exports": "An Admin sets the ERP layout and loads the ERP's invoice list."}  # fmt: skip
     for page, said in pages.items():
         text = html.unescape(re.sub(r"\s+", " ", clerk.get(page).text))

@@ -807,18 +807,13 @@ def _history_upload(request: Request, name: str, content: bytes) -> JSONResponse
 
 
 def _table_upload(request: Request, name: str, content: bytes) -> JSONResponse:
-    """A table of past lines read and kept, waiting for its columns."""
+    """A table of past lines read and kept, waiting for its columns: the page's verdict says what was found (B-2471)."""
     try:
         sheets = read_sheets(name, content)
     except ValueError as exc:
         return refuse(str(exc))
     token = keep_upload(name, sheets)
-    return done(request, _url(history=token) + "#history", flash_message_for_columns(name, sheets))
-
-
-def flash_message_for_columns(name: str, sheets: dict[str, tuple[list[str], list[dict[str, Any]]]]) -> str:
-    rows = sum(len(r) for _, r in sheets.values())
-    return f"Read {name}: {ui.plural(rows, 'line')}. Check the columns below, then load."
+    return done(request, _url(history=token) + "#history")
 
 
 @router.post("/learning/history/teach")
@@ -844,8 +839,8 @@ def _history_teach(request: Request, form: Any) -> JSONResponse:
     result = store.import_history(rows, actor=reviewer())
     drop_upload(token)
     text = (
-        f"Taught {ui.plural(result['added'], 'past line')}"
-        + (f"; {result['skipped'] + skipped:,} skipped (incomplete or already taught)"
+        f"Loaded: {ui.plural(result['added'], 'past line')} added"
+        + (f"; {result['skipped'] + skipped:,} skipped (incomplete or already loaded)"
            if result["skipped"] + skipped else "")
         + (f"; {result['unknown_gl']:,} with a GL account that is not in your list" if result["unknown_gl"] else "")
         + (f"; {result['unknown_cc']:,} kept without their cost center, which is not in your list"

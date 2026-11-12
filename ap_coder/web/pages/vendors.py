@@ -414,7 +414,7 @@ def _master_import(request: Request, form: Any) -> JSONResponse:
 
 
 def master_from_jde(store: Store) -> dict[str, Any] | None:
-    """The vendor master loaded on JD Edwards files (its events say where, B-2480): how many vendors it has, and
+    """The vendor master loaded on JD Edwards files (its events say where, B-2476): how many vendors it has, and
     whether a list loaded elsewhere (this page, the sync, the sample) added to it; None when none was loaded there."""
     wheres = {event["detail"].get("where", "") for event in store.events(actions=["vendors_imported"])}
     if JDE_FILES not in wheres:
@@ -425,9 +425,7 @@ def master_from_jde(store: Store) -> dict[str, Any] | None:
 def import_notes(result: dict[str, Any]) -> list[Any]:
     """What an import of the vendor master says: how many, the names merged, and the hold payment codes it did not
     treat as a hold."""
-    notes = [
-        flash_message(f"Vendor master: {result['added']} added, {result['updated']} updated.", "ok", icon="storefront")
-    ]
+    notes = [flash_message(f"Loaded: {result['added']} added, {result['updated']} updated.", "ok", icon="storefront")]
     dupes = result["duplicates"]
     if dupes:
         notes.append(

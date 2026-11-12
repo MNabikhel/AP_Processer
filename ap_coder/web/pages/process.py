@@ -359,7 +359,7 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
             steps.append(("todo", JDE_STEP, f"company {settings.company_code} saved, but every business unit loaded "
                           f"is company {offer}: use it on JD Edwards files (2. Business units), or set yours in "
                           "Settings → JD Edwards E1"))  # fmt: skip
-        elif saved and not problems and not _company_confirmed(store, settings):  # (B-2482)
+        elif saved and not problems and not _company_confirmed(store, settings):  # (B-2478)
             steps.append(("todo", JDE_STEP, f"company {settings.company_code} is the one a new installation starts "
                           "with: load the business units on JD Edwards files (2. Business units), or set yours in "
                           "Settings → JD Edwards E1"))  # fmt: skip
@@ -381,7 +381,7 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
 def _company_confirmed(store: Store, settings: Any) -> bool:
     """Whether JD Edwards' company number is the company's own: another than the one a new installation starts with,
     settings a person saved (not the new installation's, ``jde_prototype.prototype_settings``), or the company of a
-    business unit loaded. The new installation's alone is never ticked (B-2482)."""
+    business unit loaded. The new installation's alone is never ticked (B-2478)."""
     from ap_coder.erp import jde_prototype, jde_settings
 
     if settings.company != jde_settings.JdeSettings().company:

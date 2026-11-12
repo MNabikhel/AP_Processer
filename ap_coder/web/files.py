@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import io
 import re
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -151,7 +152,7 @@ async def receive_sheet(file: UploadFile, accept: Iterable[str] | None = (),
     if content is None:
         return "", TOO_BIG
     if not name.lower().endswith((".xlsx", ".xls")) and looks_like_journal(content):
-        return "", import_specs.elsewhere("journal", verb="loaded" if accept is None else "imported")
+        return "", import_specs.elsewhere("journal")
     if not name.lower().endswith(SHEET_TYPES):
         return "", NOT_A_SHEET
     if keep is not None:
@@ -183,7 +184,7 @@ def jde_refusal(rows: list[list[Any]], accept: Iterable[str] = ()) -> str:
         if key := import_specs.recognise(row):
             if key in accept:
                 return import_specs.check(import_specs.SPECS[key], row).problem()
-            return import_specs.elsewhere(key, verb="imported")
+            return import_specs.elsewhere(key)
     return ""
 
 
@@ -435,6 +436,29 @@ def picked_columns(
     return picked
 
 
+_NUMBERED = re.compile(r"(.+)\.\d+")  # how a reader names the 2nd column of a name the file has twice ("Code.1")
+
+
+def _as_named(column: str, present: set[str]) -> str:
+    """A column's name as the file has it: "Code" for a reader's "Code.1" (or "Code.1.1") when "Code" is there too."""
+    while (numbered := _NUMBERED.fullmatch(column)) and numbered.group(1) in present:
+        column = numbered.group(1)
+    return column
+
+
+def column_names(columns: Sequence[str]) -> list[str]:
+    """Each column as a choice shows it (B-2469): by the name the file gives it, and one of a name the file has more
+    than once with which it is ("Code (1st)", "Code (2nd)"), as ``_import.html``'s ``header_name`` shows them."""
+    present = set(columns)
+    named = [_as_named(c, present) for c in columns]
+    times, seen, out = Counter(named), Counter[str](), []
+    for name in named:
+        seen[name] += 1
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(seen[name], "th")
+        out.append(f"{name} ({seen[name]}{suffix})" if times[name] > 1 else name)
+    return out
+
+
 def sheet_context(
     token: str,
     upload: Upload,
@@ -453,6 +477,7 @@ def sheet_context(
         "sheets": sheets,
         "sheet": sheet if sheet in sheets else df.attrs.get("sheet", sheets[0] if sheets else ""),
         "columns": columns,
+        "options": list(zip(columns, column_names(columns), strict=True)),
         "count": len(df),
         "preview": [[str(v) for v in row] for row in df.head(PREVIEW_ROWS).itertuples(index=False)],
         "fields": [
@@ -479,7 +504,7 @@ def pick_refusal(spec: ImportSpec, chosen: Mapping[str, str]) -> str:
     """Why an import of ``spec`` with these columns is refused ("" when it is not): the needed fields still without a
     column, named. There is no import without them."""
     missing = unpicked(spec, chosen)
-    return f"Pick the column for: {', '.join(missing)}. Nothing was imported." if missing else ""
+    return f"Pick the column for: {', '.join(missing)}. Nothing was loaded." if missing else ""
 
 
 def spec_sheet(token: str, upload: Upload, df: pd.DataFrame, sheets: list[str], sheet: str | None, spec: ImportSpec,
@@ -487,13 +512,15 @@ def spec_sheet(token: str, upload: Upload, df: pd.DataFrame, sheets: list[str], 
     """What a page shows of an uploaded sheet to import as ``spec`` (``_sheet.html``'s ``columns``, ``_import.html``'s
     ``preview``): ``sheet_context`` with a choice for each of the spec's columns, filled from the file's headers by
     the spec's reader (``ImportSpec.find``: their order never matters) until the person picks (``params``'
-    ``col_<field>``), the needed ones marked; ``missing``: the needed fields still without a column; ``look``: the
+    ``col_<field>``), the needed ones marked, but a needed one whose name the file has twice: the person picks which
+    (``look.twice``, B-2469); ``missing``: the needed fields still without a column; ``look``: the
     file's header check (each column found as which header, or missing; its other columns) and its first rows, and
     why it is not imported when it is one of JD Edwards' reports (``jde_refusal``: a sheet chosen on the page)."""
     columns = [str(c) for c in df.columns]
     fields = {c.field: c.label for c in spec.columns}
     found = import_specs.check(spec, columns)
-    chosen = picked_columns(params or {}, fields, columns, found.found)
+    twice = {c.field for c in found.twice}  # (a needed name the file has twice: the person picks which, B-2469)
+    chosen = picked_columns(params or {}, fields, columns, {f: c for f, c in found.found.items() if f not in twice})
     context = sheet_context(token, upload, df, sheets, sheet, fields, chosen)
     needed = {c.field for c in spec.required}
     context["fields"] = [{**f, "label": fields[f["key"]], "need": f["key"] in needed, "one_of": f["key"] in spec.one_of}
@@ -504,6 +531,7 @@ def spec_sheet(token: str, upload: Upload, df: pd.DataFrame, sheets: list[str], 
             "one_of": {"fields": list(spec.one_of), "label": unpicked(spec, {})[-1]} if spec.one_of else None,
             "look": {"name": upload.name, "count": len(df), "spec": spec, "check": found, "pick": True,
                      "unfound": unpicked(spec, found.found),
+                     "twice": [f"“{_as_named(found.found[c.field], set(columns))}” ({c.label})" for c in found.twice],
                      "guessed": "; ".join(f"{spec.column(f).label} as “{found.found[f]}”" for f in found.guessed),
                      "problem": jde_refusal(first_rows(df), accept) or ("" if len(df) else NO_ROWS),
                      "sample": import_specs.preview(rows, 0)}}  # fmt: skip

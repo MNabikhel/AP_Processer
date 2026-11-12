@@ -318,7 +318,7 @@ class VendorMasterMixin:
         before these, so a row goes to the vendor of its name holding its ERP ID ("Acme", or "Acme #4002" the second
         of two, B-930) and another ERP ID's row of that name is merged into that vendor or is the second vendor, as
         in one file. ``log``: the import's event (the sync logs one for all its pages); ``where``: the page it was
-        loaded on, kept in the event (``JDE_FILES``), so Vendors says where its vendors came from (B-2480).
+        loaded on, kept in the event (``JDE_FILES``), so Vendors says where its vendors came from (B-2476).
         A supplier whose name the ERP marks as retired ("… DO NOT USE", ``name_marker``) is kept under its name
         without the marker, on hold, with a note that says so; when the list has a supplier of that name in use too,
         that one is the vendor of the name and the retired one is kept under its ERP ID (B-2083).

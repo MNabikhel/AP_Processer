@@ -397,7 +397,7 @@ def test_jd_edwards_voucher_list_is_imported_as_it_comes_and_says_what_was_read(
     page = follow(client, client.post("/exports/register/upload", files={"file": empty}, headers=PAGE))
     refused = client.post("/exports/register/import", data={"file": page.url.params["register"], "replace": "1"},
                           headers=PAGE)  # fmt: skip
-    assert refused.status_code == 400 and "nothing was imported" in refused.json()["error"]
+    assert refused.status_code == 400 and "nothing was loaded" in refused.json()["error"]
     assert "Left out: the totals row; 1 voucher with no invoice number" in refused.json()["error"]
     assert store.erp_register_count() == 5
     # B-2164: a later list that shows a voucher at 0.00 (voided in JD Edwards since) takes it off the list; what a

@@ -216,7 +216,7 @@ VENDOR_INFO = ImportSpec(
                       for f in (*vendor_info.COLUMNS, *vendor_info.SECOND)}, vendor_info.NEEDS,
                      {f: (vendor_info.LABELS.get(f, f.replace("_", " ").capitalize()), header)
                       for f, header in _INFO_HEADERS.items()}
-                     | {"business_unit": ("Business unit number", "Business Unit"),  # (the first of the two: B-2484)
+                     | {"business_unit": ("Business unit number", "Business Unit"),  # (the first of the two: B-2480)
                         "business_unit_name": ("Business unit name", "Business Unit")}
                      | {f"address{n}": (f"Address line {n}", f"Address Line {n}") for n in range(1, 5)},
                      _INFO_ABOUT),
@@ -324,8 +324,15 @@ def _account_find(meals: bool) -> Callable[[list[str]], dict[str, str]]:
     return find
 
 
-def _accounts(key: str, title: str, noun: str, meals: bool) -> ImportSpec:
+# The headers the other imports read a GL account under, as their files write them: Past coding's and the GL map's
+# "GL Code", a bank account's cash "GL Account", the Transaction Journal's "Account Number". A GL account list's code
+# under one of them is found by its name, not guessed (B-2470); the column picked is the guess's as before.
+GL_CODE_NAMES = ("GL Code", "GL Account", JOURNAL.column("account").header)
+
+
+def _accounts(key: str, title: str, noun: str, meals: bool, code_names: Sequence[str] = ()) -> ImportSpec:
     hints: dict[str, Sequence[str]] = {f: tuple(f"…{w}…" for w in words) for f, words in ACCOUNT_HINTS.items()}
+    hints["code"] = (*code_names, *hints["code"])
     if meals:
         hints["meals"] = MEALS_HEADERS
     return ImportSpec(
@@ -341,7 +348,7 @@ def _accounts(key: str, title: str, noun: str, meals: bool) -> ImportSpec:
     )  # fmt: skip
 
 
-GL_ACCOUNTS = _accounts("gl_accounts", "GL accounts", "GL account", meals=True)
+GL_ACCOUNTS = _accounts("gl_accounts", "GL accounts", "GL account", meals=True, code_names=GL_CODE_NAMES)
 COST_CENTERS = _accounts("cost_centers", "Cost centers", "cost center", meals=False)
 
 BANK_ACCOUNTS = ImportSpec(
@@ -627,15 +634,15 @@ def recognise(headers: Iterable[Any]) -> str | None:
     return whole.key if whole is not None and counts.get(whole.key, 0) >= 2 else None
 
 
-def elsewhere(key: str, card: str = "", verb: str = "loaded") -> str:
-    """Why a file that is JD Edwards' report ``key`` (``recognise``) is not ``verb`` here: what it is and the card
+def elsewhere(key: str, card: str = "") -> str:
+    """Why a file that is JD Edwards' report ``key`` (``recognise``) is not loaded here: what it is and the card
     of the JD Edwards files page it is loaded on (``card``: the card it was dropped on, when it is one)."""
     if key in VOUCHER_GRIDS:
         load = "here" if card == "vouchers" else f"on the JD Edwards files page, under {VOUCHERS.card}"
         what = f"this file is {VOUCHER_GRIDS[key]}, from a voucher's screen in JD Edwards"
-        return f"Not {verb}: {what}. {_LEDGER} and load it {load}."
+        return f"Not loaded: {what}. {_LEDGER} and load it {load}."
     spec = SPECS[key]
-    return f"Not {verb}: this file is {spec.report}. It is loaded on the JD Edwards files page, under {spec.card}."
+    return f"Not loaded: this file is {spec.report}. It is loaded on the JD Edwards files page, under {spec.card}."
 
 
 def header_row(rows: Sequence[Sequence[Any]], specs: Iterable[ImportSpec]) -> int:

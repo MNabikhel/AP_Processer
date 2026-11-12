@@ -102,7 +102,7 @@ def _url(card: str, **query: str) -> str:
 
 def _shown(card: str, token: str) -> str:
     """The page on the file just checked on ``card``: at its summary (``#<card>-summary``), so its verdict and its
-    Load are in view, not the card's top above them (B-2483)."""
+    Load are in view, not the card's top above them (B-2479)."""
     return f"{HERE}?{card}={token}#{card}-summary"
 
 

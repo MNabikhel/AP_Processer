@@ -62,7 +62,7 @@
     {% endif %}
     <div class="row">
       <button class="btn primary" type="submit"{% if journal.state == "refused" %} disabled{% endif %}><span class="ms" aria-hidden="true">school</span>Load this journal</button>
-      <a class="btn" href="/learning#history">Cancel</a>
+      <a class="btn" href="/learning#history"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
     </div>
   </form>
   {% else %}
@@ -93,7 +93,7 @@
     <p class="muted">Lines without a vendor, a description or a GL account are skipped.</p>
     <div class="row">
       <button class="btn primary" type="submit"{{ go(upload.s) }}><span class="ms" aria-hidden="true">school</span>Load {{ upload.rows | plural("line") }}</button>
-      <a class="btn" href="/learning#history">Cancel</a>
+      <a class="btn" href="/learning#history"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
     </div>
   </form>
   {% endif %}
@@ -107,7 +107,7 @@
     summary is shown first; nothing is loaded until you say so.</p>
   </div>
   {% else %}
-  <p class="muted">{{ imp.done_by("An Admin imports the past coding.", "The past coding is imported") }}</p>
+  <p class="muted">{{ imp.done_by("An Admin loads the past coding.", "The past coding is loaded") }}</p>
   {% endif %}
   {% endif %}
   {% if history_count and can("/learning/history/forget") %}

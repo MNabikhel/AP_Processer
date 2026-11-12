@@ -40,7 +40,7 @@
   {% endif %}
 
   {% if a.chart and a.rows %}{% set others = a.rows | length - a.chart.given %}
-  {# how many of the rows the chart gives, the others imported or typed here (B-2479) #}
+  {# how many of the rows the chart gives, the others imported or typed here (B-2475) #}
   <p class="imp-then" id="from-chart"><span class="ms" aria-hidden="true">account_tree</span><span>{% if others %}{{
     a.chart.given | num }} of these{% else %}These{% endif %} {% if tab == "gl" %}{{ a.rows | length | plural("GL account") }}
     come from the chart of accounts loaded on
@@ -54,7 +54,7 @@
   {% endif %}
   {% if edit %}
   <details class="expander" id="import"{% if not a.rows or a.imp or a.imp_error %} open{% endif %}>
-    <summary><span class="ms" aria-hidden="true">upload</span>Import {{ a.noun }}s from CSV or Excel</summary>
+    <summary><span class="ms" aria-hidden="true">upload</span>Load {{ a.noun }}s from CSV or Excel</summary>
     <div class="stack imp-pane">
     {{ imp.report(a.spec) }}
     {% if a.imp_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ a.imp_error }}</div></div>{% endif %}
@@ -80,7 +80,7 @@
   </details>
   {% endif %}
 
-  {% if not edit %}<p class="muted">{{ imp.done_by("An Admin imports and changes the " ~ a.noun ~ "s.", "The " ~ a.noun ~ "s are imported and changed") }}</p>{% endif %}
+  {% if not edit %}<p class="muted">{{ imp.done_by("An Admin loads and changes the " ~ a.noun ~ "s.", "The " ~ a.noun ~ "s are loaded and changed") }}</p>{% endif %}
 
   {% if not a.rows %}
   {{ ui.empty_note("No " ~ a.noun ~ "s yet", " Import them from a CSV or Excel file above.", "upload_file") }}
@@ -198,7 +198,7 @@
 
   {% if can("/accounts/bank/import") and not short %}
   <details class="expander" id="import"{% if not b.rows or b.imp or b.imp_error %} open{% endif %}>
-    <summary><span class="ms" aria-hidden="true">upload</span>Import bank accounts from CSV or Excel</summary>
+    <summary><span class="ms" aria-hidden="true">upload</span>Load bank accounts from CSV or Excel</summary>
     <div class="stack imp-pane">
     {{ imp.report(b.spec) }}
     {% if b.imp_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ b.imp_error }}</div></div>{% endif %}
@@ -215,9 +215,7 @@
       </div>
     </form>
     {% else %}
-    {{ imp.file_box("/accounts/bank/upload", b.spec.accept, "A CSV or Excel file (.csv, .xlsx or .xls) of your bank accounts", "Reading…") }}
-    <p class="muted small">Or start from <a class="link" href="/accounts/bank/template.csv" download>a template with a made-up account in it</a>.</p>
-    {% endif %}
+    {{ imp.file_box("/accounts/bank/upload", b.spec.accept, "A CSV or Excel file (.csv, .xlsx or .xls) of your bank accounts", "Reading…") }}    {% endif %}
     </div>
   </details>
   {% endif %}

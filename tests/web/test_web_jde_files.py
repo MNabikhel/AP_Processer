@@ -224,7 +224,7 @@ def test_the_vendor_information_list_is_told_by_its_columns_and_shown_before_it_
     assert "55 suppliers to load: 0 already in the supplier list by their number" in summary
     assert "Left out: 1 row of totals at the end." in summary and "Tax ID: " in summary and "Currency: CAD" in summary
     assert '<b>Tax ID</b> <span class="muted">as</span> “Tax ID”' in summary
-    assert '<b>Business unit number</b> <span class="muted">as</span> “Business Unit”' in summary  # (B-2484)
+    assert '<b>Business unit number</b> <span class="muted">as</span> “Business Unit”' in summary  # (B-2480)
     assert (
         re.search(r"Load [\d,]+ suppliers?</button>", summary) and "/vendors?file=" not in summary
     )  # its columns are not picked
@@ -1234,7 +1234,7 @@ def test_getting_started_is_not_ticked_while_the_business_units_offer_another_co
 
 
 def test_vendors_says_its_suppliers_came_from_jd_edwards_files_and_warns_before_a_list_on_top(client, store, exports):
-    """B-2480: after the suppliers were loaded on JD Edwards files, Vendors said "55 vendors in the vendor master ·
+    """B-2476: after the suppliers were loaded on JD Edwards files, Vendors said "55 vendors in the vendor master ·
     Imported from the ERP" with no link there, and its own import added another list on top without a word, where GL
     accounts & tax warns first."""
     token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.SUPPLIERS_FILE))
@@ -1258,7 +1258,7 @@ def test_vendors_says_its_suppliers_came_from_jd_edwards_files_and_warns_before_
 
 
 def test_getting_started_never_ticks_the_company_a_new_installation_starts_with(tmp_path, exports):
-    """B-2482: on a fresh install Getting started ticked "JD Edwards settings ✓ company 00001, 0 accounts mapped",
+    """B-2478: on a fresh install Getting started ticked "JD Edwards settings ✓ company 00001, 0 accounts mapped",
     then turned it to to-do once the business units were loaded (another company): a step went backwards. The
     company a new installation starts with is to do until a person saves settings of their own or the business units
     loaded are that company."""
@@ -1299,7 +1299,7 @@ EVERY_FILE = (
 
 
 def test_each_cards_check_lands_on_the_file_shown_so_its_load_is_in_view(client, exports):
-    """B-2483: after Check, the page landed on the card's top, so on a laptop (1366 x 768, 911 x 600) the vendor
+    """B-2479: after Check, the page landed on the card's top, so on a laptop (1366 x 768, 911 x 600) the vendor
     information list's Load (card 3) and the voucher list's (card 5) were below the fold. Every card's Check lands on
     the file it shows (``#<card>-summary``): its verdict and its Load."""
     for card, name in EVERY_FILE:
@@ -1312,7 +1312,7 @@ def test_each_cards_check_lands_on_the_file_shown_so_its_load_is_in_view(client,
 
 
 def test_in_a_browser_each_cards_load_is_in_view_after_check_on_a_laptop(chromium, store, exports, tmp_path):
-    """B-2483, in a browser: at 1366 x 768 and 911 x 600, after each card's Check the Load button is on screen."""
+    """B-2479, in a browser: at 1366 x 768 and 911 x 600, after each card's Check the Load button is on screen."""
     from ap_coder.core.store import Store
     from tests.browser import browser_on
 
@@ -1337,7 +1337,7 @@ def test_in_a_browser_each_cards_load_is_in_view_after_check_on_a_laptop(chromiu
 
 
 def test_the_vendor_information_lists_two_business_unit_columns_say_number_and_name(client, exports):
-    """B-2484: the vendor information list's two "Business Unit" chips read "Business Unit (the 1st of that name)"
+    """B-2480: the vendor information list's two "Business Unit" chips read "Business Unit (the 1st of that name)"
     and "Business Unit (business unit name)": the first is the business unit's number, and says so. The columns read
     are the same: the first by that name the number, the second the name."""
     from ap_coder.coding import vendor_info

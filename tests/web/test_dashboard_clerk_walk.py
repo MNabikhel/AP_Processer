@@ -149,7 +149,7 @@ def test_the_vendor_master_duplicates_warning_is_about_the_last_import(client):
     assert "1 name is shared by more than one supplier number" in import_file("vendors.csv", twice)
     once = head + "V1,Northwind IT Solutions Inc.,Net 30\nV3,Chinook,Net 15\n"
     page = import_file("vendors_fixed.csv", once)
-    assert "Vendor master:" in page and "more than once" not in page and "more than one supplier number" not in page
+    assert "Loaded: " in page and "more than once" not in page and "more than one supplier number" not in page
 
 
 class _Tables(HTMLParser):

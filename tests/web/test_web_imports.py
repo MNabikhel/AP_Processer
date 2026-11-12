@@ -91,8 +91,11 @@ def _import(client, key: str, token: str, html: str):
 
 
 def _check(html: str, key: str) -> str:
-    """The header check of the file shown (``_import.html``'s preview)."""
-    return html.split(f'aria-label="The columns of {escape(SPECS[key].title)} in this file"', 1)[1].split("</ul>", 1)[0]
+    """The header check of the file shown (``_import.html``'s preview), named by its spec's title or, on Exports,
+    the page's own name of the list (B-2473)."""
+    title = re.escape(str(escape(SPECS[key].title)))
+    head = re.search(rf'aria-label="The columns of ({title}|Invoices already in [^"]+) in this file"', html)
+    return html[head.end() :].split("</ul>", 1)[0]
 
 
 @pytest.mark.parametrize("key", list(PAGES))
@@ -127,7 +130,7 @@ def test_an_uploaded_file_shows_each_column_found_or_missing_and_is_refused_with
     before = PAGES[key][6](store)
     refused = _import(client, key, token, html)
     assert refused.status_code == 400 and refused.json()["error"] == (f"Pick the column for: {needed.label}. Nothing "
-                                                                      "was imported.")  # fmt: skip
+                                                                      "was loaded.")  # fmt: skip
     assert PAGES[key][6](store) == before
 
 
@@ -198,7 +201,7 @@ def test_the_gl_map_is_shown_then_imported_and_one_without_its_gl_code_column_is
                              headers=PAGE)  # fmt: skip
         html = client.get(answer.json()["redirect"]).text
         assert '<b>GL code</b> <span class="muted">as</span> “GL Code”' in _check(html, "gl_map")
-        assert "2 mapping rows to import." in html and jde_settings.load(store).gl_map in (before, gl_map)
+        assert "2 mapping rows to load." in html and jde_settings.load(store).gl_map in (before, gl_map)
         token = parse_qs(urlsplit(answer.json()["redirect"]).query)["gl_map"][0]
         done = post(client, "/settings/jde/gl-map/import", {"token": token, "replace": "1"})
         assert done.status_code == 200, done.text
@@ -361,7 +364,7 @@ def test_a_jd_edwards_report_is_refused_on_every_column_picker_naming_its_card(c
             answer = client.post(url, files={"file": (name, (jde / name).read_bytes())}, headers=PAGE)
             assert answer.status_code == 400, (key, name)
             said = answer.json()["error"]
-            assert said.startswith("Not imported: this file is ") and f"under {card}" in said, (key, name, said)
+            assert said.startswith("Not loaded: this file is ") and f"under {card}" in said, (key, name, said)
     assert sorted(a["code"] for a in store.list_accounts("gl_accounts")) == before
     assert store.master_vendors() == [] and store.erp_register_count() == 0
     # Chosen on the page from a workbook's other sheet, at the import too.
@@ -461,7 +464,7 @@ def test_vendors_refuses_the_vendor_information_list_naming_its_card(client, sto
     answer = client.post("/vendors/master/upload", files={"file": (made.VENDOR_INFO_FILE,
                          (jde / made.VENDOR_INFO_FILE).read_bytes())}, headers=PAGE)  # fmt: skip
     assert answer.status_code == 400
-    assert answer.json()["error"] == import_specs.elsewhere("vendor_info", verb="imported")
+    assert answer.json()["error"] == import_specs.elsewhere("vendor_info")
     assert "under 3. Suppliers" in answer.json()["error"] and store.master_vendors() == []
 
 
@@ -551,7 +554,7 @@ def test_in_a_browser_after_check_and_load_the_focus_is_on_what_the_page_says(ch
         page.locator("button[data-imp-go]").click()
         page.wait_for_selector(".imp-preview", state="detached")
         page.wait_for_function("document.activeElement.classList.contains('flash')")
-        assert "Vendor master: 1 added" in page.evaluate(FOCUSED)[3]
+        assert "Loaded: 1 added" in page.evaluate(FOCUSED)[3]
         page.goto(base + "/jde-files")
         page.locator("#units input[type=file]").set_input_files(str(jde / made.UNITS_FILE))
         page.locator("#units .imp-upload button[type=submit]").click()
@@ -671,7 +674,7 @@ def test_the_words_beside_a_load_button_say_load(client):
     past = _xlsx([["Vendor", "Description", "GL Code"], ["A", "B", "6100"]])
     answer = client.post("/learning/history/upload", headers=PAGE, files={"file": ("past.xlsx", past)})
     page = client.get(answer.json()["redirect"]).text
-    assert "Check the columns below, then load." in page and "then teach" not in page
+    assert "Check them, then load." in page and "then teach" not in page
     html, _token = _upload(client, "gl_accounts", [["Postal Code", "Company Name"], ["T5H 1L2", "Bracken"]])
     assert "Check each below before you load." in html and "before you import" not in html
 
@@ -682,3 +685,112 @@ def test_the_invoices_already_in_the_erp_are_named_as_their_list_is_when_loaded(
     html, token = _upload(client, "erp_register", PAGES["erp_register"][5])
     page = client.get(_import(client, "erp_register", token, html).json()["redirect"]).text
     assert "Invoices already in your ERP: 1 invoice on the list now." in page and "known." not in page
+
+
+def test_a_needed_column_named_twice_is_picked_by_the_person_and_that_one_is_loaded(client, store):
+    """B-2469: GL accounts with "Code" twice (a junk column first) said in green "found by its name" and loaded the
+    junk column; so did a vendor list with "Vendor Name" twice; the choices offered pandas' "Code.1". The page says
+    which name is there twice, picks none of them, offers each as the file names it and which ("Code (2nd)"), and the
+    one picked is the one loaded."""
+    for key, header, junk, real in (("gl_accounts", "Code", "ZZZ", "6010"),
+                                    ("vendor_master", "Vendor Name", "ZZZ", "Acme Ltd")):  # fmt: skip
+        field = SPECS[key].required[0].field
+        html, token = _upload(client, key, [[header, "Description", header], [junk, "IT Hardware", real]])
+        assert "Every column" not in html and f"Named twice in this file: “{header}”" in html, key
+        assert _offered(html)[field] == "" and " data-imp-go disabled" in html, key
+        picker = re.search(rf'<select name="col_{field}">(.*?)</select>', html, re.S).group(1)
+        options = {label: value for value, label in re.findall(r'<option value="([^"]*)">([^<]*)</option>', picker)}
+        assert {f"{header} (1st)", f"{header} (2nd)"} <= set(options) and f"{header}.1" not in options, options
+        _url, url, _name, token_field, _page, _rows, _held = PAGES[key]
+        refused = post(client, url, {token_field: token, f"col_{field}": ""})
+        assert refused.status_code == 400, key
+        loaded = post(client, url, {token_field: token, f"col_{field}": options[f"{header} (2nd)"]})
+        assert loaded.status_code == 200 and loaded.json()["ok"], loaded.text
+    assert [a["code"] for a in store.list_accounts("gl_accounts") if a["code"] in ("ZZZ", "6010")] == ["6010"]
+    assert [v["display_name"] for v in store.master_vendors()] == ["Acme Ltd"]
+
+
+def test_a_gl_account_list_with_an_ordinary_code_header_is_not_said_guessed(client):
+    """B-2470: GL accounts headed "GL Code" (Past coding's and the GL map's own template header), "Account Number" or
+    "GL Account" said "Guessed by a word in the header… check each"; they are names of the code, as "Code" is."""
+    for header in ("GL Code", "Account Number", "GL Account"):
+        html, _token = _upload(client, "gl_accounts", [[header, "Description"], ["6010", "IT Hardware"]])
+        assert "Guessed by a word" not in html and "Every column" in html, header
+        assert _offered(html)["code"] == header
+    html, _token = _upload(client, "gl_accounts", [["Postal Code", "Company Name"], ["T5H 1L2", "Bracken"]])
+    assert "Guessed by a word" in html
+
+
+def test_past_coding_shows_one_verdict_and_its_way_back_says_choose_another_file(client):
+    """B-2471: Learning showed a green "Read past_miss.xlsx: 1 line. Check the columns below, then load." above the
+    amber "Not found by its name: GL account", and its button back said Cancel, where every other import shows one
+    verdict and says "Choose another file"."""
+    html, _token = _upload(client, "past_coding", [["Vendor", "Description"], ["Acme Ltd", "Paper"]])
+    assert "Not found by its name: GL account." in html
+    assert "Read list.xlsx" not in html and len(re.findall(r'class="flash (?:ok|warn|err)\b', html)) == 1
+    assert "Choose another file</a>" in html and ">Cancel</a>" not in html
+
+
+_IMPORT_WORDS = re.compile(r"Imported[: ]|Taught \d|Vendor master: \d|mapping rows? (imported|to import)|Not "
+                           r"imported|othing was imported|Import [\w ]+ from CSV|\(imported\)")  # fmt: skip
+
+
+def test_every_import_says_loaded_in_its_results_refusals_titles_and_buttons(client, store, jde):
+    """B-2472: behind Load buttons the pages said "Imported: 12 added…", "Imported 8 POs…", "Vendor master: 10
+    added", "Taught 10 past lines", "1 mapping row imported", "Not imported:" (but "Not loaded:" on JD Edwards files),
+    "Import … from CSV or Excel" and "Vendor master from the ERP (imported)"; Exports' button was a bare Load. One
+    pattern: "Loaded: N added, M updated", "Not loaded:", "Load <thing>"."""
+    from ap_coder.bench import jde_exports as made
+
+    for key in PAGES:
+        html, token = _upload(client, key, PAGES[key][5])
+        assert not _IMPORT_WORDS.search(html), (key, _IMPORT_WORDS.search(html))
+        page = client.get(_import(client, key, token, html).json()["redirect"]).text
+        assert not _IMPORT_WORDS.search(page), (key, _IMPORT_WORDS.search(page))
+        assert key == "erp_register" or "Loaded: " in page, key
+        assert "Load</button>" not in page, key
+    assert "Load invoices</button>" in _upload(client, "erp_register", PAGES["erp_register"][5])[0]
+    answer = client.post("/settings/jde/gl-map/upload", headers=PAGE,
+                         files={"file": ("map.csv", b"GL Code,BU,Object\r\n6010,100,6010\r\n")})  # fmt: skip
+    token = parse_qs(urlsplit(answer.json()["redirect"]).query)["gl_map"][0]
+    shown = client.get(answer.json()["redirect"]).text
+    assert "1 mapping row to load." in shown and not _IMPORT_WORDS.search(shown)
+    page = client.get(post(client, "/settings/jde/gl-map/import", {"token": token}).json()["redirect"]).text
+    assert "Loaded: 1 added, 0 updated." in page and not _IMPORT_WORDS.search(page)
+    chart = (jde / made.CHART_FILE).read_bytes()
+    for url in PICKERS.values():
+        answer = client.post(url, files={"file": (made.CHART_FILE, chart)}, headers=PAGE)
+        assert answer.status_code == 400 and answer.json()["error"].startswith("Not loaded: "), url
+    refused = post(
+        client,
+        "/accounts/gl_accounts/import",
+        {"file": _upload(client, "gl_accounts", [["Description"], ["Paper"]])[1]},
+    )
+    assert refused.json()["error"] == "Pick the column for: Code. Nothing was loaded."
+
+
+def test_exports_names_the_invoices_already_in_the_erp_as_its_section_does(client, store):
+    """B-2473: with JD Edwards in use Exports' section said "Invoices already in JD Edwards" but the file shown was
+    "Invoices already in the ERP", the file box "The ERP's invoice list" and the duplicate audit "the ERP invoice
+    register". One name, as B-2425 gave the section: JD Edwards' when it is in use, else "your ERP"."""
+    from ap_coder.web.core import SHOW_JDE
+
+    for shown, erp in (("1", "JD Edwards"), ("0", "your ERP")):
+        store.set_setting(SHOW_JDE, shown)
+        page = " ".join(client.get("/exports").text.split())
+        assert "ERP invoice register" not in page and "The ERP&#39;s invoice list" not in page, erp
+        assert "in the ERP" not in page.split('id="register"', 1)[1].split('id="audit"', 1)[0], erp
+        assert f"the invoices already in {erp} when loaded" in page.split('id="audit"', 1)[1], erp
+        html, _token = _upload(client, "erp_register", PAGES["erp_register"][5])
+        pill = html.split('class="imp-is"', 1)[1].split("</span></span>", 1)[0]
+        assert f"Invoices already in {erp}" in pill, (erp, pill)
+        assert "already in the ERP" not in html.split('id="register"', 1)[1].split('id="audit"', 1)[0], erp
+
+
+def test_every_import_page_offers_one_template(client):
+    """B-2474: Purchase orders and Bank accounts offered two templates, the blank .xlsx of every import and, under
+    Check the file, "Or start from a template with an example…" (.csv). One, as on every other page."""
+    for key in PAGES:
+        page = client.get(PAGES[key][4]).text
+        assert len(re.findall(r"<a [^>]*template[^>]*download", page)) == 1, key
+        assert "Or start from" not in page, key

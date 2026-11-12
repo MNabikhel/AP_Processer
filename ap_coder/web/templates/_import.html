@@ -12,7 +12,7 @@
 
 {# Who does what this person may not, in a sentence: on the company server the roles' words (``server``); on the laptop
    shared on the office network, which has no sign-in and so no Admin, the computer running AP Coder (``here``: "These
-   files are loaded", B-2481). #}
+   files are loaded", B-2477). #}
 {% macro done_by(server, here) %}{{ server if server_mode else here ~ " on the computer running AP Coder." }}{% endmacro %}
 
 {# 1st, 2nd, 3rd, 4th... #}
@@ -91,17 +91,19 @@
 {# An uploaded file as the import sees it, nothing kept yet: its name and rows, which report it is, each column found
    as which header or missing, its other columns and its first rows. The caller draws the Load and Cancel buttons.
    ``look.pick``: its columns are picked on the page (files.spec_sheet): what was not found by its name is to pick
-   (``look.unfound``), and its first rows are shown in every column, to pick from. ``look.done`` and ``look.go``: what
+   (``look.unfound``), as is a needed one whose name the file has twice (``look.twice``), and its first rows are shown
+   in every column, to pick from. ``look.done`` and ``look.go``: what
    the page does with it, when it is not imported ("compared", "reconcile"); ``look.compared``: what it was compared
-   with, once it was. The verdict takes the focus when the page opens on it (imports.js). #}
+   with, once it was; ``look.title``: the report's name as the page names it, when not its spec's title. The verdict
+   takes the focus when the page opens on it (imports.js). #}
 {% macro preview(look, card_id) %}
 <div class="imp-preview stack" id="{{ card_id }}-summary">
   <p class="imp-file"><span class="ms" aria-hidden="true">description</span><b>{{ look.name }}</b>{% if look.size %} · {{ look.size }}{% elif look.count is number %} · {{ look.count | plural("row") }}{% endif %} · {% if look.already %}loaded already.{% elif look.compared %}{{ look.compared }}{% else %}this file is not {{ look.done or "loaded" }} yet.{% endif %}
-    {% if look.spec and not look.belongs and look.check and look.check.found %}<span class="imp-is">{{ ui.pill(look.spec.title, "info") }}</span>{% endif %}</p>
+    {% if look.spec and not look.belongs and look.check and look.check.found %}<span class="imp-is">{{ ui.pill(look.title or look.spec.title, "info") }}</span>{% endif %}</p>
   {% if look.problem %}
   <div class="flash err imp-verdict" tabindex="-1" role="alert"><span class="ms" aria-hidden="true">block</span><div>{{ look.problem }}</div></div>
-  {% elif look.pick and look.unfound %}
-  <div class="flash warn imp-verdict" tabindex="-1" role="status"><span class="ms" aria-hidden="true">touch_app</span><div>Not found by {{ "its name" if look.unfound | length == 1 else "their names" }}: {{ look.unfound | join("; ") }}. Pick {{ "its column" if look.unfound | length == 1 else "their columns" }} below: nothing is loaded without {{ "it" if look.unfound | length == 1 else "them" }}.</div></div>
+  {% elif look.pick and (look.unfound or look.twice) %}{% set n = (look.unfound | length) + (look.twice | default([]) | length) %}
+  <div class="flash warn imp-verdict" tabindex="-1" role="status"><span class="ms" aria-hidden="true">touch_app</span><div>{% if look.unfound %}Not found by {{ "its name" if look.unfound | length == 1 else "their names" }}: {{ look.unfound | join("; ") }}. {% endif %}{% if look.twice %}Named twice in this file: {{ look.twice | join("; ") }}. {% endif %}{% if n == 1 and look.twice %}Pick which one it is{% else %}Pick {{ "its column" if n == 1 else "their columns" }}{% endif %} below: nothing is loaded without {{ "it" if n == 1 else "them" }}.</div></div>
   {% elif look.pick and look.guessed %}
   <div class="flash warn imp-verdict" tabindex="-1" role="status"><span class="ms" aria-hidden="true">help</span><div>Guessed by a word in the header, not found by its name: {{ look.guessed }}. Check each below before you {{ look.go or "load" }}.</div></div>
   {% elif look.pick %}
@@ -112,11 +114,11 @@
   {{ caller() }}
   {% if look.check %}
   <{{ sub_h() }} class="imp-sub">Columns</{{ sub_h() }}>
-  <ul class="imp-check" aria-label="The columns of {{ look.spec.title }} in this file">
+  <ul class="imp-check" aria-label="The columns of {{ look.title or look.spec.title }} in this file">
     {% for item in look.check.rows() %}{% set c = item.column %}
     {% set state = "ok" if item.header else ("miss" if c.required or (c.field in look.spec.one_of and look.check.none_of) else "opt") %}
     <li class="{{ state }}"><span class="ms" aria-hidden="true">{{ {"ok": "check_circle", "miss": "cancel", "opt": "remove"}[state] }}</span>
-      <span><b>{{ c.label }}</b>{% if item.header %} <span class="muted">as</span> “{{ header_name(item.header, look.check.headers) }}”{% set same = look.check.rows() | selectattr("header", "equalto", item.header) | list %}{% if same | length > 1 %}{% for other in same %}{% if other.column.field == c.field %} <span class="muted">(the {{ nth(loop.index) }} of {{ same | length }} by that name)</span>{% endif %}{% endfor %}{% endif %}{% if c.field in look.check.guessed %} <span class="imp-tag">guessed: check it</span>{% endif %}{% elif state == "miss" %} <span class="imp-tag bad">missing: “{{ c.header }}”</span>{% else %} <span class="muted">not in this file (optional)</span>{% endif %}</span></li>
+      <span><b>{{ c.label }}</b>{% if item.header %} <span class="muted">as</span> “{{ header_name(item.header, look.check.headers) }}”{% set same = look.check.rows() | selectattr("header", "equalto", item.header) | list %}{% if same | length > 1 %}{% for other in same %}{% if other.column.field == c.field %} <span class="muted">(the {{ nth(loop.index) }} of {{ same | length }} by that name)</span>{% endif %}{% endfor %}{% endif %}{% if c.field in look.check.guessed %} <span class="imp-tag">guessed: check it</span>{% endif %}{% if look.pick and c in look.check.twice %} <span class="imp-tag">named twice: pick which</span>{% endif %}{% elif state == "miss" %} <span class="imp-tag bad">missing: “{{ c.header }}”</span>{% else %} <span class="muted">not in this file (optional)</span>{% endif %}</span></li>
     {% endfor %}
   </ul>
   {% if look.check.unused %}
