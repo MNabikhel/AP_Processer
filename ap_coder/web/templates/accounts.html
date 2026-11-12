@@ -208,9 +208,7 @@
       </div>
     </form>
     {% else %}
-    {{ imp.file_box("/accounts/bank/upload", b.spec.accept, "A CSV or Excel file (.csv, .xlsx or .xls) of your bank accounts", "Reading…") }}
-    <p class="muted small">Or start from <a class="link" href="/accounts/bank/template.csv" download>a template with a made-up account in it</a>.</p>
-    {% endif %}
+    {{ imp.file_box("/accounts/bank/upload", b.spec.accept, "A CSV or Excel file (.csv, .xlsx or .xls) of your bank accounts", "Reading…") }}    {% endif %}
     </div>
   </details>
   {% endif %}

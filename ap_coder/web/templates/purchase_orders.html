@@ -28,9 +28,7 @@
   </form>
   {% endif %}
   {% elif can("/purchase-orders/upload") %}
-  {{ imports.file_box("/purchase-orders/upload", spec.accept, "PO lines, a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…") }}
-  <p class="muted small">Or start from <a class="link" href="/purchase-orders/template.csv" download>a template with an example line in it</a>.</p>
-  {% else %}<p class="muted">An Admin imports the purchase orders.</p>{# server mode (D-98) #}
+  {{ imports.file_box("/purchase-orders/upload", spec.accept, "PO lines, a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…") }}  {% else %}<p class="muted">An Admin imports the purchase orders.</p>{# server mode (D-98) #}
   {% endif %}
   </div>
   {% if not pos and can("/purchase-orders/sample") %}

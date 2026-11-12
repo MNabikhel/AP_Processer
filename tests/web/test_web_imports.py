@@ -780,3 +780,12 @@ def test_exports_names_the_invoices_already_in_the_erp_as_its_section_does(clien
         pill = html.split('class="imp-is"', 1)[1].split("</span></span>", 1)[0]
         assert f"Invoices already in {erp}" in pill, (erp, pill)
         assert "already in the ERP" not in html.split('id="register"', 1)[1].split('id="audit"', 1)[0], erp
+
+
+def test_every_import_page_offers_one_template(client):
+    """B-2474: Purchase orders and Bank accounts offered two templates, the blank .xlsx of every import and, under
+    Check the file, "Or start from a template with an example…" (.csv). One, as on every other page."""
+    for key in PAGES:
+        page = client.get(PAGES[key][4]).text
+        assert len(re.findall(r'<a [^>]*template[^>]*download', page)) == 1, key
+        assert "Or start from" not in page, key
