@@ -35,7 +35,7 @@ from fastapi import Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from markupsafe import Markup
 
-from ap_coder.core import authenticator
+from ap_coder.core import authenticator, paths
 from ap_coder.core.store.users import (
     ACCOUNT_PAUSED,
     ADMIN,
@@ -128,7 +128,11 @@ def _loopback_name(host: str) -> bool:
 
 
 def _here_only(request: Request) -> str:
-    """``FIRST_HERE_ONLY``, with the address to open on the computer running AP Coder."""
+    """``FIRST_HERE_ONLY``, with the address to open on the computer running AP Coder; behind a proxy (``--proxy``),
+    where no browser makes the first sign-in, the console's command instead."""
+    if getattr(request.app.state, "proxy", None):
+        return (f"{FIRST_HERE_ONLY} Behind a proxy this way is off: add the first Admin in a command window on the "
+                "server with python -m ap_coder users add --admin <username>.")  # fmt: skip
     port = request.url.port or (443 if request.url.scheme == "https" else 80)
     return f"{FIRST_HERE_ONLY} On that computer, open {request.url.scheme}://127.0.0.1:{port}."
 
@@ -432,6 +436,10 @@ def first_save(request: Request, name: str = Form(""), new: str = Form(""), agai
         user_id = store.add_first_admin(new, shown)
     except ValueError as exc:
         return refuse(str(exc))
+    if not server_mode(request) and shown != reviewer():  # a laptop's: the approvals take the name too, as in Settings
+        rename = {"from": reviewer(), "to": shown}
+        store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["reviewer"], "reviewer": rename})
+        paths.write_user_settings(reviewer=shown)
     store.end_first_sign_in(token)
     answer = done(request, f"{identity.SET_UP_PATH}?next={quote(_next(next), safe='')}",
                   flash_message("Password saved. Now set up your authenticator app.", "ok", icon="key"))  # fmt: skip

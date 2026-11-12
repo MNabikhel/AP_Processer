@@ -129,6 +129,17 @@ def test_a_new_name_in_settings_is_the_accounts_too(store, owner):
     assert store.find_user("admin")["name"] == "Pat A. Lee" and client.get("/probe").json()["reviewer"] == "Pat A. Lee"
 
 
+def test_a_name_corrected_at_the_first_sign_in_is_the_one_on_the_approvals_too(store, owner):
+    """The page asks for the name "as it is written on your approvals": one changed there is the approvals' name as
+    well as the account's, as Settings does it, so a later ``share`` still knows the account for the owner's."""
+    client = browser(laptop(store))
+    first_sign_in(client, name="Patricia Lee")
+    assert store.find_user("admin")["name"] == "Patricia Lee"
+    assert client.get("/probe").json()["reviewer"] == "Patricia Lee"
+    renamed = store.events(actions=["settings_changed"])[0]
+    assert renamed["actor"] == "Pat Lee" and renamed["detail"]["reviewer"] == {"from": "Pat Lee", "to": "Patricia Lee"}
+
+
 def test_a_restore_on_settings_keeps_the_laptops_admin_and_its_sign_in(store, owner):
     backup = store.backup_now()  # from before the sign-in
     client = browser(laptop(store))
