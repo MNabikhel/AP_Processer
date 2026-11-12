@@ -115,7 +115,8 @@ def test_a_line_item_naming_a_province_under_a_ship_to_label_is_not_the_ship_to(
     own address gave none was taken as the ship-to, so the place of supply; a ship-to only named still is."""
     from ap_coder.ai.offline_coder import addresses
 
-    text = "Acme Supply Ltd.\n123 Bank St, Ottawa, ON K1P 1J9\nShip to:\nAcme site\nDescription\nHotel stay - Montreal, Quebec\n"
+    letterhead = "Acme Supply Ltd.\n123 Bank St, Ottawa, ON K1P 1J9\n"
+    text = f"{letterhead}Ship to:\nAcme site\nDescription\nHotel stay - Montreal, Quebec\n"
     assert addresses(text)[1] == ""
     assert (
         addresses("Acme Supply Ltd.\n123 Bank St, Ottawa, ON K1P 1J9\nShip to:\nSite 4\nMontreal, Quebec\n")[1] == "QC"
