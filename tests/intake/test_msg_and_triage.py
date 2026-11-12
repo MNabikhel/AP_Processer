@@ -233,7 +233,7 @@ def test_a_credit_memo_a_statement_lists_or_avoir_in_a_sentence_is_no_credit_not
 @pytest.mark.parametrize(
     "text",
     [
-        "Northwind Supply Ltd.          CREDIT MEMO\nCredit # CM-1002\nReturn of goods shipped on packing slip PS-5521\n"
+        "Northwind Supply Ltd.      CREDIT MEMO\nCredit # CM-1002\nReturn of goods shipped on packing slip PS-5521\n"
         "Total credit -56.50",
         "Northwind Supply Ltd.   CREDIT MEMO\nRMA 5521 - Purchase order 4410\nTotal -56.50",
         "Northwind Supply Ltd.   Credit Note\nRe: order confirmation 4410\nTotal -56.50",
