@@ -447,6 +447,7 @@
         <label class="field">Follow up on<input type="date" name="follow_up" min="{{ today }}"></label>
         {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
         {% if nav.next_id %}<input type="hidden" name="next_id" value="{{ nav.next_id }}">{% endif %}
+        <input type="hidden" name="rev" value="{{ rev }}">{# refused from a screen out of date, as Approve (D-184) #}
         <button class="btn" type="submit"><span class="ms" aria-hidden="true">pause_circle</span>Park</button>
       </form>
       {% if can("/review/1/manager") and not simple_screens %}{# (manager confirmations: hidden in Simple screens) #}
@@ -475,6 +476,7 @@
         <label class="field">Reason<input type="text" name="reason" placeholder="e.g. not our invoice"></label>
         {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
         {% if nav.next_id %}<input type="hidden" name="next_id" value="{{ nav.next_id }}">{% endif %}
+        <input type="hidden" name="rev" value="{{ rev }}">
         <button class="btn" type="submit"><span class="ms" aria-hidden="true">block</span>Reject</button>
       </form>
     </details>

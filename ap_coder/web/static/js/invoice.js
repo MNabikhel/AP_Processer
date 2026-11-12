@@ -1737,9 +1737,11 @@ if (reader) {
   }, { everyMs: every, firstMs: every, mostMs: 60000 });
 }
 
-// Approve or Send to the manager from a screen out of date: said as its check says it, what was typed kept (B-1936)
+// Approve, Send to the manager, Park or Reject from a screen out of date: said as its check says it, what was typed
+// kept (B-1936, B-2533)
 document.addEventListener("apc:stale", (event) => {
-  if (event.detail.form === form) showStale(event.detail.stale);
+  const from = event.detail.form;
+  if (from === form || from.closest?.("[data-park], [data-reject]")) showStale(event.detail.stale);
 });
 
 /** The approve bar's draft revision (each check draws it again, D-184). */

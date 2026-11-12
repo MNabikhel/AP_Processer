@@ -75,6 +75,16 @@ def test_bringing_it_back_or_deleting_it_withdraws_the_request(store):
     assert store.manager_request(rid2)["status"] == WITHDRAWN and store.waiting_manager_requests() == []
 
 
+def test_rejecting_it_withdraws_the_request(store):
+    """B-2533: an invoice waiting for its manager and rejected left the request waiting: listed on the manager's page,
+    and the manager's answer was recorded on a rejected invoice. Rejecting withdraws it, as bringing it back does."""
+    iid, rid = _sent(store)
+    store.reject_invoice(iid, "Ann", "not ours")
+    assert store.manager_request(rid)["status"] == WITHDRAWN and store.waiting_manager_requests() == []
+    with pytest.raises(ValueError):
+        store.answer_manager_request(rid, CONFIRMED, by="Bob", actor="Bob")
+
+
 def test_a_manager_account_sees_only_its_own_requests(store):
     _iid, rid = _sent(store, manager_user=7)
     _sent(store, manager_user=8)

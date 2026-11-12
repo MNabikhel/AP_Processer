@@ -367,6 +367,7 @@ class InvoicesMixin:
                     f"invoice {invoice_id} cannot be rejected (approved, rejected or deleted meanwhile: only an "
                     "invoice in the review queue or parked can be)"
                 )
+            self.withdraw_manager_requests(invoice_id, reviewer, conn)  # rejected before the manager answered
             layout = self._forget_learning(conn, invoice_id)
             self._log(conn, "rejected", invoice_id, reviewer, {"reason": reason, **layout})
             row = conn.execute("SELECT vendor_name, vendor_key, invoice_number FROM invoices WHERE id = ?",
