@@ -798,3 +798,17 @@ def test_an_emails_attachment_repeating_another_is_said_repeated_not_sent_to_the
     mail = unpack(tmp_path / "mail.eml")
     lines = _email_lines(store, [mail], _read_saved([mail], []), include_failed=False)
     assert lines[0]["text"] == "mail.eml: Invoice; 2 invoices to the review queue, 1 repeated"
+
+
+def test_two_attachments_that_could_not_be_read_are_not_said_repeated(store, tmp_path):
+    """B-2526 keyed each attachment by its SHA-256: two with none (not read) had the same key, None, and the second
+    was said repeated."""
+    from ap_coder.intake.mailbox import unpack
+    from ap_coder.web.pages.process import _email_lines
+    from tests.ops.test_cli_exports_and_data import _repeating_email
+
+    _repeating_email(tmp_path / "mail.eml")
+    mail = unpack(tmp_path / "mail.eml")
+    mail.saved, mail.repeated = mail.saved[:2], 0  # the two invoices that differ, neither read
+    lines = _email_lines(store, [mail], [], include_failed=False)
+    assert lines[0]["text"] == "mail.eml: Invoice; 2 invoices to the review queue"
