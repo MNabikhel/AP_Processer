@@ -364,15 +364,7 @@ def store_checks(store: Any, server: bool) -> list[Check]:
 
     checks: list[Check] = []
     if server:
-        count = store.user_count()
-        if count:
-            admins = sum(1 for u in store.list_users() if u["role"] == "admin" and u["active"])
-            checks.append(Check("server accounts", PASS if admins else FAIL,
-                                f"{count} account(s), {admins} active Admin(s)" if admins else f"{count} account(s), "
-                                "but no active Admin: python -m ap_coder users add --admin <name>"))  # fmt: skip
-        else:
-            checks.append(Check("server accounts", FAIL, "no accounts: nobody can log in: python -m ap_coder users add "
-                                "--admin <name>"))  # fmt: skip
+        checks.append(_server_accounts(store))
         from .health import store_rows
 
         checks += [Check(*row) for row in store_rows(store)]
@@ -415,6 +407,32 @@ def store_checks(store: Any, server: bool) -> list[Check]:
             checks.append(Check("finance hub last run", PASS if ok else WARN,
                                 f"{last.get('at')}: {last.get('summary') or last.get('error') or ''}"))  # fmt: skip
     return checks
+
+
+def _server_accounts(store: Any) -> Check:
+    """Whether people can log in to the company server (B-2525): an account, an active Admin whose password still
+    logs in (not a temporary one past its 3 days), and the key that opens the authenticator codes once an app is set
+    up."""
+    from ..core import authenticator
+
+    users = store.list_users()
+    if not users:
+        return Check("server accounts", FAIL, "no accounts: nobody can log in: python -m ap_coder users add --admin "
+                     "<name>")  # fmt: skip
+    admins = [u for u in users if u["role"] == "admin" and u["active"]]
+    if not admins:
+        return Check("server accounts", FAIL, f"{len(users)} account(s), but no active Admin: python -m ap_coder users "
+                     "add --admin <name>")  # fmt: skip
+    if any(u["totp_on"] for u in users) and authenticator.load_key(store.path.parent) is None:
+        return Check("server accounts", FAIL, f"the sign-in codes' key ({authenticator.KEY_FILE} in the data folder) "
+                     "is missing or damaged: no authenticator code is accepted, so nobody can log in. Put it back from "
+                     "a backup, or reset each person's app: python -m ap_coder users reset-2fa <name>")  # fmt: skip
+    if all(u["must_change"] and store._temporary_expired(u) for u in admins):
+        name = admins[0]["username"] if len(admins) == 1 else "<name>"
+        return Check("server accounts", FAIL, f"no Admin can log in: the temporary password of "
+                     f"{', '.join(u['username'] for u in admins)} has expired (it lasts 3 days): python -m ap_coder "
+                     f"users reset {name}")  # fmt: skip
+    return Check("server accounts", PASS, f"{len(users)} account(s), {len(admins)} active Admin(s)")
 
 
 def _provider_detail(provider: str) -> str:

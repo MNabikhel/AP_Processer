@@ -86,9 +86,9 @@ def request_page(request: Request, request_id: int) -> HTMLResponse:
     me = _me()
     answerable = req["status"] == WAITING and _is_manager() and me is not None and req["manager_user"] == me.user_id
     total = sum(li["amount"] for li in req["lines"])
-    mine_total = sum(li["amount"] for li in req["lines"] if li["cost_center"] in set(req["cost_centers"]))
+    mine = store.managers_cost_centers(req)  # theirs, not every cost center of the invoice (B-2527)
     return render(request, "manager.html", "manager", req=req, inv=inv, pages=pages, answerable=answerable,
-                  manager_view=_is_manager(), server=server_mode(request), total=total, mine_total=mine_total,
+                  manager_view=_is_manager(), server=server_mode(request), total=total, own_centers=mine,
                   today=dt.date.today().isoformat())  # fmt: skip
 
 
@@ -206,7 +206,8 @@ def email(request: Request, request_id: int) -> Response:
     req = _request(request, request_id)
     inv = store.get_invoice(req["invoice_id"]) or {"id": req["invoice_id"]}
     source = Path(inv.get("source_path") or "")
-    body = request_email(inv, req, source if source.is_file() else None, signature=reviewer())
+    body = request_email(inv, req, source if source.is_file() else None, signature=reviewer(),
+                         mine=store.managers_cost_centers(req))  # fmt: skip
     name = f"Confirm cost allocation AP-{request_id}.eml"
     return Response(body, media_type="message/rfc822",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip

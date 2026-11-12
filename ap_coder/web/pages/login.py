@@ -20,6 +20,7 @@ On a laptop (server mode off) there are no logins: these pages send to the revie
 
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import quote
 
 from fastapi import Form, Request
@@ -27,7 +28,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from markupsafe import Markup
 
 from ap_coder.core import authenticator
-from ap_coder.core.store.users import KEY_MISSING, LOCKED, MANAGER, LoginRefused
+from ap_coder.core.store.users import ADMIN, KEY_MISSING, LOCKED, MANAGER, TEMPORARY_EXPIRED, LoginRefused
 from ap_coder.web import identity
 from ap_coder.web.core import (
     done,
@@ -52,6 +53,8 @@ NO_LOGINS = "There are no logins on this computer: AP Coder opens for whoever us
 TOO_LONG = "Your login took too long, or it ended: log in again."
 OUT_OF_STEP = "That isn't the next step of your login: reload the page."
 SIX_DIGITS = "Type the six digits your authenticator app shows (spaces don't matter)."
+ONLY_ADMIN = ("Your temporary password has expired (it lasts 3 days). You are the only Admin: for a new one, run "
+              "python -m ap_coder users reset {username} on the server.")  # fmt: skip
 QUIET = 4  # modules of white around a QR code, as the standard asks
 
 
@@ -142,7 +145,7 @@ def login_save(request: Request, username: str = Form(""), password: str = Form(
     try:
         user = store.authenticate(username, password, ip, console=from_console(request))
     except LoginRefused as exc:
-        return refuse(str(exc), 401)
+        return refuse(_refusal(store, str(exc), username), 401)
     store.end_session(_token(request))  # whatever session this browser had before: never carried over
     store.end_pending(_pending(request))  # nor a login half way
     pending = store.start_pending(user["id"])  # the password alone is no session (D-146)
@@ -160,6 +163,16 @@ def login_save(request: Request, username: str = Form(""), password: str = Form(
 
 
 # --- The steps after the password (D-146) -----------------------------------------------------------------------------
+
+
+def _refusal(store: Any, said: str, username: str) -> str:
+    """What a login refused says; to the only active Admin, whose temporary password expired, the command that gives
+    a new one: there is no other Admin to ask (B-2525). (Said only once the password matched.)"""
+    if said != TEMPORARY_EXPIRED:
+        return said
+    account = store.find_user(username) or {}
+    admins = [u["id"] for u in store.list_users() if u["role"] == ADMIN and u["active"]]
+    return ONLY_ADMIN.format(username=account["username"]) if admins == [account.get("id")] else said
 
 
 def qr_svg(text: str) -> str:

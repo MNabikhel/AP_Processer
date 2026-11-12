@@ -149,16 +149,14 @@ def setup_report(store: Any) -> str:
 
 def _make_setup_report(store: Any) -> str:
     from ap_coder.core.config import Settings
-    from ap_coder.ops.cli import _load_reference, build_parser, bundled_reference
-    from ap_coder.ops.doctor import format_checks, run_checks
+    from ap_coder.ops.cli import build_parser, doctor_checks, doctor_report
 
     args = build_parser().parse_args(["--db", str(store.path), "doctor"])
     try:
-        # with the LM Studio and page reader lines (B-1195)
-        checks = run_checks(Settings.from_env(), lambda: _load_reference(args), bundled=bundled_reference(args))
+        # the doctor's own checks, LM Studio's and the page reader's lines included (B-1195, B-2526)
+        return doctor_report(*doctor_checks(args, Settings.from_env()))
     except Exception as exc:  # noqa: BLE001 - the page that reports problems must not be one
         return f"## AP Coder doctor report\n\nThe checks could not run: {type(exc).__name__}: {exc}"
-    return format_checks(checks)
 
 
 REPORT_INVOICES = 500  # the latest invoices Report a problem summarises (a year of them is no report to paste)

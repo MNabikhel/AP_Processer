@@ -104,3 +104,33 @@ def test_the_shortcuts_list_has_the_page_viewers_keys_worded_as_on_the_review_sc
             for part in shortcut_keys(spec):
                 assert part["text"] in rows, (part, rows)
     assert help_rows.count("apc-kbd") >= 4 * 2 + 9  # the four invoice keys, and the viewer's nine
+
+
+def test_help_names_where_the_screens_show_park_and_jd_edwards_files(demo_template, tmp_path):
+    """B-2529: Help sent a clerk to "More → Park", where Park is a button of its own on the review screen's action bar;
+    and "Setup → JD Edwards files" holds in the Simple screens only: with every page shown, it is under More."""
+    import re
+
+    from ap_coder.core.store import REVIEW
+    from ap_coder.ops import help as help_text
+    from ap_coder.web.core import SCREENS, SIMPLE
+    from tests.conftest import ROOT, fill_from
+    from tests.webclient import client_for
+
+    store = fill_from(Store(tmp_path / "private" / "ap_coder.db"), demo_template)
+    client = client_for(store)
+    bar = client.get(f"/review/{store.list_invoices(REVIEW)[0]['id']}").text.split('class="inv-actionbar"', 1)[1]
+    assert re.search(r"<summary[^>]*>.*?Park</summary>", bar, re.S) and ">More<" not in bar.split("</details>")[0]
+    answers = " ".join(answer for _, answer in FAQ) + (ROOT / "docs" / "WHATS_NEW.md").read_text(encoding="utf-8")
+    assert "More → Park" not in answers
+    assert "Park button" in dict(FAQ)["An invoice is waiting for someone. Where do I put it?"]
+
+    def group_of_jde_files():
+        rail = client.get("/help").text.split('aria-label="Pages"', 1)[1].split("</nav>", 1)[0]
+        before = rail.split('href="/jde-files"', 1)[0]
+        return "Setup" if before.rfind('id="nav-setup"') > before.rfind('id="nav-more"') else "More"
+
+    assert group_of_jde_files() == "More"  # every page shown
+    store.set_setting(SCREENS, SIMPLE)
+    assert group_of_jde_files() == "Setup"
+    assert "under More" in help_text.CHART_IMPORT and "under Setup" in help_text.CHART_IMPORT

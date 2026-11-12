@@ -741,6 +741,21 @@ def test_a_temporary_password_expires_after_3_days(tmp_path):
     assert store.authenticate("ann", "another good secret", "10.0.0.5")
 
 
+def test_the_only_admin_whose_temporary_password_expired_is_told_the_command_that_resets_it(web):
+    """B-2525: the only Admin was told to "ask an Admin for a new one": there is none to ask."""
+    from tests.web.test_server_security import log_in
+
+    store = web["store"]
+    store.add_user("boss", GOOD, role="admin")  # as `users add --admin`: temporary
+    with store._conn() as conn:
+        conn.execute("UPDATE events SET created_at = '2000-01-01T00:00:00' WHERE action = 'user_added'")
+    said = log_in(web["client"](), "boss").json()["error"]
+    assert "only Admin" in said and "python -m ap_coder users reset boss" in said and "ask an Admin" not in said
+    store.add_user("kim", GOOD, role="admin", must_change=False)  # another Admin: the one to ask
+    said = log_in(web["client"](), "boss").json()["error"]
+    assert "ask an Admin" in said and "users reset" not in said
+
+
 def test_wrong_current_passwords_on_the_password_page_log_the_person_out(web):
     from tests.web.test_server_security import log_in
     from tests.webclient import PAGE
