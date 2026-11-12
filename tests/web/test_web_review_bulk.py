@@ -140,6 +140,18 @@ def test_an_invoice_edited_or_acted_on_while_the_job_ran_is_left_for_a_person(st
     assert f'href="/review/{ids[2]}"' in page and f'href="/review/{ids[3]}"' not in page  # (only those still waiting)
 
 
+def test_an_invoice_in_a_currency_not_in_use_is_left_for_a_person(store):
+    """B-2503: bulk approval checks each invoice again as it is coded, and "XYZ" (no currency in use, D-75) was said
+    only on the review screen: it was approved in bulk, a voucher in no currency."""
+    ids = _clean(store, 2)
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET ai_output = json_set(ai_output, '$.currency', 'XYZ') WHERE id = ?", (ids[0],))
+    out = bulk.bulk_approve(store, store.reference_data(), web_settings(), ids, "Pat")
+    assert out["approved"] == ids[1:] and [i for i, _why in out["skipped"]] == ids[:1]
+    assert "not a currency code in use" in out["skipped"][0][1]
+    assert store.get_invoice(ids[0])["status"] == REVIEW
+
+
 def _bulk_form(client: TestClient) -> dict[str, list[str]]:
     """The queue's bulk approval form, as the page drew it: each invoice and its stamp."""
     page = client.get("/review").text

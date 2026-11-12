@@ -73,11 +73,14 @@ LINE_COLUMNS = [
 ]  # fmt: skip
 MONEY_HEADERS = {"Subtotal", "Tax", "Total", "Net", "Non-recoverable tax", "Amount"}
 # Real dates in the workbook (Excel sorts and filters them as dates), not text (B-470); the CSV keeps YYYY-MM-DD.
-DATE_HEADERS = {"Invoice date": "yyyy-mm-dd", "Due date": "yyyy-mm-dd", "Approved at": "yyyy-mm-dd hh:mm"}
+# The invoice directory's "Approved on" and "Received" (``directory.COLUMNS``) are dates and times too.
+DATE_HEADERS = {"Invoice date": "yyyy-mm-dd", "Due date": "yyyy-mm-dd", "Approved at": "yyyy-mm-dd hh:mm",
+                "Approved on": "yyyy-mm-dd hh:mm", "Received": "yyyy-mm-dd hh:mm"}  # fmt: skip
 
 
 def _excel_date(value: Any) -> Any:
-    """'2026-10-01' -> date, '2026-10-01 14:05:09' -> datetime (seconds kept); anything else as it is."""
+    """'2026-10-01' -> date, '2026-10-01 14:05:09' or '2026-10-01T14:05:09' -> datetime (seconds kept); anything
+    else as it is."""
     if not isinstance(value, str) or not value.strip():
         return value
     text = value.strip().replace("T", " ")

@@ -210,6 +210,19 @@ def test_a_name_ending_in_a_province_s_letters_is_still_a_name(tmp_path):
     assert _not_a_name("Tusket, NS")
 
 
+def test_a_long_company_name_ending_in_its_legal_form_is_read(tmp_path):
+    names = ["Western Canada Industrial Maintenance and Mechanical Contracting Services Ltd.",
+             "Les Entreprises de Construction et de Rénovation Côté-Bélanger et Associés Ltée"]  # fmt: skip
+    for i, name in enumerate(names):
+        f = _read(_pdf(tmp_path, [(40, 40, name, 9), (40, 56, "500 Dock Road, Calgary, AB T2P 1J9"),
+                                  (420, 40, "Invoice # 1001"), *_AMOUNTS], name=f"n{i}.pdf"))  # fmt: skip
+        assert f["vendor_name"].value == name
+    # A sentence ending in a company's name is still a sentence.
+    from ap_coder.capture.reader import _not_a_name
+
+    assert _not_a_name("Please make all cheques payable to Western Canada Industrial Maintenance Ltd.")
+
+
 def test_a_large_line_over_the_supplier_is_not_taken_for_its_letterhead(tmp_path):
     # A customer's or a project's name printed large over the supplier's letterhead: the size says nothing about whose
     # name it is (the review's probes). Two names at the top: never verified, and the supplier's is not lost to it.
@@ -587,6 +600,34 @@ def test_a_deposit_on_a_taxed_invoice_leaves_the_total_for_a_person_to_check(tmp
                            ("Balance Due", "421.50")])  # fmt: skip
     assert f["grand_total"].status not in (VERIFIED, "likely")
     assert f["other_charges"].status not in (VERIFIED, "likely")
+
+
+def test_a_deposit_or_holdback_under_a_printed_total_holds_the_total_for_a_person_to_check(tmp_path):
+    # The totals add up without what is taken off after the printed total; whether the total or the amount due after
+    # it is posted is still AP's call (D-47).
+    for i, label in enumerate(["Deposit received", "Less payment received", "Less 10% holdback", "Holdback 10%",
+                               "Less: Holdback (10%)", "Retenue 10 %", "Less retainage 10%"]):  # fmt: skip
+        f = _totals(tmp_path, [("Subtotal", "550.00"), ("HST 13%", "71.50"), ("Total", "621.50"), (label, "(100.00)"),
+                               ("Balance Due", "521.50")], name=f"d{i}.pdf")  # fmt: skip
+        assert f["grand_total"].value == 621.5, label
+        assert f["grand_total"].status == "check", label
+    # A plain invoice, and a sentence about a holdback with no amount, leave the total as it is.
+    assert _totals(tmp_path, _PLAIN, name="plain.pdf")["grand_total"].status == VERIFIED
+    held = _totals(tmp_path, [*_PLAIN, "Holdback of 10% is payable within 60 days of completion."], name="note.pdf")
+    assert held["grand_total"].status == VERIFIED
+
+
+def test_a_line_item_named_for_a_deposit_or_holdback_or_a_holdback_of_nothing_leaves_the_total_as_it_is(tmp_path):
+    """B-2492 held every total of a document printing a deposit or holdback with an amount: a line item's own words
+    ("Holdback release - Phase 1 550.00") and a totals row of nothing ("Holdback 0.00") held ordinary invoices too."""
+    for i, desc in enumerate(["Holdback release - Phase 1", "10% Holdback release", "Prepayment 50% of order 1234",
+                              "Retainage billing - Phase 2", "Deposit received on PO 1234"]):  # fmt: skip
+        head = [x for x in _NORTHWIND if x[2] not in ("Consulting services", "550.00")]
+        f = _totals(tmp_path, _PLAIN, head=[*head, (50, 258, desc), (500, 258, "550.00")], name=f"li{i}.pdf")
+        assert (f["grand_total"].value, f["grand_total"].status) == (621.5, VERIFIED), desc
+    f = _totals(tmp_path, [("Subtotal", "550.00"), ("HST 13%", "71.50"), ("Total", "621.50"), ("Holdback", "0.00")],
+                name="none.pdf")  # fmt: skip
+    assert (f["grand_total"].value, f["grand_total"].status) == (621.5, VERIFIED)
 
 
 def test_an_invoice_number_ending_in_a_word_after_a_slash_is_kept_whole(tmp_path):

@@ -74,7 +74,11 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (r"(?:volume\s*|promotional\s*|early\s*payment\s*)?discount|escompte|rabais|remise", 0.9),
         # Paid before the invoice: "Posted Pre-Payments (519.35)", "Less deposit", "Deposit applied".
         (r"(?:less\s*:?\s*)?(?:posted\s*)?pre\s*-?\s*payments?(?:\s*(?:applied|received|posted))?|"
-         r"(?:less\s*:?\s*)?deposits?\s*(?:applied|received|paid)|less\s*:?\s*deposits?", 0.9),
+         r"(?:less\s*:?\s*)?deposits?\s*(?:applied|received|paid)|less\s*:?\s*deposits?|"
+         r"less\s*:?\s*payments?\s*(?:applied|received)", 0.9),
+        # Held back until the work is done: "Less 10% holdback", "Holdback 10%", "Retenue 10 %", "Less retainage 10%".
+        (r"(?:less\s*:?\s*)?(?:\(?\d{1,2}(?:[.,]\d{1,2})?\s*%\)?\s*)?(?:holdback|retainage|retenue)"
+         r"(?:\s*\(?\d{1,2}(?:[.,]\d{1,2})?\s*%\)?)?", 0.9),
     ],
     "tax_total": [
         (r"total\s*(?:sales\s*)?tax(?:es)?\b", 1.0), (r"tax(?:es)?\s*total", 0.95), (r"total\s*des\s*taxes", 1.0),

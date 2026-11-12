@@ -34,7 +34,7 @@ import sys
 import unicodedata
 from array import array
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
 from typing import Any
@@ -701,15 +701,22 @@ def pair_lines(before: list[Any], after: list[Any]) -> list[tuple[Any | None, An
     return [(originals.get(k), li) for k, li in keyed(after)]
 
 
-def compare_with_history(coding: Any, rows: list[dict[str, Any]], key: str | None = None) -> list[dict[str, Any]]:
+def compare_with_history(coding: Any, rows: list[dict[str, Any]], key: str | None = None,
+                         usable: Collection[str] | None = None) -> list[dict[str, Any]]:  # fmt: skip
     """Per line: does the prediction agree with an established pattern for this vendor? ``key``: the vendor's key
-    (``Store.vendor_key_for``: the second of two vendors by one name has its own, B-1021), else the name's."""
+    (``Store.vendor_key_for``: the second of two vendors by one name has its own, B-1021), else the name's. ``usable``:
+    as ``compare_patterns``."""
     key = key or vendor_key(coding.vendor_name)
-    return compare_patterns(coding, [p for p in aggregate(rows) if p.vendor_key == key])
+    return compare_patterns(coding, [p for p in aggregate(rows) if p.vendor_key == key], usable)
 
 
-def compare_patterns(coding: Any, patterns: list[Pattern]) -> list[dict[str, Any]]:
-    """``compare_with_history`` on one vendor's patterns (``aggregate`` of its lessons: ``Store.vendor_lessons``)."""
+def compare_patterns(coding: Any, patterns: list[Pattern],
+                     usable: Collection[str] | None = None) -> list[dict[str, Any]]:  # fmt: skip
+    """``compare_with_history`` on one vendor's patterns (``aggregate`` of its lessons: ``Store.vendor_lessons``).
+    ``usable``: the GL codes a line may still be coded to (``ReferenceData.line_accounts``); the lines coded to
+    another (closed in the chart, taken out of the list) are no history to follow (B-2521)."""
+    if usable is not None:
+        patterns = [p for p in patterns if p.gl_code in usable]
     results = []
     for li in coding.line_items:
         line_tokens = tokens(li.description)

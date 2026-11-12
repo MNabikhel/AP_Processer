@@ -57,7 +57,9 @@ def task_file(data: Path) -> Path:
 
 
 def runner_text(folder: Path, data: Path) -> str:
-    """``run.cmd``: the data folder, server mode, and the service host of ``folder``. A % is doubled (cmd.exe)."""
+    """``run.cmd``: the data folder, server mode, and the service host of ``folder``. A % is doubled (cmd.exe). It is
+    UTF-8, and cmd.exe reads a batch file in the console's code page: ``chcp 65001`` comes first, so a folder with an
+    accent reaches ``set`` and ``cd /d`` as written (B-2506)."""
 
     def cmd(value: str | Path) -> str:
         return str(value).replace("%", "%%")
@@ -65,6 +67,7 @@ def runner_text(folder: Path, data: Path) -> str:
     python = f"{folder}\\.venv\\Scripts\\python.exe"  # (a .cmd file: always Windows)
     return (
         "@echo off\r\n"
+        "chcp 65001 >nul\r\n"
         'rem AP Coder\'s service host, written by "python -m ap_coder service install" and "server-update".\r\n'
         "rem Change the settings in server.json (next to this folder), not here.\r\n"
         f'set "AP_PRIVATE_DIR={cmd(data)}"\r\n'

@@ -101,6 +101,49 @@ def test_a_remark_gets_this_invoices_month_quarter_year_and_number_and_keeps_its
     assert with_period(written, Period(2026, 5, 2), "BW-2291", written=2025) == now
 
 
+@pytest.mark.parametrize(
+    "usual, wanted",
+    [
+        ("cell 2025-11", "cell 2026-12"),
+        ("phones 11/2025", "phones 12/2026"),
+        ("phones 3/2025", "phones 12/2026"),
+        ("hydro 2025-11-30", "hydro 2025-11-30"),  # a whole date: its month and day can't follow, nor its year
+        ("hydro 30/11/2025", "hydro 30/11/2025"),
+        ("unit 1990-11 rent", "unit 1990-11 rent"),  # no year it was written in: left
+    ],
+)
+def test_a_remarks_month_written_as_a_number_follows_the_invoices_period(usual, wanted):
+    """A December 2026 bill keyed "cell 2026-12", not "cell 2026-11" (the year moved, last voucher's month kept)."""
+    invoice = {"invoice_date": "2027-01-04", "line_items": [{"description": "Mobile service December"}]}
+    period = period_of(invoice["line_items"][0], invoice)
+    assert period == Period(2026, 12, 4)
+    assert with_period(usual, period, "", 2025) == wanted
+    assert with_period("cell 2025-11", None, "", 2025) == "cell"  # no date: taken out, not kept stale
+
+
+@pytest.mark.parametrize(
+    "usual, wanted",
+    [
+        ("job 2025-07A", "job 2026-07A"),  # a job number: no month of it follows (its year does, as any year)
+        ("lot 3-2025", "lot 3-2025"),  # one digit and a dash: a lot or a reference as likely as a month
+        ("hydro 1-2025", "hydro 1-2025"),
+        ("ref 2025/1", "ref 2025/1"),
+        ("bin A-11/2025", "bin A-11/2026"),  # part of a longer code: no month of it either
+    ],
+)
+def test_a_number_that_only_looks_like_a_month_and_year_is_not_given_this_invoices_month(usual, wanted):
+    """B-2514: "job 2025-07A" became "job 2026-12A" and "lot 3-2025" "lot 12-2026"."""
+    assert with_period(usual, Period(2026, 12, 4), "", 2025) == wanted
+
+
+@pytest.mark.parametrize("number", ["INV-55123", "INV 55123", "inv#55123", "Invoice 55123"])
+def test_the_invoice_number_put_in_a_remark_does_not_repeat_its_label(number):
+    """The remark read "INV INV-55123": 8 of JD Edwards' 30 characters, "INV" twice."""
+    remark = with_period("Dec 2025 cell INV 54001", Period(2026, 12, 4), number, 2026)
+    assert remark == "Dec 2026 cell INV 55123" and len(remark) <= REMARK_MOST
+    assert with_period("INV 54001 cell", Period(2026, 12, 4), "INVERNESS-1", 2026) == "INV INVERNESS-1 cell"
+
+
 def test_with_no_date_the_month_is_taken_out_not_kept_stale():
     assert with_period("Jul janitorial 410 Elm", None, "", written=2025) == "janitorial 410 Elm"
     assert with_period("INV 778812 freight", None, "", written=2025) == "INV freight"

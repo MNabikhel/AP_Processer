@@ -367,6 +367,7 @@ class InvoicesMixin:
                     f"invoice {invoice_id} cannot be rejected (approved, rejected or deleted meanwhile: only an "
                     "invoice in the review queue or parked can be)"
                 )
+            self.withdraw_manager_requests(invoice_id, reviewer, conn)  # rejected before the manager answered
             layout = self._forget_learning(conn, invoice_id)
             self._log(conn, "rejected", invoice_id, reviewer, {"reason": reason, **layout})
             row = conn.execute("SELECT vendor_name, vendor_key, invoice_number FROM invoices WHERE id = ?",
@@ -896,7 +897,8 @@ class InvoicesMixin:
 
     def send_back(self, invoice_id: int, actor: str, reason: str = "") -> None:
         """Return an invoice waiting for a second approval to the review queue. What was learned from the
-        first approval is withdrawn: it is learned again when the invoice is approved again."""
+        first approval is withdrawn: it is learned again when the invoice is approved again. Its coding is kept as
+        a reopen keeps it: a line changed then corrects what was approved (B-2501)."""
         with self._conn() as conn:
             cur = conn.execute(
                 "UPDATE invoices SET status = ?, reviewer = NULL, reviewed_at = NULL WHERE id = ? AND status = ?",
@@ -904,6 +906,7 @@ class InvoicesMixin:
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
+            self._keep_approved_coding(conn, invoice_id)  # before its lessons go (B-1299)
             layout = self._forget_learning(conn, invoice_id)
             self._log(conn, "sent_back", invoice_id, actor, {"reason": reason, **layout})
 

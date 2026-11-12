@@ -64,6 +64,7 @@
 {# The comparison: where Reconcile takes the person, the focus on it (imports.js) #}
 <div class="imp-result" id="result" tabindex="-1" data-imp-result aria-labelledby="result-title">
 {{ tile_row(tiles) }}
+{% if rec.period_unknown %}<div class="flash warn" id="statement-period-unknown"><span class="ms" aria-hidden="true">warning</span><div>The statement's dates read either way (day or month first) and its invoices didn't tell which, so its period couldn't be told: the invoices it leaves out may not be listed as Not on statement.</div></div>{% endif %}
 <section class="card">
   <div class="card-head">
     <h4 id="result-title">{{ names[vendor] }}: the statement compared with AP Coder</h4>

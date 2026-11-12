@@ -1,10 +1,9 @@
-"""The invoice details of the review screen (its header fields): the note under each, and the dates and currency typed.
+"""The invoice details of the review screen (its header fields): the note under each, and the dates typed.
 
 * The note under a detail a check is about (``field_flags``, ``code_flags``, which are errors: ``flag_errors``;
   ``merge_flags`` says each once), a tax number filled from the vendor list that the invoice does not print
   (``not_printed``), and a field the coding can't be built from, in plain words (``plain_problem``).
-* The dates and the currency as typed, settled before the coding is built (``settle_dates``, ``DateCheck``,
-  ``currency_issues``).
+* The dates as typed, settled before the coding is built (``settle_dates``, ``DateCheck``).
 * A one-click fix under an empty or unclear field (``field_help``) and the Pay from list (``pay_from_choices``).
 
 The fields' names and what is posted are ``invoice_form.py``'s; the findings' words, ``invoice_findings.py``'s.
@@ -150,19 +149,7 @@ def plain_problem(problem: str) -> str:
     return f"{where}: {what}"
 
 
-# --- Dates and currency as typed ----------------------------------------------------------------------------------
-
-# The currency codes in use (ISO 4217, active): a code not in it is a typo, never a voucher (D-75).
-ISO_CURRENCIES = frozenset(
-    """
-AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BRL BSD BTN BWP BYN BZD CAD CDF CHF CLP
-CNY COP CRC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL HTG HUF IDR
-ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT
-MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD
-SCR SDG SEK SGD SHP SLE SOS SRD SSP STN SVC SYP SZL THB TJS TMT TND TOP TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND
-VUV WST XAF XCD XOF XPF YER ZAR ZMW ZWL
-""".split()
-)
+# --- Dates as typed --------------------------------------------------------------------------------------------------
 
 
 def _iso(text: str) -> bool:
@@ -225,16 +212,6 @@ def settle_dates(header: dict[str, Any], fallback: dict[str, Any]) -> DateCheck:
         was = str(fallback.get(name) or "").strip()
         out.header[name] = was if _iso(was) else (dt.date.today().isoformat() if name == "invoice_date" else "")
     return out
-
-
-def currency_issues(currency: str) -> list[Any]:
-    """A three-letter currency that is no currency in use (XYZ): flagged, never a voucher (D-75). Not three letters is
-    validation's own CURRENCY_FORMAT."""
-    code = (currency or "").strip().upper()
-    if re.fullmatch(r"[A-Z]{3}", code) and code not in ISO_CURRENCIES:
-        return [Issue(ERROR, "CURRENCY_UNKNOWN", f"“{code}” is not a currency code in use: type it as on the page, "
-                      "e.g. CAD, USD or EUR")]  # fmt: skip
-    return []
 
 
 # --- Fixes and choices --------------------------------------------------------------------------------------------

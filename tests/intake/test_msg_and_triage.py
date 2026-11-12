@@ -208,6 +208,46 @@ def test_triage_and_capture_know_the_same_credit_note_titles(title):
     assert capture_title.match(plain(title))
 
 
+def test_a_credit_memo_a_statement_lists_or_avoir_in_a_sentence_is_no_credit_note_title():
+    rows = ["2026-09-01  Invoice INV-1001  500.00", "2026-09-05  Credit Memo CM-1002  -50.00",
+            "2026-09-20  Invoice INV-1010  250.00", "2026-10-02  Invoice INV-1022  125.00"]  # fmt: skip
+    head = "Northwind Supply Ltd.\nSTATEMENT OF ACCOUNT\nStatement date: 2026-10-31\n"
+    statement = triage.Document("statement.pdf", head + "\n".join(rows) + "\nBalance due: 825.00")
+    assert triage.classify_document(statement).kind == triage.STATEMENT
+    # Its columns read apart, the credit memo starts a line of its own.
+    columns = triage.Document("statement.pdf", head + "\n".join(x for r in rows for x in r.split("  ")))
+    assert triage.classify_document(columns).kind == triage.STATEMENT
+    thanks = "Plomberie Côté inc.\nMerci de nous avoir choisi pour vos travaux!\nMontant à payer : 114,98 $"
+    assert triage.classify_document(triage.Document("doc.pdf", thanks)).kind == triage.INVOICE
+    titled = "Plomberie Côté inc.\nFACTURE\nMerci de nous avoir choisi!\nNo de facture : F-1001"
+    assert triage.classify_document(triage.Document("doc.pdf", titled)).kind == triage.INVOICE
+    # A credit note titled so, or named so, is one still, whatever it lists.
+    assert triage.classify_document(triage.Document("cm.pdf", "Northwind\nCREDIT MEMO CM-1002\n" + rows[0])).kind == (
+        triage.CREDIT
+    )
+    assert triage.classify_document(triage.Document("Credit memo 12.pdf", "Northwind\nTotal -50.00")).kind == (
+        triage.CREDIT
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Northwind Supply Ltd.      CREDIT MEMO\nCredit # CM-1002\nReturn of goods shipped on packing slip PS-5521\n"
+        "Total credit -56.50",
+        "Northwind Supply Ltd.   CREDIT MEMO\nRMA 5521 - Purchase order 4410\nTotal -56.50",
+        "Northwind Supply Ltd.   Credit Note\nRe: order confirmation 4410\nTotal -56.50",
+        "Northwind Supply Ltd. | Credit Note No. CN-55 | 2026-10-01\nTotal -56.50",
+        "Page 1 of 1 Credit Memo\nNorthwind\nAmount -56.50",
+        "Fournisseur Inc. NOTE DE CRÉDIT No 55\nTotal -56,50",
+    ],
+)
+def test_a_credit_title_on_a_line_with_other_words_is_still_a_credit_note(text):
+    """B-2494 read a credit title only at the start of a line: one beside the supplier's name was lost, and with a
+    packing slip or an order mentioned the credit note was kept out of the queue."""
+    assert triage.classify_document(triage.Document("scan0001.pdf", text)).kind == triage.CREDIT
+
+
 def test_kinds_in_english_and_french():
     assert _kind("Statement", "", ("soa.pdf", STATEMENT)).kind == triage.STATEMENT
     assert (

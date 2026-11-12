@@ -297,7 +297,7 @@ instead of the shipped one and survives updates.
 | Wrong regime for the place of supply (e.g. GST only in an HST province) | warning |
 | PST/QST not charged where expected (self-assessment may be required) | warning |
 | Lines marked as taxable don't add up to the taxable amount | warning |
-| GST/HST or QST registration number missing or malformed (needed for ITC/ITR) | warning |
+| GST/HST or QST registration number malformed, or missing from $100 ($30 before 21 April 2021) (needed for ITC/ITR) | warning |
 
 Posting treatment per tax type is configured in the dashboard:
 - *Recoverable* posts to its own GL account. This is the default for GST, HST and QST.

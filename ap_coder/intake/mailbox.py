@@ -84,6 +84,7 @@ class Unpacked:
     held: list[Path] = field(default_factory=list)  # attachments a person must look at (emails/needs a person/)
     triage: triage.EmailTriage | None = None
     left_in_place: bool = False  # it could not be moved (open in another program): sorted again, and logged, later
+    repeated: int = 0  # of ``saved``, the attachments the same as one before them: one invoice, read once
 
 
 @dataclass
@@ -453,9 +454,12 @@ def unpack(path: Path, folder: Path | None = None) -> Unpacked:
     stem = safe_name(path.stem)[:40].rstrip(" .")
     person = folder / DONE_FOLDER / PERSON_FOLDER
     placed: list[tuple[str, Path]] = []
+    queued: set[bytes] = set()
     for (name, content), (_doc, dec) in zip([*mail.found, *mail.sheets], sorted_mail.documents, strict=True):
         if dec.kind in triage.QUEUE_KINDS:
             placed.append(("saved", _save(folder, stem, name, content)))
+            result.repeated += content in queued
+            queued.add(content)
         elif dec.kind == triage.STATEMENT:
             placed.append(("statements", _save(folder / STATEMENTS_FOLDER, stem, name, content)))
         else:

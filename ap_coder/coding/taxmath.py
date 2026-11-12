@@ -44,6 +44,7 @@ from .tax import (
     is_meals,
     is_tip,
     meals_parts,
+    on_its_lines,
     short,
     supply_source,
     tax_shares,
@@ -160,6 +161,8 @@ def _tax_row(sums: _Sums, tax_type: str) -> dict[str, Any]:
     """One tax: its rate on the lines marked with it, against what is charged."""
     items, n, setup = sums.items, sums.n, sums.setup
     taxes = [t for t in sums.coding.tax_lines if t.tax_type == tax_type]
+    # A tax line of nothing beside lines that charge the tax (GST 0.00 on a zero-rated line) is on no line (B-2485)
+    taxes = [t for t in taxes if on_its_lines(t, sums.places)] or taxes
     charged = add_up(t.tax_amount for t in taxes)
     label = tax_name(tax_type, sums.province)
     flagged = [li for li in items if tax_type in li.taxes_applied]
@@ -312,10 +315,12 @@ def _total_row(coding: InvoiceCoding, taxes_total: float) -> dict[str, Any]:
     adds_up = within(diff, 0, CENT) or cash
     taxes_agree = within(taxes_total, coding.tax_total, CENT)
     shown = diff if not adds_up else half_up(coding.grand_total - half_up(coding.subtotal + taxes_total))
+    sign = "-" if coding.tax_total < 0 else "+"  # a credit's tax is taken off: -500.00 - 60.00, not + -60.00 (B-2504)
+    tax = money(abs(coding.tax_total))
     row = {"kind": "total", "what": "Subtotal + tax = total", "ok": adds_up and taxes_agree,
            "diff": "" if adds_up and taxes_agree else money(shown), "subtotal": money(coding.subtotal),
-           "tax": money(coding.tax_total), "computed": money(computed), "total": money(coding.grand_total),
-           "detail": f"{money(coding.subtotal)} + {money(coding.tax_total)} = {money(computed)}; the total is "
+           "sign": sign, "tax": tax, "computed": money(computed), "total": money(coding.grand_total),
+           "detail": f"{money(coding.subtotal)} {sign} {tax} = {money(computed)}; the total is "
                      f"{money(coding.grand_total)}", "lines": []}  # fmt: skip
     hints = [f"Rounded to the nickel for cash: the rounding, {money(diff)}, is a line of its own."] if cash else []
     if not taxes_agree:
@@ -549,9 +554,9 @@ def _posted(items: list[Any], tax_lines: list[Any], setup: TaxSetup, places: int
         part = _PARTS.index(_WHERE[setup.treatment(tl.tax_type).treatment])
         meals: dict[int, float] = {}
         if part == 0 and tl.tax_type in MEALS_RESTRICTED and setup.meals_gl_codes:
-            meals = dict(meals_parts(items, tl, setup.meals_gl_codes, places))
+            meals = dict(meals_parts(items, tl, setup.meals_gl_codes, places, tax_lines))
         of_tax = out.setdefault(tl.tax_type, {})
-        for idx, share in tax_shares(items, tl, places):
+        for idx, share in tax_shares(items, tl, places, tax_lines):
             parts = of_tax.setdefault(idx, [0.0, 0.0, 0.0])
             kept = meals.get(idx, 0.0)
             parts[part] = half_up(parts[part] + share - kept)

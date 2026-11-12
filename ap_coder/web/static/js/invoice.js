@@ -1717,9 +1717,11 @@ if (reader) {
   }, { everyMs: every, firstMs: every, mostMs: 60000 });
 }
 
-// Approve or Send to the manager from a screen out of date: said as its check says it, what was typed kept (B-1936)
+// Approve, Send to the manager, Park or Reject from a screen out of date: said as its check says it, what was typed
+// kept (B-1936, B-2502)
 document.addEventListener("apc:stale", (event) => {
-  if (event.detail.form === form) showStale(event.detail.stale);
+  const from = event.detail.form;
+  if (from === form || from.closest?.("[data-park], [data-reject]")) showStale(event.detail.stale);
 });
 
 /** The approve bar's draft revision (each check draws it again, D-184). */
@@ -2239,14 +2241,12 @@ function lineName(tr) {
   return n ? `Line ${n}` : "The line";
 }
 
-/** The lines numbered 1, 2, 3… stay so when one is added between them; otherwise a new line takes the next number. */
+/** A new line takes the number after the last, wherever it is put: the others keep theirs, since approval pairs the
+    lines with the AI's by number (B-2499; a split's parts too, B-1188). */
 function numberNew(tr) {
   const rows = gridRows();
-  const others = rows.filter((r) => r !== tr);
-  const numbers = others.map((r) => Number(lineNo(r)));
-  const inOrder = numbers.every((n, i) => n === i + 1);
-  if (inOrder) rows.forEach((r, i) => (r.querySelector('[name="line_number"]').value = String(i + 1)));
-  else tr.querySelector('[name="line_number"]').value = String(Math.max(0, ...numbers.filter(Number.isFinite)) + 1);
+  const numbers = rows.filter((r) => r !== tr).map((r) => Number(lineNo(r)));
+  tr.querySelector('[name="line_number"]').value = String(Math.max(0, ...numbers.filter(Number.isFinite)) + 1);
   rows.forEach((r) => {  // a row that shows its number as text (one Account box a line)
     const shown = r.querySelector("[data-line-no]");
     if (shown) shown.textContent = lineNo(r);

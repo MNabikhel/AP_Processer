@@ -47,7 +47,7 @@ from ..core.tax_setup import (  # noqa: F401  (the names this module had: import
     load_tax_mapping,
     rates_path,
 )
-from .money import CENT, add_up, half_up, nil, per_line, split, tax_band, tax_right, times, within
+from .money import CENT, add_up, half_up, in_cents, nil, per_line, split, tax_band, tax_right, times, within
 
 
 def province_label(code: str, unknown: str = "Province unknown") -> str:
@@ -303,14 +303,40 @@ def _each_tax_line(check: _TaxCheck) -> None:
 
 
 def tax_line_ways(coding: Any, tl: Any, places: int) -> list[float]:
-    """The ways a tax line's tax is worked out: once on its taxable amount, and, when it is the only line of its tax,
-    line by line on the lines marked with it, each rounded (``money.tax_right`` holds the tax to them)."""
+    """The ways a tax line's tax is worked out: once on its taxable amount, and line by line, each line rounded
+    (``money.tax_right`` holds the tax to them): on the lines marked with its tax when it is the only line of its
+    tax that charges something (a line of 0.00 charges nothing, B-2485), else on its own lines
+    (``_line_by_line_on_its_lines``, B-2484)."""
     ways = [times(tl.taxable_amount, tl.rate, places)]
-    if sum(1 for t in coding.tax_lines if t.tax_type == tl.tax_type) == 1:
-        flagged = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
+    flagged = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
+    if sum(1 for t in coding.tax_lines if t.tax_type == tl.tax_type and on_its_lines(t, places)) == 1:
         if flagged:
             ways.append(add_up((times(li.amount, tl.rate, places) for li in flagged), places))
+    elif (by_line := _line_by_line_on_its_lines(flagged, tl, places)) is not None:
+        ways.append(by_line)
     return ways
+
+
+def on_its_lines(tl: Any, places: int = 2) -> bool:
+    """Whether a tax line is charged on lines of the invoice: it charges something, or its rate on its taxable
+    amount rounds to nothing (GST 5% on 0.06). A line of 0.00 at no rate (GST 0% on a zero-rated line), or at a rate
+    that would charge something, is on no line (B-2485)."""
+    return not nil(tl.tax_amount) or (tl.rate > 0 and nil(times(tl.taxable_amount, tl.rate, places)))
+
+
+def _line_by_line_on_its_lines(flagged: list[Any], tl: Any, places: int) -> float | None:
+    """A tax line's tax rounded line by line on the lines marked with its tax whose amounts make its taxable amount
+    (to the cent, as the Tax check tells the lines of each rate apart), when every such set of lines gives the same
+    tax (eight lines of 10.05, four at each rate); None when no set does, the sets differ, or there are too many to
+    count."""
+    from .line_tax import subset_solutions
+    from .taxmath import MAX_RATE_LINES
+
+    if not flagged or len(flagged) > MAX_RATE_LINES:
+        return None
+    found, total = subset_solutions([in_cents(li.amount) for li in flagged], in_cents(tl.taxable_amount), 1, cap=500)
+    sums = {add_up((times(flagged[k].amount, tl.rate, places) for k in s.lines), places) for s in found if s.lines}
+    return sums.pop() if len(sums) == 1 and total == len(found) else None
 
 
 def _tax_line_amount(check: _TaxCheck, tl: Any, places: int) -> None:
@@ -380,12 +406,15 @@ def _tax_line_rate(check: _TaxCheck, tl: Any) -> None:
 
 def _lines_carry_each_tax(check: _TaxCheck) -> None:
     """Which invoice lines carry each tax (their tax code, D-64), and does their sum match the taxable amount?
-    Compared per tax type, because the same tax can be printed more than once (e.g. on goods and on freight)."""
+    Compared per tax type, because the same tax can be printed more than once (e.g. on goods and on freight). A tax
+    line of nothing (GST 0.00 on a zero-rated line) is on no line: its taxable amount is not counted (B-2485)."""
     coding, tol = check.coding, check.tol
+    places = currency_places(getattr(coding, "currency", ""))
     for tax_type in sorted(check.charged):
         name = tax_name(tax_type, check.prov)
         flagged = [li for li in coding.line_items if tax_type in li.taxes_applied]
-        taxable = add_up(t.taxable_amount for t in check.tax_lines if t.tax_type == tax_type)
+        taxes = [t for t in check.tax_lines if t.tax_type == tax_type and on_its_lines(t, places)]
+        taxable = add_up(t.taxable_amount for t in taxes)
         if not flagged:
             check.add(WARNING, "TAX_NOT_ALLOCATED",
                       f"{name} is charged but no line is marked with it: pick the tax code of the lines it applies "
@@ -418,8 +447,8 @@ def _lines_carry_each_tax(check: _TaxCheck) -> None:
             said = f"line {suspect.line_number} ({short(suspect.description)}, {suspect.amount:,.2f})"
             hint = f": {said} may be exempt from {name}" if gap < 0 else f": {said} may carry {name} too"
         else:
-            charged_amount = add_up(t.tax_amount for t in check.tax_lines if t.tax_type == tax_type)
-            rates = {round(t.rate, 6) for t in check.tax_lines if t.tax_type == tax_type}
+            charged_amount = add_up(t.tax_amount for t in taxes)
+            rates = {round(t.rate, 6) for t in taxes}
             hint = (_unexplained(coding.line_items, tax_type, charged_amount, rates.pop(), name)[0]
                     if len(rates) == 1
                     else f": check the lines' tax codes, or the {name} the vendor charged")  # fmt: skip
@@ -457,11 +486,16 @@ def _lines_marked_with_a_tax_not_charged(check: _TaxCheck) -> None:
 
 
 def _qst_before_gst(check: _TaxCheck) -> None:
-    """QST is calculated on the price excluding GST (no tax-on-tax since 2013)."""
-    gst = next((t for t in check.tax_lines if t.tax_type == "GST"), None)
-    qst = next((t for t in check.tax_lines if t.tax_type == "QST"), None)
-    if gst and qst and not within(qst.taxable_amount, gst.taxable_amount, check.tol):
-        if within(qst.taxable_amount, gst.taxable_amount + gst.tax_amount, check.tol):
+    """QST is calculated on the price excluding GST (no tax-on-tax since 2013): every QST line's base against every
+    GST line's, each tax printed on goods and on freight alike (B-2483)."""
+    places = currency_places(getattr(check.coding, "currency", ""))
+    gst = [t for t in check.tax_lines if t.tax_type == "GST" and on_its_lines(t, places)]
+    qst = [t for t in check.tax_lines if t.tax_type == "QST" and on_its_lines(t, places)]
+    if not any(not nil(t.tax_amount) for t in gst) or not any(not nil(t.tax_amount) for t in qst):
+        return
+    gst_base, qst_base = add_up(t.taxable_amount for t in gst), add_up(t.taxable_amount for t in qst)
+    if not within(qst_base, gst_base, check.tol):
+        if within(qst_base, add_up([gst_base, *(t.tax_amount for t in gst)]), check.tol):
             check.add(ERROR, "QST_ON_GST_INCLUSIVE",
                       "QST was calculated on the GST-inclusive amount; it must exclude GST")  # fmt: skip
 
@@ -602,13 +636,18 @@ def _exemptions_to_confirm(check: _TaxCheck) -> None:
 
 
 def _registration_numbers(check: _TaxCheck) -> None:
-    """Registration numbers needed to claim input tax credits."""
+    """Registration numbers needed to claim input tax credits: printed wrong, whatever the amount; missing, from the
+    documentary threshold (``taxreturn.document_threshold``: $100 since 21 April 2021, $30 before; B-2486)."""
+    from .taxreturn import document_threshold
+
     coding = check.coding
+    needed = abs(coding.grand_total) >= document_threshold(coding.invoice_date)
     if check.charged & {"GST", "HST"}:
         number = coding.gst_hst_registration_number
         if not number.strip():
-            check.add(WARNING, "GST_HST_NUMBER_MISSING",
-                      "supplier GST/HST registration number not found (needed for ITC)")  # fmt: skip
+            if needed:
+                check.add(WARNING, "GST_HST_NUMBER_MISSING",
+                          "supplier GST/HST registration number not found (needed for ITC)")  # fmt: skip
         elif not valid_gst_number(number):
             check.add(WARNING, "GST_HST_NUMBER_FORMAT", "GST/HST number is not in the format 123456789RT0001")
         elif not gst_check_digit_ok(number):
@@ -617,7 +656,9 @@ def _registration_numbers(check: _TaxCheck) -> None:
     if "QST" in check.charged:
         number = coding.qst_registration_number
         if not number.strip():
-            check.add(WARNING, "QST_NUMBER_MISSING", "supplier QST registration number not found (needed for ITR)")
+            if needed:
+                check.add(WARNING, "QST_NUMBER_MISSING",
+                          "supplier QST registration number not found (needed for ITR)")  # fmt: skip
         elif not valid_qst_number(number):
             check.add(WARNING, "QST_NUMBER_FORMAT", "QST number is not in the format 1234567890TQ0001")
 
@@ -778,7 +819,7 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
         t = setup.treatment(tl.tax_type)
         label = f"{tl.tax_type}{' ' + tl.province if tl.province else ''} {tl.rate * 100:.6g}%"  # QST 9.975%
         if t.treatment == EXPENSE_TO_LINE and coding.line_items:
-            for idx, share in tax_shares(coding.line_items, tl, places):  # a tip takes none of it (B-2169)
+            for idx, share in tax_shares(coding.line_items, tl, places, coding.tax_lines):  # a tip takes none (B-2169)
                 e = entries[idx]
                 e["non_recoverable_tax"] = half_up(e["non_recoverable_tax"] + share)
                 e["amount"] = half_up(e["amount"] + share)
@@ -786,7 +827,7 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
         moved = 0.0
         parts: list[tuple[dict[str, Any], float]] = []
         if t.treatment == RECOVERABLE and tl.tax_type in MEALS_RESTRICTED and setup.meals_gl_codes:
-            for idx, part in meals_parts(coding.line_items, tl, setup.meals_gl_codes, places):
+            for idx, part in meals_parts(coding.line_items, tl, setup.meals_gl_codes, places, coding.tax_lines):
                 e = entries[idx]
                 e["non_recoverable_tax"] = half_up(e["non_recoverable_tax"] + part)
                 e["amount"] = half_up(e["amount"] + part)
@@ -846,11 +887,12 @@ def half_down(amount: float, places: int = 2) -> float:
     return float((Decimal(str(amount)) / 2).quantize(unit, rounding=ROUND_DOWN))
 
 
-def tax_shares(lines: list[Any], tax_line: Any, places: int = 2) -> list[tuple[int, float]]:
+def tax_shares(lines: list[Any], tax_line: Any, places: int = 2, tax_lines: Any = ()) -> list[tuple[int, float]]:
     """(line position, its share of ``tax_line``'s tax): spread over the lines that carry it, tip lines left out (a
     voluntary tip is not taxed), in cents. A tax kept in the expense is added to the lines by these shares
     (``build_gl_distribution``, B-2169), and the JD Edwards pay items take the same (B-867; a pay item per line, by
-    the same rule, B-1889)."""
+    the same rule, B-1889). ``tax_lines``, the invoice's: a tax printed at two rates or for two provinces is spread
+    over the lines its rate was charged on, when their amounts tell which (``taxmath._lines_of_each_rate``, B-2482)."""
     items = list(enumerate(lines))
     tax_type = tax_line.tax_type
     # The lines whose tax code carries it; none marked: the lines not marked exempt, zero-rated or out of scope
@@ -860,23 +902,42 @@ def tax_shares(lines: list[Any], tax_line: Any, places: int = 2) -> list[tuple[i
         or [(i, li) for i, li in items if tax_state(li, tax_type) != NOT_DUE]
         or items
     )
+    own = _lines_of_its_rate(lines, tax_line, tax_lines)
+    if own is not None:
+        targets = [(i, lines[i]) for i in own]
     untipped = [(i, li) for i, li in targets if not is_tip(li)]
     targets = untipped or targets
     shares = split(tax_line.tax_amount, [li.amount for _, li in targets], places)
     return [(idx, share) for (idx, _li), share in zip(targets, shares, strict=True)]
 
 
+def _lines_of_its_rate(lines: list[Any], tax_line: Any, tax_lines: Any) -> list[int] | None:
+    """The positions of the lines ``tax_line`` was charged on, when its tax is printed at two rates or for two
+    provinces among ``tax_lines`` and the lines marked with it tell which (the Tax check's rule); else None."""
+    from .taxmath import _lines_of_each_rate, _rate_groups
+
+    groups = _rate_groups([t for t in tax_lines if t.tax_type == tax_line.tax_type])
+    if len(groups) < 2:
+        return None
+    marked = [i for i, li in enumerate(lines) if tax_line.tax_type in li.taxes_applied]
+    told = _lines_of_each_rate(lines, marked, groups)
+    if told is None:
+        return None
+    return next((mine for taxes, mine in zip(groups, told, strict=True) if any(t is tax_line for t in taxes)), None)
+
+
 def is_tip(line: Any) -> bool:
     return bool(_TIP.search(str(getattr(line, "description", "") or "")))
 
 
-def meals_parts(lines: list[Any], tax_line: Any, meals_gl_codes: Any, places: int = 2) -> list[tuple[int, float]]:
+def meals_parts(lines: list[Any], tax_line: Any, meals_gl_codes: Any, places: int = 2,
+                tax_lines: Any = ()) -> list[tuple[int, float]]:  # fmt: skip
     """(line position, the tax not claimable) of each meals line for one recoverable tax line: half of each meals
     line's share (``tax_shares``), rounded so the claim is never more than half, is not claimable."""
     if not any(is_meals(getattr(li, "predicted_gl_code", ""), meals_gl_codes) for li in lines):
         return []
     out = []
-    for idx, share in tax_shares(lines, tax_line, places):
+    for idx, share in tax_shares(lines, tax_line, places, tax_lines):
         if is_meals(lines[idx].predicted_gl_code, meals_gl_codes) and not nil(share):
             out.append((idx, half_up(share - half_down(share, places))))
     return out

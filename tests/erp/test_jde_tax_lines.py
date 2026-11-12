@@ -87,6 +87,24 @@ def test_taxable_amount_is_the_sum_of_a_tax_printed_twice():
     assert (header["VLATXA"], header["VLATXN"], header["VLSTAM"]) == (120000, 0, 15600)
 
 
+def test_one_pay_item_a_line_splits_the_taxable_amount_of_the_tax_printed_twice():
+    """B-2488: with a pay item for each G/L line, the taxable amount was split over the lines of the tax whose one
+    tax line had the largest taxable amount, while VLATXA adds each tax's lines (B-923): the BC PST (goods only)
+    printed before the GST (goods, then freight) gave the goods 150.00 taxable on 100.00 (VLATXN -50.00) and the
+    freight none, its 3.00 GST on no taxable amount. The tax whose lines add up to the most is split."""
+    settings = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX, default_bu="CORP",
+                                        line_numbering=jde_settings.MATCH_HEADER)  # fmt: skip
+    settings.tax_map["BC"] = jde_settings.TaxArea("BCGSTPST", "C")
+    lines = [line(1, 100.0, "6010", ["GST", "PST"]), line(2, 20.0, "6020", ["GST", "PST"]),
+             line(3, 60.0, "6030", ["GST"], desc="Freight")]  # fmt: skip
+    gst = [tl("GST", "", 0.05, 120.0, 6.0), tl("GST", "", 0.05, 60.0, 3.0)]
+    pst = [tl("PST", "BC", 0.07, 120.0, 8.4)]
+    for taxes in (pst + gst, gst + pst):
+        headers, _, _ = jde_zfiles.voucher_rows(coded(doc(lines, taxes, prov="BC")), "10023", settings)
+        assert [(h["VLATXA"], h["VLATXN"]) for h in headers] == [(10000, 0), (2000, 0), (6000, 0)], taxes[0]
+        assert [h["VLSTAM"] for h in headers] == [1200, 240, 300]
+
+
 # --- B-924: VLDDJ ------------------------------------------------------------------------------------------------
 
 

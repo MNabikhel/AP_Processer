@@ -404,6 +404,12 @@ _WORDY_DMY_DASH = re.compile(r"\b(\d{1,2})[-\s]([a-z]{3,10})[-\s](\d{2,4})\b")
 # Not inside a number ("INV-12MAR26", "PO-OCT-15-26").
 _WORDY_MDY_DASH = re.compile(r"(?<![\w/-])([a-z]{3,10})\.?-(\d{1,2})-(\d{2}|\d{4})(?![\w/-])")
 _GLUED_DMY = re.compile(r"(?<![\w/-])(\d{1,2})([a-z]{3,4})(\d{2})(?![\w/-])")
+# A two-digit year after the month, the day and a slash: "Dec 31/26", "Dec.31/26"; the month between slashes:
+# "31/Dec/2026"; the year first: "2026-Dec-31", "2026/Dec/31". Not inside a number, not with spaces alone ("Oct 30 12
+# pm", "May 2 24 pcs"), not a month run into its day ("Ref MAY15/24" is an invoice number).
+_WORDY_MDY_SHORT = re.compile(r"(?<![\w/-])([a-z]{3,10})(?:\.\s*|\s+)(\d{1,2})/(\d{2})(?![\w/.,:-])")
+_WORDY_DMY_SLASH = re.compile(r"(?<![\w/-])(\d{1,2})/([a-z]{3,10})\.?/(\d{2}|\d{4})(?![\w/-])")
+_WORDY_YMD = re.compile(r"(?<![\w/-])((?:19|20)\d{2})([-/])([a-z]{3,10})\.?\2(\d{1,2})(?![\w/-])")
 
 
 def _make(y: int, m: int, d: int) -> dt.date | None:
@@ -471,11 +477,14 @@ def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tupl
             found.append((d, m.start(), m.end(), False))
             taken.append(m.span())
     for rx, order in ((_WORDY_MDY, "mdy"), (_WORDY_DMY, "dmy"), (_WORDY_DMY_DASH, "dmy"), (_WORDY_MDY_DASH, "mdy"),
-                      (_GLUED_DMY, "dmy")):  # fmt: skip
+                      (_GLUED_DMY, "dmy"), (_WORDY_YMD, "ymd"), (_WORDY_DMY_SLASH, "dmy"),
+                      (_WORDY_MDY_SHORT, "mdy")):  # fmt: skip
         for m in rx.finditer(s):
             if not free(*m.span()):
                 continue
-            if order == "mdy":
+            if order == "ymd":
+                year, mon, day = int(m.group(1)), MONTHS.get(m.group(3)), int(m.group(4))
+            elif order == "mdy":
                 mon, day, year = MONTHS.get(m.group(1)), int(m.group(2)), int(m.group(3))
             else:
                 day, mon, year = int(m.group(1)), MONTHS.get(m.group(2)), int(m.group(3))

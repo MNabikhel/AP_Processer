@@ -1,10 +1,17 @@
 """Vendor statement reconciliation."""
 
 import csv
+import json
 
+import pytest
+
+from ap_coder.ai.pipeline import finalise_coding
+from ap_coder.core.config import Settings
 from ap_coder.core.memory import vendor_key
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import load_sample_setup
 from ap_coder.erp import statements as stm
-from tests.conftest import DATA, copy_database
+from tests.conftest import DATA, SAMPLES, copy_database
 
 
 def _inv(i, number, total, date="2026-09-10", status="approved"):
@@ -134,3 +141,87 @@ def test_a_payment_line_carrying_the_invoice_number_never_takes_the_invoice():
     # A credit note AP holds under the same number still matches the credit line.
     rec = stm.reconcile(debit_credit, stm.map_columns(list(debit_credit[0])), [*invoices, _inv(3, "1001", -500.0)])
     assert {(li.status, li.invoice_id) for li in rec.lines} == {(stm.MATCHED, 1), (stm.MATCHED, 2), (stm.MATCHED, 3)}
+
+
+def _coded(store, stem):
+    doc = json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text())
+    out, _ = finalise_coding(InvoiceCoding.model_validate(doc), store.reference_data(), Settings(), store=store)
+    return out
+
+
+def test_a_statement_line_matches_the_approved_invoice_not_a_resent_copy_in_review(store, tmp_path):
+    """The vendor sent the bill again: its copy in review (the newest) never takes the statement line from the
+    approved, exported original, and is not listed "Not on statement" once its number matched."""
+    load_sample_setup(store)
+    out = _coded(store, "northwind_ON_HST_NW-2026-0912")
+    original = store.add_invoice(tmp_path / "NW-2026-0912.pdf", out, {})
+    store.approve_invoice(original, out, "Jane")
+    store.create_export_batch([original], "csv")
+    store.add_invoice(tmp_path / "copy.pdf", _coded(store, "northwind_ON_HST_NW-2026-0912"), {})
+    records = [{"Invoice": "NW-2026-0912", "Date": "2026-09-12", "Amount": "18,017.85"}]
+    key = store.get_invoice(original)["vendor_key"]
+    rec = stm.reconcile(records, stm.map_columns(list(records[0])), store.vendor_invoices(key))
+    assert [(li.status, li.invoice_id) for li in rec.lines] == [(stm.MATCHED, original)]
+
+
+def test_a_statement_whose_dates_read_both_ways_still_lists_what_it_leaves_out():
+    """Every day 12 or less: the matched invoices' own dates tell the order (month first here)."""
+    invoices = [_inv(1, "1001", 100.0, "2026-09-02"), _inv(2, "1002", 200.0, "2026-09-05"),
+                _inv(3, "1003", 300.0, "2026-09-08")]  # fmt: skip
+    records = [{"Invoice": "1001", "Date": "09/02/2026", "Amount": "100.00"},
+               {"Invoice": "1002", "Date": "09/05/2026", "Amount": "200.00"},
+               {"Invoice": "1004", "Date": "09/10/2026", "Amount": "50.00"}]  # fmt: skip
+    rec = stm.reconcile(records, stm.map_columns(list(records[0])), invoices)
+    assert [li.invoice_id for li in rec.lines if li.status == stm.NOT_ON_STATEMENT] == [3]
+    assert {li.date for li in rec.lines} == {"2026-09-02", "2026-09-05", "2026-09-08", "2026-09-10"}
+    assert not rec.period_unknown
+    # Nothing matched to tell by: the period is unknown, and the page says so rather than looking clean.
+    rec = stm.reconcile(records, stm.map_columns(list(records[0])), [_inv(3, "1003", 300.0, "2026-09-08")])
+    assert rec.period_unknown and rec.count(stm.NOT_ON_STATEMENT) == 0
+
+
+def _doc(i, number, date, total, status="approved", batch=None):
+    return {**_inv(i, number, total, date, status), "export_batch": batch}
+
+
+@pytest.mark.parametrize("left_over", [(-100.0, None), (250.0, 4)], ids=["credit note", "number used again"])
+def test_a_credit_note_or_a_reused_number_left_over_is_still_not_on_statement(left_over):
+    """B-2510: only a copy of the invoice a line took (same number, same total) is left out of "Not on statement": a
+    credit note numbered as its invoice, or another bill under a number the vendor used again, is still listed."""
+    cols = {"number": "No", "date": "Date", "amount": "Amount"}
+    records = [{"No": "1009", "Date": "2026-10-01", "Amount": "5.00"},
+               {"No": "1010", "Date": "2026-10-31", "Amount": "6.00"},
+               {"No": "1001", "Date": "2026-10-05", "Amount": "100.00"}]  # fmt: skip
+    invoices = [_doc(22, "1001", "2026-10-20", left_over[0], batch=left_over[1]),
+                _doc(21, "1001", "2026-10-05", 100.0, batch=3), _doc(20, "1010", "2026-10-31", 6.0, batch=3),
+                _doc(19, "1009", "2026-10-01", 5.0, batch=3)]  # fmt: skip
+    rec = stm.reconcile(records, cols, invoices)
+    assert [li.invoice_id for li in rec.lines if li.status == stm.NOT_ON_STATEMENT] == [22]
+    assert {li.invoice_id for li in rec.lines if li.status == stm.MATCHED} == {19, 20, 21}
+
+
+@pytest.mark.parametrize("amount, older, status", [("60.00", 80.0, "review"), ("100.00", 100.0, "approved")],
+                         ids=["a balance", "the same amount"])  # fmt: skip
+def test_a_line_takes_the_invoice_of_its_own_date_before_an_older_one_exported(amount, older, status):
+    """B-2510: #1001 of 2025 (exported) never takes the 2026-10-05 line from #1001 of 2026, whether the statement's
+    amount is a balance (it differs from both) or both bills have the same amount (a monthly fee)."""
+    cols = {"number": "No", "date": "Date", "amount": "Amount"}
+    records = [{"No": "1001", "Date": "2026-10-05", "Amount": amount},
+               {"No": "1002", "Date": "2026-10-30", "Amount": "5.00"}]  # fmt: skip
+    invoices = [_doc(9, "1002", "2026-10-30", 5.0), _doc(5, "1001", "2026-10-05", 100.0, status),
+                _doc(1, "1001", "2025-10-05", older, batch=1)]  # fmt: skip
+    rec = stm.reconcile(records, cols, invoices)
+    assert next(li.invoice_id for li in rec.lines if li.number == "1001") == 5
+
+
+def test_a_line_whose_date_reads_both_ways_takes_the_invoice_of_either_reading_first():
+    """B-2510: on a statement whose every date reads both ways ("05/10/2026"), last year's exported #1001 took the
+    line of this year's #1001, which was then listed "Not on statement": a date not yet read fits an invoice of
+    either reading."""
+    cols = {"number": "No", "date": "Date", "amount": "Amount"}
+    records = [{"No": "1001", "Date": "05/10/2026", "Amount": "60.00"},
+               {"No": "1002", "Date": "09/10/2026", "Amount": "5.00"}]  # fmt: skip
+    invoices = [_doc(9, "1002", "2026-10-09", 5.0), _doc(5, "1001", "2026-10-05", 100.0, "review"),
+                _doc(1, "1001", "2025-10-05", 80.0, batch=1)]  # fmt: skip
+    rec = stm.reconcile(records, cols, invoices)
+    assert next(li.invoice_id for li in rec.lines if li.number == "1001") == 5

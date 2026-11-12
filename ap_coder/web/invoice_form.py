@@ -285,7 +285,8 @@ class Draft:
     def to_dict(self) -> dict[str, Any]:
         return {"header": self.header, "lines": self.lines, "taxes": self.taxes, "taught": self.taught,
                 "reader_at": self.reader_at, "absent": self.absent, "from_vendor": self.from_vendor,
-                "pay_from_for": self.pay_from_for}  # fmt: skip
+                "pay_from_for": self.pay_from_for, "override": self.override,
+                "override_reason": self.override_reason}  # fmt: skip
 
 
 def parse_from_vendor(raw: Any) -> dict[str, Any]:

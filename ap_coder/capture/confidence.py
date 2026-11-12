@@ -803,7 +803,9 @@ def _capped(fz: _Fusion, f: str, g: _Group, conf: float, raw: float, vouched: li
         reasons.append("read only where this supplier's value was before, and the template cannot vouch for it")
     if any(TAKEN_OFF in r.method for r in readings):
         conf = min(conf, _clamp(raw, UNMEASURED_CAP))
-        reasons.append("something is taken off before the amount to pay (a deposit, a commission): a person checks it")
+        reasons.append(
+            "something is taken off before the amount to pay (a deposit, a holdback, a commission): a person checks it"
+        )
     if any(TWO_SUBTOTALS in r.method for r in readings):
         conf = min(conf, SINGLE_READER_CAP)
         reasons.append("the totals add up with another subtotal printed too (before or after the charges)")

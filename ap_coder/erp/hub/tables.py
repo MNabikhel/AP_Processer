@@ -407,6 +407,7 @@ def _channel(row: dict[str, Any]) -> str:
 
 def invoices(store: Any, ctx: Context, rows: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     from ...capture.workflow import AUTONOMOUS_REVIEWER
+    from ...core.keys import master_vendor_id
 
     rows = store.hub_invoice_rows() if rows is None else rows
     vendor_ids = ctx.vendor_ids if ctx.vendor_ids is not None else store.vendor_ids()
@@ -420,10 +421,13 @@ def invoices(store: Any, ctx: Context, rows: list[dict[str, Any]] | None = None)
         batch = whole(r.get("export_batch"))
         made = batches.get(batch) if batch is not None else None
         voucher = _voucher(meta)
+        vendor = coding.get("vendor_name") or r.get("vendor_name")
+        # (as the exports find it, ``exports._vendor_id``: by its name or its GST/HST number)
+        vendor_id = master_vendor_id(vendor_ids, vendor, coding.get("gst_hst_registration_number"))
         out.append({
             "invoice_id": int(r["id"]), "status": text(r.get("status")), "coding_source": source,
-            "vendor_name": text(coding.get("vendor_name") or r.get("vendor_name")),
-            "vendor_key": text(r.get("vendor_key")), "vendor_erp_id": text(vendor_ids.get(r.get("vendor_key") or "")),
+            "vendor_name": text(vendor),
+            "vendor_key": text(r.get("vendor_key")), "vendor_erp_id": text(vendor_id),
             "invoice_number": text(coding.get("invoice_number") or r.get("invoice_number")),
             "invoice_date": day(coding.get("invoice_date") or r.get("invoice_date")),
             "due_date": day(r.get("due_date")), "po_number": text(coding.get("po_number")),

@@ -114,7 +114,11 @@ def statements_page(
                             rec.count(stm.NOT_RECEIVED),
                             f"{money(rec.total(stm.NOT_RECEIVED))} to request",
                         ),
-                        ("Not on statement", rec.count(stm.NOT_ON_STATEMENT), "in AP Coder for the period"),
+                        (
+                            "Not on statement",
+                            rec.count(stm.NOT_ON_STATEMENT),
+                            "period unknown" if rec.period_unknown else "in AP Coder for the period",
+                        ),
                     ],
                     lines=[
                         {

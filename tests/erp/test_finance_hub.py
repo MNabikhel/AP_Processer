@@ -132,6 +132,35 @@ def test_each_table_is_built_from_the_store(store, tmp_path):
     assert "approved" in actions and "import_run" in actions
 
 
+def test_the_hub_gives_the_same_vendor_erp_id_as_the_export(store, tmp_path):
+    """The supplier number is found as the exports find it: by the GST/HST number, or by the number in the name the
+    reviewer picked ("LAKESIDE CATERING LTD #2004"), not by the invoice's vendor key alone."""
+    from ap_coder.erp import exports
+
+    store.import_vendor_master([
+        {"vendor_name": "Northwind IT Solutions Inc.", "erp_id": "4001", "gst": "123456782 RT0001"},
+        {"vendor_name": "Lakeside Catering Ltd", "erp_id": "2004"},
+        {"vendor_name": "Lakeside Catering Ltd", "erp_id": "2005"},
+    ])  # fmt: skip
+    a = _approved(store, tmp_path, "a.pdf", **gt("northwind_ON_HST_NW-2026-0912", vendor_name="Northwind IT"))
+    b = _approved(
+        store, tmp_path, "b.pdf", **gt("chinook_AB_GST_CCO-26-10418", vendor_name="LAKESIDE CATERING LTD #2004")
+    )
+    exported = {r["invoice_id"]: r["vendor_id"] for r in
+                exports.invoice_rows(store.get_invoices([a, b]), vendor_ids=store.vendor_ids())}  # fmt: skip
+    assert exported == {a: "4001", b: "2004"}
+    assert {r["invoice_id"]: r["vendor_erp_id"] for r in tables.invoices(store, tables.Context())} == exported
+
+
+def test_the_hubs_vendor_erp_id_is_found_by_the_invoices_own_vendor_name_when_its_coding_has_none(store):
+    """B-2513: an invoice whose coding names no vendor (none read yet) is still its vendor's, by the name it is
+    listed under, as ``vendor_name`` in the same row is."""
+    store.import_vendor_master([{"vendor_name": "Northwind IT Solutions Inc.", "erp_id": "4001"}])
+    row = {"id": 7, "status": "failed", "vendor_name": "Northwind IT Solutions Inc.", "ai_output": {}, "meta": {}}
+    (hub,) = tables.invoices(store, tables.Context(batches={}), rows=[row])
+    assert (hub["vendor_name"], hub["vendor_erp_id"]) == ("Northwind IT Solutions Inc.", "4001")
+
+
 def test_a_reopened_approval_is_marked_withdrawn(store, tmp_path):
     invoice_id = _approved(store, tmp_path, grand_total=500.0)
     store.reopen(invoice_id, "Jane", "wrong account")

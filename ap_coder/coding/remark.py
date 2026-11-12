@@ -54,13 +54,21 @@ _NOT_AFTER, _NOT_LETTER = r"(?<![^\W_])", r"(?![^\W\d_])"  # not right after a l
 _LABEL_END = r"\s*(?:no\.?|n°|#)?\s*[:.#]?\s*"
 # What changes from one voucher to the next in a remark, as ``remark_shape`` takes it out: an invoice number after
 # "INV" (five digits or more: "invoice 410 Elm" ends with an office), a month (with the year written after it), a
-# quarter, a year, a number of five digits or more.
+# quarter, a whole date (left as written: its month and day can't follow), a month as a number beside its year
+# ("2025-11", "11/2025"; ``_month_number``), a year, a number of five digits or more. A number of letters and digits
+# ("job 2025-07A", "A-11/2025") is none of them.
 _VARYING = re.compile(
     rf"{_NOT_AFTER}(?:(?P<label>(?:invoice|inv|facture|fact|fac){_LABEL_END})(?P<labelled>\d{{5,}}[\w-]*)"
     rf"|(?P<month>{_MONTH}){_NOT_LETTER}(?:(?P<gap>\.?\s*[/'-]?\s*)(?P<month_year>(?:20)?\d\d)(?!\d))?"
-    rf"|(?P<q>q)(?P<quarter>[1-4])(?![^\W_])|(?P<year>(?:19|20)\d\d)(?!\d)|(?P<number>\d{{5,}}))",
+    r"|(?P<q>q)(?P<quarter>[1-4])(?![^\W_])"
+    r"|(?P<date>(?:19|20)\d\d[/-]\d\d?[/-]\d\d?|\d\d?[/-]\d\d?[/-](?:19|20)\d\d)(?!\w)"
+    r"|(?P<ym_year>(?:19|20)\d\d)(?P<ym_sep>[/-])(?P<ym_month>\d\d?)(?![\w/-])"
+    r"|(?<!\w[/-])(?P<my_month>\d\d?)(?P<my_sep>[/-])(?P<my_year>(?:19|20)\d\d)(?![\w/-])"
+    rf"|(?P<year>(?:19|20)\d\d)(?!\d)|(?P<number>\d{{5,}}))",
     re.IGNORECASE,
 )
+# An invoice number's own label ("INV-55123", "Invoice #55123"): not repeated after the remark's "INV".
+_OWN_LABEL = re.compile(rf"^(?:invoice|inv|facture|fact|fac){_LABEL_END}-?\s*(?=\d)", re.IGNORECASE)
 _ACCOUNT_LABEL = re.compile(rf"(?:acct|account|a/c|compte|cust|customer|client|contract|contrat){_LABEL_END}$", re.I)
 # A month an invoice line names: any month with a year after it ("Apr 30, 2026", "mai 2026", "Mar/26"), or a month
 # written in full that is no other word ("may" and "mai" are).
@@ -122,11 +130,17 @@ def _get(thing: Any, name: str) -> Any:
     return thing.get(name) if isinstance(thing, Mapping) else getattr(thing, name, None)
 
 
-def _described(line: Any) -> str:
-    """A line's description as the invoice prints it: a part of a split line without the split's mark."""
-    text = one_line(_get(line, "description"))
+def described(line: Any) -> str:
+    """A line's description as the invoice prints it, on one line: a part of a split line without the split's mark."""
+    return one_line(unsplit(line))
+
+
+def unsplit(line: Any) -> str:
+    """A line's description as it is, a part of a split line's without the split's mark (``review.split_line``'s
+    "Diesel - card 30419 (40%)" is "Diesel - card 30419"): what the line memory learns of it (B-2519)."""
+    text = str(_get(line, "description") or "")
     part = _SPLIT.match(str(_get(line, "reasoning_justification") or ""))
-    return text.removesuffix(f"({part[2]})").rstrip() if part else text
+    return text.rstrip().removesuffix(f"({part[2]})").rstrip() if part else text
 
 
 def _first_part(line: Any, coding: Any) -> Any:
@@ -202,14 +216,29 @@ def _month_like(written: str, month: int, plain: bool) -> str:
     return _cased(_fold(name) if plain else name, written)
 
 
+def _month_number(found: re.Match[str], period: Period | None, year: bool) -> str:
+    """A month written as a number beside its year ("2025-11", "11/2025", "3/2025"), as ``period``'s, in as many
+    digits; taken out with no ``period``. Left as written when that is no year (``year``), no month (13), or one digit
+    but in "3/2025" ("lot 3-2025", "ref 2025/1": a lot or a reference as likely)."""
+    digits = found["ym_month"] or found["my_month"]
+    one_digit = len(digits) == 1 and not (found["my_month"] and found["my_sep"] == "/")
+    if not year or not 1 <= int(digits) <= 12 or one_digit:
+        return found[0]
+    if period is None:
+        return ""
+    month = f"{period.month:0{len(digits)}d}"
+    return f"{period.year}{found['ym_sep']}{month}" if found["ym_year"] else f"{month}{found['my_sep']}{period.year}"
+
+
 def with_period(remark: str, period: Period | None, invoice_number: Any = "", written: int | None = None) -> str:
     """A remark as the supplier's was last written, for this invoice: its month, quarter and year are ``period``'s
-    (each written as it was: "Jul" gives "May", "juillet" gives "mai"), the number after "INV" is
-    ``invoice_number``; the rest stays, the office it ends with too. A long number nothing says is the supplier's
-    account is taken out: it was that voucher's. ``written``: the year the remark was written, which tells a year
-    ("2025 audit", "Jul 25") from a street number. With no ``period`` the month is taken out, not kept stale."""
+    (each written as it was: "Jul" gives "May", "juillet" gives "mai", "2025-11" gives "2026-05"; a whole date stays),
+    the number after "INV" is ``invoice_number`` (without its own "INV"); the rest stays, the office it ends with too.
+    A long number nothing says is the supplier's account is taken out: it was that voucher's. ``written``: the year
+    the remark was written, which tells a year ("2025 audit", "Jul 25") from a street number. With no ``period`` the
+    month is taken out, not kept stale."""
     remark = one_line(remark)
-    number = one_line(invoice_number)
+    number = _OWN_LABEL.sub("", one_line(invoice_number))
     plain = remark.isascii()
 
     def a_year(digits: str) -> bool:
@@ -233,6 +262,10 @@ def with_period(remark: str, period: Period | None, invoice_number: Any = "", wr
             return out + found["gap"] + (str(period.year)[-len(digits) :] if year else digits)
         if found["quarter"]:
             return f"{found['q']}{period.quarter}" if period else ""
+        if found["date"]:
+            return found["date"]
+        if found["ym_year"] or found["my_year"]:
+            return _month_number(found, period, written is not None and a_year(found["ym_year"] or found["my_year"]))
         if found["year"]:
             if written is None or not a_year(found["year"]):
                 return found["year"]
@@ -308,9 +341,9 @@ def suggested(line: Any, invoice: Any, prior: Prior | None, account: str,
         if text:
             return Suggestion(text, why + (f", shortened to {REMARK_MOST} characters" if cut else ""), SUPPLIER)
     cut = f", shortened to {REMARK_MOST} characters"
-    text = shortened(_described(line))
+    text = shortened(described(line))
     if text:
-        return Suggestion(text, "from the invoice's line" + (cut if text != _described(line) else ""), INVOICE)
+        return Suggestion(text, "from the invoice's line" + (cut if text != described(line) else ""), INVOICE)
     name = ""
     if reference is not None and account:  # (a GL code alone, or a business unit and its code)
         name = account_name(reference, "", account) or account_name(reference, *split_account(account))

@@ -396,11 +396,13 @@ def _federal_taxes(final: dict[str, Any]) -> tuple[Any, ...]:
     return invoice_taxes(coding, TaxSetup(_rates(), {})).areas
 
 
-def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
+def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str, on: dt.date | None = None) -> _Voucher:
+    """The voucher of ``inv`` for ``an8``, checked; ``on``: the batch's day (else today), its G/L date's when that
+    is the export day, in the open period or not (B-2490)."""
     final = inv.get("final_output") or {}
     v = _Voucher(int(inv.get("id") or 0), final, [])
     add = v.add
-    po = _check_header(v, final, settings, an8)
+    po = _check_header(v, final, settings, an8, on)
     charged = _check_tax_area(v, final, settings)
     on_gl = settings.tax_on_gl
     dist = _distribution(final)
@@ -440,7 +442,8 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     return v
 
 
-def _check_header(v: _Voucher, final: dict[str, Any], settings: JdeSettings, an8: str) -> str:
+def _check_header(v: _Voucher, final: dict[str, Any], settings: JdeSettings, an8: str,
+                  on: dt.date | None = None) -> str:  # fmt: skip
     """The supplier number, invoice number, PO number, dates and currency; the PO number."""
     add = v.add
     if not an8:
@@ -462,8 +465,8 @@ def _check_header(v: _Voucher, final: dict[str, Any], settings: JdeSettings, an8
         add("no invoice date", "INVOICE_DATE_INVALID")
     elif invoice_date.year not in E1_YEARS:
         add(f"invoice date {invoice_date} is outside what JD Edwards dates hold (1900 to 2899)", "JDE_DATE_RANGE")
-    else:  # the open period (D-182): today's for a G/L date of the export day (the batch's is checked as it goes)
-        day, v.gl_moved = gl_date_of(final, settings)
+    else:  # the open period (D-182): the batch's day (``on``, else today) for a G/L date of the export day
+        day, v.gl_moved = gl_date_of(final, settings, on)
         if why := period_problem(day, settings):
             add(why, "JDE_PERIOD_CLOSED")
         elif v.gl_moved:
@@ -553,6 +556,8 @@ def _check_distribution(v: _Voucher, final: dict[str, Any], settings: JdeSetting
     for e, li in zip(v.entries, entry_lines(v.entries, final.get("line_items") or []), strict=True):
         if li is not None and li.get("remark"):  # the invoice line's own remark (``line_remark``, D-213)
             e["remark"] = li["remark"]
+        elif li is not None and li.get("remark_from") == "person":  # emptied on purpose: keyed empty (D-229, B-2489)
+            e["remark"], e["remark_from"] = "", "person"
     expected = v.gross - v.recoverable
     kept = sum(e["cents"] for e in v.entries)
     kept_cents = sum(_units(e.get("amount")) for e in v.entries)
@@ -635,14 +640,14 @@ def sent_tax(invoice: dict[str, Any], settings: JdeSettings, an8: str = "") -> f
     return round(cents / 100, 2)
 
 
-def _vouchers(invoices: list[dict[str, Any]], settings: JdeSettings,
-              vendor_lookup: VendorLookup) -> list[tuple[str, _Voucher]]:  # fmt: skip
+def _vouchers(invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup,
+              on: dt.date | None = None) -> list[tuple[str, _Voucher]]:  # fmt: skip
     """Each invoice's (supplier number, voucher), in their order: prepared once for a whole check, export or dry run,
     then handed to ``validate``, ``voucher_rows`` and ``dry_run`` as ``prepared``."""
     out = []
     for inv in invoices:
         an8 = resolve_an8(inv.get("final_output") or {}, vendor_lookup, settings)
-        out.append((an8, _prepare(inv, settings, an8)))
+        out.append((an8, _prepare(inv, settings, an8, on)))
     return out
 
 

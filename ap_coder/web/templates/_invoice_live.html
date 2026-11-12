@@ -119,7 +119,7 @@
 
 {% macro amounts(live, invoice_id) -%}
 {% set a = live.amount_line %}
-{% if a %}<div class="rvw-amounts">{{ a.subtotal }} + {{ a.tax }} tax = <b>{{ a.total }}</b> {{ a.currency }}
+{% if a %}<div class="rvw-amounts">{{ a.subtotal }} {{ a.sign }} {{ a.tax }} tax = <b>{{ a.total }}</b> {{ a.currency }}
   {% if a.adds_up %}<span class="rvw-ok" title="Adds up"><span class="ms" aria-hidden="true">check</span></span>{% else %}{{ ui.pill("does not add up", "warn") }}{% endif %}</div>{% endif %}
 {%- endmacro %}
 
@@ -216,7 +216,7 @@
   {% for r in m.rows if r.kind in ("lines", "total") %}
     <tr class="tc-sum {{ 'is-ok' if r.ok else 'is-check' }}" data-tax-row="{{ r.kind }}" data-diff="{{ r.diff or '' }}">
       <td colspan="2">{% if r.ok %}<span class="tc-ok" aria-label="Adds up">✓</span>{% else %}<span class="tc-check">check</span>{% endif %} <b>{{ r.what }}</b></td>
-      <td colspan="2" class="r">{% if r.kind == "lines" %}{{ r.lines_total }} = {{ r.subtotal }}{% else %}{{ r.subtotal }} + {{ r.tax }} = {{ r.computed }}; total {{ r.total }}{% endif %}
+      <td colspan="2" class="r">{% if r.kind == "lines" %}{{ r.lines_total }} = {{ r.subtotal }}{% else %}{{ r.subtotal }} {{ r.sign }} {{ r.tax }} = {{ r.computed }}; total {{ r.total }}{% endif %}
         {%- if r.hint %}<div class="tc-named">{{ r.hint }}</div>{% endif %}</td>
       <td class="r">{% if r.diff %}<b class="tc-diff">{{ r.diff }}</b>{% else %}—{% endif %}</td></tr>
   {% endfor %}

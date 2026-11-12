@@ -10,7 +10,7 @@ import openpyxl
 
 from ap_coder.coding.tax import TaxTreatment
 from ap_coder.core.memory import vendor_key
-from ap_coder.erp import exports, jde_formats, jde_keying, jde_prototype, jde_review, jde_settings, jde_zfiles
+from ap_coder.erp import exports, jde, jde_formats, jde_keying, jde_prototype, jde_review, jde_settings, jde_zfiles
 from tests.conftest import copy_database
 from tests.erp.test_jde import _setup
 from tests.erp.test_jde_gl_mode import coded, doc, line, tl
@@ -209,6 +209,43 @@ def test_a_line_with_a_remark_of_its_own_is_on_the_sheet_with_it():
     files = jde_zfiles.export_batch([invoice], settings(remarks=jde_settings.REMARKS_TYPED), lookup, batch=7, on=ON_DAY)
     dist = list(csv.DictReader(io.StringIO(files[jde_zfiles.DIST_FILE].decode())))
     assert [r["VNEXR"] for r in dist] == [row[3] for row in lines_and_check(block)[:3]]
+
+
+def test_a_remark_the_person_cleared_is_keyed_empty_on_the_sheet_and_in_the_files():
+    """B-2489: a remark the person emptied on purpose (D-229) was keyed as the line's description cut at 30 (the
+    sheet's Explanation -Remark-, VNEXA and VNEXR): the line's remark was copied to its G/L line only when it had
+    text, so ``line_remark`` never saw it was cleared."""
+    invoice = one_line()
+    invoice["final_output"]["line_items"][0].update(remark="", remark_from="person")
+    (block,) = blocks(workbook([invoice])[jde_keying.SHEET])
+    assert lines_and_check(block)[0][3] in ("", None)
+    files = jde_zfiles.export_batch([invoice], settings(remarks=jde_settings.REMARKS_TYPED), lookup, batch=7, on=ON_DAY)
+    (dist,) = csv.DictReader(io.StringIO(files[jde_zfiles.DIST_FILE].decode()))
+    assert (dist["VNEXA"], dist["VNEXR"]) == ("", "")
+
+
+def test_a_batch_made_earlier_is_checked_against_the_open_period_on_its_own_day():
+    """B-2490: with the export day as the G/L date, a voucher's check asked the open period about today while the
+    sheet and the files key the batch's day: a batch of 30 October rebuilt in November was ready with its G/L date
+    30 October in a closed period, and with October still the open period it was "not ready" for today's date,
+    which it would not key."""
+    day = dt.date(2026, 10, 30)
+    invoice = one_line()
+    closed = settings(gl_date=jde_settings.GL_DATE_EXPORT, open_from="2026-11-01",
+                      closed_period=jde_settings.CLOSED_HOLD)  # fmt: skip
+    ready, held = jde_keying.vouchers([invoice], closed, lookup, on=day)
+    assert not ready and "G/L date 2026-10-30 is in a closed period" in held[0].why[0]
+    report = jde.dry_run([invoice], closed, lookup, on=day)
+    assert not report["vouchers"] and "G/L date 2026-10-30 is in a closed period" in report["held"][0]["reasons"][0]
+
+    october = settings(gl_date=jde_settings.GL_DATE_EXPORT, open_from="2026-10-01", open_to="2026-10-31")
+    ready, held = jde_keying.vouchers([invoice], october, lookup, on=day)
+    assert not held and ready[0].gl_date == day
+    report = jde.dry_run([invoice], october, lookup, on=day)
+    assert not report["held"] and report["vouchers"][0]["pay_items"][0]["dates"].startswith("invoice ")
+    files = jde_zfiles.export_batch([invoice], october, lookup, batch=7, on=day)
+    (header,) = csv.DictReader(io.StringIO(files[jde_zfiles.HEADER_FILE].decode()))
+    assert header["VLDGJ"] == str(jde_formats.julian(day))
 
 
 def test_quebec_with_the_qst_in_the_expense_shows_the_gst_on_the_pay_item_and_the_qst_in_the_line():

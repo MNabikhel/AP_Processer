@@ -5781,3 +5781,23 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Amended (B-2481):** not on Windows. There CI's server load test left requests unanswered and a failover
     timing test ran over with it, on both runs; Windows keeps Python's 5 ms. The page's one-query count (B-2436)
     is what keeps JD Edwards files quick there.
+- **D-238** · **The Sales tax report claims each tax line as it was posted, not as the tax setup treats it today**
+  (`coding/taxreturn.py` `posted_recoverable`, kept in the invoices' summary by `tax_facts`; 12 Nov 2026).
+  - **Why:** the claim follows the books. A QST expensed into the lines when the invoice was approved and exported is
+    in the expense accounts, not the ITR account: claiming it once the setup is changed to recoverable claims tax
+    never booked as recoverable (and the reverse drops tax that was). The approved invoice's GL distribution, kept
+    with it (D-90), says per tax line which it was.
+  - **Fallback:** an invoice coded by an older version, with no distribution kept, is claimed by today's setup, as
+    its posting lines are built with it (`exports.distribution`). A setup change still shows on the report as the
+    taxes not recoverable today.
+- **D-239** · **A supplier JD Edwards renamed keeps its vendor checks' history and AP's hold** (`coding/vendors.py`
+  `_same_number`; 12 Nov 2026).
+  - **Why:** the touchless record and last year's journal follow the supplier number, but the vendor checks read the
+    invoices and the hold of the vendor row of the name: under its new name a touchless supplier paying a new bank
+    account raised no VENDOR_BANK_CHANGED, and AP's hold stayed on the old name (B-2517).
+  - **What:** D-222's amendment stands (a renamed supplier is a second vendor row, its lessons under the new name);
+    the vendor checks read the invoices of every vendor master row with the same supplier number, and a hold AP put
+    on any of them holds the others. That excludes a hold for the retired marker of an old name, a number of zeros
+    (no supplier number), and a row whose GST/HST number belongs to another Business Number (a rename keeps its
+    own). VENDOR_NEW still skips a vendor in the master: the master vouches for the name, and the old name's
+    approvals are the supplier's.

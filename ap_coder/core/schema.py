@@ -294,6 +294,13 @@ def _province_at_end(words: list[str]) -> str | None:
     return None
 
 
+def province_named(text: str) -> str:
+    """The province ``text`` is, spelled out or abbreviated and nothing else ("British Columbia", "Québec", "B.C.",
+    "Sask.", "Colombie-Britannique"), or ""."""
+    plain = "".join(c for c in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(c))
+    return _PROVINCE_ALIASES.get(" ".join(plain.replace(".", "").replace("-", " ").upper().split()), "")
+
+
 def province_code(value: str) -> str:
     """A province code from what a model wrote: "BC", "Vancouver, BC", "British Columbia", "Québec", "PEI", "Nfld".
     The province at the end of an address wins, so a street named after one ("500 Quebec St, Vancouver, BC",

@@ -715,7 +715,9 @@ def still_copying(folder: Path, now: float, fresh: Collection[Path] = ()) -> int
 def _sorted_line(mail: Any) -> str:
     """What triage made of an email, in one line: its kind, where its attachments went, why it needs a person."""
     t = mail.triage
-    parts = [t.label if t else "email", f"{len(mail.saved)} invoice(s) to process"]
+    parts = [t.label if t else "email", f"{ui.plural(len(mail.saved) - mail.repeated, 'invoice')} to process"]
+    if mail.repeated:
+        parts.append(f"{mail.repeated} repeated")
     if mail.statements:
         parts.append(f"{len(mail.statements)} statement(s) to statements/")
     if mail.held:

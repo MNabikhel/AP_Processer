@@ -274,10 +274,14 @@ def undo_approve(request: Request, invoice_id: int) -> JSONResponse:
 @router.post("/review/{invoice_id:int}/park")
 def park(request: Request, invoice_id: int, reason: str = Form(""), follow_up: str = Form(""),
          show: str = Form(""), q: str = Form(""), sort: str = Form(""), limit: str = Form(""),
-         next_id: str = Form("")) -> JSONResponse:  # fmt: skip
-    """Set it aside while waiting for information (out of the queue until brought back)."""
+         next_id: str = Form(""), rev: str | None = Form(None)) -> JSONResponse:  # fmt: skip
+    """Set it aside while waiting for information (out of the queue until brought back). From a screen out of date
+    (``rev``), refused as Approve is (D-184)."""
     store = get_store(request)
-    _invoice(store, invoice_id)
+    inv = _invoice(store, invoice_id)
+    query = _nav_query({"show": show, "q": q, "sort": sort, "limit": limit})
+    if behind := _acted_on_meanwhile(request, store, invoice_id, inv, {**query, "rev": rev}):
+        return behind
     if not reason.strip():
         return refuse("Say what it is waiting for.")
     follow = None
@@ -288,7 +292,6 @@ def park(request: Request, invoice_id: int, reason: str = Form(""), follow_up: s
             return refuse("The follow-up date must be a date (YYYY-MM-DD).")
         if follow < dt.date.today():
             return refuse("Pick a follow-up date from today on.")
-    query = _nav_query({"show": show, "q": q, "sort": sort, "limit": limit})
     after = next_url(store, invoice_id, query, next_id, request)
     try:
         store.park_invoice(invoice_id, reviewer(), reason.strip(), follow.isoformat() if follow else None)
@@ -364,12 +367,16 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
 
 @router.post("/review/{invoice_id:int}/reject")
 def reject(request: Request, invoice_id: int, reason: str = Form(""), show: str = Form(""), q: str = Form(""),
-           sort: str = Form(""), limit: str = Form(""), next_id: str = Form("")) -> JSONResponse:  # fmt: skip
-    """Not ours, or not to be paid. It can be reopened later, with the edits made before, as after Park (B-2361)."""
+           sort: str = Form(""), limit: str = Form(""), next_id: str = Form(""),
+           rev: str | None = Form(None)) -> JSONResponse:  # fmt: skip
+    """Not ours, or not to be paid. It can be reopened later, with the edits made before, as after Park (B-2361).
+    From a screen out of date (``rev``), refused as Approve is (D-184)."""
     store = get_store(request)
-    _invoice(store, invoice_id)
-    after = next_url(store, invoice_id, _nav_query({"show": show, "q": q, "sort": sort, "limit": limit}), next_id,
-                     request)  # fmt: skip
+    inv = _invoice(store, invoice_id)
+    query = _nav_query({"show": show, "q": q, "sort": sort, "limit": limit})
+    if behind := _acted_on_meanwhile(request, store, invoice_id, inv, {**query, "rev": rev}):
+        return behind
+    after = next_url(store, invoice_id, query, next_id, request)
     try:
         store.reject_invoice(invoice_id, reviewer(), reason.strip())
     except ValueError:

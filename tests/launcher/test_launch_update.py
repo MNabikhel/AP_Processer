@@ -9,7 +9,7 @@ import json
 import os
 import shutil
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 
 import pytest
@@ -843,6 +843,47 @@ def test_a_desktop_and_shortcut_with_accents_are_read_right_on_windows(launch, m
     monkeypatch.setattr(launch, "desktop", lambda: launch.ROOT)
     (launch.ROOT / "AP Coder.lnk").write_text("")
     assert Path(launch.old_shortcut_folder()) == Path("/Users/José/Données/AP Coder 0.1")  # "\\" on Windows
+
+
+POWERSHELL_QUOTES = "'\u2018\u2019\u201a\u201b"  # what PowerShell's tokenizer takes as a single quote
+
+
+def powershell_strings(script: str) -> list[str]:
+    """PowerShell's own reading of single-quoted strings: each starts and ends at any POWERSHELL_QUOTES character, two
+    in a row being one inside. Returns the strings read."""
+    found, i = [], 0
+    while i < len(script):
+        if script[i] not in POWERSHELL_QUOTES:
+            i += 1
+            continue
+        j, text = i + 1, ""
+        while True:
+            if j >= len(script):
+                return [*found, text + " <UNTERMINATED>"]
+            if script[j] in POWERSHELL_QUOTES:
+                if j + 1 < len(script) and script[j + 1] in POWERSHELL_QUOTES:
+                    text, j = text + script[j], j + 2  # two in a row: one inside
+                    continue
+                break
+            text, j = text + script[j], j + 1
+        found.append(text)
+        i = j + 1
+    return found
+
+
+def test_the_shortcut_command_keeps_a_folder_with_a_typographic_apostrophe(launch, monkeypatch):
+    """B-2507: write_shortcut put each path in a PowerShell single-quoted string doubling only the ASCII apostrophe.
+    PowerShell also ends such a string at a typographic one (U+2018, U+2019, U+201A, U+201B), so a folder such as
+    "C:\\Users\\Zoë\\OneDrive - O’Neil & Fils\\Desktop" (Word/Outlook-style, common in company and OneDrive names)
+    broke the command: no desktop shortcut, "tried again next time" at every start. Each of them is doubled."""
+    root = PureWindowsPath(r"C:\Users\Zoë\OneDrive - O’Neil & Fils\AP Coder ‘0.2’")
+    desk = PureWindowsPath(r"C:\Users\Zoë\OneDrive - O’Neil & Fils\Desktop")
+    monkeypatch.setattr(launch, "ROOT", root)
+    sent = []
+    monkeypatch.setattr(launch.subprocess, "run", lambda cmd, **kw: sent.append(cmd) or SimpleNamespace(returncode=0))
+    launch.write_shortcut(desk)
+    strings = powershell_strings(sent[0][-1])
+    assert [str(desk / "AP Coder.lnk"), str(root / "APProcessor.bat"), str(root)] == strings[:3], strings
 
 
 # --- A data folder an earlier AP Coder made: set up the department's way before the server starts (D-232) ----------

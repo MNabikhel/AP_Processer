@@ -57,8 +57,60 @@ def test_period_status_and_treatment(tmp_path):
     assert report.claims == [] and report.not_approved == 1  # the approved one is dated after the quarter
     assert len(taxreturn.build(store, dt.date(2026, 10, 1), dt.date(2026, 12, 31)).claims) == 1
     store.set_tax_treatment("HST", EXPENSE_TO_LINE)
+    later, _ = _approved(store, tmp_path, "harbourview_NS_HST_HPS-2026-0347", invoice_date="2026-10-05")
     report = taxreturn.build(store, dt.date(2026, 10, 1), dt.date(2026, 12, 31))
-    assert report.claims == [] and "HST" in report.not_recoverable
+    # The HST approved after the change is expensed into the lines: not claimed (the one posted before still is, D-238)
+    assert later not in {c.invoice_id for c in report.claims} and len(report.claims) == 1
+    assert "HST" in report.not_recoverable
+
+
+def test_the_itr_report_claims_the_qst_as_it_was_posted_not_by_todays_setup(tmp_path):
+    """QST expensed into the lines when the invoice was approved and exported is never claimed once the QST is set
+    recoverable, and QST posted recoverable is still claimed once it is set expensed (D-238)."""
+    from ap_coder.core.tax_setup import RECOVERABLE
+    from ap_coder.erp import exports
+
+    store = Store(tmp_path / "t.db")
+    load_sample_setup(store)
+    store.set_tax_treatment("QST", EXPENSE_TO_LINE, "")
+    expensed, _ = _approved(store, tmp_path, "laurentides_QC_TPS_TVQ_SIL-4471")
+    posted = exports.distribution(store.get_invoice(expensed)["final_output"])
+    assert not [e for e in posted if e["kind"] == "tax" and "QST" in e["description"]]  # in the expense lines
+    store.set_tax_treatment("QST", RECOVERABLE, "2210")
+    assert taxreturn.build(store, *YEAR).totals()[taxreturn.ITR] == {}
+    claimed, qc = _approved(store, tmp_path, "montroyal_QC_TPS_TVQ_ACMR-2026-1187")
+    store.set_tax_treatment("QST", EXPENSE_TO_LINE, "")
+    report = taxreturn.build(store, *YEAR)
+    assert {c.invoice_id for c in report.claims if c.tax_type == "QST"} == {claimed}
+    assert report.totals()[taxreturn.ITR] == {"CAD": round(qc["tax_lines"][1]["tax_amount"] - 127.18, 2)}
+
+
+def test_a_tax_line_of_nothing_never_takes_the_tax_entry_of_the_next():
+    """B-2511: with tax lines GST 5% $0.00 then GST 5% $5.00, the $0.00 one (no posting line of its own, as
+    ``build_gl_distribution`` skips it) took the $5.00 one's entry: the real $5 ITC was left out."""
+    from ap_coder.coding.tax import RECOVERABLE, TaxRateTable, TaxSetup, TaxTreatment, build_gl_distribution
+
+    lines = [{"line_number": 1, "description": "Supplies", "quantity": 1, "unit_price": 100, "amount": 100,
+              "predicted_gl_code": "6000"}]  # fmt: skip
+    taxes = [{"tax_type": "GST", "rate": 0.05, "tax_amount": amount, "taxable_amount": 100} for amount in (0, 5)]
+    coding = InvoiceCoding(vendor_name="V", invoice_number="1", invoice_date="2026-10-01", currency="CAD",
+                           subtotal=100, tax_lines=taxes, tax_total=5, grand_total=105, confidence_score=0.9,
+                           line_items=lines)  # fmt: skip
+    doc = coding.to_output()
+    doc["gl_distribution"] = build_gl_distribution(coding, TaxSetup(TaxRateTable(()), {"GST": TaxTreatment(
+        "GST", RECOVERABLE, "2200")}))  # fmt: skip
+    assert taxreturn.posted_recoverable(doc) == {1: True}
+    assert [line[1] for line in taxreturn.tax_facts({"final_output": doc}, None)["lines"]] == [5.0]
+
+
+def test_a_tax_entry_of_another_tax_line_is_never_taken_by_its_label():
+    """B-2511: an entry that says which tax line it is (its meals' half, ``tax_line``) is that line's, though an
+    earlier line of the same tax and rate reads the same."""
+    taxes = [{"tax_type": "GST", "rate": 0.05, "tax_amount": 5} for _ in range(2)]
+    entry = {"kind": "tax", "description": "GST 5% (recoverable, less 50% on meals)", "non_recoverable_tax": 0.0,
+             "amount": 2.5, "meals_tax": 2.5, "tax_line": 1}  # fmt: skip
+    doc = {"tax_lines": taxes, "gl_distribution": [{"kind": "expense", "amount": 102.5}, entry]}
+    assert taxreturn.posted_recoverable(doc) == {0: False, 1: True}
 
 
 def test_claims_to_check(tmp_path):

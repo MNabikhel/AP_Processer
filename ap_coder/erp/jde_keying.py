@@ -141,7 +141,7 @@ def vouchers(
     account (D-220), and one in a currency none of them is in says so."""
     ready: list[Voucher] = []
     held: list[Held] = []
-    for inv, (an8, v) in zip(invoices, jde_voucher._vouchers(invoices, settings, vendor_lookup), strict=True):
+    for inv, (an8, v) in zip(invoices, jde_voucher._vouchers(invoices, settings, vendor_lookup, on), strict=True):
         final = v.final
         why = list((left_out or {}).get(v.inv_id) or []) or (jde_voucher._accounts_once(v) if v.problems else [])
         if why:
