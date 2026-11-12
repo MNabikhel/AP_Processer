@@ -144,6 +144,15 @@ def test_the_invoice_number_put_in_a_remark_does_not_repeat_its_label(number):
     assert with_period("INV 54001 cell", Period(2026, 12, 4), "INVERNESS-1", 2026) == "INV INVERNESS-1 cell"
 
 
+def test_a_remark_written_with_a_hyphen_after_inv_gets_the_new_invoice_number():
+    """The remark "INV-54001 cell Jan" was suggested as "INV- cell Feb": the number taken out, none put back."""
+    assert with_period("INV-54001 cell Jan", Period(2026, 2, 1), "55123", 2026) == "INV-55123 cell Feb"
+    assert with_period("Inv-12345 rent Jan", Period(2026, 2, 1), "INV-99001", 2026) == "Inv-99001 rent Feb"
+    assert with_period("INV - 54001 cell", Period(2026, 2, 1), "55123", 2026) == "INV - 55123 cell"
+    assert with_period("INV-54001 cell", None, "", 2026) == "INV cell"  # no number read: no "INV-" left
+    assert with_period("acct-1234567 hydro", Period(2026, 2, 1), "55123", 2026) == "acct-1234567 hydro"
+
+
 def test_with_no_date_the_month_is_taken_out_not_kept_stale():
     assert with_period("Jul janitorial 410 Elm", None, "", written=2025) == "janitorial 410 Elm"
     assert with_period("INV 778812 freight", None, "", written=2025) == "INV freight"

@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from ..core.chart import SEPARATOR, clean, join_account, split_account, split_code
 from ..core.csvio import sniff_delimiter
 from ..core.headers import header_key
-from ..core.parsing import parse_amount, parse_date
+from ..core.parsing import infer_day_first, parse_amount, parse_date
 from ..core.ui import plural
 
 REPORT = "R09321"
@@ -270,6 +270,13 @@ def _voucher(draft: _Draft, intercompany: frozenset[str]) -> Voucher:
     )  # fmt: skip
 
 
+def _day_first(rows: list[list[str]], pos: dict[str, int]) -> bool:
+    """How the file prints its G/L dates, from the vouchers' ones that read one way only (25/03/2026: day first);
+    month first when none tells (or they mix)."""
+    dates = (_cell(row, pos["gl_date"]) for row in rows if SEPARATOR in _cell(row, pos["account"]))
+    return bool(infer_day_first("\n".join(dates)))
+
+
 def read_journal(data: bytes, *, payable_objects: PayableObjects, tax_objects: Iterable[str]) -> Journal:
     """The vouchers of a Transaction Journal saved as CSV. ``payable_objects`` and ``tax_objects``: the objects of
     the lines AP did not choose (trade and intercompany payable; the GST clearing account). Every voucher is kept,
@@ -287,13 +294,14 @@ def read_journal(data: bytes, *, payable_objects: PayableObjects, tax_objects: I
     kinds |= {clean(o): PAYABLE for o in (*payable_objects.trade, *intercompany)}
     seen = _Seen(titles=sum(1 for row in rows[:start] if any(cell.strip() for cell in row)), no_header=header is None)
     drafts: list[_Draft] = []
+    day_first = _day_first(rows[start:], pos)
     for n, row in enumerate(rows[start:], start=start + 1):
         if SEPARATOR not in _cell(row, pos["account"]):
             _not_data(row, pos, seen)
             continue
         doc_type, company, gl_date = (_cell(row, pos[name]) for name in _HEAD)
         if doc_type:
-            date = parse_date(gl_date, day_first=False)
+            date = parse_date(gl_date, day_first=day_first)
             drafts.append(_Draft(n, doc_type, company, date.isoformat() if date else ""))
         read = _line(n, row, pos, kinds)
         if read is None or not drafts or not doc_type and (company or gl_date):

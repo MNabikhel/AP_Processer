@@ -538,3 +538,17 @@ def test_a_header_row_without_the_remark_column_is_refused_naming_it_never_read_
     with pytest.raises(ValueError, match="no “Remark” column"):
         read(as_csv(cut))
     assert read(as_csv(rows_of(vouchers(), header=False))).vouchers  # (no header row: the report's positions)
+
+
+def test_a_journal_printed_day_first_reads_its_dates_that_read_two_ways_day_first():
+    """25/03/2026 in the file says it prints day first: 03/04/2026 is 3 April, not 4 March."""
+    found = read(as_csv(rows_of([
+        voucher(date, number, "Any Supplier", line(f"{MAIN}.7200.1105", "10.00"), line(f"{MAIN}.{TRADE}", "", "10.00"))
+        for date, number in (("25/03/2026", "302001"), ("03/04/2026", "302002"), ("04/04/2026", "302003"))
+    ])))  # fmt: skip
+    assert [v.gl_date for v in found.vouchers] == ["2026-03-25", "2026-04-03", "2026-04-04"]
+    assert (found.totals.first_date, found.totals.last_date) == ("2026-03-25", "2026-04-04")
+
+
+def test_a_journal_printed_month_first_still_reads_them_month_first(journal):
+    assert journal.vouchers[0].gl_date == "2025-03-07"  # 3/7/2025: 11/30/2025 says the file prints month first
