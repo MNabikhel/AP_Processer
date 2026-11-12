@@ -348,3 +348,28 @@ def test_remembering_the_manager_does_not_take_another_managers_cost_center(stor
     assert known["CC-200"] == {"name": "Ann Site", "email": "ann.site@example.com"}  # the same manager: kept up to date
     assert "CC-300 keeps its manager, Bob Plant" in client.get(answer["redirect"]).text
 
+
+def test_the_manager_sees_only_their_own_cost_centers_marked(server, store):
+    """B-2534: a Manager answering for CC-200 saw the CC-300 lines of the same invoice marked as theirs too."""
+    client, tokens, bob_id = server
+    iid, form = _split_form(store)
+    sent = client.post(f"/review/{iid}/manager", data={**form, "manager_user": str(bob_id)},
+                       headers=_as(tokens["clerk"]))  # fmt: skip
+    assert sent.json()["ok"], sent.text
+    rid = store.waiting_manager_request(iid)["id"]
+    page = client.get(f"/manager/{rid}", headers=_as(tokens["bob"])).text
+    marked = re.findall(r'<tr class="mine">.*?</tr>', page, re.S)
+    assert marked and all("CC-200" in row and "CC-300" not in row for row in marked), marked
+
+
+def test_the_request_email_marks_only_the_cost_centers_remembered_for_that_manager(store):
+    """B-2534: on the laptop, the email marked every cost center of the invoice as the manager's."""
+    client = client_for(store)
+    iid, form = _split_form(store)
+    store.set_cost_center_manager(["CC-300"], "Bob Plant", "bob@example.com", "AP")
+    form = {**form, "manager_name": "Ann Site", "manager_email": "ann@example.com", "remember_manager": "1"}
+    assert client.post(f"/review/{iid}/manager", data=form, headers=PAGE).json()["ok"]
+    rid = store.waiting_manager_request(iid)["id"]
+    msg = message_from_bytes(client.get(f"/manager/{rid}/email.eml").content, policy=default)
+    marked = re.findall(r'<tr style="background:#fff4e0">.*?</tr>', msg.get_body(("html",)).get_content(), re.S)
+    assert marked and all("CC-200" in row and "CC-300" not in row for row in marked), marked

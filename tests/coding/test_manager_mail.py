@@ -20,7 +20,8 @@ REQ = {"id": 4, "manager_name": "Bob Manager", "manager_email": "bob@example.com
 def test_the_email_opens_as_a_draft_to_the_manager_with_the_invoice_and_the_coding(tmp_path):
     pdf = tmp_path / "brightline 90311.pdf"
     pdf.write_bytes(b"%PDF-1.4 test")
-    msg = message_from_bytes(request_email(INV, REQ, pdf, signature="Ann, Accounts payable"), policy=default)
+    msg = message_from_bytes(request_email(INV, REQ, pdf, signature="Ann, Accounts payable", mine={"CC-200"}),
+                             policy=default)  # fmt: skip
     assert msg["To"] == "bob@example.com" and msg["X-Unsent"] == "1"
     assert msg["Subject"] == (
         "Please confirm the cost allocation: Brightline Janitorial Ltd. invoice 90311 (565.00 CAD) [AP-4]"
@@ -30,7 +31,7 @@ def test_the_email_opens_as_a_draft_to_the_manager_with_the_invoice_and_the_codi
     assert "Note from AP: New vendor for the site" in text and "Ann, Accounts payable" in text
     page = msg.get_body(("html",)).get_content()
     assert "Office cleaning &lt;October&gt;" in page and "<October>" not in page  # escaped
-    assert "#fff4e0" in page  # the manager's own cost center marked
+    assert page.count("#fff4e0") == 1 and '#fff4e0"><td>1</td>' in page  # the manager's own cost center marked
     (attached,) = list(msg.iter_attachments())
     assert attached.get_filename() == "brightline 90311.pdf" and attached.get_content() == b"%PDF-1.4 test"
 

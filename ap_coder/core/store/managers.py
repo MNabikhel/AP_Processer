@@ -234,6 +234,14 @@ class ManagersMixin:
             self.set_cost_center_manager(free, name, email, actor)
         return kept
 
+    def managers_cost_centers(self, req: dict[str, Any]) -> set[str]:
+        """The cost centers the manager of request ``req`` answers for: their Manager account's (server mode), else
+        the ones remembered with their name (``cost_center_managers``)."""
+        if req.get("manager_user") is not None:
+            account = self.user(int(req["manager_user"])) or {}
+            return {c.strip() for c in str(account.get("cost_centers") or "").split(",") if c.strip()}
+        return {c for c, m in self.cost_center_managers().items() if _same_name(m["name"], req.get("manager_name"))}
+
 
 def _same_name(one: Any, other: Any) -> bool:
     """Two names of a manager are one person's when they read the same, spaces and case aside."""
