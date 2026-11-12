@@ -359,6 +359,10 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
             steps.append(("todo", JDE_STEP, f"company {settings.company_code} saved, but every business unit loaded "
                           f"is company {offer}: use it on JD Edwards files (2. Business units), or set yours in "
                           "Settings → JD Edwards E1"))  # fmt: skip
+        elif saved and not problems and not _company_confirmed(store, settings):  # (B-2482)
+            steps.append(("todo", JDE_STEP, f"company {settings.company_code} is the one a new installation starts "
+                          "with: load the business units on JD Edwards files (2. Business units), or set yours in "
+                          "Settings → JD Edwards E1"))  # fmt: skip
         elif saved and not problems:
             mapped = f"Default BU {settings.default_bu.strip()}" if settings.use_default_rule and \
                 settings.default_bu.strip() else ui.plural(len(settings.gl_map), "account") + " mapped"  # fmt: skip
@@ -372,6 +376,19 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
     said += [ui.plural(learned, "coding line") + " from last year's journal"] if learned else []
     steps.append(("ok", HISTORY_STEP, ", ".join(said)) if said else ("todo", HISTORY_STEP, HISTORY_WHY))
     return steps
+
+
+def _company_confirmed(store: Store, settings: Any) -> bool:
+    """Whether JD Edwards' company number is the company's own: another than the one a new installation starts with,
+    settings a person saved (not the new installation's, ``jde_prototype.prototype_settings``), or the company of a
+    business unit loaded. The new installation's alone is never ticked (B-2482)."""
+    from ap_coder.erp import jde_prototype, jde_settings
+
+    if settings.company != jde_settings.JdeSettings().company:
+        return True
+    if settings.to_json() != jde_prototype.prototype_settings().to_json():
+        return True
+    return any(unit.company in (settings.company, settings.company_code) for unit in store.business_units())
 
 
 def _company_offer(store: Store) -> str:

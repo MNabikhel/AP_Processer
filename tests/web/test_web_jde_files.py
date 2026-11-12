@@ -14,7 +14,7 @@ from markupsafe import escape
 
 from ap_coder.bench import jde_exports as made
 from ap_coder.core.reference_data import reads_like_meals
-from ap_coder.erp import import_specs, jde_settings
+from ap_coder.erp import import_specs, jde_prototype, jde_settings
 from ap_coder.ops import chart_cmd, journal_cmd
 from ap_coder.web import files, roles
 from ap_coder.web.app import create_app
@@ -1255,3 +1255,33 @@ def test_vendors_says_its_suppliers_came_from_jd_edwards_files_and_warns_before_
     form = re.sub(r"\s+", " ", form)
     assert f"The suppliers loaded on JD Edwards files give the {count:,} vendors in the vendor master now" in form
     assert "a list loaded here is added on top of them" in form
+
+
+def test_getting_started_never_ticks_the_company_a_new_installation_starts_with(tmp_path, exports):
+    """B-2482: on a fresh install Getting started ticked "JD Edwards settings ✓ company 00001, 0 accounts mapped",
+    then turned it to to-do once the business units were loaded (another company): a step went backwards. The
+    company a new installation starts with is to do until a person saves settings of their own or the business units
+    loaded are that company."""
+    from ap_coder.core.chart import BuRow
+    from ap_coder.web.core import first_run, using_store
+    from ap_coder.web.pages.process import JDE_STEP, pilot_steps
+    from tests.webclient import client_for
+
+    store = first_run(tmp_path / "private" / "ap_coder.db", server=False)
+
+    def step():
+        with using_store(store):
+            return next(s for s in pilot_steps(store) if s[1] == JDE_STEP)
+
+    state, _, text = step()
+    assert state == "todo" and "company 00001" in text and "JD Edwards files" in text, text
+    client = client_for(store)
+    _load_chart(client, exports)
+    assert step()[0] == "todo"
+    follow(client, client.post("/jde-files/company", headers=PAGE))  # the company of the business units, used
+    assert step()[0] == "ok"
+    with using_store(store):  # (a company really numbered 00001: its business units say so)
+        store.import_business_units([BuRow(unit.code, unit.name, "00001", unit.type, unit.status)
+                                     for unit in store.business_units()])  # fmt: skip
+        jde_settings.save(store, jde_prototype.prototype_settings())
+    assert step()[0] == "ok"
