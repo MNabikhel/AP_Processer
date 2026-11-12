@@ -8,6 +8,11 @@
   * ``/login/authenticator``: the authenticator app set up, at the first login (or after an Admin reset it): the QR
     code of its ``otpauth://`` address and its key as text, then a code from it to confirm;
   * ``/login/code``: the code at every other login.
+  * ``/login/first``: the first sign-in (D-243). While the database has no account, the username admin and the
+    password admin, typed in a browser on the computer running AP Coder (``first_sign_in_here``), lead here: the
+    person's name and their own password make the first Admin, whose authenticator app is then set up as anyone's.
+    admin / admin is never a password kept, and opens nothing once an account exists; from another computer it is
+    refused before anything is checked or counted (no one there can pause the first sign-in).
   Only once the code is right does the login get a session, under a new token (one planted before it is worth
   nothing); the cookie ``ap_session`` is HttpOnly, SameSite=Strict, and Secure on the server unless
   ``--insecure-http`` (also behind a proxy that reports plain HTTP, D-101).
@@ -20,6 +25,7 @@ On a laptop (server mode off) there are no logins: these pages send to the revie
 
 from __future__ import annotations
 
+import hmac
 from typing import Any
 from urllib.parse import quote
 
@@ -28,7 +34,18 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from markupsafe import Markup
 
 from ap_coder.core import authenticator
-from ap_coder.core.store.users import ADMIN, KEY_MISSING, LOCKED, MANAGER, TEMPORARY_EXPIRED, LoginRefused
+from ap_coder.core.store.users import (
+    ADMIN,
+    FIRST_HERE_ONLY,
+    FIRST_PASSWORD,
+    FIRST_USERNAME,
+    KEY_MISSING,
+    LOCKED,
+    MANAGER,
+    TEMPORARY_EXPIRED,
+    LoginRefused,
+    fold_username,
+)
 from ap_coder.web import identity
 from ap_coder.web.core import (
     done,
@@ -56,6 +73,12 @@ SIX_DIGITS = "Type the six digits your authenticator app shows (spaces don't mat
 ONLY_ADMIN = ("Your temporary password has expired (it lasts 3 days). You are the only Admin: for a new one, run "
               "python -m ap_coder users reset {username} on the server.")  # fmt: skip
 QUIET = 4  # modules of white around a QR code, as the standard asks
+# What a reverse proxy adds to the requests it passes on: one on this computer makes every browser arrive from 127.0.0.1
+# (D-243). IIS's ARR adds X-ARR-SSL, X-ARR-LOG-ID and the like too (``X_ARR``).
+FORWARDING = ("x-forwarded-for", "forwarded", "x-real-ip", "x-forwarded-host", "x-forwarded-proto", "via",
+              "x-original-url", "x-original-host")  # fmt: skip
+X_ARR = "x-arr-"
+NAME_FIRST = "Type your name, as it is written on your approvals: AP Coder shows it on each one."
 
 
 def _next(url: str | None) -> str:
@@ -82,6 +105,25 @@ def from_console(request: Request) -> bool:
     host = request.client.host if request.client else ""
     ip = identity._ip(host)
     return ip is not None and ip.is_loopback and not getattr(request.app.state, "proxy", None)
+
+
+def _loopback_name(host: str) -> bool:
+    """Whether a Host header names this computer: localhost or a loopback address, with or without its port."""
+    name = host.strip().lower()
+    if name.startswith("["):
+        name = name[1:].split("]", 1)[0]
+    elif name.count(":") == 1:
+        name = name.split(":", 1)[0]
+    ip = identity._ip(name)
+    return name == "localhost" or (ip is not None and ip.is_loopback)
+
+
+def first_sign_in_here(request: Request) -> bool:
+    """Whether admin / admin may start the first sign-in from this request (D-243): a browser on the computer running
+    AP Coder, opened at its own loopback name, with no reverse proxy between (no ``--proxy``, nothing a proxy adds)."""
+    if not from_console(request) or not _loopback_name(request.headers.get("host", "")):
+        return False
+    return not any(k in FORWARDING or k.startswith(X_ARR) for k in (key.lower() for key in request.headers.keys()))
 
 
 def _pending(request: Request) -> str:
@@ -126,7 +168,8 @@ def login_page(request: Request, next: str = HOME) -> Response:  # noqa: A002 - 
     if identity.person() is not None:  # logged in already
         return RedirectResponse(_next(next), status_code=303)
     store = get_store(request)
-    context = {"next": _next(next), "first_admin": store.user_count() == 0,
+    first = store.user_count() == 0
+    context = {"next": _next(next), "first_admin": first, "first_here": first and first_sign_in_here(request),
                "flashes": take_flash(request.query_params.get("flash")), "title": "Log in"}  # fmt: skip
     response = templates.TemplateResponse(request, "login.html", context)
     response.headers["Cache-Control"] = "no-store"
@@ -141,6 +184,10 @@ def login_save(request: Request, username: str = Form(""), password: str = Form(
     if not username.strip() or not password:
         return refuse("Type your username and your password.")
     store = get_store(request)
+    if fold_username(username) == FIRST_USERNAME and store.user_count() == 0:
+        first = _first_sign_in(request, password, next)
+        if first is not None:
+            return first
     ip = request.client.host if request.client else ""
     try:
         user = store.authenticate(username, password, ip, console=from_console(request))
@@ -159,6 +206,22 @@ def login_save(request: Request, username: str = Form(""), password: str = Form(
     else:
         answer = done(request, _step_url(user, wanted))
     set_pending_cookie(request, answer, pending)
+    return answer
+
+
+def _first_sign_in(request: Request, password: str, next: str) -> JSONResponse | None:  # noqa: A002
+    """admin / admin while there is no account (D-243): from this computer, the first sign-in starts (its own cookie,
+    the login half way's, which opens only ``FIRST_PATH``); from anywhere else, refused before the password is looked
+    at or the try counted. None: another password typed here, an ordinary login that doesn't match."""
+    if not first_sign_in_here(request):
+        return refuse(FIRST_HERE_ONLY, 403)
+    if not hmac.compare_digest(password.encode("utf-8"), FIRST_PASSWORD.encode("utf-8")):
+        return None
+    store = get_store(request)
+    store.end_session(_token(request))
+    store.end_pending(_pending(request))
+    answer = done(request, f"{identity.FIRST_PATH}?next={quote(_next(next), safe='')}")
+    set_pending_cookie(request, answer, store.start_first_sign_in())
     return answer
 
 
@@ -205,6 +268,8 @@ def _step_page(request: Request, step: str, next: str) -> Response:  # noqa: A00
                "title": {identity.NEW_PASSWORD_PATH: "Your password", identity.SET_UP_PATH: "Set up your "
                          "authenticator app"}.get(step, "Your code")}  # fmt: skip
     if step == identity.SET_UP_PATH:
+        admins = [u["id"] for u in store.list_users() if u["role"] == ADMIN and u["active"]]
+        context["only_admin"] = admins == [user["id"]]  # their lost phone: the console's command, no Admin to ask
         try:
             secret = store.authenticator_secret(user["id"])
         except ValueError as exc:  # the key file damaged: never made again over it
@@ -287,6 +352,51 @@ def code_page(request: Request, next: str = HOME) -> Response:  # noqa: A002
 @router.post(identity.CODE_PATH)
 def code_save(request: Request, code: str = Form(""), next: str = Form(HOME)) -> Response:  # noqa: A002
     return _second_step(request, identity.CODE_PATH, code, next)
+
+
+@router.get(identity.FIRST_PATH, response_class=HTMLResponse)
+def first_page(request: Request, next: str = HOME) -> Response:  # noqa: A002
+    """The first sign-in's page (D-243): the first Admin's name and own password, after admin / admin."""
+    if not server_mode(request):
+        return RedirectResponse(HOME, status_code=303)
+    store, wanted = get_store(request), _next(next)
+    if not (first_sign_in_here(request) and store.user_count() == 0 and store.first_sign_in_open(_pending(request))):
+        return RedirectResponse(_again(wanted), status_code=303)
+    context = {"step": identity.FIRST_PATH, "next": wanted, "username": FIRST_USERNAME, "name": "", "error": "",
+               "flashes": take_flash(request.query_params.get("flash")),
+               "title": "Make this account yours"}  # fmt: skip
+    response = templates.TemplateResponse(request, "login_step.html", context)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.post(identity.FIRST_PATH)
+def first_save(request: Request, name: str = Form(""), new: str = Form(""), again: str = Form(""),
+               next: str = Form(HOME)) -> JSONResponse:  # noqa: A002  # fmt: skip
+    """The first Admin made, with the name and password typed (``add_first_admin``: only while there is no account);
+    the first sign-in goes on as a login half way, to the authenticator app's set-up."""
+    if not server_mode(request):
+        return refuse(NO_LOGINS)
+    if not first_sign_in_here(request):
+        return refuse(FIRST_HERE_ONLY, 403)
+    store, token = get_store(request), _pending(request)
+    if not store.first_sign_in_open(token):
+        again = with_flash(_again(next), [flash_message(TOO_LONG, "info", icon="schedule")])
+        return refuse(TOO_LONG, 401, redirect=again)
+    if new != again:
+        return refuse("The two new passwords are not the same: type it twice the same way.")
+    shown = identity.clean_name(name)
+    if not shown:
+        return refuse(NAME_FIRST)
+    try:
+        user_id = store.add_first_admin(new, shown)
+    except ValueError as exc:
+        return refuse(str(exc))
+    store.end_first_sign_in(token)
+    answer = done(request, f"{identity.SET_UP_PATH}?next={quote(_next(next), safe='')}",
+                  flash_message("Password saved. Now set up your authenticator app.", "ok", icon="key"))  # fmt: skip
+    set_pending_cookie(request, answer, store.start_pending(user_id))
+    return answer
 
 
 def _second_step(request: Request, step: str, code: str, next: str) -> Response:  # noqa: A002

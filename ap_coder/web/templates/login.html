@@ -31,8 +31,13 @@
           <input type="password" name="password" autocomplete="current-password" required></label>
         <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">login</span>Log in</button>
       </form>
-      {% if first_admin %}
-      <p class="muted">No one has an account yet. On the server, the first Admin is added in a command window:
+      {% if first_here %}
+      <p>No one has an account yet. First time here: log in with the
+        username <b>admin</b> and the password <b>admin</b>, then choose your own password and set up an authenticator
+        app on your phone.</p>
+      {% elif first_admin %}
+      <p class="muted">No one has an account yet. The first login is made in a browser on the computer running AP Coder;
+        or the first Admin is added there in a command window:
         <code>python -m ap_coder users add --admin &lt;username&gt;</code></p>
       {% else %}
       <p class="muted">Forgot your password? Ask an Admin to reset it.</p>

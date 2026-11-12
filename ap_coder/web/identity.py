@@ -66,7 +66,8 @@ HTTP_PENDING_COOKIE = "ap_pending"  # over --insecure-http
 NEW_PASSWORD_PATH = "/login/new-password"
 SET_UP_PATH = "/login/authenticator"
 CODE_PATH = "/login/code"
-LOGIN_FORMS = (LOGIN_PATH, NEW_PASSWORD_PATH, SET_UP_PATH, CODE_PATH)  # the forms sent before a session
+FIRST_PATH = "/login/first"  # the first sign-in's own password, after admin / admin (D-243)
+LOGIN_FORMS = (LOGIN_PATH, NEW_PASSWORD_PATH, SET_UP_PATH, CODE_PATH, FIRST_PATH)  # the forms sent before a session
 # What a page asks by itself while it waits (a job's progress, OvisOCR2 reading the invoice, the self-test, a download
 # being made, a bulk approval): no one using it, so these don't keep a session from ending after its idle minutes
 # (D-109, B-1580, B-1927).

@@ -66,6 +66,8 @@ RULES: dict[tuple[str, str], str] = {
         # A login's steps after the password (D-146): no session yet, each checks the login half way is at its step.
         "GET /login/new-password", "POST /login/new-password", "GET /login/authenticator",
         "POST /login/authenticator", "GET /login/code", "POST /login/code",
+        # The first sign-in (D-243): admin / admin typed on the computer running AP Coder, its own password chosen.
+        "GET /login/first", "POST /login/first",
     ),
     **_rules(
         SIGNED_IN,

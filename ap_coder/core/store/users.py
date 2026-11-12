@@ -109,6 +109,15 @@ KEY_MISSING = (
 ALREADY_SET_UP = "This account's authenticator app is set up already: an Admin resets it to set it up again."
 PENDING_KIND = "login-pending"  # a login half way, in the short-lived table (D-146)
 PENDING_SECONDS = 15 * 60  # time to change a password and set an app up; the code's step takes seconds
+# The first sign-in (D-243): while the database has no account at all, admin / admin, typed in a browser on the computer
+# running AP Coder (web/pages/login.py), starts it; the account is made only once its own password is chosen.
+FIRST_USERNAME, FIRST_PASSWORD = "admin", "admin"
+FIRST_KIND = "first-sign-in"  # in the short-lived table, as a login half way is (never a session)
+FIRST_ACTOR = "the first sign-in on this computer"
+FIRST_HERE_ONLY = ("No one can sign in yet: the first sign-in is made in a browser on the computer running AP Coder "
+                   "(not through another computer or a proxy).")  # fmt: skip
+FIRST_DONE = ("The first sign-in was just finished in another browser: log in with that account (or ask the person "
+              "who made it).")  # fmt: skip
 EASY_PASSWORD = (
     "That password is too easy to guess: choose one that is not your username or your name, not a common password, "
     "and not one character or a short pattern repeated. A few unrelated words make a good one."
@@ -357,10 +366,12 @@ class UsersMixin:
     # --- Accounts ---------------------------------------------------------------------------------------------------
 
     def add_user(self, username: str, password: str, role: str = CLERK, display_name: str = "", *,
-                 actor: str = "", must_change: bool = True, by_user: int | None = None) -> int:  # fmt: skip
+                 actor: str = "", must_change: bool = True, by_user: int | None = None,
+                 only_first: bool = False) -> int:  # fmt: skip
         """A new account; ValueError (in words) for a username taken or not allowed, a role that is not one of
         ``ROLES`` or a password the policy refuses. ``by_user``: the account of the Admin adding it (recorded, for
-        ``vouched_for``)."""
+        ``vouched_for``). ``only_first``: only while the database has no account (``FIRST_DONE``), checked in the
+        transaction that adds it, so two browsers can't both make the first one."""
         name = fold_username(username)
         if not USERNAME.fullmatch(name):
             raise ValueError(
@@ -376,6 +387,8 @@ class UsersMixin:
         hashed = hash_password(password)
         with self._conn() as conn:
             begin_write(conn)
+            if only_first and conn.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+                raise ValueError(FIRST_DONE)
             if conn.execute("SELECT 1 FROM users WHERE username = ?", (name,)).fetchone():
                 raise ValueError(f"There is already an account {name}.")
             cur = conn.execute(
@@ -386,6 +399,13 @@ class UsersMixin:
             by = {"by_user": int(by_user)} if by_user is not None else {}
             self._log(conn, "user_added", None, actor or None, {"username": name, "name": shown, "role": role, **by})
             return int(cur.lastrowid)
+
+    def add_first_admin(self, password: str, display_name: str) -> int:
+        """The first account (D-243): ``FIRST_USERNAME``, an Admin, with the password its person chose at the first
+        sign-in (their own: nothing to change at the next login; the authenticator app still to set up). ValueError
+        when an account was made meanwhile (``FIRST_DONE``) or the policy refuses the password."""
+        return self.add_user(FIRST_USERNAME, password, role=ADMIN, display_name=display_name, actor=FIRST_ACTOR,
+                             must_change=False, only_first=True)  # fmt: skip
 
     def user(self, user_id: int) -> dict[str, Any] | None:
         with self._conn() as conn:
@@ -903,6 +923,31 @@ class UsersMixin:
     def _end_pending(conn: Any, user_id: int) -> None:
         """Every login half way of ``user_id`` ends (its password reset, its authenticator reset)."""
         conn.execute("DELETE FROM ephemeral WHERE kind = ? AND CAST(value AS TEXT) = ?", (PENDING_KIND, str(user_id)))
+
+    # --- The first sign-in (D-243): admin / admin typed, its own password still to choose ----------------------------
+
+    def start_first_sign_in(self) -> str:
+        """A first sign-in under way: its token, which only the browser keeps (the database its SHA-256), for
+        ``PENDING_SECONDS``. It opens only the page where the first account's password is chosen."""
+        token, now = secrets.token_urlsafe(TOKEN_BYTES), _clock()
+        with self._conn() as conn:
+            conn.execute("DELETE FROM ephemeral WHERE kind = ? AND expires_at < ?", (FIRST_KIND, now))
+            conn.execute("INSERT INTO ephemeral (kind, token, value, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+                         (FIRST_KIND, token_hash(token), b"1", now, now + PENDING_SECONDS))  # fmt: skip
+        return token
+
+    def first_sign_in_open(self, token: str | None) -> bool:
+        """Whether ``token`` is a first sign-in under way, not past its time."""
+        if not token:
+            return False
+        with self._conn() as conn:
+            row = conn.execute("SELECT expires_at FROM ephemeral WHERE kind = ? AND token = ?",
+                               (FIRST_KIND, token_hash(token))).fetchone()  # fmt: skip
+        return row is not None and row["expires_at"] >= _clock()
+
+    def end_first_sign_in(self, token: str | None) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM ephemeral WHERE kind = ? AND token = ?", (FIRST_KIND, token_hash(token or "")))
 
     # --- Sessions ---------------------------------------------------------------------------------------------------
 

@@ -20,7 +20,24 @@
       {% endfor %}
     </div>
     <section class="card">
-      {% if step == "/login/new-password" %}
+      {% if step == "/login/first" %}
+      <h1 class="apc-title">Make this account yours</h1>
+      <p class="muted">This is the first account of AP Coder: its Admin. Choose your own password to replace admin: at
+        least 12 characters, not "admin" and not your name. A few words make a good one.</p>
+      <form method="post" action="/login/first" class="stack" data-busy="Saving…" data-urlencoded>
+        <input type="hidden" name="next" value="{{ next }}">
+        <input type="text" name="username" value="{{ username }}" autocomplete="username" hidden>
+        <label class="field">Your name, as it is written on your approvals
+          <input type="text" name="name" value="{{ name }}" autocomplete="name" maxlength="60" required autofocus></label>
+        <label class="field">New password
+          <input type="password" name="new" autocomplete="new-password" minlength="12" required></label>
+        <label class="field">New password again
+          <input type="password" name="again" autocomplete="new-password" minlength="12" required></label>
+        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save the password</button>
+      </form>
+      <p class="muted">Next you set up an authenticator app on your phone, for a code at every login. From then on you
+        log in as <b>{{ username }}</b> with this password: admin / admin no longer works.</p>
+      {% elif step == "/login/new-password" %}
       <h1 class="apc-title">Choose your own password</h1>
       <p class="muted">The password you were given is temporary. Choose your own to carry on: at least 12 characters,
         and not your username or your name. A few words make a good one.</p>
@@ -59,8 +76,14 @@
                  maxlength="8" required autofocus></label>
         <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">verified_user</span>Confirm</button>
       </form>
+      {% if only_admin %}
+      <p class="muted">Keep the app on your phone. You are the only Admin: if you lose your phone or get a new one,
+        type <code>python -m ap_coder users reset-2fa {{ username }}</code> in a command window on the computer running
+        AP Coder (on a laptop, <code>scripts\terminal.bat</code> in the AP Coder folder), then set the app up again.</p>
+      {% else %}
       <p class="muted">Keep the app on your phone. If you lose your phone or get a new one, ask an Admin to reset your
         authenticator, and set it up again.</p>
+      {% endif %}
       {% endif %}
       {% else %}
       <h1 class="apc-title">Type your code</h1>
