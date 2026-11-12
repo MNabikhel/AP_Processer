@@ -436,15 +436,28 @@ def first_save(request: Request, name: str = Form(""), new: str = Form(""), agai
         user_id = store.add_first_admin(new, shown)
     except ValueError as exc:
         return refuse(str(exc))
-    if not server_mode(request) and shown != reviewer():  # a laptop's: the approvals take the name too, as in Settings
-        rename = {"from": reviewer(), "to": shown}
-        store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["reviewer"], "reviewer": rename})
-        paths.write_user_settings(reviewer=shown)
+    unsaved = "" if server_mode(request) else _name_on_approvals(store, shown)
     store.end_first_sign_in(token)
     answer = done(request, f"{identity.SET_UP_PATH}?next={quote(_next(next), safe='')}",
-                  flash_message("Password saved. Now set up your authenticator app.", "ok", icon="key"))  # fmt: skip
+                  flash_message("Password saved. Now set up your authenticator app.", "ok", icon="key"),
+                  unsaved and flash_message(unsaved, "warn"))  # fmt: skip
     set_pending_cookie(request, answer, store.start_pending(user_id))
     return answer
+
+
+def _name_on_approvals(store: Any, shown: str) -> str:
+    """A laptop's: a name changed at the first sign-in is the approvals' too, as in Settings, logged under the old
+    name. A settings file that cannot be written (a read-only profile) leaves it as it was: what to say then."""
+    before = reviewer()
+    if shown == before:
+        return ""
+    try:
+        paths.write_user_settings(reviewer=shown)
+    except OSError:
+        return f"Your approvals still show the name {before}: it could not be saved. Change it in Settings."
+    rename = {"from": before, "to": shown}
+    store.log_event("settings_changed", actor=before, detail={"keys": ["reviewer"], "reviewer": rename})
+    return ""
 
 
 def _second_step(request: Request, step: str, code: str, next: str) -> Response:  # noqa: A002

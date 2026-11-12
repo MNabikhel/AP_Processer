@@ -35,8 +35,8 @@ def browser(app, client: tuple[str, int] = HERE) -> TestClient:
     return TestClient(app, base_url="http://localhost", client=client, follow_redirects=False)
 
 
-def first_sign_in(client: TestClient, name: str | None = None) -> None:
-    """admin / admin, the person's own password, then the authenticator's code: signed in."""
+def first_sign_in(client: TestClient, name: str | None = None) -> str:
+    """admin / admin, the person's own password, then the authenticator's code: signed in. The set-up page shown."""
     answer = client.post("/login", data={"username": "admin", "password": "admin", "next": "/review"}, headers=PAGE)
     assert answer.json()["redirect"].startswith("/login/first"), answer.text
     form = client.get(answer.json()["redirect"]).text
@@ -44,10 +44,11 @@ def first_sign_in(client: TestClient, name: str | None = None) -> None:
     fields = {"name": name or shown, "new": CHOSEN, "again": CHOSEN, "next": "/review"}
     chosen = client.post("/login/first", data=fields, headers=PAGE)
     assert chosen.json()["redirect"].startswith("/login/authenticator"), chosen.text
-    client.get(chosen.json()["redirect"])
+    set_up = client.get(chosen.json()["redirect"]).text
     code = authenticator_code(client.app.state.store, "admin")
     done = client.post("/login/authenticator", data={"code": code, "next": "/review"}, headers=PAGE)
     assert done.json()["ok"], done.text
+    return set_up
 
 
 @pytest.fixture
@@ -138,6 +139,22 @@ def test_a_name_corrected_at_the_first_sign_in_is_the_one_on_the_approvals_too(s
     assert client.get("/probe").json()["reviewer"] == "Patricia Lee"
     renamed = store.events(actions=["settings_changed"])[0]
     assert renamed["actor"] == "Pat Lee" and renamed["detail"]["reviewer"] == {"from": "Pat Lee", "to": "Patricia Lee"}
+
+
+def test_a_name_that_cannot_be_saved_in_settings_still_finishes_the_first_sign_in(store, owner, monkeypatch):
+    """A settings file that cannot be written (a read-only profile) leaves the approvals' name as it was and says so:
+    the sign-in goes on to the authenticator's set-up, not a 500 with an account made and no way back to this step."""
+
+    def read_only(**values):
+        raise PermissionError("read only")
+
+    monkeypatch.setattr("ap_coder.core.paths.write_user_settings", read_only)
+    client = browser(laptop(store))
+    set_up = first_sign_in(client, name="Patricia Lee")
+    assert "Your approvals still show the name Pat Lee: it could not be saved. Change it in Settings." in set_up
+    assert store.find_user("admin")["name"] == "Patricia Lee"
+    assert client.get("/probe").json()["reviewer"] == "Pat Lee"
+    assert store.events(actions=["settings_changed"]) == []
 
 
 def test_a_restore_on_settings_keeps_the_laptops_admin_and_its_sign_in(store, owner):
