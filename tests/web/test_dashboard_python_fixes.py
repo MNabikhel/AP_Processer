@@ -63,7 +63,9 @@ def test_the_jd_edwards_mapping_from_a_semicolon_csv_with_a_comma_in_a_header_is
     answer = client.post("/settings/jde/gl-map/upload", files={"file": ("map.csv", SEMICOLON_GL_MAP.encode())},
                          headers=PAGE)  # fmt: skip
     token = answer.json()["redirect"].split("gl_map=")[1].split("#")[0]
-    assert "Loaded: 2 added, 0 updated." in follow(client, post(client, "/settings/jde/gl-map/import", {"token": token}))
+    assert "Loaded: 2 added, 0 updated." in follow(
+        client, post(client, "/settings/jde/gl-map/import", {"token": token})
+    )
 
 
 # --- B-1401: the past coding and the JD Edwards mapping were read whole, however large ------------------------------

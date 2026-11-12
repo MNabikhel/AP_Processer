@@ -201,7 +201,7 @@ def test_the_gl_map_is_shown_then_imported_and_one_without_its_gl_code_column_is
                              headers=PAGE)  # fmt: skip
         html = client.get(answer.json()["redirect"]).text
         assert '<b>GL code</b> <span class="muted">as</span> “GL Code”' in _check(html, "gl_map")
-        assert "2 mapping rows to import." in html and jde_settings.load(store).gl_map in (before, gl_map)
+        assert "2 mapping rows to load." in html and jde_settings.load(store).gl_map in (before, gl_map)
         token = parse_qs(urlsplit(answer.json()["redirect"]).query)["gl_map"][0]
         done = post(client, "/settings/jde/gl-map/import", {"token": token, "replace": "1"})
         assert done.status_code == 200, done.text
@@ -731,8 +731,8 @@ def test_past_coding_shows_one_verdict_and_its_way_back_says_choose_another_file
     assert "Choose another file</a>" in html and ">Cancel</a>" not in html
 
 
-_IMPORT_WORDS = re.compile(r"Imported[: ]|Taught \d|Vendor master: \d|mapping rows? imported|Not imported|othing was "
-                           r"imported|Import [\w ]+ from CSV|\(imported\)")  # fmt: skip
+_IMPORT_WORDS = re.compile(r"Imported[: ]|Taught \d|Vendor master: \d|mapping rows? (imported|to import)|Not "
+                           r"imported|othing was imported|Import [\w ]+ from CSV|\(imported\)")  # fmt: skip
 
 
 def test_every_import_says_loaded_in_its_results_refusals_titles_and_buttons(client, store, jde):
@@ -753,14 +753,19 @@ def test_every_import_says_loaded_in_its_results_refusals_titles_and_buttons(cli
     answer = client.post("/settings/jde/gl-map/upload", headers=PAGE,
                          files={"file": ("map.csv", b"GL Code,BU,Object\r\n6010,100,6010\r\n")})  # fmt: skip
     token = parse_qs(urlsplit(answer.json()["redirect"]).query)["gl_map"][0]
+    shown = client.get(answer.json()["redirect"]).text
+    assert "1 mapping row to load." in shown and not _IMPORT_WORDS.search(shown)
     page = client.get(post(client, "/settings/jde/gl-map/import", {"token": token}).json()["redirect"]).text
     assert "Loaded: 1 added, 0 updated." in page and not _IMPORT_WORDS.search(page)
     chart = (jde / made.CHART_FILE).read_bytes()
     for url in PICKERS.values():
         answer = client.post(url, files={"file": (made.CHART_FILE, chart)}, headers=PAGE)
         assert answer.status_code == 400 and answer.json()["error"].startswith("Not loaded: "), url
-    refused = post(client, "/accounts/gl_accounts/import", {"file": _upload(client, "gl_accounts", [["Description"],
-                                                                                                   ["Paper"]])[1]})
+    refused = post(
+        client,
+        "/accounts/gl_accounts/import",
+        {"file": _upload(client, "gl_accounts", [["Description"], ["Paper"]])[1]},
+    )
     assert refused.json()["error"] == "Pick the column for: Code. Nothing was loaded."
 
 
@@ -787,5 +792,5 @@ def test_every_import_page_offers_one_template(client):
     Check the file, "Or start from a template with an example…" (.csv). One, as on every other page."""
     for key in PAGES:
         page = client.get(PAGES[key][4]).text
-        assert len(re.findall(r'<a [^>]*template[^>]*download', page)) == 1, key
+        assert len(re.findall(r"<a [^>]*template[^>]*download", page)) == 1, key
         assert "Or start from" not in page, key

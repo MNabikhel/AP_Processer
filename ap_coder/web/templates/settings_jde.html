@@ -251,7 +251,7 @@
   {% set look = gl_map_look %}
   {% if look and look.name %}
   {% call imp.preview(look, "gl-map") %}
-    {% if not look.problem %}<p>{{ look.kept | plural("mapping row") }} to import.</p>{% endif %}
+    {% if not look.problem %}<p>{{ look.kept | plural("mapping row") }} to load.</p>{% endif %}
     <form method="post" action="/settings/jde/gl-map/import" class="stack" data-busy="Loading…" data-long>
       <input type="hidden" name="token" value="{{ look.token }}">
       {% if not look.problem %}<label class="check"><input type="checkbox" name="replace" value="1"> Replace the current mapping (otherwise these rows are added to it, a GL code and cost center already there replaced)</label>{% endif %}
