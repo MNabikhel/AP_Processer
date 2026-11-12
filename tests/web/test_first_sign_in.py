@@ -115,6 +115,18 @@ def test_behind_a_proxy_on_this_computer_admin_admin_is_refused(store, headers):
     assert admin_admin(server(store, proxy="127.0.0.1")).json()["error"].startswith(users.FIRST_HERE_ONLY)
 
 
+def test_behind_a_proxy_the_refusal_names_the_console_not_an_address_refused_too(store, monkeypatch):
+    """With ``--proxy`` the first sign-in is off from every browser, 127.0.0.1 too: the refusal names the one way
+    left, the console's ``users add --admin``, not an address that is refused the same way."""
+    monkeypatch.setenv("AP_ALLOWED_HOSTS", "apcoder.company.local")
+    app = server(store, proxy="127.0.0.1").app
+    for base in ("https://apcoder.company.local", "https://127.0.0.1:8501"):
+        client = TestClient(app, base_url=base, client=CONSOLE, follow_redirects=False)
+        error = admin_admin(client).json()["error"]
+        assert error.startswith(users.FIRST_HERE_ONLY) and "users add --admin" in error, base
+        assert "127.0.0.1" not in error, base
+
+
 def test_through_another_name_than_this_computers_admin_admin_is_refused(store, monkeypatch):
     monkeypatch.setenv("AP_ALLOWED_HOSTS", "apcoder.company.local")
     client = server(store)
