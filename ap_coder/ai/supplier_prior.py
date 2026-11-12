@@ -874,9 +874,9 @@ def alike(prior: Prior, use: AccountUse, line_text: str, reference: ReferenceDat
     line = keys(line_text)
     if not line:
         return 0.0
-    return max(*(similarity(line, k, prior.word_weight) for k in use.remark_keys),
-               *(similarity(line, k) for k in use.line_keys),
-               similarity(line, name_words(reference, use.business_unit, use.code)))  # fmt: skip
+    return max([*(similarity(line, k, prior.word_weight) for k in use.remark_keys),
+                *(similarity(line, k) for k in use.line_keys),
+                similarity(line, name_words(reference, use.business_unit, use.code))])  # fmt: skip
 
 
 def rank(prior: Prior, line_text: str, reference: ReferenceData) -> list[Candidate]:

@@ -249,6 +249,17 @@ def test_a_meal_on_the_invoice_of_a_supplier_of_meals_is_coded_to_its_one_accoun
     assert line.reasoning_justification.startswith("12 of this supplier's 12 lines last year")
 
 
+@pytest.mark.parametrize("remark", ["", "{month} 2025", "884501"])
+def test_a_suppliers_one_account_with_no_words_in_its_remarks_still_codes_its_lines(store, remark):
+    """A journal whose remarks for the supplier's one account are blank, a month or an invoice number gives the
+    account no words to compare a line with: coding its next invoice raised a TypeError (one value to ``max``)."""
+    reference = load_chart(store)
+    _vendor(store, "RAPIDWAY COURIER", 555)
+    load_journal(store, monthly(555, "RAPIDWAY COURIER", COURIER, remark, 6))
+    line = _line_of(store, reference, "Rapidway Courier", "Courier waybill 77812")
+    assert f"{line.predicted_cost_center}.{line.predicted_gl_code}" == COURIER
+
+
 # --- the made-up company (``chart_company``): what a reviewer of its first day found --------------------------------
 
 
