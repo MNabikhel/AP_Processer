@@ -273,7 +273,7 @@ def voucher_rows(
 
 
 def _taxable_by_tax(v: _Voucher) -> dict[str, int]:
-    """Each tax's taxable amount on the voucher, its tax lines added up, as VLATXA is (B-923, B-2487)."""
+    """Each tax's taxable amount on the voucher, its tax lines added up, as VLATXA is (B-923, B-2488)."""
     bases: dict[str, int] = {}
     for t in v.charged:
         if t["tax_type"] not in v.expensed:

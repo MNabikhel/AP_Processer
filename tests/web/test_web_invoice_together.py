@@ -213,7 +213,7 @@ def test_a_screen_drawn_before_an_approval_was_undone_cannot_approve_over_it(lap
 
 
 def test_park_or_reject_from_a_screen_drawn_before_the_invoice_changed_is_refused_as_approve_is(laptop, store):
-    """B-2501: Park and Reject posted no revision, so a screen drawn before the invoice was approved and the approval
+    """B-2502: Park and Reject posted no revision, so a screen drawn before the invoice was approved and the approval
     undone (or sent to its manager) parked or rejected it without a word of what had changed. Their forms post the
     screen's revision and are refused as Approve is (D-184): in the queue, said as its check says it; once it left
     it, "changed meanwhile"."""
@@ -475,7 +475,7 @@ def test_in_a_browser_typed_then_approved_at_once_from_a_tab_behind_keeps_what_w
 
 
 def test_in_a_browser_reject_from_a_screen_drawn_before_a_reopen_says_it_is_out_of_date(browser, store):
-    """B-2501: Reject (or Park) from a screen drawn before the invoice was approved and reopened is refused: the
+    """B-2502: Reject (or Park) from a screen drawn before the invoice was approved and reopened is refused: the
     screen says so once, as after Approve, and turns read-only."""
     chromium, base = browser
     inv_id = clean_invoice(client_for(store), store)

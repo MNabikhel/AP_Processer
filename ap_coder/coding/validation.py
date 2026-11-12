@@ -237,7 +237,7 @@ def _header_issues(coding: InvoiceCoding, add: Any) -> None:
         add(ERROR, "MISSING_INVOICE_NUMBER", "No invoice number: type it from the page")
     if not re.fullmatch(r"[A-Z]{3}", coding.currency):
         add(WARNING, "CURRENCY_FORMAT", f"The currency “{coding.currency}” is not a 3-letter code such as CAD or USD")
-    elif coding.currency not in ISO_CURRENCIES:  # (XYZ): never a voucher, on every path to approval (B-2502)
+    elif coding.currency not in ISO_CURRENCIES:  # (XYZ): never a voucher, on every path to approval (B-2503)
         add(ERROR, "CURRENCY_UNKNOWN", f"“{coding.currency}” is not a currency code in use: type it as on the page, "
             "e.g. CAD, USD or EUR")  # fmt: skip
     if not coding.line_items:

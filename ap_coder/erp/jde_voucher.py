@@ -398,7 +398,7 @@ def _federal_taxes(final: dict[str, Any]) -> tuple[Any, ...]:
 
 def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str, on: dt.date | None = None) -> _Voucher:
     """The voucher of ``inv`` for ``an8``, checked; ``on``: the batch's day (else today), its G/L date's when that
-    is the export day, in the open period or not (B-2489)."""
+    is the export day, in the open period or not (B-2490)."""
     final = inv.get("final_output") or {}
     v = _Voucher(int(inv.get("id") or 0), final, [])
     add = v.add
@@ -556,7 +556,7 @@ def _check_distribution(v: _Voucher, final: dict[str, Any], settings: JdeSetting
     for e, li in zip(v.entries, entry_lines(v.entries, final.get("line_items") or []), strict=True):
         if li is not None and li.get("remark"):  # the invoice line's own remark (``line_remark``, D-213)
             e["remark"] = li["remark"]
-        elif li is not None and li.get("remark_from") == "person":  # emptied on purpose: keyed empty (D-229, B-2488)
+        elif li is not None and li.get("remark_from") == "person":  # emptied on purpose: keyed empty (D-229, B-2489)
             e["remark"], e["remark_from"] = "", "person"
     expected = v.gross - v.recoverable
     kept = sum(e["cents"] for e in v.entries)

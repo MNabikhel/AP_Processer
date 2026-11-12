@@ -183,7 +183,7 @@ def voucher_view(
     final = output
     v = _prepare({"id": 0, "final_output": final}, settings, str(an8 or "").strip(), on)
     invoice_date = _date(final.get("invoice_date"))
-    gl_date, gl_moved = gl_date_of(final, settings, on)  # as keyed: moved into the open period (D-182, B-2490)
+    gl_date, gl_moved = gl_date_of(final, settings, on)  # as keyed: moved into the open period (D-182, B-2491)
     gl_from = "the day of the export" if settings.gl_date == GL_DATE_EXPORT else "the invoice date"
     if settings.gl_date != GL_DATE_EXPORT and invoice_date is None:
         gl_text = f"— ({gl_from})"

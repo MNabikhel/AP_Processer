@@ -212,7 +212,7 @@ def test_a_line_with_a_remark_of_its_own_is_on_the_sheet_with_it():
 
 
 def test_a_remark_the_person_cleared_is_keyed_empty_on_the_sheet_and_in_the_files():
-    """B-2488: a remark the person emptied on purpose (D-229) was keyed as the line's description cut at 30 (the
+    """B-2489: a remark the person emptied on purpose (D-229) was keyed as the line's description cut at 30 (the
     sheet's Explanation -Remark-, VNEXA and VNEXR): the line's remark was copied to its G/L line only when it had
     text, so ``line_remark`` never saw it was cleared."""
     invoice = one_line()
@@ -225,7 +225,7 @@ def test_a_remark_the_person_cleared_is_keyed_empty_on_the_sheet_and_in_the_file
 
 
 def test_a_batch_made_earlier_is_checked_against_the_open_period_on_its_own_day():
-    """B-2489: with the export day as the G/L date, a voucher's check asked the open period about today while the
+    """B-2490: with the export day as the G/L date, a voucher's check asked the open period about today while the
     sheet and the files key the batch's day: a batch of 30 October rebuilt in November was ready with its G/L date
     30 October in a closed period, and with October still the open period it was "not ready" for today's date,
     which it would not key."""

@@ -139,7 +139,7 @@ def test_a_line_changed_after_a_reopen_is_a_correction_of_what_was_approved_befo
 
 
 def test_a_line_changed_after_a_send_back_is_a_correction_of_what_was_approved_first(tmp_path, ground_truth):
-    """B-2500: sent back by the second approver, a line AP had coded where the AI proposed nothing (6110) and then
+    """B-2501: sent back by the second approver, a line AP had coded where the AI proposed nothing (6110) and then
     changed (6100) was recorded as AP's own coding: the second approver read "no changes to the suggested coding".
     A send-back keeps the coding approved as a reopen does (B-1299, D-112): the change is a correction of it."""
     import copy

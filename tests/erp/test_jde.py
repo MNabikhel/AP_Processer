@@ -671,7 +671,7 @@ def test_a_voucher_in_jd_edwards_for_one_of_two_suppliers_of_a_name_is_found_by_
 
 
 def test_a_voucher_in_jd_edwards_is_found_when_the_supplier_number_was_typed_with_a_leading_zero():
-    """B-2486: the duplicate check compared JD Edwards' supplier number with ours as text: an override typed
+    """B-2487: the duplicate check compared JD Edwards' supplier number with ours as text: an override typed
     "02004" missed the voucher list's "2004" (and the name is not asked when both sides have a number), so a voucher
     JD Edwards already has went out again. The hold check and the API's compare the numbers without leading zeros."""
     final = {"vendor_name": "LAKESIDE CATERING LTD", "invoice_number": "LC-7781", "grand_total": 525.0,
@@ -1309,7 +1309,7 @@ def test_the_voucher_view_says_what_is_keyed_on_the_pay_item_or_why_it_is_not_re
 
 
 def test_the_review_screens_g_l_date_row_is_the_date_keyed_moved_into_the_open_period():
-    """B-2490: the review screen's G/L date row ignored the open period: "2026-10-20 (the invoice date)" beside
+    """B-2491: the review screen's G/L date row ignored the open period: "2026-10-20 (the invoice date)" beside
     "Keyed on the pay item: G/L date 2026-11-01". It is the date keyed, and says it was moved and from what."""
     final = {**_invoice(AB)["final_output"], "invoice_date": "2026-10-20"}
 

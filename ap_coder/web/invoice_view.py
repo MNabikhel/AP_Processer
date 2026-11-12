@@ -158,7 +158,7 @@ def lines_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
 
 def numbers_deleted(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
     """Whether the line numbers on screen miss only those of lines the AI read that a person deleted: with them they
-    run 1, 2, 3… (no line was missed, B-2499)."""
+    run 1, 2, 3… (no line was missed, B-2500)."""
     now = [li.line_number for li in coding.line_items]
     whole = set(now) | {li.get("line_number") for li in ai.get("line_items") or []}
     return len(set(now)) == len(now) and sorted(whole) == list(range(1, len(whole) + 1))

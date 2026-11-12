@@ -544,7 +544,7 @@ def test_hst_at_two_rates_one_of_them_wrong_shows_that_rate_on_its_lines():
 
 
 def test_a_tax_kept_in_the_expense_at_two_rates_posts_each_rate_on_the_lines_it_was_charged_on():
-    """B-2481: each tax line of a tax kept in the expense was spread by amount over every line marked with that tax:
+    """B-2482: each tax line of a tax kept in the expense was spread by amount over every line marked with that tax:
     BC food 1,000.00 (PST 7%, 70.00) and wine 200.00 (PST 10%, 20.00) posted 1,075.00 and 215.00. The lines' amounts
     tell which rate is on which line, so each line takes its own rate's tax: 1,070.00 and 220.00."""
     d = doc([line(1, 1000.0, "5100", ["GST", "PST"], desc="Catering - food"),

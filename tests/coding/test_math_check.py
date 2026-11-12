@@ -76,7 +76,7 @@ def test_a_credit_note_adds_up_in_the_negative():
 
 
 def test_a_credit_notes_subtotal_and_tax_read_as_a_sum_without_a_plus_minus():
-    """B-2503: a credit note's Tax check read "-500.00 + -60.00 = -560.00". Its tax is taken off: "-500.00 - 60.00 =
+    """B-2504: a credit note's Tax check read "-500.00 + -60.00 = -560.00". Its tax is taken off: "-500.00 - 60.00 =
     -560.00"; the summary under the amounts reads so too."""
     from ap_coder.web.invoice_view import _amount_line
 

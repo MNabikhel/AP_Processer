@@ -76,7 +76,7 @@ def test_bringing_it_back_or_deleting_it_withdraws_the_request(store):
 
 
 def test_rejecting_it_withdraws_the_request(store):
-    """B-2501: an invoice waiting for its manager and rejected left the request waiting: listed on the manager's page,
+    """B-2502: an invoice waiting for its manager and rejected left the request waiting: listed on the manager's page,
     and the manager's answer was recorded on a rejected invoice. Rejecting withdraws it, as bringing it back does."""
     iid, rid = _sent(store)
     store.reject_invoice(iid, "Ann", "not ours")

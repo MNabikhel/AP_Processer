@@ -1718,7 +1718,7 @@ if (reader) {
 }
 
 // Approve, Send to the manager, Park or Reject from a screen out of date: said as its check says it, what was typed
-// kept (B-1936, B-2501)
+// kept (B-1936, B-2502)
 document.addEventListener("apc:stale", (event) => {
   const from = event.detail.form;
   if (from === form || from.closest?.("[data-park], [data-reject]")) showStale(event.detail.stale);
@@ -2242,7 +2242,7 @@ function lineName(tr) {
 }
 
 /** A new line takes the number after the last, wherever it is put: the others keep theirs, since approval pairs the
-    lines with the AI's by number (B-2498; a split's parts too, B-1188). */
+    lines with the AI's by number (B-2499; a split's parts too, B-1188). */
 function numberNew(tr) {
   const rows = gridRows();
   const numbers = rows.filter((r) => r !== tr).map((r) => Number(lineNo(r)));

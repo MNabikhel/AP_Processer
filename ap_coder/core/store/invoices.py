@@ -898,7 +898,7 @@ class InvoicesMixin:
     def send_back(self, invoice_id: int, actor: str, reason: str = "") -> None:
         """Return an invoice waiting for a second approval to the review queue. What was learned from the
         first approval is withdrawn: it is learned again when the invoice is approved again. Its coding is kept as
-        a reopen keeps it: a line changed then corrects what was approved (B-2500)."""
+        a reopen keeps it: a line changed then corrects what was approved (B-2501)."""
         with self._conn() as conn:
             cur = conn.execute(
                 "UPDATE invoices SET status = ?, reviewer = NULL, reviewed_at = NULL WHERE id = ? AND status = ?",
