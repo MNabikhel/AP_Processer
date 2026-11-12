@@ -687,15 +687,15 @@ class UsersMixin:
 
     def _temporary_expired(self, row: Any) -> bool:
         """Whether ``row``'s temporary password was given over ``TEMPORARY_SECONDS`` ago (its last ``user_added`` or
-        ``password_reset`` event; else its creation); never the only active Admin's before a first sign-in (B-2533)."""
-        with self._conn() as conn:  # (that first Admin, made by ``share``, has no other to give it a new one)
-            first = row["role"] == ADMIN and row["active"] and not row["last_login"] and self._active_admins(conn) == 1
-            given = conn.execute(
-                "SELECT MAX(created_at) FROM events WHERE action IN ('user_added', 'password_reset') "
-                "AND json_extract(detail, '$.username') = ?",
+        ``password_reset`` event; else its creation); not the only Admin's from the console till a sign-in (B-2533)."""
+        with self._conn() as conn:  # (no Admin gave it, ``share`` did: nobody else could give it a new one)
+            given, by = conn.execute(
+                "SELECT created_at, json_extract(detail, '$.by_user') FROM events WHERE action IN ('user_added', "
+                "'password_reset') AND json_extract(detail, '$.username') = ? ORDER BY created_at DESC, id DESC",
                 (row["username"],),
-            ).fetchone()[0]
-
+            ).fetchone() or (None, None)
+            first = by is None and row["role"] == ADMIN and row["active"] and self._active_admins(conn) == 1 and not (
+                conn.execute("SELECT 1 FROM users WHERE last_login IS NOT NULL").fetchone())  # fmt: skip
         try:
             when = dt.datetime.fromisoformat(given or row["created_at"]).timestamp()
         except (TypeError, ValueError):

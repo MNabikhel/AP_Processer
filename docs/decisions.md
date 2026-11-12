@@ -5707,7 +5707,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `base.html`; docs/PROTOTYPE.md section 1)
   - **Amended (B-2531, B-2532):** a folder with no invoices but GL accounts, cost centers or a tax setup of its own is
     asked too, the question saying QST is then added to each expense line; saved JD Edwards settings keep the folder
-    as it is only when really set up (`jde_settings.set_up`), not for one supplier number.
+    as it is only when really set up (`jde_settings.set_up`: any value not the default but supplier numbers, terms
+    codes, bank accounts and the worksheet's answers), not for one supplier number. With JD Edwards set up the QST
+    never changes: a folder with invoices of its own is asked only "Use the short menu?" (`ASK_SCREENS`), one with
+    none is not asked.
 
 - **D-233** · **CI's tests run in more, even parts side by side; Windows' one 20-minute test runs on main, not in
   a pull request** (`.github/workflows/ci.yml`, `tests/conftest.py`, `tests/times.py`; 11 Nov 2026).
