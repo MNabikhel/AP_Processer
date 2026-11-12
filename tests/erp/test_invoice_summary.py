@@ -223,9 +223,16 @@ def test_the_sales_tax_report_gives_what_it_gave(year):
     assert ref.tax_self_assessment(year, *YEAR)  # the BC supply without PST
     treatments = {**year.tax_treatments()}
     treatments["QST"] = type(treatments["QST"])("QST", EXPENSE_TO_LINE, "")
-    assert _pairs(taxreturn.build(year, *YEAR, treatments).claims) == _pairs(
-        ref.tax_build(year, *YEAR, treatments).claims
+    # Another tax setup: an invoice approved by an older version (no posting lines kept) follows it, as the old code
+    # did; the others are claimed as they were posted (D-239), as with today's setup.
+    kept = {c.invoice_id for c in taxreturn.build(year, *YEAR).claims
+            if year.get_invoice(c.invoice_id)["final_output"].get("gl_distribution")}  # fmt: skip
+    new, old = taxreturn.build(year, *YEAR, treatments).claims, ref.tax_build(year, *YEAR, treatments).claims
+    assert _pairs(c for c in new if c.invoice_id not in kept) == _pairs(c for c in old if c.invoice_id not in kept)
+    assert _pairs(c for c in new if c.invoice_id in kept) == _pairs(
+        c for c in ref.tax_build(year, *YEAR).claims if c.invoice_id in kept
     )
+    assert len(new) < len(ref.tax_build(year, *YEAR).claims)  # (the older version's Quebec invoice's QST)
 
 
 def test_the_queue_offers_the_same_invoices_for_bulk_approval(year):
