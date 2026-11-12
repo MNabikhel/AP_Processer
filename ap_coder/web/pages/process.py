@@ -491,7 +491,7 @@ def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
                         "switch to yours later."}  # fmt: skip
     if state["GL accounts"][0] != "ok":
         return {"title": "Import your GL accounts", "icon": "account_tree", "href": STEP_LINKS["GL accounts"],
-                "button": "Import GL accounts", "sample": True,
+                "button": "Load GL accounts", "sample": True,
                 "text": "AP Coder codes each invoice line to one of your GL accounts. To look around first, use the "
                         "sample accounts and switch to yours later."}  # fmt: skip
     if state[TAX_STEP][0] != "ok":
