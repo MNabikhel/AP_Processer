@@ -19,7 +19,7 @@ from ap_coder.web import roles
 from ap_coder.web.app import create_app
 from ap_coder.web.core import SHOW_JDE
 from tests.conftest import copy_database
-from tests.webclient import enrol, sign_in, web_settings
+from tests.webclient import PAGE, enrol, sign_in, web_settings
 
 GOOD = "correct horse battery"
 FILES = (".csv", ".png", ".pdf", ".xlsx", ".zip", ".txt")
@@ -166,3 +166,67 @@ def test_read_only_opens_an_invoice_read_only_and_posts_nothing(servers):
     # screen checks on opening (the page is drawn with its checks, D-154)
     start = "if (readOnly) lockFields();\nelse if (form && kept) putBack(kept);\nelse if (form) focusFirstToCheck();"
     assert start in script
+
+
+def _workbook(rows: list[list[str]]) -> bytes:
+    import io
+
+    import openpyxl
+
+    book = openpyxl.Workbook()
+    for row in rows:
+        book.active.append(row)
+    out = io.BytesIO()
+    book.save(out)
+    return out.getvalue()
+
+
+def test_a_clerk_opening_an_admins_preview_is_offered_no_load(tmp_path):
+    """B-2431: a Clerk opening the address an Admin's upload led to (/vendors?file=…, /purchase-orders?file=…,
+    /learning?history=…) saw its rows and a Load button the server then refused (403). The rows are shown; Load
+    only to whom may load, as JD Edwards files and GL accounts & tax do."""
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    app, clients = _server(store)
+    files = {
+        "/vendors/master/upload": ("/vendors/master/import", [["Vendor Name", "Vendor ID"], ["Acme Ltd", "V1"]]),
+        "/purchase-orders/upload": ("/purchase-orders/import", [
+            ["PO Number", "Description", "Quantity", "Unit Price", "Vendor"],
+            ["PO-1", "Laptops", "2", "1000", "Acme"]]),
+        "/learning/history/upload": ("/learning/history/teach", [
+            ["Supplier", "Memo", "GL Account", "Dept"], ["Acme", "Paper", "6100", "100"]]),
+    }  # fmt: skip
+    for upload, (load, rows) in files.items():
+        sent = clients[ADMIN].post(upload, files={"file": ("list.xlsx", _workbook(rows))}, headers=PAGE)
+        assert sent.status_code == 200, sent.text
+        link = sent.json()["redirect"]
+        assert ("POST", load) in [(m, path) for m, path, _what, _link in targets(clients[ADMIN].get(link).text)]
+        clerk = clients["clerk"].get(link)
+        assert clerk.status_code == 200 and "Acme" in clerk.text, link  # the rows, as the Admin sees them
+        refused = [path for method, path, _w, _l in targets(clerk.text) if not roles.can(app, "clerk", method, path)]
+        assert refused == [], (link, refused)
+
+
+def test_a_persons_uploads_never_push_out_anothers(tmp_path):
+    """B-2432: the uploads waiting to be loaded were one pool of 24 for everyone: a Clerk's 24 statements pushed out
+    the vendor list an Admin had just uploaded, its Load then "no longer here (uploads are kept for an hour)". Each
+    person keeps their own last 24; one pushed out by their own later uploads is not said to have run out of time."""
+    from ap_coder.web import files
+    from ap_coder.web.core import using_store
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    _app, clients = _server(store)
+    vendors = [["Vendor Name", "Vendor ID"], ["Acme Ltd", "V1"]]
+    sent = clients[ADMIN].post("/vendors/master/upload", files={"file": ("v.xlsx", _workbook(vendors))}, headers=PAGE)
+    token = re.search(r"file=([^&#]+)", sent.json()["redirect"]).group(1)
+    statement = _workbook([["Invoice No", "Date", "Balance"], ["INV-1", "2026-01-05", "100.00"]])
+    first = ""
+    for _n in range(files._MAX + 1):
+        answer = clients["clerk"].post("/statements/upload", files={"file": ("st.xlsx", statement)}, headers=PAGE)
+        assert answer.status_code == 200, answer.text
+        first = first or re.search(r"file=([^&#]+)", answer.json()["redirect"]).group(1)
+    loaded = clients[ADMIN].post("/vendors/master/import", data={"file": token, "col_vendor_name": "Vendor Name"},
+                                 headers=PAGE)  # fmt: skip
+    assert loaded.status_code == 200 and loaded.json()["ok"], loaded.text
+    with using_store(store):
+        assert files.get_upload(first) is None and files.get_upload(token) is None  # (loaded: gone)
+    assert "only your last" in files.GONE and "an hour" in files.GONE

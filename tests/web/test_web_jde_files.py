@@ -177,7 +177,11 @@ def test_the_suppliers_are_shown_before_they_are_loaded(client, store, exports):
     token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.SUPPLIERS_FILE))
     page = client.get(f"/jde-files?suppliers={token}").text
     summary = page.split('id="suppliers-summary"', 1)[1].split("</section>", 1)[0]
-    assert made.SUPPLIERS_FILE in summary and "nothing is loaded yet" in summary and "as</span> “Alpha Name”" in summary
+    assert (
+        made.SUPPLIERS_FILE in summary
+        and "this file is not loaded yet" in summary
+        and "as</span> “Alpha Name”" in summary
+    )
     assert (
         re.search(r"Load [\d,]+ suppliers?</button>", summary) and "/vendors?file=" not in summary
     )  # (no picker for it: B-2406)
@@ -216,7 +220,7 @@ def test_the_vendor_information_list_is_told_by_its_columns_and_shown_before_it_
     terms and addresses, each on the supplier of its number."""
     token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.VENDOR_INFO_FILE))
     summary = _summary(client, token)
-    assert made.VENDOR_INFO_FILE in summary and "nothing is loaded yet" in summary
+    assert made.VENDOR_INFO_FILE in summary and "this file is not loaded yet" in summary
     assert "55 suppliers to load: 0 already in the supplier list by their number" in summary
     assert "Left out: 1 row of totals at the end." in summary and "Tax ID: " in summary and "Currency: CAD" in summary
     assert '<b>Tax ID</b> <span class="muted">as</span> “Tax ID”' in summary
@@ -379,14 +383,13 @@ def test_a_wrong_file_in_a_box_is_refused_in_plain_words(client, store, exports)
 def test_the_chart_is_bound_by_its_readers_own_limit_and_no_other_upload_is_loosened(client, store, exports,
                                                                                       monkeypatch):  # fmt: skip
     """A chart's sheet unzips to about 104 MB, over the 20 MB a sheet of any other upload may (``files.read_excel``):
-    the chart and the business units go to their reader as they come; the other boxes keep the limit."""
+    the chart and the business units go to their reader as they come; the other boxes keep the limit (but for the
+    voucher list, read within the chart reader's own: B-2433)."""
     monkeypatch.setattr(files.triage, "sheet_unzips_too_big", lambda content: True)
     _load_chart(client, exports)
     assert _accounts(store) > 0 and store.business_units()
-    for path, name in (("/jde-files/suppliers/upload", made.SUPPLIERS_FILE),
-                       ("/jde-files/vouchers/upload", made.HEADERS_FILE)):  # fmt: skip
-        refused = _send(client, path, exports, name)
-        assert refused.status_code == 400 and refused.json()["error"] == files.TOO_BIG_UNZIPPED, path
+    refused = _send(client, "/jde-files/suppliers/upload", exports, made.SUPPLIERS_FILE)
+    assert refused.status_code == 400 and refused.json()["error"] == files.TOO_BIG_UNZIPPED
 
 
 def test_on_the_server_anyone_from_a_clerk_sees_the_page_and_only_an_admin_loads(store):
@@ -443,7 +446,7 @@ def test_the_chart_is_shown_first_its_columns_in_any_order_and_loaded_only_on_lo
     page = client.get(f"/jde-files?chart={token}").text
     summary = page.split('id="chart-summary"', 1)[1].split("</section>", 1)[0]
     rows = len(list(openpyxl.load_workbook(io.BytesIO(whole)).active.iter_rows())) - 1
-    assert f"<b>mixed.xlsx</b> · {rows:,} rows · nothing is loaded yet." in summary
+    assert f"<b>mixed.xlsx</b> · {rows:,} rows · this file is not loaded yet." in summary
     assert "every column it needs is here." in summary and 'role="alert"' not in summary
     for header in ("Business Unit", "Object Account", "Subsidiary", "P E", "Account Description", "L D"):
         assert f'<span class="muted">as</span> “{header}”' in summary, header
@@ -639,6 +642,19 @@ def test_a_needed_column_named_twice_is_refused_naming_it(client, store, exports
     assert 'role="alert"' not in summary  # (the list's own two "Business Unit" columns: read both)
 
 
+def test_a_vendor_information_list_with_a_needed_column_named_twice_is_not_loaded(client, store, exports):
+    """B-2462: the vendor information list with a junk "Company Name" column before its own was refused on its card,
+    but its Load checked only that rows were read: a POST of the token loaded every supplier as "ZZZ"."""
+    rows = _grid((exports / made.VENDOR_INFO_FILE).read_bytes())
+    at = next(i for i, row in enumerate(rows) if "Company Name" in [str(cell).strip() for cell in row])
+    doubled = [["Company Name" if i == at else "ZZZ" if i > at else "", *row] for i, row in enumerate(rows)]
+    token, summary = _look_of(client, "suppliers", "info.xlsx", _book(("Sheet1", doubled)))
+    assert "more than one column named “Company Name”" in summary and 'role="alert"' in summary
+    refused = client.post("/jde-files/suppliers/load", data={"token": token}, headers=PAGE)
+    assert refused.status_code == 400 and "“Company Name”" in refused.json()["error"]
+    assert store.master_vendors() == []
+
+
 def test_the_vendor_information_list_without_a_column_is_judged_as_itself(client, store, exports):
     """B-2410: the vendor information list without its Tax ID column was judged as the supplier master: the message
     named Alpha Name and Address Number, columns the list never has."""
@@ -823,7 +839,10 @@ def test_the_journal_is_summed_up_in_three_lines_with_the_rest_folded_and_its_co
     summary = client.get(f"/jde-files?journal={token}").text.split('id="journal-summary"', 1)[1].split("</section>")[0]
     seen = journal_cmd.look(store, (exports / made.JOURNAL_FILE).read_bytes(), made.JOURNAL_FILE)
     lines, vouchers = seen.journal.totals.lines, seen.journal.totals.vouchers
-    assert f"<b>{made.JOURNAL_FILE}</b> · {lines:,} lines on {vouchers:,} vouchers · nothing is loaded yet." in summary
+    assert (
+        f"<b>{made.JOURNAL_FILE}</b> · {lines:,} lines on {vouchers:,} vouchers · this file is not loaded yet."
+        in summary
+    )
     brief = summary.split('id="journal-brief">', 1)[1].split("</ul>", 1)[0]
     assert brief.count("<li>") == 3 and "matching the report&#39;s Grand Total" in brief and "To learn from: " in brief
     folded = summary.split("<details", 1)[1].split("</details>", 1)[0]
@@ -833,7 +852,7 @@ def test_the_journal_is_summed_up_in_three_lines_with_the_rest_folded_and_its_co
     follow(client, client.post("/jde-files/journal/load", data={"token": token}, headers=PAGE))
     token = _token(_send(client, "/jde-files/journal/upload", exports, made.JOURNAL_FILE))
     summary = client.get(f"/jde-files?journal={token}").text.split('id="journal-summary"', 1)[1].split("</section>")[0]
-    assert "This file is loaded already" in summary and "nothing is loaded yet" not in summary
+    assert "This file is loaded already" in summary and "not loaded yet" not in summary
     assert f"{lines:,} lines on {vouchers:,} vouchers · loaded already." in summary
 
 
@@ -860,3 +879,355 @@ def test_one_name_for_the_voucher_list_and_one_word_for_the_last_button_on_every
                  "/learning?teach=1", "/settings/jde"):  # fmt: skip
         page = client.get(path).text
         assert "click Load." in page and not re.search(r"click (Import|Teach|Apply)\b", page), path
+
+
+# --- The voucher list: read once, as the chart's reader reads a long export, loaded as on Exports -------------------
+
+
+def _vouchers_page(client, items, name: str = "vouchers.xlsx", cut: bool = False) -> str:
+    """The token of a voucher list of these pay items uploaded on card 5 (its totals row left off: ``cut``)."""
+    from tests.jde_exports import voucher_headers
+
+    data = voucher_headers(items)
+    if cut:
+        data = _book(("Sheet1", _grid(data)[:-1]))
+    return _token(_send_bytes(client, "/jde-files/vouchers/upload", name, data))
+
+
+def test_a_years_voucher_list_too_large_for_a_spreadsheet_is_read_as_the_charts_reader_reads_it(
+        client, store, exports, monkeypatch):  # fmt: skip
+    """B-2433: a year's voucher list as .xlsx (22,137 pay items: 46.7 MB unzipped) was refused on card 5 and on
+    Exports by the 20 MB a sheet of any other upload may unzip to, as "it may be damaged"; as CSV it loaded in 3 s.
+    It is read a row at a time within the chart reader's own bounds (``core/chart_file``); a file over any bound is
+    "too large", told to be saved as CSV, never "damaged"."""
+    monkeypatch.setattr(files.triage, "sheet_unzips_too_big", lambda content: True)
+    token = _token(_send(client, "/jde-files/vouchers/upload", exports, made.HEADERS_FILE))
+    assert "JD Edwards&#39; voucher list: " in _card_of(client, "vouchers", token)
+    page = follow(client, client.post("/jde-files/vouchers/load", data={"token": token}, headers=PAGE))
+    assert store.erp_register_count() > 0 and "vouchers of JD Edwards known now." in page
+    sent = _send(client, "/exports/register/upload", exports, made.HEADERS_FILE)
+    assert sent.status_code == 200 and "JD Edwards&#39; voucher list: " in client.get(sent.json()["redirect"]).text
+    assert "too large" in files.TOO_BIG_UNZIPPED and "CSV" in files.TOO_BIG_UNZIPPED
+    assert "damaged" not in files.TOO_BIG_UNZIPPED + files.TOO_BIG
+    refused = _send(client, "/jde-files/suppliers/upload", exports, made.SUPPLIERS_FILE)  # (no long export: 20 MB)
+    assert refused.status_code == 400 and refused.json()["error"] == files.TOO_BIG_UNZIPPED
+    monkeypatch.setattr(jde_files.chart_file, "SHEET_MOST", 1000)  # over the chart reader's bound too
+    refused = _send(client, "/jde-files/vouchers/upload", exports, made.HEADERS_FILE)
+    assert refused.status_code == 400 and refused.json()["error"] == files.TOO_BIG_UNZIPPED
+
+
+def test_replace_is_refused_for_a_voucher_list_that_may_be_cut_short(client, store):
+    """B-2434: Replace ticked on card 5 with a list whose totals row is missing (or not the sum of its rows) took the
+    list loaded from 20,000 vouchers to 18,193, while its words said a voucher it does not show is never taken off.
+    Replace is refused for such a list, saying why, on card 5 and on Exports; loaded without Replace, it adds."""
+    from tests.jde_exports import sample_pay_items, voucher_headers
+
+    page = follow(client, client.post("/jde-files/vouchers/load", data={"token": _vouchers_page(
+        client, sample_pay_items())}, headers=PAGE))  # fmt: skip
+    before = store.erp_register_count()
+    assert before == 5, page
+    token = _vouchers_page(client, sample_pay_items()[:2], cut=True)
+    refused = client.post("/jde-files/vouchers/load", data={"token": token, "replace": "1"}, headers=PAGE)
+    assert refused.status_code == 400 and "cut short" in refused.json()["error"] and store.erp_register_count() == 5
+    cut = _book(("Sheet1", _grid(voucher_headers(sample_pay_items()[:2]))[:-1]))
+    sent = client.post("/exports/register/upload", files={"file": ("v.xlsx", cut)}, headers=PAGE)
+    register = re.search(r"register=([^&#]+)", sent.json()["redirect"]).group(1)
+    refused = client.post("/exports/register/import", data={"file": register, "replace": "1"}, headers=PAGE)
+    assert refused.status_code == 400 and "cut short" in refused.json()["error"] and store.erp_register_count() == 5
+    follow(client, client.post("/jde-files/vouchers/load", data={"token": token}, headers=PAGE))
+    assert store.erp_register_count() == 5  # (its two vouchers were there already)
+
+
+def test_card_5_takes_off_a_voided_voucher_as_exports_does(client, store):
+    """B-2435: card 5 never took off the list a voucher a later list shows at 0.00 (voided in JD Edwards); Exports
+    did with the same file, and also offered to take off what a whole, unfiltered list no longer shows. Both pages
+    load a voucher list by the same function, with the same words."""
+    from tests.jde_exports import pay_item, sample_pay_items
+
+    follow(client, client.post("/jde-files/vouchers/load", data={"token": _vouchers_page(client, sample_pay_items())},
+                               headers=PAGE))  # fmt: skip
+    assert store.in_erp("Maple Leaf Coffee Services Inc.", "INV-0042", 214.2)
+    void = pay_item(700101, "001", 0.00, 410001, "MAPLE LEAF COFFEE SERVICES INC.", "INV-0042")
+    later = [void, *sample_pay_items()[1:4], *sample_pay_items()[5:7]]
+    page = follow(client, client.post("/jde-files/vouchers/load", data={"token": _vouchers_page(client, later)},
+                                      headers=PAGE))  # fmt: skip
+    assert store.in_erp("Maple Leaf Coffee Services Inc.", "INV-0042", 214.2) == []
+    assert "1 voucher an earlier list gave is voided or no longer in JD Edwards by this one: taken off" in page
+    assert store.in_erp("Maple Leaf Coffee Services Inc.", "ML-3318", 642.90)  # not shown: still there
+    whole = {"token": _vouchers_page(client, later), "whole": "1"}
+    follow(client, client.post("/jde-files/vouchers/load", data=whole, headers=PAGE))
+    assert store.in_erp("Maple Leaf Coffee Services Inc.", "ML-3318", 642.90) == []
+
+
+def test_card_5_reads_its_file_once_at_the_upload(client, store, exports, monkeypatch):
+    """B-2441: card 5's summary read the uploaded voucher list again at every view of the page (1.2 to 3 s a view;
+    a year's list as .xlsx, 8 s). What was read is kept with the upload, as the other cards keep theirs, and the
+    load reads nothing again."""
+    token = _token(_send(client, "/jde-files/vouchers/upload", exports, made.HEADERS_FILE))
+    first = _card_of(client, "vouchers", token)
+
+    def never(*_args, **_kwargs):
+        raise AssertionError("the file was read again")
+
+    monkeypatch.setattr(files, "read_sheet", never)
+    assert _card_of(client, "vouchers", token) == first and "JD Edwards&#39; voucher list: " in first
+    follow(client, client.post("/jde-files/vouchers/load", data={"token": token}, headers=PAGE))
+    assert store.erp_register_count() > 0
+
+
+def test_card_5_offers_whole_list_as_exports_does(client, store, exports):
+    """B-2464: card 5's load takes off the vouchers of the period a whole list no longer shows when told the grid was
+    not filtered (``whole``), as Exports' does, but the card had no box to say so: the list could only be added."""
+    token = _token(_send(client, "/jde-files/vouchers/upload", exports, made.HEADERS_FILE))
+    card = _card_of(client, "vouchers", token)
+    sent = _send(client, "/exports/register/upload", exports, made.HEADERS_FILE)
+    register = client.get(sent.json()["redirect"]).text
+    label = re.search(r'<input type="checkbox" name="whole" value="1">([^<]+)</label>', register).group(1)
+    assert label.strip().startswith("This list is every voucher of the period it covers")
+    assert f'<input type="checkbox" name="whole" value="1">{label}</label>' in card
+
+
+def test_a_file_being_loaded_shows_no_load_button(client, store, exports, monkeypatch):
+    """B-2465: while a chart or business unit file was being loaded (``looks.<card>.loading``, B-2437) its card
+    showed it as before, with its Load button; Load then said only that it was being loaded. The card says the file
+    is being loaded and offers no Load."""
+    monkeypatch.setattr(jde_files, "_being_loaded", lambda token: True)
+    for card, name in (("chart", made.CHART_FILE), ("units", made.UNITS_FILE)):
+        shown = _card_of(client, card, _token(_send(client, f"/jde-files/{card}/upload", exports, name)))
+        assert "is being loaded now" in shown and f'data-load="{card}"' not in shown, card
+
+
+def test_an_upload_gone_says_how_long_and_how_many_are_kept(client):
+    """B-2466: JD Edwards files and Learning said an upload gone was gone "(uploads are kept for an hour)", where
+    every other page says an upload is kept for an hour and only the person's last 24 (``files.GONE``)."""
+    for url in ("/jde-files?chart=gone", "/learning?history=gone"):
+        page = client.get(url).text
+        assert "(uploads are kept for an hour)" not in page and "only your last 24" in page, url
+
+
+def test_a_worksheet_too_large_is_called_too_large_not_damaged(client, monkeypatch):
+    """B-2467: the JDE team's worksheet that unzips to more than any workbook may was refused as "may be damaged",
+    on its upload and by its reader. It is called too large, and told to be downloaded again."""
+    from ap_coder.erp import jde_worksheet
+
+    monkeypatch.setattr(files.triage, "sheet_unzips_too_big", lambda content: True)
+    refused = client.post("/settings/jde/worksheet/upload", files={"file": ("w.xlsx", b"PK")}, headers=PAGE)
+    said = [refused.json()["error"], *jde_worksheet.read(b"PK", jde_settings.JdeSettings()).problems]
+    assert refused.status_code == 400 and said[0] == said[1], said
+    assert "too large" in said[0] and "damaged" not in said[0]
+
+
+def test_exports_reads_a_voucher_list_once_at_the_upload(client, store, exports, monkeypatch):
+    """B-2468: Exports read an uploaded voucher list again at every view of the page and at its import (a year's
+    list as .xlsx, 8 s each), where card 5 keeps what was read with the upload (B-2441). Exports keeps it too."""
+    sent = _send(client, "/exports/register/upload", exports, made.HEADERS_FILE)
+    first = client.get(sent.json()["redirect"]).text.split('id="register"', 1)[1]
+
+    def never(*_args, **_kwargs):
+        raise AssertionError("the file was read again")
+
+    monkeypatch.setattr(files, "read_sheet", never)
+    again = client.get(sent.json()["redirect"]).text.split('id="register"', 1)[1]
+    assert again == first and "JD Edwards&#39; voucher list: " in first
+    token = re.search(r"register=([^&#]+)", sent.json()["redirect"]).group(1)
+    follow(client, client.post("/exports/register/import", data={"file": token}, headers=PAGE))
+    assert store.erp_register_count() > 0
+
+
+# --- Review passes 3 and 4: headings, names and what a box says while it works --------------------------------------
+
+
+def _levels(html: str) -> list[int]:
+    """The levels of the headings of the page's content, in order."""
+    return [int(n) for n in re.findall(r"<h([1-6])[ >]", html.split('id="main"', 1)[1])]
+
+
+def test_the_headings_go_down_one_level_at_a_time(client, store, exports):
+    """B-2447: the page's headings went from its title (h1) to the cards' (h4) and the file shown's "Columns" and
+    "Its first rows" (h5). The cards are h2, the parts under them h3."""
+    for card, name in (("chart", made.CHART_FILE), ("suppliers", made.SUPPLIERS_FILE)):
+        page = client.get(f"/jde-files?{card}={_token(_send(client, f'/jde-files/{card}/upload', exports, name))}").text
+        levels = _levels(page)
+        assert levels[0] == 1 and all(b <= a + 1 for a, b in zip(levels, levels[1:], strict=False)), levels
+        assert '<h2 id="chart-title">1. Chart of accounts</h2>' in page and '<h3 class="imp-sub">Columns</h3>' in page
+
+
+def test_each_more_is_named_after_what_it_is_about(client):
+    """B-2448: five toggles on the page were each called "More": a screen reader's list of them said "More" five
+    times. Each names its report."""
+    names = re.findall(r'<details class="imp-more"><summary>([^<]*)</summary>', client.get("/jde-files").text)
+    more = [name for name in names if name.startswith("More")]
+    assert "More" not in names and len(more) == 5 and len(set(more)) == 5, names
+    assert "More about chart of accounts" in more and "More about invoices already in JD Edwards" in more
+
+
+def test_a_file_shown_says_this_file_is_not_loaded_yet_beside_what_is_loaded_now(client, store, exports):
+    """B-2457: the chart shown said "14,000 rows · nothing is loaded yet." above "Replaces the 13,870 accounts loaded
+    now": it says this file is not loaded yet."""
+    _load_chart(client, exports)
+    card = _card_of(client, "chart", _token(_send(client, "/jde-files/chart/upload", exports, made.CHART_FILE)))
+    assert "rows · this file is not loaded yet." in card and "nothing is loaded yet" not in card
+    assert "Replaces the" in card
+
+
+def test_the_vendor_information_list_says_what_its_load_does(client, store, exports):
+    """B-2459: the vendor information list's preview had no line saying what Load would do, where the supplier
+    master's says it updates the suppliers loaded and removes none."""
+    token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.SUPPLIERS_FILE))
+    follow(client, client.post("/jde-files/suppliers/load", data={"token": token}, headers=PAGE))
+    card = _card_of(client, "suppliers", _token(_send(client, "/jde-files/suppliers/upload", exports,
+                                                      made.VENDOR_INFO_FILE)))  # fmt: skip
+    then = card.split('id="suppliers-then"', 1)[1].split("</p>", 1)[0]
+    assert re.search(r"Updates the [\d,]+ suppliers? loaded already and adds [\d,]+: no supplier is removed\.", then)
+    assert "Each keeps its payment hold; its tax ID, currency, terms and address are taken from this list." in then
+
+
+def test_in_a_browser_the_chart_box_says_it_is_reading_and_how_long_it_takes(chromium, store, exports):
+    """B-2460: a real-size chart takes 15 to 19 s to read, and the box showed only "Reading the chart…" on its
+    button. The button says how long it takes, and the box what file it reads, the seconds gone by and how long a
+    real-size chart takes; it is said once to a screen reader, not each second."""
+    from tests.browser import browser_on
+
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
+        page = browser.new_page(viewport={"width": 683, "height": 400})
+        held = []
+        page.route("**/jde-files/chart/upload", lambda route: held.append(route))
+        page.goto(base + "/jde-files")
+        page.locator("#chart input[type=file]").set_input_files(str(exports / made.CHART_FILE))
+        page.locator("#chart .imp-upload button[type=submit]").click()
+        page.wait_for_selector("#chart .imp-drop.working")
+        said = page.locator("#chart [data-imp-chosen]").inner_text()
+        assert f"Reading {made.CHART_FILE}… A chart of some 14,000 accounts takes 10 to 20 seconds" in said, said
+        assert "10 to 20 seconds" in page.locator("#chart .imp-upload button[type=submit]").inner_text()
+        assert page.locator("#chart form.imp-upload[aria-busy]").count() == 1
+        page.wait_for_function("/\\d+ s$/.test(document.querySelector('#chart .imp-seconds').textContent)")
+        assert page.locator("#chart .imp-seconds").get_attribute("aria-hidden") == "true"
+        held[0].continue_()
+        page.wait_for_selector("#chart-summary")
+        page.close()
+
+
+def test_the_page_counts_the_chart_and_never_reads_its_rows(client, store, exports, monkeypatch):
+    """B-2436: opening JD Edwards files while a chart was being loaded took 11 to 13 s: the page read the chart's
+    20,000 rows one at a time only to count them, and after each row it waited for the load, reading its workbook on
+    another thread, to let go of Python's lock (5 ms at a time: not the database, which the load writes to only
+    once it has read the file). The page counts them in one query, and the dashboard's threads take turns every
+    half millisecond (0.3 s for the page during a load)."""
+    import sys
+
+    from ap_coder.web import app as web_app
+
+    assert sys.getswitchinterval() == web_app.SWITCH_INTERVAL <= 0.0005  # (set by create_app)
+    _load_chart(client, exports)
+    accounts, units = _accounts(store), len({row.bu for row in store.chart_accounts()})
+    vendors = len(store.master_vendors())
+
+    def never(*_args):
+        raise AssertionError("every row read")
+
+    monkeypatch.setattr(type(store), "chart_accounts", never)
+    monkeypatch.setattr(type(store), "master_vendors", never)
+    page = client.get("/jde-files").text
+    assert f"{accounts:,} accounts</b>" in page and f"On {units:,} business units" in page and vendors == 0
+
+
+def test_a_file_being_loaded_says_so_and_is_not_loaded_twice(client, store, exports, monkeypatch):
+    """B-2437: the page opened again during a chart's Load showed the file as before, Load offered; Load then said
+    the file was loaded already, with the counts from before. While a file is loaded its card says so, and a second
+    Load of it is refused."""
+    import threading
+
+    from fastapi.testclient import TestClient
+
+    from ap_coder.web.core import using_store
+
+    _load_chart(client, exports)
+    token = _token(_send(client, "/jde-files/chart/upload", exports, made.CHART_FILE))
+    reading, go_on = threading.Event(), threading.Event()
+    real = chart_cmd.import_files
+
+    def importing(*args, **kwargs):
+        reading.set()
+        assert go_on.wait(30)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(jde_files.chart_cmd, "import_files", importing)
+    first = {}
+    loading = threading.Thread(target=lambda: first.setdefault("answer", client.post(
+        "/jde-files/chart/load", data={"token": token}, headers=PAGE)))  # fmt: skip
+    loading.start()
+    try:
+        assert reading.wait(30)
+        other = TestClient(client.app, base_url="http://localhost")
+        with using_store(store):  # (the card's words for it are the page's: ``looks.chart.loading``)
+            look = jde_files.page_context(store, {"chart": token})["looks"]["chart"]
+        again = other.post("/jde-files/chart/load", data={"token": token}, headers=PAGE)
+    finally:
+        go_on.set()
+        loading.join(30)
+    assert first["answer"].status_code == 200 and again.status_code == 400
+    assert again.json()["error"] == jde_files.BEING_LOADED and look["loading"]
+    again = client.post("/jde-files/chart/load", data={"token": token}, headers=PAGE)
+    assert again.json()["error"] == jde_files.LOADED  # (done: loaded already)
+
+
+def test_the_charts_load_says_how_many_gl_accounts_it_removes_or_changes(client, store, exports):
+    """B-2438: a chart loaded after a GL list was imported on GL accounts & tax took off the GL accounts only that
+    list had (9990, 9991) and put the chart's description back over one typed there, said only under "8 more
+    lines". The chart's preview counts the GL accounts its load removes and changes (``gl_replaced``)."""
+    from ap_coder.web.core import using_store
+
+    _load_chart(client, exports)
+    first = store.list_accounts("gl_accounts")[0]
+    store.import_accounts("gl_accounts", [{"c": "9990", "d": "Suspense"}, {"c": "9991", "d": "Clearing"},
+                                          {"c": first["code"], "d": "Typed here"}], "c", "d")  # fmt: skip
+    token = _token(_send(client, "/jde-files/chart/upload", exports, made.CHART_FILE))
+    with using_store(store):
+        replaced = jde_files.page_context(store, {"chart": token})["gl_replaced"]
+        assert jde_files.page_context(store, {})["gl_replaced"] is None
+    assert (replaced["removed"], replaced["changed"]) == (2, 1)
+    follow(client, client.post("/jde-files/chart/load", data={"token": token}, headers=PAGE))
+    listed = {r["code"]: r["description"] for r in store.list_accounts("gl_accounts")}
+    assert "9990" not in listed and "9991" not in listed and listed[first["code"]] == first["description"]
+
+
+def test_loading_the_same_chart_or_units_again_is_recorded(client, store, exports):
+    """B-2439: the chart or the business units loaded again from the same file recorded nothing: "last loaded" kept
+    the first time and Activity showed no load. A load is recorded even when it changes nothing (and nothing else
+    is worked out again)."""
+    _load_chart(client, exports)
+    version = store.chart_version()
+    _load_chart(client, exports)
+    events = store.events(actions=["accounts_imported"])
+    assert [e["detail"]["table"] for e in events] == ["business_units", "chart_accounts"] * 2
+    assert events[0]["detail"]["unchanged"] and "unchanged" not in events[3]["detail"]
+    assert store.chart_version() == version
+    from ap_coder.core import audit
+    from ap_coder.web.core import using_store
+
+    assert "loaded again, the same as before: nothing changed" in audit.describe(events[1])
+    with using_store(store):
+        last = jde_files.page_context(store, {})["last"]["chart"]["when"]
+    assert last == str(events[1]["created_at"]).replace("T", " ")[:16]
+
+
+def test_getting_started_is_not_ticked_while_the_business_units_offer_another_company(client, store, exports):
+    """B-2440: Getting started ticked "JD Edwards settings ✓ company 00001" while card 2 offered "Use company
+    00210", the one company of the business units loaded: every voucher would have gone out under 00001. The step
+    is to do until that company is used (or another set)."""
+    from ap_coder.web.core import SHOW_JDE, using_store
+    from ap_coder.web.pages.process import JDE_STEP, pilot_steps
+
+    store.set_setting(SHOW_JDE, "1")
+    jde_settings.save(store, jde_settings.JdeSettings(use_default_rule=True, default_bu="1"), actor="pat")
+    _load_chart(client, exports)
+    (company,) = {unit.company for unit in store.business_units()}
+
+    def step():
+        with using_store(store):
+            return next(s for s in pilot_steps(store) if s[1] == JDE_STEP)
+
+    state, text = step()[0], step()[2]
+    assert state == "todo" and company in text and "JD Edwards files" in text, text
+    follow(client, client.post("/jde-files/company", headers=PAGE))
+    assert step()[0] == "ok"

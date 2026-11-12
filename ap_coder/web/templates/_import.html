@@ -6,6 +6,10 @@
    type)", or "Business Unit (the 1st of that name)" when its label is its name. #}
 {% macro column_name(spec, c) %}{% set same = spec.columns | selectattr("header", "equalto", c.header) | list %}{{ c.header }}{% if same | length > 1 %}{% if c.label | lower != c.header | lower %} ({{ c.label | lower }}){% else %}{% for d in same %}{% if d.field == c.field %} (the {{ nth(loop.index) }} of that name){% endif %}{% endfor %}{% endif %}{% endif %}{% endmacro %}
 
+{# The level of the parts' own headings ("Columns", "Its first rows"...): one under the card's title. A page whose
+   cards are h2 sets ``sub_level = 3`` before importing these; the others' cards are h4. #}
+{% macro sub_h() %}h{{ sub_level | default(5) }}{% endmacro %}
+
 {# 1st, 2nd, 3rd, 4th... #}
 {% macro nth(n) %}{{ n }}{{ {1: "st", 2: "nd", 3: "rd"}.get(n, "th") }}{% endmacro %}
 
@@ -50,9 +54,9 @@
    by default; none for a spec with ``no_template``). ``named``: its title and purpose above. #}
 {% macro report(spec, named=false, template="/imports/template/") %}
 <div class="imp-report">
-  {% if named %}<h5 class="imp-sub">{{ spec.title }} <span class="muted">· {{ spec.purpose }}</span></h5>{% endif %}
+  {% if named %}<{{ sub_h() }} class="imp-sub">{{ spec.title }} <span class="muted">· {{ spec.purpose }}</span></{{ sub_h() }}>{% endif %}
   <p class="imp-source"><span class="ms" aria-hidden="true">ios_share</span><span><b>How to get it:</b> {{ spec.source }}</span></p>
-  {% if spec.more %}<details class="imp-more"><summary>More</summary><p class="muted">{{ spec.more }}</p></details>{% endif %}
+  {% if spec.more %}<details class="imp-more"><summary>More about {{ spec.title[:1] | lower }}{{ spec.title[1:] }}</summary><p class="muted">{{ spec.more }}</p></details>{% endif %}
   {{ columns(spec) }}
   {% if not spec.no_template %}<p class="imp-template"><a href="{{ template }}{{ spec.key }}" download><span class="ms" aria-hidden="true">download</span>Download a blank template ({{ ".csv" if spec.key == "journal" else ".xlsx" }})</a>
     <span class="muted">· its column names, to compare with your export</span></p>{% endif %}
@@ -60,9 +64,11 @@
 {% endmacro %}
 
 {# The file box: a drop zone with the chosen file's name (imports.js), and the button that shows the file first. A
-   caller's fields (a vendor to compare a statement with) go above the drop zone; ``then``: the button that keeps it. #}
-{% macro file_box(action, accept, what, busy, button="Check the file", then="Load") %}
-<form method="post" action="{{ action }}" enctype="multipart/form-data" class="imp-upload" data-busy="{{ busy }}" data-long>
+   caller's fields (a vendor to compare a statement with) go above the drop zone; ``then``: the button that keeps it;
+   ``wait``: how long reading a real-size file takes, said in the box while it is read. A file refused is said in the
+   box's form, kept there until the next one is sent (``data-refusal``: app.js, imports.js). #}
+{% macro file_box(action, accept, what, busy, button="Check the file", then="Load", wait="") %}
+<form method="post" action="{{ action }}" enctype="multipart/form-data" class="imp-upload" data-busy="{{ busy }}" data-long data-refusal{% if wait %} data-wait="{{ wait }}"{% endif %}>
   {% if caller %}{{ caller() }}{% endif %}
   <label class="dropzone imp-drop" data-imp-drop>
     <input type="file" name="file" accept="{{ accept }}" required data-imp-file>
@@ -81,25 +87,26 @@
    as which header or missing, its other columns and its first rows. The caller draws the Load and Cancel buttons.
    ``look.pick``: its columns are picked on the page (files.spec_sheet): what was not found by its name is to pick
    (``look.unfound``), and its first rows are shown in every column, to pick from. ``look.done`` and ``look.go``: what
-   the page does with it, when it is not imported ("compared", "reconcile"). #}
+   the page does with it, when it is not imported ("compared", "reconcile"); ``look.compared``: what it was compared
+   with, once it was. The verdict takes the focus when the page opens on it (imports.js). #}
 {% macro preview(look, card_id) %}
 <div class="imp-preview stack" id="{{ card_id }}-summary">
-  <p class="imp-file"><span class="ms" aria-hidden="true">description</span><b>{{ look.name }}</b>{% if look.size %} · {{ look.size }}{% elif look.count is number %} · {{ look.count | plural("row") }}{% endif %} · {% if look.already %}loaded already.{% else %}nothing is {{ look.done or "loaded" }} yet.{% endif %}
+  <p class="imp-file"><span class="ms" aria-hidden="true">description</span><b>{{ look.name }}</b>{% if look.size %} · {{ look.size }}{% elif look.count is number %} · {{ look.count | plural("row") }}{% endif %} · {% if look.already %}loaded already.{% elif look.compared %}{{ look.compared }}{% else %}this file is not {{ look.done or "loaded" }} yet.{% endif %}
     {% if look.spec and not look.belongs and look.check and look.check.found %}<span class="imp-is">{{ ui.pill(look.spec.title, "info") }}</span>{% endif %}</p>
   {% if look.problem %}
-  <div class="flash err imp-verdict" role="alert"><span class="ms" aria-hidden="true">block</span><div>{{ look.problem }}</div></div>
+  <div class="flash err imp-verdict" tabindex="-1" role="alert"><span class="ms" aria-hidden="true">block</span><div>{{ look.problem }}</div></div>
   {% elif look.pick and look.unfound %}
-  <div class="flash warn imp-verdict" role="status"><span class="ms" aria-hidden="true">touch_app</span><div>Not found by {{ "its name" if look.unfound | length == 1 else "their names" }}: {{ look.unfound | join("; ") }}. Pick {{ "its column" if look.unfound | length == 1 else "their columns" }} below: nothing is loaded without {{ "it" if look.unfound | length == 1 else "them" }}.</div></div>
+  <div class="flash warn imp-verdict" tabindex="-1" role="status"><span class="ms" aria-hidden="true">touch_app</span><div>Not found by {{ "its name" if look.unfound | length == 1 else "their names" }}: {{ look.unfound | join("; ") }}. Pick {{ "its column" if look.unfound | length == 1 else "their columns" }} below: nothing is loaded without {{ "it" if look.unfound | length == 1 else "them" }}.</div></div>
   {% elif look.pick and look.guessed %}
-  <div class="flash warn imp-verdict" role="status"><span class="ms" aria-hidden="true">help</span><div>Guessed by a word in the header, not found by its name: {{ look.guessed }}. Check each below before you {{ look.go or "import" }}.</div></div>
+  <div class="flash warn imp-verdict" tabindex="-1" role="status"><span class="ms" aria-hidden="true">help</span><div>Guessed by a word in the header, not found by its name: {{ look.guessed }}. Check each below before you {{ look.go or "load" }}.</div></div>
   {% elif look.pick %}
-  <div class="flash ok imp-verdict" role="status"><span class="ms" aria-hidden="true">check_circle</span><div>Every column {{ look.spec.report }} needs was found by its name: the choices below start with them. Check them, then {{ look.go or "load" }}.</div></div>
+  <div class="flash ok imp-verdict" tabindex="-1" role="status"><span class="ms" aria-hidden="true">check_circle</span><div>Every column {{ look.spec.report }} needs was found by its name: the choices below start with them. Check them, then {{ look.go or "load" }}.</div></div>
   {% elif look.check %}
-  <div class="flash ok imp-verdict" role="status"><span class="ms" aria-hidden="true">check_circle</span><div>This is {{ look.spec.report }}: every column it needs is here.</div></div>
+  <div class="flash ok imp-verdict" tabindex="-1" role="status"><span class="ms" aria-hidden="true">check_circle</span><div>This is {{ look.spec.report }}: every column it needs is here.</div></div>
   {% endif %}
   {{ caller() }}
   {% if look.check %}
-  <h5 class="imp-sub">Columns</h5>
+  <{{ sub_h() }} class="imp-sub">Columns</{{ sub_h() }}>
   <ul class="imp-check" aria-label="The columns of {{ look.spec.title }} in this file">
     {% for item in look.check.rows() %}{% set c = item.column %}
     {% set state = "ok" if item.header else ("miss" if c.required or (c.field in look.spec.one_of and look.check.none_of) else "opt") %}
@@ -113,7 +120,7 @@
   {% endif %}
   {% endif %}
   {% if look.sample and look.sample.rows %}
-  <h5 class="imp-sub">Its first {{ "row" if look.sample.rows | length == 1 else look.sample.rows | length | plural("row") }}{% if look.check and look.check.unused and not look.pick %}, in the columns used{% endif %}</h5>
+  <{{ sub_h() }} class="imp-sub">Its first {{ "row" if look.sample.rows | length == 1 else look.sample.rows | length | plural("row") }}{% if look.check and look.check.unused and not look.pick %}, in the columns used{% endif %}</{{ sub_h() }}>
   <div class="table-wrap imp-rows"><table class="apc-table">
     <thead><tr>{% for h in look.sample.headers %}<th scope="col">{{ header_name(h, look.sample.headers, loop.index0) }}</th>{% endfor %}</tr></thead>
     <tbody>{% for row in look.sample.rows %}<tr>{% for cell in row %}<td>{{ cell_text(cell) }}</td>{% endfor %}</tr>{% endfor %}</tbody>

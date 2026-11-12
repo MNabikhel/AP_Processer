@@ -115,10 +115,11 @@ def test_the_same_chart_again_puts_back_a_gl_account_deleted_by_hand(store):
     assert result["cost_centers"] == {"now": 8, "added": 0, "updated": 0, "removed": 1}
     assert "5450" in _gl(store) and "0999999999" not in _cc(store) and store.chart_version() == version + 1
     assert "worked out again" in audit.describe(store.events(actions=["accounts_imported"])[0])
-    # And when nothing is out of step, nothing is written or recorded.
-    stamp = (store.chart_version(), store.events_stamp())
+    # And when nothing is out of step, nothing is written: only the load is recorded (B-2439).
+    version = store.chart_version()
     assert store.import_chart(_chart())["gl_accounts"]["added"] == 0
-    assert (store.chart_version(), store.events_stamp()) == stamp
+    assert store.chart_version() == version
+    assert store.events(actions=["accounts_imported"])[0]["detail"]["unchanged"]
 
 
 def test_the_lists_are_rebuilt_from_the_chart_on_demand(store):

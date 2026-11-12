@@ -40,7 +40,9 @@ from ap_coder.web.files import (
     SheetError,
     download,
     drop_upload,
+    first_rows,
     get_upload,
+    jde_refusal,
     keep_upload,
     read_upload,
     receive_sheet,
@@ -291,7 +293,8 @@ def _gl_map_read(token: str) -> tuple[dict[str, Any], list[jde_accounts.GlMap]]:
     columns = [str(c) for c in df.columns]
     check = import_specs.check(GL_MAP, columns)
     rows = jde_accounts.gl_map_from_records(df.to_dict("records")) if check.ok else []
-    problem = check.problem() or ("" if len(df) else NO_ROWS)
+    # (JD Edwards' own reports: on JD Edwards files only, B-2463)
+    problem = jde_refusal(first_rows(df)) or check.problem() or ("" if len(df) else NO_ROWS)
     if not problem and not rows:
         problem = "No row has a GL code: nothing would be imported."
     head = [columns, *df.head(import_specs.PREVIEW_ROWS).values.tolist()]
@@ -448,7 +451,7 @@ def _worksheet_head(content: bytes) -> tuple[list[list[str]], str]:
     import openpyxl
 
     if triage.sheet_unzips_too_big(content):
-        return [], "This workbook unzips to far more than its size on disk, so it is not opened: it may be damaged."
+        return [], jde_worksheet.TOO_LARGE
     try:
         book = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
     except Exception:  # noqa: BLE001 - not an Excel file, or damaged

@@ -15,6 +15,14 @@ _DB_NOW = NOW_SECONDS
 _OPEN = "kind >= 'open:' AND kind < 'open;'"  # every invoice's "open:<id>" rows, off the primary key
 
 
+def _kinds(kind: str, any_of: bool) -> tuple[str, tuple[str, ...]]:
+    """The rows of ``kind``, or with ``any_of`` of every kind starting with it (it ends in ":"), off the primary
+    key."""
+    if not any_of:
+        return "kind = ?", (kind,)
+    return "kind >= ? AND kind < ?", (kind, kind[:-1] + chr(ord(kind[-1]) + 1))
+
+
 class EphemeralMixin:
     # --- Kept for a short while ---------------------------------------------------------------------------------
 
@@ -39,22 +47,26 @@ class EphemeralMixin:
                          (kind, token, value, now, now + ttl))  # fmt: skip
         return token
 
-    def ephemeral(self, kind: str, token: str | None, *, take: bool = False) -> bytes | None:
-        """What is kept under ``token`` (None when there is nothing, or it expired); ``take``: forgotten once read."""
+    def ephemeral(self, kind: str, token: str | None, *, take: bool = False, any_of: bool = False) -> bytes | None:
+        """What is kept under ``token`` (None when there is nothing, or it expired); ``take``: forgotten once read.
+        ``any_of``: ``kind`` is the start of the kinds it may be kept under, ending in ":" (each person's uploads,
+        B-2432)."""
         if not token:
             return None
+        where, params = _kinds(kind, any_of)
         with self._conn() as conn:
-            row = conn.execute("SELECT value, expires_at FROM ephemeral WHERE kind = ? AND token = ?",
-                               (kind, token)).fetchone()  # fmt: skip
+            row = conn.execute(f"SELECT value, expires_at FROM ephemeral WHERE {where} AND token = ?",
+                               (*params, token)).fetchone()  # fmt: skip
             if row is not None and (take or row["expires_at"] < time.time()):
-                conn.execute("DELETE FROM ephemeral WHERE kind = ? AND token = ?", (kind, token))
+                conn.execute(f"DELETE FROM ephemeral WHERE {where} AND token = ?", (*params, token))
         if row is None or row["expires_at"] < time.time():
             return None
         return bytes(row["value"])
 
-    def drop_ephemeral(self, kind: str, token: str | None) -> None:
+    def drop_ephemeral(self, kind: str, token: str | None, *, any_of: bool = False) -> None:
+        where, params = _kinds(kind, any_of)
         with self._conn() as conn:
-            conn.execute("DELETE FROM ephemeral WHERE kind = ? AND token = ?", (kind, token or ""))
+            conn.execute(f"DELETE FROM ephemeral WHERE {where} AND token = ?", (*params, token or ""))
 
     # --- A dashboard job seen by every web worker of the company server (D-111) -------------------------------------
     # One row per job name: "job-running:<owner>" while a worker runs it (renewed every second, gone after ``stale``

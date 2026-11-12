@@ -510,6 +510,10 @@ class VendorMasterMixin:
         with self._conn() as conn:
             return conn.execute("SELECT 1 FROM vendors WHERE in_master = 1 LIMIT 1").fetchone() is not None
 
+    def master_vendor_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM vendors WHERE in_master = 1").fetchone()[0])
+
     def master_vendors(self) -> list[dict[str, Any]]:
         with self._conn() as conn:
             return [dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master = 1")]

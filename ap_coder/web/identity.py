@@ -78,13 +78,18 @@ THIS_COMPUTER = {"127.0.0.1", "localhost", "::1"}
 # Settings (all of it: the approval limit and rates, Data's backups and restore, the Azure check) are changed only on
 # the computer running AP Coder when it is shared on the office network (B-972); on the server, by an Admin's role.
 THIS_COMPUTER_ONLY = ("/settings",)
-# The setup and its imports, changed only from this computer too (B-1030): the account lists, the tax setup, the
-# policy notes (under /accounts), the coding rules (/rules) and the vendor master's import. Looking at them stays
-# open. (On the company server the rules are changed by anyone who reviews invoices: web/roles.py, D-217.)
-SETUP_CHANGES_HERE_ONLY = ("/accounts", "/rules", "/vendors/master")
+# The setup and its imports, changed only from this computer too (B-1030, B-2429): the account lists, the tax setup,
+# the policy notes (under /accounts), the coding rules (/rules), the vendor master's import, JD Edwards' files, the
+# purchase orders, the ERP's invoice list (Exports' register) and the past coding (Learning's history and journal):
+# what an Admin's role changes on the company server (web/roles.py). Looking at them stays open, and so do the
+# statements a colleague compares (a Clerk's on the server). (On the company server the rules are changed by anyone
+# who reviews invoices: web/roles.py, D-217.)
+SETUP_CHANGES_HERE_ONLY = ("/accounts", "/rules", "/vendors/master", "/jde-files", "/purchase-orders",
+                           "/exports/register", "/learning/history", "/learning/journal")  # fmt: skip
 SETUP_HERE_ONLY = (
-    "The account lists, the tax setup, the coding rules and the vendor master are changed only on the computer "
-    "running AP Coder. Ask the person at that computer, or the pilot tester."
+    "The account lists, the tax setup, the coding rules, the vendor master, JD Edwards' files, the purchase orders, "
+    "the ERP's invoice list and the past coding are changed only on the computer running AP Coder. Ask the person "
+    "at that computer, or the pilot tester."
 )
 SETTINGS_HERE_ONLY = (
     "Settings are changed only on the computer running AP Coder. Ask the person at that computer, or the pilot "
@@ -226,6 +231,16 @@ def from_this_computer(scope: dict[str, Any]) -> bool:
     return is_this_computer(client, (scope.get("server") or ("", 0))[0] or "")
 
 
+def here_only(path: str, method: str = "GET") -> str:
+    """Why a colleague on the office network may not send ``method`` to ``path`` ("" when they may): Settings, all
+    of it, and the setup's changes are this computer's (``THIS_COMPUTER_ONLY``, ``SETUP_CHANGES_HERE_ONLY``)."""
+    if any(path == p or path.startswith(p + "/") for p in THIS_COMPUTER_ONLY):
+        return SETTINGS_HERE_ONLY
+    if method not in ("GET", "HEAD") and any(path == p or path.startswith(p + "/") for p in SETUP_CHANGES_HERE_ONLY):
+        return SETUP_HERE_ONLY
+    return ""
+
+
 def _cookies(headers: list[tuple[bytes, bytes]]) -> dict[str, str]:
     found: dict[str, str] = {}
     for key, value in headers:
@@ -299,20 +314,13 @@ class Identity:
         if scope["type"] != "http" or not self.network or from_this_computer(scope):
             await self.app(scope, receive, send)
             return
-        path = scope.get("path") or ""
-        if any(path == p or path.startswith(p + "/") for p in THIS_COMPUTER_ONLY):
-            if scope.get("method", "GET") in ("GET", "HEAD"):
-                page = f"<!doctype html><meta charset=utf-8><title>Settings</title><p>{SETTINGS_HERE_ONLY}</p>"
+        path, method = scope.get("path") or "", scope.get("method", "GET")
+        if said := here_only(path, method):
+            if method in ("GET", "HEAD"):
+                page = f"<!doctype html><meta charset=utf-8><title>Settings</title><p>{said}</p>"
                 refusal: Any = HTMLResponse(page + '<p><a href="/">Back</a></p>', 403)
             else:
-                refusal = JSONResponse({"ok": False, "error": SETTINGS_HERE_ONLY}, status_code=403)
-            refusal.headers["Cache-Control"] = "no-store"
-            await refusal(scope, receive, send)
-            return
-        if scope.get("method", "GET") not in ("GET", "HEAD") and any(
-            path == p or path.startswith(p + "/") for p in SETUP_CHANGES_HERE_ONLY
-        ):
-            refusal = JSONResponse({"ok": False, "error": SETUP_HERE_ONLY}, status_code=403)
+                refusal = JSONResponse({"ok": False, "error": said}, status_code=403)
             refusal.headers["Cache-Control"] = "no-store"
             await refusal(scope, receive, send)
             return

@@ -170,7 +170,7 @@ def test_a_table_of_past_lines_still_goes_to_its_columns(store, data):
     assert "the Transaction Journal (report R09321) saved as CSV is read as it comes" in _text(client.get(
         "/learning").text)  # fmt: skip
     gone = client.get("/learning?journal=not-a-token").text
-    assert "That upload has expired" in gone
+    assert "That upload is no longer here" in gone
     assert post(client, "/learning/journal/load", {"token": "not-a-token"}).status_code == 400
 
 

@@ -45,8 +45,8 @@
   {% endif %}
   {% if s %}
   {{ sheets(s, "/statements", {"vendor": vendor, "file": s.token}) }}
-  {% call imp.preview(s.look, "statements") %}{% endcall %}
-  <form method="get" action="/statements" class="stack" id="pick-statements">
+  {% call imp.preview(s.look, "statements") %}{% if rec %}<p id="statements-compared">{{ compared }} <a href="#result">See the comparison</a></p>{% endif %}{% endcall %}
+  <form method="get" action="/statements#result" class="stack" id="pick-statements">
     {{ columns(s) }}
     <div class="row">
       <label class="field inline">Vendor
@@ -61,10 +61,12 @@
 </section>
 
 {% if rec %}
+{# The comparison: where Reconcile takes the person, the focus on it (imports.js) #}
+<div class="imp-result" id="result" tabindex="-1" data-imp-result aria-labelledby="result-title">
 {{ tile_row(tiles) }}
-<section class="card" id="result">
+<section class="card">
   <div class="card-head">
-    <h4>{{ names[vendor] }}</h4>
+    <h4 id="result-title">{{ names[vendor] }}: the statement compared with AP Coder</h4>
     <a class="btn" href="/statements/reconciliation.csv?{{ query }}" download><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
   </div>
   <div class="table-wrap">
@@ -104,6 +106,7 @@
   </details>
   {% endif %}
 </section>
+</div>
 {% endif %}
 {% endif %}
 {% endblock %}

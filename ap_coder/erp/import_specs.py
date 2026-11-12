@@ -237,7 +237,7 @@ _JOURNAL_NUMBERS = tuple(journal._NUMBER_HEADERS)
 def _journal_find(headers: list[str]) -> dict[str, str]:
     """{field: header} of a row of the journal, as ``journal._positions`` reads its header: {} when the row is not
     the header (it names no account number and remark)."""
-    positions, at = journal._positions([[str(h) for h in headers]])
+    positions, at = journal._positions([[str(h) for h in headers]], loose=True)
     if at is None:
         return {}
     words = {f: (journal.HEADER_WORDS[f],) if f in journal.HEADER_WORDS else _JOURNAL_NUMBERS for f in positions}
@@ -676,14 +676,14 @@ def journal_head(data: bytes) -> tuple[list[list[str]], int | None]:
         start = start[: start.rfind(b"\n") + 1] or start
         start = start[: len(start) - len(start) % 2] if data.startswith((b"\xff\xfe", b"\xfe\xff")) else start
     rows = journal._rows(start)
-    return rows, journal._positions(rows)[1]
+    return rows, journal._positions(rows, loose=True)[1]
 
 
 def journal_lines(rows: Sequence[Sequence[str]], at: int, most: int = PREVIEW_ROWS) -> dict:
     """The journal's columns found on its header row ``at`` (named by their labels: the report's header is split
     over two rows), in the report's order, and its first ``most`` lines with an account under it: {"headers",
     "rows"}."""
-    positions = journal._positions([list(rows[at])])[0]
+    positions = journal._positions([list(rows[at])], loose=True)[0]
     where = sorted((positions[f], JOURNAL.column(f).label) for f in JOURNAL.find(list(rows[at])))
     lines = [r for r in rows[at + 1 :] if chart.SEPARATOR in _text(r[positions["account"]] if positions["account"]
                                                                    < len(r) else "")][:most]  # fmt: skip

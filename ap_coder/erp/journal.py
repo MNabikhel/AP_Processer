@@ -186,17 +186,19 @@ _NEEDED = ("account", "remark")  # the header's columns a journal is not read wi
 HEADER_NAMES = 3  # the header's words a row names, one of ``_NEEDED`` among them, to be the header without the other
 
 
-def _positions(rows: list[list[str]]) -> tuple[dict[str, int], int | None]:
+def _positions(rows: list[list[str]], loose: bool = False) -> tuple[dict[str, int], int | None]:
     """({field: its column}, the header row's index): the header is the first row naming the account number and the
-    remark, or one of them and others of the header's words (``HEADER_NAMES`` in all), and each column is where its
-    words are (the one of ``_NEEDED`` it lacks: ``header_lacks``). Two columns are headed "Number" ("Document" and
-    "Address" are on the row above): the one before the account is the document type's, the one after it the
-    supplier number's. With no header: the standard positions, and None."""
+    remark, and each column is where its words are. ``loose`` (the journal's own reader, to name the column of
+    ``_NEEDED`` a header lacks: ``header_lacks``, B-2407): also a row naming one of them and others of the header's
+    words, ``HEADER_NAMES`` in all; never to tell a file is the journal (a GL list has "Account Number" and
+    "Description": B-2461). Two columns are headed "Number" ("Document" and "Address" are on the row above): the one
+    before the account is the document type's, the one after it the supplier number's. With no header: the standard
+    positions, and None."""
     for at, row in enumerate(rows[:HEADER_ROWS]):
         keys = [header_key(cell) for cell in row]
         found = {name: keys.index(word) for name, word in HEADER_WORDS.items() if word in keys}
         named = set(_NEEDED) & set(found)
-        if not named or len(named) < len(_NEEDED) and len(found) < HEADER_NAMES:
+        if len(named) < len(_NEEDED) and not (loose and named and len(found) >= HEADER_NAMES):
             continue
         numbers = [i for i, key in enumerate(keys) if key in _NUMBER_HEADERS]
         account = found.get("account", POSITIONS["account"])
@@ -274,7 +276,7 @@ def read_journal(data: bytes, *, payable_objects: PayableObjects, tax_objects: I
     also one that does not balance or pays an affiliate: it is marked, and ``coding_lines`` leaves it out.
     Raises ValueError when the file is not a CSV at all."""
     rows = _rows(data)
-    pos, header = _positions(rows)
+    pos, header = _positions(rows, loose=True)
     if header is not None and (lacks := header_lacks(rows[header])):  # (never read by position: B-2407)
         named = " and ".join(f"“{name}”" for name in lacks)
         raise ValueError(f"The report's header row has no {named} column{'s' if len(lacks) > 1 else ''}, so its "

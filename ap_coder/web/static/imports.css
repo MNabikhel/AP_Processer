@@ -5,6 +5,7 @@
 
 .imp {min-width: 0;}
 .imp .card {min-width: 0;}
+.imp h2 {font-size: 14px; font-weight: 600; margin: 0 0 4px;}  /* a card's title (h4 elsewhere: app.css) */
 .imp h5, .imp-sub {font-size: 12.5px; font-weight: 600; color: var(--lg-text); margin: 4px 0 0;}
 .imp-sub .muted {font-weight: 400;}
 .imp details > summary {cursor: pointer;}
@@ -31,7 +32,7 @@
 .imp-head {display: flex; align-items: flex-start; gap: 12px; align-self: stretch;}
 .imp-head .imp-num {width: 30px; height: 30px; font-size: 13.5px;}
 .imp-title {flex: 1; min-width: 0;}
-.imp-title h4 {font-size: 15px; margin: 0;}
+.imp-title h2 {font-size: 15px; margin: 0;}
 .imp-title p {margin: 2px 0 0;}
 .imp-state {flex: none; margin-top: 4px;}
 .imp-now, .imp-source {display: flex; gap: 8px; align-items: flex-start; margin: 0;}
@@ -56,7 +57,7 @@
 .imp-col-list {list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px;}
 .imp-col-list li {display: grid; grid-template-columns: minmax(0, 11rem) minmax(0, 1fr); gap: 4px 10px; align-items: start;}
 .imp-col-list li > .imp-chip {justify-self: start;}
-.imp-also {display: block; color: var(--lg-subtle); overflow-wrap: anywhere;}
+.imp-also {display: block; font-size: 12px; color: var(--lg-muted); overflow-wrap: anywhere;}  /* 4.5:1 on its grey */
 .imp-tag {font-size: 11.5px; font-weight: 600; color: var(--lg-accent);}
 .imp-tag.bad {color: var(--lg-danger);}
 .imp-note {font-size: 12.5px; margin: 8px 0 0;}
@@ -67,6 +68,12 @@
 .imp-drop-what {overflow-wrap: anywhere;}
 .imp-drop.chosen {border-style: solid; border-color: var(--lg-accent-line); background: var(--lg-accent-weak);}
 .imp-drop.chosen > .ms {color: var(--lg-accent);}
+/* While its file is read (imports.js): the hourglass turns, the seconds count */
+.imp-drop.working {border-style: solid; border-color: var(--lg-accent); background: var(--lg-accent-weak); cursor: progress;}
+.imp-drop.working > .ms {color: var(--lg-accent); animation: imp-turn 2s ease-in-out infinite;}
+.imp-seconds {font-variant-numeric: tabular-nums; color: var(--lg-muted);}
+@keyframes imp-turn {to {transform: rotate(360deg);}}
+@media (prefers-reduced-motion: reduce) {.imp-drop.working > .ms {animation: none;}}
 
 /* The file shown before it is loaded */
 .imp-preview {align-self: stretch; gap: 10px; padding: 14px; border: 1px solid var(--lg-accent-line); border-radius: var(--lg-r);
@@ -74,6 +81,8 @@
 .imp-file {display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0; overflow-wrap: anywhere;}
 .imp-file > .ms {color: var(--lg-subtle);}
 .imp-verdict {align-self: stretch;}
+.imp-result > * + * {margin-top: 16px;}  /* a statement's comparison: its tiles, then its lines */
+.imp-result:focus {outline: none;}
 .imp-check {list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr));
   gap: 4px 16px; font-size: 13px; align-self: stretch;}
 .imp-check li {display: flex; gap: 6px; align-items: flex-start; min-width: 0; overflow-wrap: anywhere;}

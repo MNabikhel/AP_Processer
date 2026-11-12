@@ -17,6 +17,7 @@
   {% if imp %}
   {{ sheets(imp, "/purchase-orders", {"file": imp.token}) }}
   {% call imports.preview(imp.look, "purchase_orders") %}{% endcall %}
+  {% if can("/purchase-orders/import") %}{# a Clerk opening an Admin's preview: the rows, no Load (B-2431) #}
   <form method="post" action="/purchase-orders/import" class="stack" data-busy="Loading…" data-long id="pick-purchase_orders">
     {{ columns(imp) }}
     <label class="check"><input type="checkbox" name="replace" value="1"> Replace all my purchase orders with this file</label>
@@ -25,6 +26,7 @@
       <a class="btn" href="/purchase-orders"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
     </div>
   </form>
+  {% endif %}
   {% elif can("/purchase-orders/upload") %}
   {{ imports.file_box("/purchase-orders/upload", spec.accept, "PO lines, a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…") }}
   <p class="muted small">Or start from <a class="link" href="/purchase-orders/template.csv" download>a template with an example line in it</a>.</p>

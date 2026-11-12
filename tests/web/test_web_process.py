@@ -787,3 +787,17 @@ def test_a_file_left_out_of_an_upload_is_counted_and_said_with_why(app, client, 
     only = client.post("/process/upload", files=files[1:2], headers=PAGE)
     assert only.status_code == 200
     assert finished(app, client)["result"]["label"] == "Nothing new to read: 1 left out"
+
+
+def test_the_vendor_master_step_writes_its_count_of_address_numbers_as_a_number(tmp_path):
+    """B-2456: Getting started said "3,015 vendors, 3015 with an address number (AN8)": the second count was written
+    without its thousands separator."""
+    from ap_coder.web.core import SHOW_JDE
+    from ap_coder.web.pages.process import VENDOR_STEP, pilot_steps
+
+    store = Store(tmp_path / "ap.db")
+    store.set_setting(SHOW_JDE, "1")
+    store.import_vendor_master([{"vendor_name": f"Supplier {n}", "erp_id": str(1000 + n), "status": "active"}
+                                for n in range(1200)])  # fmt: skip
+    step = next(s for s in pilot_steps(store) if s[1] == VENDOR_STEP)[2]
+    assert step == "1,200 vendors, 1,200 with an address number (AN8)"

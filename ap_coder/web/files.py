@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import io
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -33,6 +33,7 @@ from ap_coder.erp import import_specs
 from ap_coder.erp.import_specs import ImportSpec
 from ap_coder.erp.journal import looks_like_journal
 from ap_coder.intake import triage
+from ap_coder.web import identity
 from ap_coder.web.core import current_store
 
 SHEET_TYPES = (".csv", ".xlsx", ".xls")
@@ -47,12 +48,17 @@ CANNOT_READ = (
 NOT_A_SHEET = "Upload a CSV or Excel file (.csv or .xlsx)."
 EMPTY = "This file is empty: it has no column names and no rows. Export the list again and upload the file it saved."
 NO_ROWS = "This file has no rows under its header line."
-GONE = "That upload is no longer here (uploads are kept for an hour). Upload the file again."
+GONE = "That upload is no longer here: an upload is kept for an hour, and only your last 24. Upload the file again."
 TOO_BIG_UNZIPPED = (
-    "This workbook unzips to far more than its size on disk (over 50 MB, or one sheet over 20 MB), so it is not "
-    "opened: it may be damaged. Export fewer rows, or save it as CSV UTF-8 and upload that."
+    "This workbook is too large to open here: it unzips to over 50 MB, or one sheet to over 20 MB (JD Edwards' "
+    "voucher list, to over 250 MB). In Excel, save it as CSV UTF-8 (File, Save As) and upload that, or export fewer "
+    "rows."
 )
 TOO_BIG = "This file is larger than 50 MB. Export fewer rows, or only the columns needed."
+# JD Edwards' long reports an import page reads (B-2433): a year's voucher list as .xlsx (22,000 pay items, 56
+# columns) unzips to 47 MB, over what pandas may open of any other workbook (``triage.sheet_unzips_too_big``), so it
+# is read a row at a time within the chart reader's own bounds (``core/chart_file``: a sheet of 250 MB at most).
+LONG_REPORTS = ("vouchers",)
 # The most columns a sheet is read with (B-1499): a statement or a list has a few dozen, an ERP export a few hundred;
 # pandas takes about 2 KB and 40 microseconds a column, so 50 MB of short headers would take some 10 GB.
 MAX_COLUMNS = 500
@@ -84,9 +90,10 @@ def attachment(name: str) -> str:
 # --- Uploads waiting for their columns to be picked -------------------------------------------------------------
 
 _TTL = 3600  # seconds an upload waits
-_MAX = 24  # uploads kept at most (the oldest go first)
+_MAX = 24  # uploads kept at most of each person (their oldest go first: B-2432)
 _MAX_BYTES = 50 * 1024 * 1024  # an uploaded file, and an emailed statement read for the Statements page
-UPLOAD_KIND = "upload"  # its kind in the database's short-lived table (``Store.keep_ephemeral``)
+# Its kind in the database's short-lived table (``Store.keep_ephemeral``): "upload:" and whose it is (``_whose``).
+UPLOAD_KIND = "upload:"
 
 
 @dataclass(frozen=True)
@@ -95,14 +102,24 @@ class Upload:
     content: bytes
 
 
+def _whose() -> str:
+    """Whose uploads a new one is counted with (B-2432): the account's on the company server, the browser's of a
+    colleague on the office network, "" this computer's."""
+    found = identity.person()
+    if found is None:
+        return ""
+    return f"user {found.user_id}" if found.user_id else f"browser {found.browser or found.address}"
+
+
 def keep_upload(name: str, content: bytes) -> str:
-    """Keep an uploaded file for the next page, in the dashboard's database (a restart of the server keeps it, D-99);
-    returns its token."""
-    return current_store().keep_ephemeral(UPLOAD_KIND, name.encode("utf-8") + b"\0" + content, _TTL, keep=_MAX)
+    """Keep an uploaded file for the next page, in the dashboard's database (a restart of the server keeps it, D-99),
+    the person's last ``_MAX`` kept; returns its token (whoever opens it reads it: an Admin's link to a Clerk)."""
+    value = name.encode("utf-8") + b"\0" + content
+    return current_store().keep_ephemeral(UPLOAD_KIND + _whose(), value, _TTL, keep=_MAX)
 
 
 def get_upload(token: str | None) -> Upload | None:
-    kept = current_store().ephemeral(UPLOAD_KIND, token) if token else None
+    kept = current_store().ephemeral(UPLOAD_KIND, token, any_of=True) if token else None
     if kept is None:
         return None
     name, _, content = kept.partition(b"\0")
@@ -110,7 +127,7 @@ def get_upload(token: str | None) -> Upload | None:
 
 
 def drop_upload(token: str | None) -> None:
-    current_store().drop_ephemeral(UPLOAD_KIND, token)
+    current_store().drop_ephemeral(UPLOAD_KIND, token, any_of=True)
 
 
 async def read_capped(file: UploadFile) -> bytes | None:
@@ -119,12 +136,14 @@ async def read_capped(file: UploadFile) -> bytes | None:
     return None if len(content) > _MAX_BYTES else content
 
 
-async def receive_sheet(file: UploadFile, accept: Iterable[str] | None = ()) -> tuple[str, str]:
+async def receive_sheet(file: UploadFile, accept: Iterable[str] | None = (),
+                        keep: Callable[[str, bytes], tuple[str, str]] | None = None) -> tuple[str, str]:  # fmt: skip
     """(token, "") for an uploaded spreadsheet that can be read, else ("", the problem in plain words). The sheet is
     read and kept on a threadpool thread: a 50 MB workbook never holds up the dashboard's other requests. JD Edwards'
     Transaction Journal is refused, naming its card; so is any other of JD Edwards' reports (``jde_refusal``), but
     those of ``accept`` with every column they need. ``accept`` None: the caller judges JD Edwards' reports itself
-    (the JD Edwards files page)."""
+    (the JD Edwards files page). ``keep``: what keeps the file read, (token, "") or ("", why not), instead of the
+    upload kept as it came (JD Edwards files' voucher list, kept as read: B-2441)."""
     name = file.filename or "upload.csv"
     if not name.lower().endswith((*SHEET_TYPES, ".txt")):
         return "", NOT_A_SHEET
@@ -135,6 +154,8 @@ async def receive_sheet(file: UploadFile, accept: Iterable[str] | None = ()) -> 
         return "", import_specs.elsewhere("journal", verb="loaded" if accept is None else "imported")
     if not name.lower().endswith(SHEET_TYPES):
         return "", NOT_A_SHEET
+    if keep is not None:
+        return await run_in_threadpool(keep, name, content)
     return await run_in_threadpool(_keep_sheet, name, content, accept)
 
 
@@ -288,7 +309,9 @@ def read_sheet(name: str, content: bytes, sheet: str | None = None,
         raise SheetError(EMPTY)
     names: list[str] = []
     try:
-        if name.lower().endswith((".xlsx", ".xls")):
+        if name.lower().endswith(".xlsx") and triage.sheet_unzips_too_big(content):
+            df, names = _long_report(name, content, sheet)
+        elif name.lower().endswith((".xlsx", ".xls")):
             sheets = read_excel(content)
             names = [str(n) for n in sheets]
             if not names:
@@ -309,6 +332,49 @@ def read_sheet(name: str, content: bytes, sheet: str | None = None,
     if not _filled(df):
         raise SheetError(EMPTY)
     return df, names
+
+
+def _long_report(name: str, content: bytes, sheet: str | None) -> tuple[pd.DataFrame, list[str]]:
+    """(the sheet, the workbook's sheet names) of a workbook too large for ``read_excel`` that is one of JD Edwards'
+    ``LONG_REPORTS`` (``sheet``, or the first sheet that is one whole), read a row at a time by the chart's reader
+    within its bounds (``chart_file``), its cells as ``read_excel`` gives them. SheetError (``TOO_BIG_UNZIPPED``)
+    for any other workbook, or one over those bounds."""
+    from ap_coder.core import chart_file
+    from ap_coder.core.chart import ChartError
+
+    specs = [import_specs.SPECS[key] for key in LONG_REPORTS]
+    try:
+        heads = chart_file.sheet_heads(content, name)
+        for title, rows in heads:
+            cells = [["" if cell is None else str(cell).strip() for cell in row] for row in rows]
+            at = import_specs.header_row(cells, specs) if cells else 0
+            if (sheet in (None, title)) and cells and _whole(pd.DataFrame(columns=cells[at]), specs):
+                read = [[_cell(value) for value in row] for row in chart_file.read_rows(content, name, title)]
+                break
+        else:
+            raise SheetError(TOO_BIG_UNZIPPED)
+    except ChartError as exc:
+        raise SheetError(TOO_BIG_UNZIPPED) from exc
+    width = max((len(row) for row in read), default=0)
+    read = [row + [""] * (width - len(row)) for row in read]
+    columns: list[str] = []
+    for j, cell in enumerate(read[0] if read else []):
+        column = cell or f"Unnamed: {j}"
+        while column in columns:  # two columns of one name: kept apart, as pandas does
+            column += ".1"
+        columns.append(column)
+    df = _named_row(_frame(pd.DataFrame(read[1:], columns=columns, dtype=str)), specs)
+    df.attrs["sheet"] = title
+    return df, [title for title, _rows in heads]
+
+
+def _cell(value: Any) -> str:
+    """A cell as ``read_excel`` gives it as text: a whole number without its ".0", nothing as ""."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
 
 
 def _filled(df: pd.DataFrame) -> bool:

@@ -332,7 +332,7 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
         vendor = (
             ("ok" if an8 else "todo"),
             VENDOR_STEP,
-            f"{ui.plural(vendors, 'vendor')}, {an8} with an address number (AN8)"
+            f"{ui.plural(vendors, 'vendor')}, {an8:,} with an address number (AN8)"
             if an8
             else f"{ui.plural(vendors, 'vendor')}, but no address number (AN8): import it as the ERP ID, or set "
             "it in Settings → JD Edwards → Supplier address numbers",
@@ -355,6 +355,10 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
             steps.append(("todo", JDE_STEP, f"company {settings.company_code} saved, but "
                           f"{ui.plural(len(missing), 'account')} ({shown}) {verb} no JD Edwards business unit: set a "
                           "Default BU, or map them, in Settings → JD Edwards E1"))  # fmt: skip
+        elif saved and not problems and (offer := _company_offer(store)):  # (card 2 offers it: B-2440)
+            steps.append(("todo", JDE_STEP, f"company {settings.company_code} saved, but every business unit loaded "
+                          f"is company {offer}: use it on JD Edwards files (2. Business units), or set yours in "
+                          "Settings → JD Edwards E1"))  # fmt: skip
         elif saved and not problems:
             mapped = f"Default BU {settings.default_bu.strip()}" if settings.use_default_rule and \
                 settings.default_bu.strip() else ui.plural(len(settings.gl_map), "account") + " mapped"  # fmt: skip
@@ -368,6 +372,13 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
     said += [ui.plural(learned, "coding line") + " from last year's journal"] if learned else []
     steps.append(("ok", HISTORY_STEP, ", ".join(said)) if said else ("todo", HISTORY_STEP, HISTORY_WHY))
     return steps
+
+
+def _company_offer(store: Store) -> str:
+    """The company JD Edwards files offers to use (the one of every business unit loaded), "" when none."""
+    from ap_coder.web.pages import jde_files
+
+    return jde_files._company_offer(store, store.business_units())
 
 
 BANK_STEP = "Your bank accounts (optional)"

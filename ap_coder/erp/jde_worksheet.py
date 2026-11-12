@@ -408,6 +408,10 @@ def _choice(q: Question, answer: str) -> str | None:
 NOT_A_WORKBOOK = ("This file could not be opened as an Excel workbook (.xlsx): download the worksheet again on this "
                   "page, fill in its answers in Excel and load the file Excel saved.")  # fmt: skip
 EMPTY_FILE = "This file is empty (0 bytes): load the worksheet as Excel saved it, its answers filled in."
+TOO_LARGE = (
+    "This workbook is too large to open here: it unzips to far more than AP Coder's worksheet (some 30 KB). "
+    "Download the worksheet again on this page, fill in its answers in Excel and load the file Excel saved."
+)
 
 
 def read(content: bytes, settings: jde_settings.JdeSettings) -> Result:
@@ -417,9 +421,7 @@ def read(content: bytes, settings: jde_settings.JdeSettings) -> Result:
     out = Result(jde_settings.JdeSettings.from_json(settings.to_json()))
     s = out.settings
     if triage.sheet_unzips_too_big(content):  # an uploaded workbook: its unzipped sizes are checked first (W2-01)
-        out.problems.append(
-            "This workbook unzips to far more than its size on disk, so it is not opened: it may be damaged."
-        )
+        out.problems.append(TOO_LARGE)
         return out
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)

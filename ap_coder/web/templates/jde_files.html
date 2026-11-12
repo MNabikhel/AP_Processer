@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {# JD Edwards files (pages/jde_files.py): JD Edwards' own exports, a card each in the order they are loaded. Each card
    says the report to export and its columns, shows the file first (_import.html), then loads it. #}
+{% set sub_level = 3 %}{# the cards' titles are h2, the import parts' headings under them h3 #}
 {% import "_import.html" as imp with context %}
 {% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">
 <link rel="stylesheet" href="{{ static_url('/static/imports.css') }}">{% endblock %}
@@ -22,7 +23,7 @@
 {% macro card_head(n, card, title, purpose) %}
 <div class="imp-head">
   <span class="imp-num{{ ' done' if loaded[card] }}" aria-hidden="true">{% if loaded[card] %}<span class="ms">check</span>{% else %}{{ n }}{% endif %}</span>
-  <div class="imp-title"><h4 id="{{ card }}-title">{{ n }}. {{ title }}</h4><p class="muted">{{ purpose }}</p></div>
+  <div class="imp-title"><h2 id="{{ card }}-title">{{ n }}. {{ title }}</h2><p class="muted">{{ purpose }}</p></div>
   <span class="imp-state">{% if loaded[card] %}{{ ui.pill("Loaded", "ok", "check") }}{% else %}{{ ui.pill("Not yet", "gray") }}{% endif %}</span>
 </div>
 {% endmacro %}
@@ -35,12 +36,14 @@
 {# Where a report comes from, its columns and its template (_import.html). #}
 {% macro report(spec, named=false) %}{{ imp.report(spec, named, "/jde-files/template/") }}{% endmacro %}
 {# Cancel: back to the card, the file forgotten. #}
+{# A chart or business unit file whose Load is under way (``looks.<card>.loading``): said instead of its Load. #}
+{% macro being_loaded(card) %}<p class="imp-then" id="{{ card }}-loading" role="status"><span class="ms" aria-hidden="true">hourglass_top</span><span>This file is being loaded now: open the page again in a moment to see what was loaded.</span></p>{% endmacro %}
 {% macro cancel(card) %}<a class="btn" href="/jde-files#{{ card }}"><span class="ms" aria-hidden="true">close</span>Choose another file</a>{% endmacro %}
 {% block content %}
 <div class="narrow imp">
 <section class="card imp-steps-card" id="checklist" aria-labelledby="checklist-title">
   <div class="imp-steps-head">
-    <h4 id="checklist-title">What is loaded</h4>
+    <h2 id="checklist-title">What is loaded</h2>
     <p class="muted">Five exports from JD Edwards, loaded top to bottom. Each file is shown first: nothing is kept until you click Load.</p>
   </div>
   <ol class="imp-steps">
@@ -63,7 +66,7 @@
   </ol>
   <details class="imp-more"><summary>Why this order</summary><p class="muted">{{ order }}</p></details>
   {% if not can("/jde-files/chart/upload") %}<p class="muted">An Admin loads these files.</p>{% endif %}
-  {% if upload_gone %}{{ ui.empty_note("That upload is no longer here", " (uploads are kept for an hour). Upload the file again.", "warning") }}{% endif %}
+  {% if upload_gone %}{{ ui.empty_note("That upload is no longer here", ": an upload is kept for an hour, and only your last 24. Upload the file again.", "warning") }}{% endif %}
 </section>
 
 <section class="card stack" id="chart">
@@ -108,18 +111,22 @@
   {% if looks.chart %}
   {% call imp.preview(looks.chart, "chart") %}
     {% if can("/jde-files/chart/load") %}
-    <form method="post" action="/jde-files/chart/load" class="stack" data-busy="Loading the chart (10 to 20 seconds)…" data-long>
+    <form method="post" action="/jde-files/chart/load" class="stack" data-busy="Loading the chart (10 to 20 seconds)…" data-long data-refusal>
       <input type="hidden" name="token" value="{{ looks.chart.token }}">
       {{ load_then("chart") }}
+      {# What loading it does to the GL accounts listed on GL accounts & tax (``gl_replaced``: how many go, how many change). #}
+      {% set gl = gl_replaced if gl_replaced is defined else none %}{% if gl and (gl.removed or gl.changed) %}
+      <p class="imp-then" id="chart-gl"><span class="ms" aria-hidden="true">swap_horiz</span><span>{% if gl.removed %}Replaces {{ gl.removed | num }} of the GL accounts on GL accounts &amp; tax{% if gl.changed %} and changes {{ gl.changed | num }}{% endif %}{% else %}Changes {{ gl.changed | num }} of the GL accounts on GL accounts &amp; tax{% endif %}.</span></p>
+      {% endif %}
       <div class="row">
-      {% if not looks.chart.problem %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">account_tree</span>{{ load.chart.button }}</button>{% endif %}
+      {% if looks.chart.loading %}{{ being_loaded("chart") }}{% elif not looks.chart.problem %}<button class="btn primary" type="submit" data-load="chart"><span class="ms" aria-hidden="true">account_tree</span>{{ load.chart.button }}</button>{% endif %}
       {{ cancel("chart") }}
       </div>
     </form>
     {% endif %}
   {% endcall %}
   {% elif can("/jde-files/chart/upload") %}
-  {{ imp.file_box("/jde-files/chart/upload", specs.chart[0].accept, "The account master's export, an Excel workbook (.xlsx)", "Reading the chart…") }}
+  {{ imp.file_box("/jde-files/chart/upload", specs.chart[0].accept, "The account master's export, an Excel workbook (.xlsx)", "Reading the chart (10 to 20 seconds)…", wait="A chart of some 14,000 accounts takes 10 to 20 seconds to read.") }}
   {% endif %}
   {% if can("/jde-files/chart/settings") %}
   <details class="imp-secondary" {% if said and said.card == "chart" and "settings were saved" in said.lines[0] %}open{% endif %}>
@@ -153,11 +160,11 @@
   {% if looks.units %}
   {% call imp.preview(looks.units, "units") %}
     {% if can("/jde-files/units/load") %}
-    <form method="post" action="/jde-files/units/load" class="stack" data-busy="Loading…" data-long>
+    <form method="post" action="/jde-files/units/load" class="stack" data-busy="Loading…" data-long data-refusal>
       <input type="hidden" name="token" value="{{ looks.units.token }}">
       {{ load_then("units") }}
       <div class="row">
-      {% if not looks.units.problem %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">domain</span>{{ load.units.button }}</button>{% endif %}
+      {% if looks.units.loading %}{{ being_loaded("units") }}{% elif not looks.units.problem %}<button class="btn primary" type="submit" data-load="units"><span class="ms" aria-hidden="true">domain</span>{{ load.units.button }}</button>{% endif %}
       {{ cancel("units") }}
       </div>
     </form>
@@ -173,7 +180,7 @@
   {{ what_was_said("suppliers") }}
   {{ loaded_now("suppliers", loaded.suppliers, "supplier", last.suppliers) }}
   {% if loaded.suppliers %}<p class="muted" id="suppliers-tax-ids">{% if tax_ids %}The vendor information list is loaded for {{ tax_ids | plural("supplier") }}: picking a supplier on the review screen fills its tax ID, and a tax ID typed there finds its supplier.{% else %}The vendor information list is not loaded yet: no tax ID is filled or compared from it.{% endif %}</p>{% endif %}
-  <details class="imp-more"><summary>More</summary><p class="muted">Each row goes to the supplier of its number, and
+  <details class="imp-more"><summary>More about loading suppliers</summary><p class="muted">Each row goes to the supplier of its number, and
     loading one never removes what only the other gives. A newer list adds the new suppliers and updates the others.
     Holds, notes and each supplier's details are on <a href="/vendors">Vendors</a>.</p></details>
   <div class="imp-two">
@@ -189,9 +196,9 @@
     {% if can("/jde-files/suppliers/load") %}
     <div class="row">
       {% if not look.problem %}
-      <form method="post" action="/jde-files/suppliers/load" data-busy="Loading…" data-long>
+      <form method="post" action="/jde-files/suppliers/load" data-busy="Loading…" data-long data-refusal>
         <input type="hidden" name="token" value="{{ look.token }}">
-        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">storefront</span>{{ load.suppliers.button }}</button>
+        <button class="btn primary" type="submit" data-load="suppliers"><span class="ms" aria-hidden="true">storefront</span>{{ load.suppliers.button }}</button>
       </form>
       {% endif %}
       {{ cancel("suppliers") }}
@@ -218,7 +225,7 @@
     {{ imp.journal_brief(journal) }}
     {% if journal.note and journal.problem %}<p><b>{{ journal.note }}.</b></p>{% endif %}
     {% if can("/jde-files/journal/load") %}
-    <form method="post" action="/jde-files/journal/load" class="stack" data-busy="Loading…" data-long>
+    <form method="post" action="/jde-files/journal/load" class="stack" data-busy="Loading…" data-long data-refusal>
       <input type="hidden" name="token" value="{{ journal.token }}">
       {% if journal.state == "differs" %}
       <label class="check"><input type="checkbox" name="anyway" value="1" required> Load it though its lines do not add up to the report's Grand Total</label>
@@ -226,7 +233,7 @@
       {{ load_then("journal") }}
       <div class="row">
         {% if journal.read and journal.state not in ("same_file", "refused") %}
-        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">school</span>{{ load.journal.button or "Load this journal" }}</button>
+        <button class="btn primary" type="submit" data-load="journal"><span class="ms" aria-hidden="true">school</span>{{ load.journal.button or "Load this journal" }}</button>
         {% endif %}
         {% if journal.read %}<a class="btn" href="/learning?journal={{ journal.token }}#history">Change the payable or tax objects on Learning</a>{% endif %}
         {{ cancel("journal") }}
@@ -268,11 +275,12 @@
   {% call imp.preview(look, "vouchers") %}
     {% if look.said %}<ul class="imp-said"><li>{{ look.said }}</li></ul>{% endif %}
     {% if can("/jde-files/vouchers/load") %}
-    <form method="post" action="/jde-files/vouchers/load" class="stack" data-busy="Loading…" data-long>
+    <form method="post" action="/jde-files/vouchers/load" class="stack" data-busy="Loading…" data-long data-refusal>
       <input type="hidden" name="token" value="{{ look.token }}">
+      {% if not look.problem %}<label class="check"><input type="checkbox" name="whole" value="1"> This list is every voucher of the period it covers (the grid was not filtered by supplier, batch or pay status): also take off the list the vouchers of that period it no longer shows</label>{% endif %}
       {% if not look.problem and loaded.vouchers %}<label class="check"><input type="checkbox" name="replace" value="1"> Replace the list loaded now, {{ loaded.vouchers | plural("voucher") }} (otherwise these are added to it)</label>{% endif %}
       <div class="row">
-        {% if not look.problem %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">receipt_long</span>{{ load.vouchers.button }}</button>{% endif %}
+        {% if not look.problem %}<button class="btn primary" type="submit" data-load="vouchers"><span class="ms" aria-hidden="true">receipt_long</span>{{ load.vouchers.button }}</button>{% endif %}
         {{ cancel("vouchers") }}
       </div>
     </form>

@@ -5770,3 +5770,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     columns), each needed field is marked, Import stays off with a line naming those still without a column, and
     the server refuses the same. JD Edwards' own exports (the JD Edwards files page, the voucher list on Exports)
     have no picker: the right report or nothing (D-234).
+- **D-237** · **The dashboard switches between its threads every half millisecond, not Python's 5** (`web/app.py`
+  `SWITCH_INTERVAL`, set by `create_app`; 12 Nov 2026).
+  - **Why:** a page opened while a chart of 16,000 accounts loads on another thread (10 to 20 s of Python reading
+    the workbook) waited for Python's lock in 5 ms turns: JD Edwards files took 11 to 13 s to open (B-2436). Counting
+    the chart with one query instead of row by row left 5.6 s; the interval set to 0.5 ms, 0.4 s.
+  - **Cost, measured:** the chart's load 15.0 s → 15.2 s (about 1%). The interval matters only while two threads
+    want the lock at once; the OCR engine and SQLite let go of it while they work. It is process-wide: revisit if a
+    measured slowdown of reading (`python -m ap_coder.bench speed`) is traced to it.

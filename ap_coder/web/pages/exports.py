@@ -17,8 +17,10 @@ duplicate payment audit.
 from __future__ import annotations
 
 import datetime as dt
+import json
 from typing import Any, BinaryIO
 
+import pandas as pd
 from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -45,6 +47,7 @@ from ap_coder.erp import (
 from ap_coder.erp.import_specs import ERP_REGISTER, VOUCHERS
 from ap_coder.web.core import (
     by_currency,
+    current_store,
     done,
     flash_message,
     get_store,
@@ -62,13 +65,17 @@ from ap_coder.web.core import (
 from ap_coder.web.core import reviewer as current_reviewer
 from ap_coder.web.files import (
     NO_ROWS,
+    PREVIEW_ROWS,
     SheetError,
+    Upload,
     download,
     drop_upload,
     first_rows,
     jde_refusal,
+    keep_upload,
     pick_refusal,
     picked_columns,
+    read_sheet,
     read_upload,
     receive_sheet,
     spec_sheet,
@@ -213,6 +220,11 @@ def batch_file(store: Store, batch: int, fmt: str) -> tuple[bytes, str, str]:
     invoices = store.get_invoices(store.batch_invoice_ids(batch))
     return exports.build(fmt, invoices, gl_names(store), batch, store.vendor_ids(), layout=layout(store),
                          tax_treatments=store.tax_treatments(), bank_accounts=bank_accounts(store))  # fmt: skip
+
+
+def register_name(store: Store) -> str:
+    """The list's one name, as JD Edwards files' card 5 names it (another system's: "your ERP")."""
+    return "Invoices already in " + ("JD Edwards" if jde_shown(store) else "your ERP")
 
 
 def bank_accounts(store: Store) -> dict[str, dict[str, Any]]:
@@ -366,20 +378,7 @@ def exports_page(
     layout_rows += [{"header": "", "field": "", "text": ""}] * BLANK_LAYOUT_ROWS
 
     # The ERP register: an uploaded list waiting for its columns
-    reg, reg_error = None, ""
-    if register:
-        try:
-            upload, df, sheets = read_upload(register, sheet or None)
-            reg = spec_sheet(register, upload, df, sheets, sheet, ERP_REGISTER, accept=REGISTER_JDE)
-            found = jde_vouchers(store, df)  # JD Edwards' voucher list: read as it comes, no column to pick
-            reg["vouchers"] = registers.vouchers_said(found[1]) if found else ""
-            if found:  # (its columns checked as JD Edwards files checks them)
-                check = import_specs.check(VOUCHERS, reg["columns"])
-                head = [reg["columns"], *df.head(import_specs.PREVIEW_ROWS).values.tolist()]
-                reg["look"] |= {"spec": VOUCHERS, "check": check, "pick": False,
-                                "sample": import_specs.preview(head, 0, check.found.values())}  # fmt: skip
-        except SheetError as exc:
-            reg_error = str(exc)
+    reg, reg_error = _register_view(store, register, sheet) if register else (None, "")
 
     # The duplicate payment audit, when asked for
     pairs = dupaudit.find(store) if audit else None
@@ -421,8 +420,7 @@ def exports_page(
         delimiters=export_layout.DELIMITERS,
         csv_preview=layout_preview(store, current, ready),
         register_count=store.erp_register_count(),
-        # the list's one name, as JD Edwards files' card 5 names it (another system's: "your ERP")
-        register_name="Invoices already in " + ("JD Edwards" if jde_shown(store) else "your ERP"),
+        register_name=register_name(store),
         reg=reg,
         reg_error=reg_error,
         register_spec=ERP_REGISTER,
@@ -624,14 +622,75 @@ def _preview_layout(request: Request, form: Any) -> JSONResponse:
 
 
 REGISTER_JDE = ("vouchers",)  # JD Edwards' report the register reads as it comes, whole (B-2406)
+# What was read of an uploaded voucher list, kept under its upload's token as long as the upload (B-2468).
+READ_KIND, READ_TTL = "register-read", 3600
 
 
 @router.post("/exports/register/upload")
 async def register_upload(request: Request, file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
-    token, problem = await receive_sheet(file, accept=REGISTER_JDE)
+    token, problem = await receive_sheet(file, keep=_keep_register)
     if problem:
         return refuse(problem)
     return done(request, f"/exports?register={token}#register")
+
+
+def _keep_register(name: str, content: bytes) -> tuple[str, str]:
+    """(token, "") of an uploaded list, kept as it came (its columns are picked, or another sheet chosen); and of
+    JD Edwards' voucher list, what was read of its sheet, kept under the same token: the page and the import read
+    it once, as JD Edwards files' card 5 does (a year's list as .xlsx: 8 s, B-2441). ("", why) when it is refused."""
+    try:
+        df, sheets = read_sheet(name, content)
+    except SheetError as exc:
+        return "", str(exc)
+    if refusal := jde_refusal(first_rows(df), REGISTER_JDE):
+        return "", refusal
+    token = keep_upload(name, content)
+    headers = [str(c) for c in df.columns]
+    columns = registers.voucher_columns(headers)
+    if columns and not df.empty:
+        used = list(dict.fromkeys(columns.values()))
+        read = {"name": name, "sheets": sheets, "sheet": df.attrs.get("sheet", sheets[0] if sheets else ""),
+                "headers": headers, "count": len(df), "head": df.head(PREVIEW_ROWS).values.tolist(),
+                "columns": columns, "items": df[used].values.tolist(),
+                "said": registers.vouchers_said(jde_vouchers(current_store(), df)[1])}  # fmt: skip
+        kept = json.dumps(read, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        current_store().keep_ephemeral(READ_KIND, kept, READ_TTL, keep=4, token=token)
+    return token, ""
+
+
+def _register_view(store: Store, register: str, sheet: str) -> tuple[dict[str, Any] | None, str]:
+    """(what the page shows of the uploaded list ``register``, ""), or (None, why it cannot be read). JD Edwards'
+    voucher list is read as it comes, no column to pick, as read at its upload (``_register_read``), its columns
+    checked as JD Edwards files checks them."""
+    if read := _register_read(register, sheet):
+        df = pd.DataFrame(read["head"], columns=read["headers"])
+        df.attrs["sheet"] = read["sheet"]
+        reg = spec_sheet(register, Upload(read["name"], b""), df, read["sheets"], sheet, ERP_REGISTER,
+                         accept=REGISTER_JDE)  # fmt: skip
+        reg["count"] = reg["look"]["count"] = read["count"]
+        reg["vouchers"], head = read["said"], [reg["columns"], *read["head"]]
+    else:
+        try:
+            upload, df, sheets = read_upload(register, sheet or None)
+        except SheetError as exc:
+            return None, str(exc)
+        reg = spec_sheet(register, upload, df, sheets, sheet, ERP_REGISTER, accept=REGISTER_JDE)
+        found = jde_vouchers(store, df)
+        reg["vouchers"] = registers.vouchers_said(found[1]) if found else ""
+        head = [reg["columns"], *df.head(import_specs.PREVIEW_ROWS).values.tolist()]
+    if reg["vouchers"]:
+        check = import_specs.check(VOUCHERS, reg["columns"])
+        reg["look"] |= {"spec": VOUCHERS, "check": check, "pick": False,
+                        "sample": import_specs.preview(head, 0, check.found.values())}  # fmt: skip
+    return reg, ""
+
+
+def _register_read(token: str, sheet: str) -> dict[str, Any] | None:
+    """What was read of the voucher list ``token`` at its upload (``_keep_register``) when ``sheet`` is the one read
+    (or none is chosen); None otherwise."""
+    kept = current_store().ephemeral(READ_KIND, token)
+    read = None if kept is None else json.loads(kept)
+    return read if read is not None and sheet in ("", read["sheet"]) else None
 
 
 @router.post("/exports/register/import")
@@ -647,29 +706,66 @@ def jde_vouchers(store: Store, df: Any) -> tuple[list[dict[str, Any]], dict[str,
     columns = registers.voucher_columns(list(df.columns))
     if not columns:
         return None
+    return named_vouchers(store, df.to_dict("records"), columns)
+
+
+def named_vouchers(store: Store, records: list[dict[str, Any]],
+                   columns: dict[str, str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:  # fmt: skip
+    """The voucher list's pay items (``records``, in its ``columns``: ``registers.voucher_columns``) as the
+    register's vouchers and what was read, their suppliers named from the vendor master by their number."""
     names = {v["erp_id"]: v["display_name"] for v in store.master_vendors() if v.get("erp_id")}
-    return registers.vouchers_from_pay_items(df.to_dict("records"), columns, names)
+    return registers.vouchers_from_pay_items(records, columns, names)
+
+
+CUT_SHORT_REPLACE = (
+    "Not loaded with Replace: this list's totals row is missing or is not the sum of its rows, so the file may be cut "
+    "short, and Replace would take off the list every voucher it does not show. Export the whole list again (its "
+    "totals row last), or load it without Replace. The list is as it was."
+)
+
+
+def load_vouchers(store: Store, rows: list[dict[str, Any]], read: dict[str, Any], *, replace: bool, whole: bool,
+                  verb: str = "loaded") -> tuple[str, int]:  # fmt: skip
+    """JD Edwards' voucher list into the register, as Exports and JD Edwards files' card 5 both load it (B-2435):
+    its vouchers added (``replace``: the register is these and nothing else, refused for a list that may be cut
+    short, B-2434), and out of it the vouchers the list shows at 0.00 (voided in JD Edwards since an earlier list
+    gave them) and, when the list is whole and the person says the grid was not filtered (``whole``), the vouchers
+    of the period it covers that it no longer shows (B-2164). (why nothing was loaded, "" when it was; how many
+    vouchers an earlier list gave were taken off.)"""
+    if replace and not read["complete"]:
+        return CUT_SHORT_REPLACE, 0
+    covers = read["covers"] if whole and read["complete"] else {}
+    if rows:
+        store.import_erp_vouchers(rows, replace_all=replace, actor=current_reviewer())
+    left = store.erp_vouchers_left(read["voided"], covers, [row["key"] for row in rows])
+    if not rows and not left:  # "Replace" would empty the list the duplicate checks look in (B-1405)
+        said = registers.vouchers_said(read)
+        return f"No voucher of this list can be kept: nothing was {verb}, the list is as it was. {said}", 0
+    return "", left
+
+
+def vouchers_left_said(left: int, whole: bool, read: dict[str, Any]) -> str:
+    """What a voucher list's load took off the list (``load_vouchers``), in the same words on both pages."""
+    if left:
+        return (f"{ui.plural(left, 'voucher')} an earlier list gave {'is' if left == 1 else 'are'} voided or no "
+                "longer in JD Edwards by this one: taken off the list.")  # fmt: skip
+    if whole and not read["complete"]:
+        return "Nothing was taken off the list for the vouchers this file does not show: it may be cut short."
+    return ""
 
 
 def _vouchers_import(request: Request, form: Any, token: str, rows: list[dict[str, Any]],
                      read: dict[str, Any]) -> JSONResponse:  # fmt: skip
-    """JD Edwards' voucher list into the register, saying what was read; and out of it the vouchers the list shows
-    at 0.00 (voided in JD Edwards since an earlier list gave them) and, when the list is whole and the person says
-    the grid was not filtered (``whole``), the vouchers of the period it covers that it no longer shows (B-2164)."""
-    store, said = get_store(request), registers.vouchers_said(read)
-    covers = read["covers"] if form.get("whole") and read["complete"] else {}
-    if rows:
-        store.import_erp_vouchers(rows, replace_all=bool(form.get("replace")), actor=current_reviewer())
-    left = store.erp_vouchers_left(read["voided"], covers, [row["key"] for row in rows])
-    if not rows and not left:  # "Replace" would empty the list the duplicate checks look in (B-1405)
-        return refuse(f"No voucher of this list can be kept: nothing was imported, the list is as it was. {said}")
+    """JD Edwards' voucher list into the register (``load_vouchers``), saying what was read and what left it."""
+    store, said, whole = get_store(request), registers.vouchers_said(read), bool(form.get("whole"))
+    refusal, left = load_vouchers(store, rows, read, replace=bool(form.get("replace")), whole=whole, verb="imported")
+    if refusal:
+        return refuse(refusal)
     drop_upload(token)
-    text = f"{ui.plural(store.erp_register_count(), 'ERP invoice')} known. {said}"
-    if left:
-        text += (f" {ui.plural(left, 'voucher')} an earlier list gave {'is' if left == 1 else 'are'} voided or no "
-                 "longer in JD Edwards by this one: taken off the list.")  # fmt: skip
-    elif form.get("whole") and not read["complete"]:
-        text += " Nothing was taken off the list for the vouchers this file does not show: it may be cut short."
+    current_store().drop_ephemeral(READ_KIND, token)
+    text = f"{register_name(store)}: {ui.plural(store.erp_register_count(), 'invoice')} on the list now. {said}"
+    if gone := vouchers_left_said(left, whole, read):
+        text += f" {gone}"
     if repeats := store.erp_register_repeats():
         text += f" {ui.plural(repeats, 'bill')} entered more than once in the ERP: see the duplicate payment audit."
     return done(request, "/exports#register", flash_message(text, "ok", icon="receipt_long"))
@@ -679,6 +775,12 @@ def _vouchers_import(request: Request, form: Any, token: str, rows: list[dict[st
 def _register_import(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
     token, sheet = str(form.get("file") or ""), str(form.get("sheet") or "")
+    if read := _register_read(token, sheet):  # JD Edwards' voucher list, as read at its upload
+        if refusal := jde_refusal([read["headers"], *read["head"]], REGISTER_JDE):
+            return refuse(refusal)
+        used = list(dict.fromkeys(read["columns"].values()))
+        items = [dict(zip(used, item, strict=True)) for item in read["items"]]
+        return _vouchers_import(request, form, token, *named_vouchers(store, items, read["columns"]))
     try:
         _upload, df, _sheets = read_upload(token, sheet or None)
     except SheetError as exc:
@@ -699,7 +801,9 @@ def _register_import(request: Request, form: Any) -> JSONResponse:
                       "again.")  # fmt: skip
     total = store.import_erp_register(rows, replace_all=bool(form.get("replace")), actor=current_reviewer())
     drop_upload(token)
-    text = f"{ui.plural(total, 'ERP invoice')} known" + (f"; {ui.plural(skipped, 'row')} skipped." if skipped else ".")
+    text = f"{register_name(store)}: {ui.plural(total, 'invoice')} on the list now" + (
+        f"; {ui.plural(skipped, 'row')} skipped." if skipped else "."
+    )
     if repeats := store.erp_register_repeats():
         text += f" {ui.plural(repeats, 'bill')} entered more than once in the ERP: see the duplicate payment audit."
     return done(request, "/exports#register", flash_message(text, "ok", icon="receipt_long"))
@@ -711,7 +815,7 @@ def register_clear(request: Request) -> JSONResponse:
     if not store.erp_register_count():
         return message("The list is already empty.", "info")
     store.clear_erp_register(actor=current_reviewer())
-    return done(request, "/exports#register", "The ERP invoice list was cleared.")
+    return done(request, "/exports#register", f"“{register_name(store)}” was cleared.")
 
 
 # --- Duplicate payment audit ------------------------------------------------------------------------------------------

@@ -366,6 +366,8 @@ _SET_ASIDE = (("meals", "meals tick", "meals ticks"), ("categories", "category",
 def _chart_text(d: dict[str, Any]) -> str:
     """An import of the chart of accounts or the business units (D-209), or the two lists worked out again: what
     changed in the table, what joined and left each list, what a person had typed that was set aside or put back."""
+    if d.get("unchanged"):  # (a file loaded again, the same as the one loaded: B-2439)
+        return f"{_table(d)}: {d.get('rows', 0):,} rows loaded again, the same as before: nothing changed"
     moved = [d.get(what, 0) for what in ("added", "updated", "removed")]
     said = [f"{_table(d)}: {d.get('rows', 0):,} rows ({moved[0]:,} added, {moved[1]:,} changed, {moved[2]:,} removed)"
             if any(moved) else f"{_table(d)}: the GL accounts and cost centers worked out again"]  # fmt: skip

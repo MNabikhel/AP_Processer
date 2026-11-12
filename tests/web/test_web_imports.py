@@ -381,6 +381,51 @@ def test_a_jd_edwards_report_is_refused_on_every_column_picker_naming_its_card(c
     assert sorted(a["code"] for a in store.list_accounts("gl_accounts")) == before
 
 
+def test_purchase_orders_and_the_gl_map_refuse_jd_edwards_report_at_the_import_too(client, store, jde):
+    """B-2463: the purchase order and GL map imports checked for JD Edwards' reports only at the upload: the chart,
+    picked as the workbook's other sheet, went in as purchase orders, and a supplier master kept on JD Edwards
+    files went in as the GL map when its token was posted. Each import refuses it, naming its card."""
+    from ap_coder.bench import jde_exports as made
+
+    book = openpyxl.Workbook()
+    book.active.append(["PO Number", "Description", "Line Amount"])
+    book.active.append(["PO-1", "Paper", "10.00"])
+    chart = book.create_sheet("Chart")
+    for row in _grid((jde / made.CHART_FILE).read_bytes()):
+        chart.append(row)
+    out = io.BytesIO()
+    book.save(out)
+    answer = client.post(PICKERS["purchase_orders"], files={"file": ("two.xlsx", out.getvalue())}, headers=PAGE)
+    token = parse_qs(urlsplit(answer.json()["redirect"]).query)["file"][0]
+    refused = post(client, "/purchase-orders/import", {"file": token, "sheet": "Chart", "col_po_number": "Account ID",
+                                                       "col_description": "Account Description",
+                                                       "col_amount": "Company"})  # fmt: skip
+    assert refused.status_code == 400 and "under 1. Chart of accounts" in refused.json()["error"]
+    assert not store.has_purchase_orders()
+    rows = _grid((jde / made.SUPPLIERS_FILE).read_bytes())
+    rows = [[*row, "GL Code" if i == 0 else "6000"] for i, row in enumerate(rows)]
+    answer = client.post("/jde-files/suppliers/upload", files={"file": ("s.xlsx", _xlsx(rows))}, headers=PAGE)
+    token = parse_qs(urlsplit(answer.json()["redirect"]).query)["suppliers"][0]
+    refused = post(client, "/settings/jde/gl-map/import", {"token": token})
+    assert refused.status_code == 400 and "under 3. Suppliers" in refused.json()["error"]
+    page = client.get(f"/settings/jde?gl_map={token}").text
+    assert "under 3. Suppliers" in page
+
+
+def test_a_list_with_an_account_number_column_is_not_taken_for_the_transaction_journal(client):
+    """B-2461: a CSV naming "Account Number" and two other of the journal's header words ("Co", "Description",
+    "Name") was taken for the Transaction Journal and refused on every column picker: a GL account list, a GL map, a
+    purchase order list, past coding. Only a file naming both Account Number and Remark, or the report's number in
+    its first cell, is the journal; each of these reaches its column picker."""
+    lists = [b"Account Number,Description,Name\r\n6000,Office,Office supplies\r\n",
+             b"Co,Account Number,Description,Category\r\n00001,6000,Office,Opex\r\n",
+             b"PO Number,Description,Amount,Name,Account Number\r\nPO-1,Paper,10.00,Acme,6000\r\n"]  # fmt: skip
+    for url in (PICKERS["gl_accounts"], PICKERS["gl_map"], PICKERS["purchase_orders"], "/learning/history/upload"):
+        for body in lists:
+            answer = client.post(url, files={"file": ("list.csv", body)}, headers=PAGE)
+            assert answer.status_code == 200 and "redirect" in answer.json(), (url, body, answer.text)
+
+
 def test_a_column_guessed_by_a_word_in_its_header_is_shown_as_guessed_not_found_by_its_name(client):
     """B-2405: "Postal Code" picked as the GL account's code was shown in green, "found by its name"."""
     html, _token = _upload(client, "gl_accounts", [["Postal Code", "Company Name"], ["T5H 1L2", "Bracken"]])
@@ -434,3 +479,206 @@ def test_an_empty_file_and_a_worksheet_that_is_no_workbook_say_so_in_plain_words
         said = answer.json()["error"]
         assert answer.status_code == 400 and "BadZipFile" not in said and "Error" not in said, said
         assert ("empty" in said) == (not data), said
+
+
+# --- Review passes 3 and 4: what is said, where, and where the focus goes --------------------------------------------
+
+
+def _app(store):
+    from ap_coder.web.app import create_app
+    from tests.webclient import web_settings
+
+    return create_app(web_settings(), store, start_reader=False)
+
+
+# Each column picker's file box, where its page opens it (a folded box is opened first).
+BOXES = [("/vendors", "#import"), ("/purchase-orders", "#import"), ("/accounts", "#import"),
+         ("/exports#register", "#register"), ("/learning?teach=1#history", "#history"),
+         ("/jde-files#vouchers", "#vouchers")]  # fmt: skip
+FOCUSED = "() => { const e = document.activeElement; return [e.tagName, e.className, e.id, e.innerText || ''] }"
+
+
+def test_in_a_browser_a_refused_upload_is_said_in_its_form_the_box_emptied_and_focused(chromium, store, tmp_path):
+    """B-2445: a refused upload on Vendors, purchase orders, GL accounts, Exports or Learning (and JD Edwards files'
+    card 5) showed only in a message in the corner for 9 s, over the file box at 683×400; the focus dropped to the
+    page and the box still said "chosen. Click Check the file". It is said in the box's form as an alert, and stays;
+    the box is emptied and has the focus."""
+    from tests.browser import browser_on
+
+    load_sample_setup(store)
+    (tmp_path / "list.xlsx").write_bytes(b"not a workbook at all")
+    errors: list[str] = []
+    with browser_on(chromium, _app(store)) as (browser, base):
+        for start, box in BOXES:
+            page = browser.new_page(viewport={"width": 683, "height": 400})
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(base + start)
+            if page.locator(f"details{box}:not([open])").count():
+                page.locator(f"{box} > summary").click()
+            page.locator(f"{box} input[type=file]").set_input_files(str(tmp_path / "list.xlsx"))
+            page.locator(f"{box} .imp-upload button[type=submit]").click()
+            alert = page.locator(f"{box} form.imp-upload [role=alert]")
+            alert.wait_for()
+            assert "could not be read as a spreadsheet" in alert.inner_text(), start
+            assert page.locator("#toasts .flash").count() == 0, start
+            assert "Choose the file" in page.locator(f"{box} [data-imp-chosen]").inner_text(), start
+            assert page.evaluate("document.activeElement.type") == "file", start
+            assert page.locator(f"{box} input[type=file]").evaluate("e => e.files.length") == 0, start
+            page.wait_for_timeout(200)
+            assert alert.is_visible(), start  # (kept: no message that goes)
+            page.close()
+    assert errors == []
+
+
+def test_in_a_browser_after_check_and_load_the_focus_is_on_what_the_page_says(chromium, store, tmp_path, jde):
+    """B-2446: after Check the file or Load, the page came back with the focus on the page itself, and the verdict
+    (a status already in the page) was never read out. The focus is on the verdict after Check, and on what the load
+    did after Load: the message on Vendors, the line of what was done on JD Edwards files."""
+    from ap_coder.bench import jde_exports as made
+    from tests.browser import browser_on
+
+    load_sample_setup(store)
+    (tmp_path / "vendors.xlsx").write_bytes(_xlsx([["Vendor Name", "Vendor ID"], ["Acme Ltd", "V1"]]))
+    with browser_on(chromium, _app(store)) as (browser, base):
+        page = browser.new_page(viewport={"width": 683, "height": 400})
+        page.goto(base + "/vendors")
+        if page.locator("details#import:not([open])").count():
+            page.locator("#import > summary").click()
+        page.locator("#import input[type=file]").set_input_files(str(tmp_path / "vendors.xlsx"))
+        page.locator("#import .imp-upload button[type=submit]").click()
+        page.wait_for_function("document.activeElement.classList.contains('imp-verdict')")
+        assert "Every column a vendor list needs was found" in page.evaluate(FOCUSED)[3]
+        page.locator("button[data-imp-go]").click()
+        page.wait_for_selector(".imp-preview", state="detached")
+        page.wait_for_function("document.activeElement.classList.contains('flash')")
+        assert "Vendor master: 1 added" in page.evaluate(FOCUSED)[3]
+        page.goto(base + "/jde-files")
+        page.locator("#units input[type=file]").set_input_files(str(jde / made.UNITS_FILE))
+        page.locator("#units .imp-upload button[type=submit]").click()
+        page.wait_for_function("document.activeElement.classList.contains('imp-verdict')")
+        assert "every column it needs is here" in page.evaluate(FOCUSED)[3]
+        page.locator("#units-summary button.primary").click()
+        page.wait_for_function("document.activeElement.id === 'units-said'")
+        page.close()
+
+
+def test_in_a_browser_reconcile_says_what_was_compared_and_takes_the_person_to_it(
+    chromium, store, setup_demo_template, tmp_path
+):
+    """B-2449: after Reconcile the statement's box still said "nothing is compared yet" and "Check them, then
+    reconcile", the comparison was below the fold and the focus at the top of the page. It says what was compared
+    with, and Reconcile goes to the comparison, the focus on it."""
+    from tests.browser import browser_on
+    from tests.conftest import fill_from
+    from tests.web.test_web_finance import _statement
+
+    store = fill_from(store, setup_demo_template)
+    key, content = _statement(store)
+    client = client_for(store)
+    redirect = client.post("/statements/upload", data={"vendor": key}, files={"file": ("s.csv", content)},
+                           headers=PAGE).json()["redirect"]  # fmt: skip
+    html = client.get(redirect).text
+    shown = html.split('id="statements-summary"', 1)[1].split("</p>", 1)[0]
+    assert "compared with AP Coder." in shown and "not compared yet" not in html and "nothing is" not in shown
+    assert "Check them, then reconcile again." in html and 'id="statements-compared"' in html
+    assert re.search(r"Compared with .*&#39;s invoices in AP Coder: \d+ matched, \d+ amount differs", html)
+    assert 'action="/statements#result"' in html and 'id="result" tabindex="-1" data-imp-result' in html
+    with browser_on(chromium, _app(store)) as (browser, base):
+        page = browser.new_page(viewport={"width": 683, "height": 400})
+        page.goto(base + redirect)
+        page.locator("#pick-statements button.primary").click()
+        page.wait_for_function("document.activeElement.id === 'result'")
+        assert page.url.endswith("#result")
+        assert page.locator("#result").evaluate("e => e.getBoundingClientRect().top") < 400
+        page.close()
+
+
+def test_in_a_browser_past_coding_loaded_says_so_in_its_card_opened(chromium, store, tmp_path):
+    """B-2450: Learning's Load of past coding came back to /learning#history with the card closed and its message at
+    the top of the page, off screen ("Taught 0 past lines; 1 with a GL account that is not in your list"). The
+    message is in the card, opened, and has the focus."""
+    from tests.browser import browser_on
+
+    load_sample_setup(store)
+    (tmp_path / "past.xlsx").write_bytes(_xlsx([["Vendor", "Description", "GL Code"], ["Acme Ltd", "Paper", "9999"]]))
+    with browser_on(chromium, _app(store)) as (browser, base):
+        page = browser.new_page(viewport={"width": 683, "height": 400})
+        page.goto(base + "/learning?teach=1#history")
+        page.locator("#history input[type=file]").set_input_files(str(tmp_path / "past.xlsx"))
+        page.locator("#history .imp-upload button[type=submit]").click()
+        page.wait_for_selector("#pick-past_coding")
+        page.locator("#pick-past_coding button.primary").click()
+        page.wait_for_selector("#pick-past_coding", state="detached")
+        page.wait_for_function("document.activeElement.classList.contains('flash')")
+        said = page.locator("#history > .flash")
+        assert "1 with a GL account that is not in your list" in said.inner_text()
+        assert page.evaluate("document.getElementById('history').open")
+        assert said.evaluate("e => e === document.activeElement")
+        page.close()
+
+
+def test_past_coding_whose_gl_accounts_are_not_listed_is_warned_of_before_it_is_loaded(client):
+    """B-2451: past coding whose lines' GL accounts are not in the GL accounts list gave no warning before Load,
+    then taught none of them. The file shown counts them, naming the column read."""
+    rows = [["Vendor", "Description", "GL Code"], ["Acme Ltd", "Paper", "9999"], ["Acme Ltd", "Toner", "9998"],
+            ["Acme Ltd", "Pens", "6100"]]  # fmt: skip
+    html, _token = _upload(client, "past_coding", rows)
+    warned = html.split('id="past_coding-unknown-gl"', 1)[1].split("</div></div>", 1)[0]
+    assert "2 lines have a GL account in “GL Code” that is not in your GL accounts" in warned
+    html, _token = _upload(client, "past_coding", rows[:1] + rows[3:])
+    assert 'id="past_coding-unknown-gl"' not in html
+
+
+def _contrast(fore: str, back: str) -> float:
+    def lum(hex_colour: str) -> float:
+        channels = [int(hex_colour.lstrip("#")[i : i + 2], 16) / 255 for i in (0, 2, 4)]
+        r, g, b = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    light, dark = sorted((lum(fore), lum(back)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def test_the_other_names_read_of_a_column_are_readable():
+    """B-2452: "Also read: …" under "What each column is" was #8a93a3 on #fafbfc (2.99:1) at 10.8 px."""
+    from pathlib import Path
+
+    static = Path(__file__).parents[2] / "ap_coder" / "web" / "static"
+    tokens = dict(re.findall(r"--(lg-[\w-]+):\s*(#[0-9a-fA-F]{6})", (static / "app.css").read_text()))
+    rule = re.search(r"\.imp-also \{([^}]*)\}", (static / "imports.css").read_text()).group(1)
+    colour = tokens[re.search(r"color: var\(--([\w-]+)\)", rule).group(1)]
+    assert _contrast(colour, tokens["lg-head"]) >= 4.5
+    assert float(re.search(r"font-size: ([\d.]+)px", rule).group(1)) >= 12
+
+
+def test_an_upload_no_longer_kept_on_learning_says_so_as_everywhere(client):
+    """B-2453: Learning still said "That upload has expired" (Load, the journal's Load, Read it as a table, and the
+    page), where every other import says it is no longer here."""
+    from ap_coder.web import files
+
+    for url, field in (("/learning/history/teach", "token"), ("/learning/journal/load", "token"),
+                       ("/learning/journal/as-table", "token")):  # fmt: skip
+        answer = post(client, url, {field: "gone"})
+        assert answer.status_code == 400 and answer.json()["error"] == files.GONE, url
+    for query in ("history=gone", "journal=gone"):
+        page = client.get(f"/learning?{query}").text
+        assert "expired" not in page and "That upload is no longer here" in page, query
+
+
+def test_the_words_beside_a_load_button_say_load(client):
+    """B-2454: Learning's message said "Check the columns below, then teach" beside "Load 1 line", and a GL accounts
+    file with a guessed column "Check each below before you import" beside "Load GL accounts"."""
+    past = _xlsx([["Vendor", "Description", "GL Code"], ["A", "B", "6100"]])
+    answer = client.post("/learning/history/upload", headers=PAGE, files={"file": ("past.xlsx", past)})
+    page = client.get(answer.json()["redirect"]).text
+    assert "Check the columns below, then load." in page and "then teach" not in page
+    html, _token = _upload(client, "gl_accounts", [["Postal Code", "Company Name"], ["T5H 1L2", "Bracken"]])
+    assert "Check each below before you load." in html and "before you import" not in html
+
+
+def test_the_invoices_already_in_the_erp_are_named_as_their_list_is_when_loaded(client, store):
+    """B-2455: Exports' message after a load said "2 ERP invoices known", for the list named "Invoices already in
+    JD Edwards" (or "your ERP")."""
+    html, token = _upload(client, "erp_register", PAGES["erp_register"][5])
+    page = client.get(_import(client, "erp_register", token, html).json()["redirect"]).text
+    assert "Invoices already in your ERP: 1 invoice on the list now." in page and "known." not in page

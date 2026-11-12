@@ -46,6 +46,7 @@ TONES = {
     stm.NOT_ON_STATEMENT: ("info", "help"),
     stm.PAYMENT: ("gray", "payments"),
 }
+TILED = (stm.MATCHED, stm.DIFFERS, stm.NOT_RECEIVED, stm.NOT_ON_STATEMENT)  # what a comparison counts (its tiles)
 
 
 def ap_status(line: stm.Line, invoices: dict[int, dict[str, Any]], keying: Collection[int] = ()) -> str:
@@ -100,6 +101,9 @@ def statements_page(
                 lang = lang if lang in vendor_mail.LANGUAGES else vendor_mail.ENGLISH
                 mail = vendor_mail.statement_request(rec.lines, lang, reviewer())
                 params = [(k, v) for k, v in request.query_params.multi_items() if k != "lang"]
+                counts = ", ".join(f"{rec.count(status):,} {stm.LABELS[status].lower()}" for status in TILED)
+                context["s"]["look"] |= {"go": "reconcile again", "compared": "compared with AP Coder."}
+                context["compared"] = f"Compared with {names[vendor]}'s invoices in AP Coder: {counts}."
                 context.update(
                     rec=rec,
                     tiles=[

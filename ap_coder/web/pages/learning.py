@@ -61,6 +61,7 @@ from ap_coder.web.core import (
     shown_count,
 )
 from ap_coder.web.files import (
+    GONE,
     PREVIEW_ROWS,
     TOO_BIG,
     SheetError,
@@ -295,8 +296,19 @@ def _history_context(store: Store, token: str | None, sheet: str | None) -> dict
         picked = spec_sheet(token, Upload(name, b""), head, list(sheets), sheet, PAST_CODING)
         picked["count"] = picked["look"]["count"] = len(rows)
         context["upload"] = {"token": token, "name": name, "sheets": list(sheets), "sheet": sheet, "rows": len(rows),
-                             "s": picked}  # fmt: skip
+                             "s": picked, **_unknown_gl(store, rows, picked)}  # fmt: skip
     return context
+
+
+def _unknown_gl(store: Store, records: list[dict[str, Any]], picked: dict[str, Any]) -> dict[str, Any]:
+    """How many of the lines, read with the columns as picked, have a GL account not in the GL accounts listed
+    (``unknown_gl``; those are not taught, ``Store.import_history``), and the column it is read from (``gl_column``)."""
+    chosen = {f["key"]: f["value"] for f in picked["fields"] if f["value"]}
+    known = {a["code"] for a in store.list_accounts("gl_accounts")}
+    if not known or "gl_code" not in chosen:
+        return {"unknown_gl": 0}
+    rows, _skipped = history.rows_from_records(records, chosen)
+    return {"unknown_gl": sum(1 for row in rows if row["gl_code"] not in known), "gl_column": chosen["gl_code"]}
 
 
 CORRECTIONS_SHOWN = 50
@@ -806,7 +818,7 @@ def _table_upload(request: Request, name: str, content: bytes) -> JSONResponse:
 
 def flash_message_for_columns(name: str, sheets: dict[str, tuple[list[str], list[dict[str, Any]]]]) -> str:
     rows = sum(len(r) for _, r in sheets.values())
-    return f"Read {name}: {ui.plural(rows, 'line')}. Check the columns below, then teach."
+    return f"Read {name}: {ui.plural(rows, 'line')}. Check the columns below, then load."
 
 
 @router.post("/learning/history/teach")
@@ -820,7 +832,7 @@ def _history_teach(request: Request, form: Any) -> JSONResponse:
     token = str(form.get("token") or "")
     upload = get_upload(token)
     if upload is None:
-        return refuse("That upload has expired. Upload the file again.")
+        return refuse(GONE)
     _, sheets = upload
     sheet = str(form.get("sheet") or "")
     columns, records = sheets[sheet] if sheet in sheets else next(iter(sheets.values()))
@@ -861,7 +873,7 @@ def _journal_load(request: Request, form: Any) -> JSONResponse:
     token = str(form.get("token") or "")
     kept = get_journal(token)
     if kept is None:
-        return refuse("That upload has expired. Upload the file again.")
+        return refuse(GONE)
     name, data = kept
     given = {key: form.get(key) for key in JOURNAL_LABELS}
     outcome, said = journal_cmd.load(get_store(request), data, name, **given, anyway=bool(form.get("anyway")),
@@ -878,7 +890,7 @@ def journal_as_table(request: Request, token: str = Form("")) -> JSONResponse:
     a remark looks like the journal."""
     kept = get_journal(token)
     if kept is None:
-        return refuse("That upload has expired. Upload the file again.")
+        return refuse(GONE)
     answer = _table_upload(request, *kept)
     if answer.status_code == 200:
         current_store().drop_ephemeral(JOURNAL_KIND, token)

@@ -106,13 +106,14 @@ def test_the_same_files_again_change_nothing_and_say_so(tmp_path, capsys):
     chart, units = cf.write_chart(tmp_path / "chart.xlsx"), cf.write_business_units(tmp_path / "bu.xlsx")
     assert _run(tmp_path, capsys, "--chart", str(chart), "--business-units", str(units))[0] == 0
     store = Store(tmp_path / "ap_coder.db")
-    before = (store.chart_version(), store.events_stamp(), store.list_accounts("gl_accounts"))
+    before = (store.chart_version(), store.list_accounts("gl_accounts"))
     code, out, _ = _run(tmp_path, capsys, "--chart", str(chart), "--business-units", str(units))
     assert code == 0
     assert "Business units: the same as already imported." in out
     assert "Chart of accounts: the same as already imported." in out
     assert "GL accounts: 13 now (0 added, 0 changed, 0 removed)." in out
-    assert (store.chart_version(), store.events_stamp(), store.list_accounts("gl_accounts")) == before
+    assert (store.chart_version(), store.list_accounts("gl_accounts")) == before
+    assert all(e["detail"]["unchanged"] for e in store.events(actions=["accounts_imported"])[:2])  # (B-2439)
 
 
 def test_rows_left_out_and_never_offered_accounts_are_said_with_the_reason(tmp_path, capsys):

@@ -955,3 +955,20 @@ def test_with_a_chart_loaded_gl_accounts_say_where_they_come_from_and_replace_wa
     assert f"The chart of accounts loaded on JD Edwards files gives the {gl:,} GL accounts listed now" in form
     assert f"Replace my current list: of the {gl:,} GL accounts listed now, those not in this file are removed" in form
     assert "Load GL accounts</button>" in form
+
+
+def test_no_bank_accounts_yet_says_what_this_person_can_do(store):
+    """B-2458: with no bank account, the Bank accounts tab said "Import them above, or type them in the grid below"
+    to a Clerk, who can do neither (and to an Approver, who has no import). Each role is told what it can do."""
+    from tests.web.test_server_web import account, log_in, server_client
+
+    said = {}
+    for role in ("clerk", "approver", "admin"):
+        account(store, role, role)
+        client = server_client(store)
+        log_in(client, role)
+        page = client.get("/accounts?tab=bank").text
+        said[role] = page.split("No bank accounts yet", 1)[1].split("</div>", 1)[0]
+    assert "An Approver or an Admin adds them" in said["clerk"] and "grid" not in said["clerk"]
+    assert "Type them in the grid below." in said["approver"] and "Import" not in said["approver"]
+    assert "Import them above, or type them in the grid below." in said["admin"]

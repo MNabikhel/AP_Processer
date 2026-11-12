@@ -342,12 +342,11 @@ def section_3(client: Client, exports: Path) -> None:
                       ("journal", jde_exports.JOURNAL_FILE), ("vouchers", jde_exports.HEADERS_FILE)):  # fmt: skip
         shown = page(client, send(client, f"/jde-files/{box}/upload", [exports / name])["redirect"])
         summary = card(shown, f"{box}-summary")
-        check(name in summary and "nothing is loaded yet" in summary, f"{name} is not shown first: {summary[:500]}")
-        check(
-            re.search(r"Load (?:th(?:ese|is) \w+|[\d,]+ rows)", summary),
-            f"the summary of {name} has no Load button: {summary}",
-        )
-        seen(f"{name}, shown first: {summary.split('nothing is loaded yet.', 1)[-1].strip()[:220]}")
+        check(name in summary and "not loaded yet" in summary, f"{name} is not shown first: {summary[:500]}")
+        part = shown.split(f'id="{box}-summary"')[-1]
+        button = re.search(rf'data-load="{box}">.*?</span>(Load [^<]+)</button>', part, re.S)
+        check(button, f"the summary of {name} has no Load button: {summary}")
+        seen(f"{name}, shown first ({button.group(1)}): {summary.split('not loaded yet.', 1)[-1].strip()[:200]}")
         token = re.search(rf'action="/jde-files/{box}/load".*?name="token" value="([^"]+)"', shown, re.S)
         check(token, f"the summary of {name} has no Load button")
         loaded = page(client, post(client, f"/jde-files/{box}/load", {"token": token.group(1)})["redirect"])

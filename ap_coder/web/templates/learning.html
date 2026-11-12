@@ -84,7 +84,10 @@
     </select></label>
   </form>
   {% endif %}
-  {% call imp.preview(upload.s.look, "past_coding") %}{% endcall %}
+  {% call imp.preview(upload.s.look, "past_coding") %}
+    {% if upload.unknown_gl %}<div class="flash warn" id="past_coding-unknown-gl"><span class="ms" aria-hidden="true">warning</span><div>{{ upload.unknown_gl | plural("line") }} {{ "has" if upload.unknown_gl == 1 else "have" }} a GL account in “{{ upload.gl_column }}” that is not in your GL accounts (<a href="/accounts?tab=gl">GL accounts &amp; tax</a>): {{ "it is" if upload.unknown_gl == 1 else "they are" }} not loaded. Add the account there first, or load the others.</div></div>{% endif %}
+  {% endcall %}
+  {% if can("/learning/history/teach") %}{# a Clerk opening an Admin's preview: the rows, no Load (B-2431) #}
   <form method="post" action="/learning/history/teach" class="stack" data-busy="Loading…" data-long id="pick-past_coding">
     {{ columns(upload.s, token="token") }}
     <p class="muted">Lines without a vendor, a description or a GL account are skipped.</p>
@@ -93,8 +96,9 @@
       <a class="btn" href="/learning#history">Cancel</a>
     </div>
   </form>
+  {% endif %}
   {% else %}
-  {% if upload_gone %}{{ ui.empty_note("That upload has expired", " Upload the file again.", "schedule") }}{% endif %}
+  {% if upload_gone %}{{ ui.empty_note("That upload is no longer here", ": an upload is kept for an hour, and only your last 24. Upload the file again.", "schedule") }}{% endif %}
   {% if can("/learning/history/upload") %}{# server mode: teaching the past coding is an Admin's (D-98) #}
   <div class="stack imp-pane">
   {{ imp.report(history_spec) }}

@@ -142,6 +142,7 @@
   </form>
 </details>
 
+{% if can("/exports/register/upload") %}{# the office network: this computer's alone (B-2430) #}
 <details class="card expander" id="register"{% if reg or reg_error %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">receipt_long</span>{{ register_name }}{% if register_count %} ({{ register_count | num }} known){% endif %}</summary>
   <p class="muted">Load the ERP's AP invoice list (vendor, invoice number, date, total), e.g. the last 18 months.
@@ -170,12 +171,13 @@
   {{ imp.file_box("/exports/register/upload", register_spec.accept, "The ERP's invoice list, a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…") }}
   {% endif %}
   {% if register_count %}
-  <form method="post" action="/exports/register/clear" data-confirm="Clear the list of {{ register_count | num }} ERP invoices? Invoices are then no longer checked against it.">
+  <form method="post" action="/exports/register/clear" data-confirm="Clear the {{ register_count | plural('invoice') }} of “{{ register_name }}”? Invoices are then no longer checked against them.">
     <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Clear the list</button>
   </form>
   {% endif %}
   </div>
 </details>
+{% endif %}
 {% endif %}
 
 <section class="card" id="batches">

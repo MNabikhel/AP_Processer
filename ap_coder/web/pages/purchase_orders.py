@@ -41,6 +41,8 @@ from ap_coder.web.files import (
     SheetError,
     download,
     drop_upload,
+    first_rows,
+    jde_refusal,
     pick_refusal,
     picked_columns,
     read_upload,
@@ -260,6 +262,8 @@ def _po_import(request: Request, form: Any) -> JSONResponse:
         _upload, df, _sheets = read_upload(token, sheet or None)
     except SheetError as exc:
         return refuse(str(exc))
+    if refusal := jde_refusal(first_rows(df)):  # (JD Edwards' own reports: on JD Edwards files only, B-2463)
+        return refuse(refusal)
     if df.empty:
         return refuse(NO_ROWS)
     chosen = picked_columns(form, po_mod.COLUMN_ALIASES, list(df.columns), {})

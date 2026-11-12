@@ -216,7 +216,8 @@
   {% endif %}
 
   {% if not b.rows %}
-  {{ ui.empty_note("No bank accounts yet", " Type them in the grid below." if short else " Import them above, or type them in the grid below.", "account_balance") }}
+  {# what this person can do about it: import (an Admin), type them in (an Approver), or nothing (the others) #}
+  {{ ui.empty_note("No bank accounts yet", (" Import them above, or type them in the grid below." if can("/accounts/bank/import") and not short else " Type them in the grid below.") if edit else " An Approver or an Admin adds them; until then nothing asks for one.", "account_balance") }}
   {% endif %}
   <form{% if edit %} method="post" action="/accounts/bank/save"{% endif %} class="stack" data-busy="Saving…" id="bank-form"><fieldset class="ro-fieldset"{% if not edit %} disabled{% endif %}>
     <input type="hidden" name="version" value="{{ b.version }}">
