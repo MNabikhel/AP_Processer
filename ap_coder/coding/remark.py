@@ -54,13 +54,20 @@ _NOT_AFTER, _NOT_LETTER = r"(?<![^\W_])", r"(?![^\W\d_])"  # not right after a l
 _LABEL_END = r"\s*(?:no\.?|n°|#)?\s*[:.#]?\s*"
 # What changes from one voucher to the next in a remark, as ``remark_shape`` takes it out: an invoice number after
 # "INV" (five digits or more: "invoice 410 Elm" ends with an office), a month (with the year written after it), a
-# quarter, a year, a number of five digits or more.
+# quarter, a whole date (left as written: its month and day can't follow), a month as a number beside its year
+# ("2025-11", "11/2025"), a year, a number of five digits or more.
 _VARYING = re.compile(
     rf"{_NOT_AFTER}(?:(?P<label>(?:invoice|inv|facture|fact|fac){_LABEL_END})(?P<labelled>\d{{5,}}[\w-]*)"
     rf"|(?P<month>{_MONTH}){_NOT_LETTER}(?:(?P<gap>\.?\s*[/'-]?\s*)(?P<month_year>(?:20)?\d\d)(?!\d))?"
-    rf"|(?P<q>q)(?P<quarter>[1-4])(?![^\W_])|(?P<year>(?:19|20)\d\d)(?!\d)|(?P<number>\d{{5,}}))",
+    r"|(?P<q>q)(?P<quarter>[1-4])(?![^\W_])"
+    r"|(?P<date>(?:19|20)\d\d[/-]\d\d?[/-]\d\d?|\d\d?[/-]\d\d?[/-](?:19|20)\d\d)(?!\d)"
+    r"|(?P<ym_year>(?:19|20)\d\d)(?P<ym_sep>[/-])(?P<ym_month>1[0-2]|0?[1-9])(?!\d)"
+    r"|(?<!\d[/-])(?P<my_month>1[0-2]|0?[1-9])(?P<my_sep>[/-])(?P<my_year>(?:19|20)\d\d)(?!\d)"
+    rf"|(?P<year>(?:19|20)\d\d)(?!\d)|(?P<number>\d{{5,}}))",
     re.IGNORECASE,
 )
+# An invoice number's own label ("INV-55123", "Invoice #55123"): not repeated after the remark's "INV".
+_OWN_LABEL = re.compile(rf"^(?:invoice|inv|facture|fact|fac){_LABEL_END}-?\s*(?=\d)", re.IGNORECASE)
 _ACCOUNT_LABEL = re.compile(rf"(?:acct|account|a/c|compte|cust|customer|client|contract|contrat){_LABEL_END}$", re.I)
 # A month an invoice line names: any month with a year after it ("Apr 30, 2026", "mai 2026", "Mar/26"), or a month
 # written in full that is no other word ("may" and "mai" are).
@@ -202,14 +209,27 @@ def _month_like(written: str, month: int, plain: bool) -> str:
     return _cased(_fold(name) if plain else name, written)
 
 
+def _month_number(found: re.Match[str], period: Period | None, year: bool) -> str:
+    """A month written as a number beside its year ("2025-11", "11/2025"), as ``period``'s, in as many digits; left
+    as written when that is no year (``year``), taken out with no ``period``."""
+    if not year:
+        return found[0]
+    if period is None:
+        return ""
+    digits = found["ym_month"] or found["my_month"]
+    month = f"{period.month:0{len(digits)}d}"
+    return f"{period.year}{found['ym_sep']}{month}" if found["ym_year"] else f"{month}{found['my_sep']}{period.year}"
+
+
 def with_period(remark: str, period: Period | None, invoice_number: Any = "", written: int | None = None) -> str:
     """A remark as the supplier's was last written, for this invoice: its month, quarter and year are ``period``'s
-    (each written as it was: "Jul" gives "May", "juillet" gives "mai"), the number after "INV" is
-    ``invoice_number``; the rest stays, the office it ends with too. A long number nothing says is the supplier's
-    account is taken out: it was that voucher's. ``written``: the year the remark was written, which tells a year
-    ("2025 audit", "Jul 25") from a street number. With no ``period`` the month is taken out, not kept stale."""
+    (each written as it was: "Jul" gives "May", "juillet" gives "mai", "2025-11" gives "2026-05"; a whole date stays),
+    the number after "INV" is ``invoice_number`` (without its own "INV"); the rest stays, the office it ends with too.
+    A long number nothing says is the supplier's account is taken out: it was that voucher's. ``written``: the year
+    the remark was written, which tells a year ("2025 audit", "Jul 25") from a street number. With no ``period`` the
+    month is taken out, not kept stale."""
     remark = one_line(remark)
-    number = one_line(invoice_number)
+    number = _OWN_LABEL.sub("", one_line(invoice_number))
     plain = remark.isascii()
 
     def a_year(digits: str) -> bool:
@@ -233,6 +253,10 @@ def with_period(remark: str, period: Period | None, invoice_number: Any = "", wr
             return out + found["gap"] + (str(period.year)[-len(digits) :] if year else digits)
         if found["quarter"]:
             return f"{found['q']}{period.quarter}" if period else ""
+        if found["date"]:
+            return found["date"]
+        if found["ym_year"] or found["my_year"]:
+            return _month_number(found, period, written is not None and a_year(found["ym_year"] or found["my_year"]))
         if found["year"]:
             if written is None or not a_year(found["year"]):
                 return found["year"]
