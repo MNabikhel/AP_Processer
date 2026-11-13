@@ -867,8 +867,9 @@ def test_in_a_browser_add_new_vendor_fills_the_tax_numbers_ap_gave_the_vendor(br
     page.keyboard.press("Escape")
     page.wait_for_load_state("networkidle")
     assert [page.input_value(f"[name={n}]") for n in blank] == ["", "", ""]
-    page.click("[data-vendor-add] > summary")
-    assert page.input_value("[data-new=name]") == "Cascade Cloudworks" and page.input_value("[data-new=gst]") == ""
+    page.click("[data-vendor-add] > summary")  # (the dialog fills its name as it opens: waited for, not raced)
+    wait_until(page, lambda: page.input_value("[data-new=name]") == "Cascade Cloudworks")
+    assert page.input_value("[data-new=gst]") == ""
     page.click("[data-new-go]")
     wait_until(page, lambda: "Added here" in page.locator(SAID).inner_text())
     wait_until(page, lambda: page.input_value("[name=gst_hst_registration_number]") != "")
