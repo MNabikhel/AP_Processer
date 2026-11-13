@@ -181,3 +181,15 @@ def test_a_database_gets_the_steps_of_the_versions_it_is_older_than(tmp_path, mo
     ran.clear()
     Store(first)  # PR #1's: every step but the one to 2, in the order of STEPS
     assert sorted(ran) == sorted(every_time + newer) and [r for r in ran if r in newer] == newer
+
+
+def test_a_journal_loaded_before_its_dates_read_were_kept_says_none(tmp_path):
+    """B-2543: a journal file loaded at schema 27, before a file kept how its G/L dates were read, is kept with none
+    said (''), so a journal printed day first loaded since is told from it; the database is then a new one."""
+    db = Store(tmp_path / "old" / "ap_coder.db").path
+    with closing(sqlite3.connect(db)) as conn, conn:
+        conn.execute("ALTER TABLE journal_files DROP COLUMN dates_read")
+        conn.execute("INSERT INTO journal_files (name, hash, loaded_at, done) VALUES ('2024.csv', 'h', '2026-11', 1)")
+        conn.execute("UPDATE settings SET value = '27' WHERE key = 'schema_version'")
+    assert [(f["name"], f["dates_read"]) for f in Store(db).journal_files()] == [("2024.csv", "")]
+    assert shape(db) == shape(Store(tmp_path / "new" / "ap_coder.db").path)

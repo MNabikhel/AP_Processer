@@ -36,7 +36,7 @@ from ..core.config import Settings
 from ..core.paths import PROJECT_DIR, env_path
 from ..core.reference_data import ReferenceData, load_reference_data, load_table, parse_policy_notes
 from ..core.schema import build_json_schema
-from ..core.store import SAMPLE_DATA_DIR, Store, default_db_path, private_dir
+from ..core.store import SAMPLE_DATA_DIR, DatabaseTooNew, Store, default_db_path, private_dir
 from ..core.store.folder import read_file
 from ..core.store.imports import IMPORT_LEASE_SECONDS
 from ..intake.imports import Reader, owner_id, pick_up
@@ -1487,6 +1487,9 @@ def main(argv: list[str] | None = None) -> int:
         where = exc.filename or "a file"
         print(f"{where} could not be opened or written: it is open in another program (Excel?) or the folder is "
               "read-only. Close it, then run the command again.", file=sys.stderr)  # fmt: skip
+        return 1
+    except DatabaseTooNew as exc:  # (said in one line, as any other refusal: no traceback, B-2557)
+        print(exc, file=sys.stderr)
         return 1
 
 

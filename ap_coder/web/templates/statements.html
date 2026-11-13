@@ -38,7 +38,7 @@
   {% if can("/statements/upload") %}{# server mode: Read-only compares no statements (D-98) #}
   {% if not s %}
   {{ imp.report(spec) }}
-  {% call imp.file_box("/statements/upload", spec.accept, "The statement, a CSV or Excel file (.csv, .xlsx or .xls): one row per invoice, credit or payment, as the vendor sent it. Nothing is stored.", "Reading…", then="Reconcile") %}
+  {% call imp.file_box("/statements/upload", spec.accept, "The statement, a CSV or Excel file (.csv or .xlsx): one row per invoice, credit or payment, as the vendor sent it. Nothing is stored.", "Reading…", then="Reconcile") %}
     <label class="field">Vendor
       <select name="vendor" data-picker data-picker-noun="vendor">{% for key, name in names.items() %}<option value="{{ key }}"{% if key == vendor %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
     {{ open_items_box() }}
@@ -70,7 +70,7 @@
 <div class="imp-result" id="result" tabindex="-1" data-imp-result aria-labelledby="result-title">
 {{ tile_row(tiles) }}
 {% if rec.exported_note %}<p class="muted" id="statement-exported">{{ rec.exported_note }}</p>{% endif %}
-{% if rec.period_unknown %}<div class="flash warn" id="statement-period-unknown"><span class="ms" aria-hidden="true">warning</span><div>The statement's dates read either way (day or month first) and its invoices didn't tell which, so its period couldn't be told: the invoices it leaves out may not be listed as Not on statement.</div></div>{% endif %}
+{% if rec.period_unknown %}<div class="flash warn" id="statement-period-unknown"><span class="ms" aria-hidden="true">warning</span><div>The statement's dates read either way (day or month first) and its invoices didn't tell which, so its period couldn't be told: the invoices it leaves out may not be listed as Not on statement.</div></div>{% elif rec.dates_unread %}<div class="flash warn" id="statement-dates-unread"><span class="ms" aria-hidden="true">warning</span><div>None of the statement's dates could be read (or no date column is picked), so its period couldn't be told: the invoices it leaves out are not listed as Not on statement. Dates written like 2026-09-15 or 15/09/2026 can be read.</div></div>{% endif %}
 <section class="card">
   <div class="card-head">
     <h4 id="result-title">{{ names[vendor] }}: the statement compared with AP Coder</h4>

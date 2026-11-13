@@ -621,3 +621,17 @@ def test_insights_counts_every_approval_past_a_hundred_thousand(tmp_path):
         conn.executemany("INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES (?, ?, ?, ?, ?)",
                          [(second, "approved", "x", "{}", "2026-10-26T10:00:00")] * 100_000)  # fmt: skip
     assert insights.approved_as_coded(store)[1] == 2
+
+
+def test_a_demo_invoice_rejected_or_approved_then_reopened_still_counts_as_a_demo_invoice(
+    store, tmp_path, ground_truth
+):
+    rejected = store.add_invoice(tmp_path / "d1.pdf", ground_truth, {}, meta={"demo": True, "source": "x"})
+    approved = store.add_invoice(tmp_path / "d2.pdf", ground_truth, {}, meta={"demo": True, "source": "y"})
+    store.add_invoice(tmp_path / "own.pdf", ground_truth, {}, meta={"source": '"demo": true'})  # (not a demo one)
+    store.reject_invoice(rejected, "ann", "test")
+    store.reopen(rejected, "ann")  # (its metadata written again by SQLite, with no space after the colon)
+    store.approve_invoice(approved, ground_truth, "ann")
+    store.reopen(approved, "ann")
+    assert store.get_invoice(rejected)["meta"]["demo"] is True
+    assert store.demo_count() == 2

@@ -383,7 +383,8 @@ class VendorsMixin:
     ) -> str:  # fmt: skip
         """A new vendor added to the vendor list from the review screen (``vendors.ADDED_HERE``): every invoice from
         it needs a person until it is in the vendor master imported from the ERP. Returns its key. A vendor already
-        in the list is refused (ValueError)."""
+        in the list is refused (ValueError). One AP gave tax numbers on the Vendors page keeps those the dialog left
+        blank; the ones it replaces are in the event."""
         key = vendor_key(name)
         if not key:
             raise ValueError("Type the vendor's name.")
@@ -393,6 +394,11 @@ class VendorsMixin:
         note = f"Added by {actor or 'a reviewer'} on {_now()[:10]}"
         note += f" from invoice #{invoice_id}." if invoice_id else "."
         notes = "\n".join(n for n in (note, str(before.get("notes") or "").strip()) if n)
+        given = {"gst": gst.strip(), "qst": qst.strip(), "pst": pst.strip(), "province": province.strip().upper()}
+        old = {k: str(before.get(c) or "") for k, c in (("gst", "expected_gst"), ("qst", "qst_number"),
+                                                        ("pst", "pst_number"), ("province", "province"))}  # fmt: skip
+        numbers = {k: given[k] or old[k] for k in given}  # left blank, AP's own numbers stay (B-2549)
+        replaced = {k: old[k] for k in given if old[k] and numbers[k] != old[k]}
         with self._conn() as conn:
             conn.execute(
                 """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at, qst_number,
@@ -401,12 +407,11 @@ class VendorsMixin:
                    expected_gst = excluded.expected_gst, notes = excluded.notes, updated_at = excluded.updated_at,
                    qst_number = excluded.qst_number, pst_number = excluded.pst_number, province = excluded.province,
                    in_master = 2""",
-                (key, name.strip(), before.get("status") or "active", gst.strip(), notes, _now(), qst.strip(),
-                 pst.strip(), province.strip().upper()),
+                (key, name.strip(), before.get("status") or "active", numbers["gst"], notes, _now(), numbers["qst"],
+                 numbers["pst"], numbers["province"]),
             )  # fmt: skip
             self._log(conn, "vendor_added", invoice_id=invoice_id, actor=actor, detail={
-                "vendor": name.strip(), "gst": gst.strip(), "qst": qst.strip(), "pst": pst.strip(),
-                "province": province.strip().upper()})  # fmt: skip
+                "vendor": name.strip(), **numbers, **({"replaced": replaced} if replaced else {})})  # fmt: skip
         return key
 
     def delete_vendors(self, keys: list[str], actor: str | None = None) -> int:

@@ -79,7 +79,7 @@ def _owner(request: Request) -> str:
 def _query(request: Request) -> directory.Query:
     """The directory's query: the page's own, else (nothing asked) the default saved layout."""
     params = request.query_params
-    if not params:
+    if not set(params) - {"flash"}:  # (the page after an action: only its message)
         preset = directory.default_preset(get_store(request), _owner(request))
         if preset:
             from urllib.parse import parse_qsl

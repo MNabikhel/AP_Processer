@@ -112,7 +112,8 @@ def test_the_file_is_listed_with_who_when_and_what_it_holds(store, truth):
     journal, data = _read(truth)
     digest = hashlib.sha256(data).hexdigest()
     objects = {"trade": ["2110"], "intercompany": ["2150"], "tax": ["2420"]}
-    store.import_journal(journal, source_name="R09321 2024.csv", source_hash=digest, actor="pat", objects=objects)
+    store.import_journal(journal, source_name="R09321 2024.csv", source_hash=digest, actor="pat", objects=objects,
+                         dates_read="month first")  # fmt: skip
     (listed,) = store.journal_files()
     assert listed["loaded_at"][:4].isdigit() and len(listed["loaded_at"]) == 19
     assert {k: v for k, v in listed.items() if k != "loaded_at"} == {
@@ -120,6 +121,7 @@ def test_the_file_is_listed_with_who_when_and_what_it_holds(store, truth):
         "last_date": "2024-12-30", "vouchers": 120, "counted": 120, "lines": 405, "coding_lines": 195,
         "payable_lines": 129, "tax_lines": 81, "affiliates": 16, "unbalanced": 1, "credits": 1,
         "learned_vouchers": 103, "learned_lines": 154, "objects": objects, "control_total_differs": False,
+        "dates_read": "month first",
     }  # fmt: skip
     (event,) = store.events(actions=["journal_imported"])
     assert event["actor"] == "pat" and event["detail"] == {

@@ -51,7 +51,8 @@ _MONTH_OF: dict[str, tuple[int, str]] = {
 } | {"sept": (9, "short")}
 _MONTH = "|".join(sorted({*_MONTH_OF, *_FR}, key=len, reverse=True))
 _NOT_AFTER, _NOT_LETTER = r"(?<![^\W_])", r"(?![^\W\d_])"  # not right after a letter or digit; no letter next
-_LABEL_END = r"\s*(?:no\.?|n°|#)?\s*[:.#]?\s*"
+_JOINS = "_/\\-\u2010\u2011\u2013\u2014"  # what joins a label to its number besides ":.#": "INV-54001", "INV_54001"
+_LABEL_END = rf"\s*(?:[:.#{_JOINS}]\s*)*(?:no\.?|n°|#)?\s*(?:[:.#{_JOINS}]\s*)*"  # "INV.-54001", "INV-No-54001"
 # What changes from one voucher to the next in a remark, as ``remark_shape`` takes it out: an invoice number after
 # "INV" (five digits or more: "invoice 410 Elm" ends with an office), a month (with the year written after it), a
 # quarter, a whole date (left as written: its month and day can't follow), a month as a number beside its year
@@ -246,7 +247,7 @@ def with_period(remark: str, period: Period | None, invoice_number: Any = "", wr
 
     def put(found: re.Match[str]) -> str:
         if found["labelled"]:
-            return f"{found['label']}{number}" if number else found["label"]
+            return f"{found['label']}{number}" if number else re.sub(rf"[{_JOINS}][\s{_JOINS}]*$", " ", found["label"])
         if found["month"]:
             if period is None:
                 return ""

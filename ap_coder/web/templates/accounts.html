@@ -74,7 +74,7 @@
       </div>
     </form>
     {% else %}
-    {{ imp.file_box("/accounts/" ~ a.table ~ "/upload", a.spec.accept, "A CSV or Excel file (.csv, .xlsx or .xls) exported from your ERP", "Reading…") }}
+    {{ imp.file_box("/accounts/" ~ a.table ~ "/upload", a.spec.accept, "A CSV or Excel file (.csv or .xlsx) exported from your ERP", "Reading…") }}
     {% endif %}
     </div>
   </details>
@@ -215,7 +215,7 @@
       </div>
     </form>
     {% else %}
-    {{ imp.file_box("/accounts/bank/upload", b.spec.accept, "A CSV or Excel file (.csv, .xlsx or .xls) of your bank accounts", "Reading…") }}    {% endif %}
+    {{ imp.file_box("/accounts/bank/upload", b.spec.accept, "A CSV or Excel file (.csv or .xlsx) of your bank accounts", "Reading…") }}    {% endif %}
     </div>
   </details>
   {% endif %}

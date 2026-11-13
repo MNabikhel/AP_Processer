@@ -20,7 +20,7 @@ from ap_coder.coding.vendors import ON_HOLD
 from ap_coder.core.safe import csv_cell
 from ap_coder.core.store import Store, load_sample_setup
 from tests.conftest import fill_from
-from tests.webclient import PAGE
+from tests.webclient import PAGE, add_clean, client_for
 
 MASTER_PAGES = [
     "/vendors",
@@ -110,6 +110,32 @@ def test_the_vendor_list_filters_and_opens_a_vendor(client, busy):
     assert f'name="key" value="{one["vendor_key"]}"' in detail
     if one["terms"]:
         assert f"terms {one['terms']}" in detail
+
+
+def test_the_vendor_search_and_name_sort_ignore_accents(store):
+    """A search for "quebec" finds Hydro-Québec, as the queue's search does, and Éclair sorts before Zed."""
+    from ap_coder.web.pages.vendors import sort_vendors
+
+    add_clean(store, vendor_name="Hydro-Québec")
+    client = client_for(store)
+    for q in ("quebec", "QUEBEC", "hydro-quebec"):
+        assert "Hydro-Québec" in client.get("/vendors", params={"q": q}).text.split("<main", 1)[-1]
+    rows = [{"vendor_name": n} for n in ("Zed Inc", "Éclair Ltée", "Alpha", "Énergir")]
+    assert [r["vendor_name"] for r in sort_vendors(rows, "name")] == ["Alpha", "Éclair Ltée", "Énergir", "Zed Inc"]
+
+
+def test_the_vendor_search_and_name_sort_read_a_ligature_as_its_two_letters(store):
+    """Œ and Æ, one letter each that NFKD leaves whole, are OE and AE: "oeuvre" finds Œuvres Ltée, which sorts
+    among the O names, not after Zed."""
+    from ap_coder.web.pages.vendors import sort_vendors
+
+    add_clean(store, vendor_name="Œuvres Ltée")
+    client = client_for(store)
+    for q in ("oeuvre", "OEUVRES"):
+        assert "Œuvres Ltée" in client.get("/vendors", params={"q": q}).text.split("<main", 1)[-1]
+    rows = [{"vendor_name": n} for n in ("Zed Inc", "Æther", "Œuvres Ltée", "Alpha", "Omega")]
+    assert [r["vendor_name"] for r in sort_vendors(rows, "name")] == ["Æther", "Alpha", "Œuvres Ltée", "Omega",
+                                                                      "Zed Inc"]  # fmt: skip
 
 
 def test_a_vendor_is_put_on_hold_and_given_its_gst_number(client, busy):
@@ -471,6 +497,44 @@ def test_the_bank_accounts_import_needs_only_the_code_as_its_reader_does(client,
     data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in guessed(page.text).items()}}
     follow(client, client.post("/accounts/bank/import", data=data, headers=PAGE))
     assert [(a["code"], a["currency"]) for a in store.bank_accounts()] == [("CAD-2", "CAD")]
+
+
+def test_a_bank_code_typed_in_another_case_is_the_same_account(client, store):
+    """As the import's own check and JD Edwards' pay-from match codes whatever their case, "cad-op" in a file is
+    the account CAD-OP: changed in place, its spelling, default and unpicked columns kept, not a second account."""
+
+    def load(content: bytes) -> None:
+        page = upload(client, "/accounts/bank/upload", "b.csv", content)
+        data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in guessed(page.text).items()}}
+        follow(client, client.post("/accounts/bank/import", data=data, headers=PAGE))
+
+    load(b"Code,Name,Account number,Default\nCAD-OP,Operating,1234567,yes\n")
+    load(b"Code,Name\ncad-op,Operating again\n")
+    accounts = [(a["code"], a["name"], a["is_default"], a["account_number"]) for a in store.bank_accounts()]
+    assert accounts == [("CAD-OP", "Operating again", True, "1234567")]
+
+
+def test_an_exact_bank_code_is_its_own_account_when_a_database_holds_both_spellings(client, store):
+    """A database from before B-2551 can hold CAD-OP and cad-op: the code typed exactly is that account, in the
+    Store, the import (its unpicked columns) and the grid (a blank account number), whichever sorts last."""
+    from ap_coder.coding import banks
+
+    rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "A upper", "currency": "CAD", "account_number": "1111111"}])
+    store.save_bank_accounts([*rows, {**rows[0], "code": "cad-op", "name": "B lower", "account_number": "2222222"}])
+
+    def kept() -> list[tuple[str, str, str]]:
+        return sorted((a["code"], a["name"], a["account_number"]) for a in store.bank_accounts())
+
+    assert store.save_bank_accounts([{**rows[0], "name": "Changed"}]) == {"added": 0, "updated": 1}
+    assert kept() == [("CAD-OP", "Changed", "1111111"), ("cad-op", "B lower", "2222222")]
+    page = upload(client, "/accounts/bank/upload", "b.csv", b"Code,Name\nCAD-OP,Imported\n")
+    data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in guessed(page.text).items()}}
+    follow(client, client.post("/accounts/bank/import", data=data, headers=PAGE))
+    assert kept() == [("CAD-OP", "Imported", "1111111"), ("cad-op", "B lower", "2222222")]
+    form = {"code": ["CAD-OP"], "name": ["Typed"], "currency": ["CAD"], "institution": [""], "transit": [""],
+            "account_number": [""], "gl_account": [""], "active": ["0"]}  # fmt: skip
+    follow(client, client.post("/accounts/bank/save", data=form, headers=PAGE))
+    assert kept() == [("CAD-OP", "Typed", "1111111"), ("cad-op", "B lower", "2222222")]
 
 
 def test_the_sample_vendor_master_is_imported_by_the_page_as_the_sample_loader_does(client, store, tmp_path):
@@ -918,6 +982,70 @@ def test_a_sheet_whose_first_row_is_its_column_names_is_read_as_before():
     assert list(df.columns)[:2] == ["Code", "Description"] and df["Code"].tolist() == ["CC100", "CC200"]
 
 
+def test_a_csv_whose_rows_end_with_a_delimiter_its_header_lacks_keeps_its_columns():
+    """B-2545: every data row ended with a comma the header line has not: pandas took the first column for the rows'
+    index and dropped it, so "Invoice" held the dates and "Amount" nothing, under names that still matched."""
+    from ap_coder.web.files import read_sheet
+
+    content = b"Invoice,Date,Amount\nINV-1,2026-09-01,100.00,\nINV-2,2026-09-05,50.00,\n"
+    df, _ = read_sheet("statement.csv", content)
+    assert list(df.columns) == ["Invoice", "Date", "Amount"]
+    assert df.values.tolist() == [["INV-1", "2026-09-01", "100.00"], ["INV-2", "2026-09-05", "50.00"]]
+
+
+@pytest.mark.parametrize(
+    ("url", "preface", "header", "row"),
+    [
+        ("/statements/upload", ["Statement date", "2026-09-30"], ["Invoice number", "Date", "Amount"],
+         ["INV-1", "2026-09-01", "100.00"]),
+        ("/purchase-orders/upload", ["Vendor", "Acme Ltd"], ["PO Number", "Description", "Amount"],
+         ["PO-9001", "Laptops", "2000"]),
+        ("/exports/register/upload", ["Company", "Fabrikam Canada"], ["Vendor", "Invoice number", "Date", "Total"],
+         ["Acme Ltd", "A-1", "2026-01-05", "100.00"]),
+    ],
+)  # fmt: skip
+def test_a_two_cell_line_above_the_column_names_is_not_taken_for_them(client, busy, url, preface, header, row):
+    """B-2546: a statement's "Statement date | 2026-09-30" (or "Vendor | Acme Ltd") under its title was taken for the
+    column names, the real ones a row of data: nothing was guessed and no column could be picked."""
+    data = {"vendor": busy.vendor_summaries()[0]["vendor_key"]} if url.startswith("/statements") else {}
+    content = xlsx([["Statement of account"], preface, [], header, row])
+    mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    page = follow(client, client.post(url, data=data, files={"file": ("s.xlsx", content, mime)}, headers=PAGE))
+    assert all(f'<option value="{name}" selected>' in page.text for name in header)
+    assert f'value="{preface[0]}"' not in page.text
+
+
+def test_an_old_excel_file_is_refused_saying_so(client, busy):
+    """B-2547: the import pages said a .xls was read, but an old Excel file (no reader for it is installed) was
+    refused as "empty, damaged or another format"; it is named, and the pages ask for .csv or .xlsx."""
+    from ap_coder.web.files import SheetError, read_sheet
+    from ap_coder.web.pages import learning
+
+    old = bytes.fromhex("D0CF11E0A1B11AE1") + b"\0" * 504
+    with pytest.raises(SheetError, match=r"older Excel file \(\.xls\)"):
+        read_sheet("statement.xls", old)
+    with pytest.raises(ValueError, match=r"older Excel file \(\.xls\)"):
+        learning.read_sheets("history.xls", old)
+    answer = client.post("/statements/upload", files={"file": ("s.xls", old, "application/vnd.ms-excel")}, headers=PAGE)
+    assert answer.status_code == 400 and "save it as Excel Workbook (.xlsx)" in answer.json()["error"]
+    for page in ("/statements", "/purchase-orders", "/vendors", "/accounts", "/exports", "/learning"):
+        assert "xlsx or .xls" not in client.get(page).text, page
+
+
+@pytest.mark.parametrize("sep", [",", "\t"])
+def test_a_utf16_csv_is_read_as_its_text(sep):
+    """B-2548: a CSV saved as UTF-16 (PowerShell's Out-File, Excel's "Unicode Text") was read as Windows-1252: its
+    byte-order mark and a NUL between every letter in each column name and cell, so no column matched."""
+    from ap_coder.web.files import read_sheet
+
+    text = "\r\n".join(sep.join(r) for r in [["Invoice", "Date", "Amount"], ["INV-1", "2026-09-01", "100.00"]])
+    for encoding in ("utf-16", "utf-16-be"):
+        content = (b"\xfe\xff" if encoding == "utf-16-be" else b"") + text.encode(encoding)
+        df, _ = read_sheet("statement.csv", content)
+        assert list(df.columns) == ["Invoice", "Date", "Amount"], encoding
+        assert df.values.tolist() == [["INV-1", "2026-09-01", "100.00"]], encoding
+
+
 def test_names_typed_in_are_cleaned_as_the_who_page_cleans_them(client, store):
     """B-1531: Settings → Review's "Your name" and the review screen's "Add new vendor" kept any length and control or
     format characters (a bell, a right-to-left override that shows an approver's name reversed in the audit trail);
@@ -995,3 +1123,119 @@ def test_with_a_chart_loaded_and_a_list_imported_too_the_page_counts_what_came_f
     form = page.text.split('id="pick-gl_accounts"', 1)[1].split("</form>", 1)[0]
     assert f"Those not in it are removed, though the chart of accounts loaded on JD Edwards files gives {gl:,}." in form
     assert f"files gives {gl:,} of the {gl + 2:,} GL accounts listed now" in form
+
+
+@pytest.mark.parametrize(
+    ("spec", "rows"),
+    [
+        ("STATEMENTS", [["Txn No.", "Posted On", "Txn Type", "Charge"], ["88231", "2026-09-01", "Invoice", "100.00"],
+                        ["88232", "2026-09-04", "Credit", "-20.00"]]),
+        ("STATEMENTS", [["N° pièce", "Émis le", "Nature", "Somme"], ["88231", "2026-09-01", "Facture", "100.00"],
+                        ["88232", "2026-09-04", "Facture", "20.00"]]),
+        ("PURCHASE_ORDERS", [["Ref", "Item", "Value", "Stage"], ["PO-9001", "Service", "2000.00", "Received"],
+                             ["PO-9002", "Laptops", "900.00", "Open"]]),
+        ("ERP_REGISTER", [["Entry", "Posted", "Kind", "Gross"], ["E1", "2026-01-05", "Invoice", "100.00"],
+                          ["E2", "2026-01-06", "Invoice", "50.00"]]),
+    ],
+)  # fmt: skip
+def test_a_data_cell_that_is_a_column_name_does_not_take_the_header(spec, rows):
+    """B-2546: with a page's spec given, a header none of whose names were known lost to the first data row when a
+    cell of it was a column's name ("Invoice" in a Type column): the real names and the first line were gone."""
+    from ap_coder.erp import import_specs
+    from ap_coder.web.files import read_sheet
+
+    for name, content in (("s.csv", "\n".join(",".join(r) for r in rows).encode()), ("s.xlsx", xlsx(rows))):
+        df, _ = read_sheet(name, content, specs=[getattr(import_specs, spec)])
+        assert list(df.columns) == rows[0] and df.values.tolist() == rows[1:], name
+
+
+@pytest.mark.parametrize("spec", ["STATEMENTS", "ERP_REGISTER"])
+@pytest.mark.parametrize("header", [["Invoice", "Foo", "Bar"], ["Invoice", "Date", "2025"]])
+def test_column_names_under_a_two_cell_line_are_taken_with_one_known_or_a_number(spec, header):
+    """B-2546: under a title and a "Statement date | 2026-09-30" line, column names with only one of the page's
+    ("Invoice | Foo | Bar") or a number among them ("Invoice | Date | 2025") were left a row of data, the two-cell
+    line taken for the names."""
+    from ap_coder.erp import import_specs
+    from ap_coder.web.files import read_sheet
+
+    content = xlsx([["Acme Ltd statement"], ["Statement date", "2026-09-30"], header, ["A1", "x", "y"]])
+    df, _ = read_sheet("s.xlsx", content, specs=[getattr(import_specs, spec)])
+    assert list(df.columns) == header and df.values.tolist() == [["A1", "x", "y"]]
+
+
+@pytest.mark.parametrize(
+    ("spec", "rows"),
+    [
+        ("ERP_REGISTER", [["Ref", "Memo", "", ""], ["Invoice", "A1", "100", "50"], ["Credit", "A2", "-20", "0"]]),
+        ("PURCHASE_ORDERS", [["Ref", "Memo", "", ""], ["PO-1", "Service", "2000", "Open"],
+                             ["PO-2", "Laptops", "900", "Open"]]),
+    ],
+)  # fmt: skip
+def test_names_of_two_cells_with_no_value_beside_them_keep_a_data_row_with_a_column_name(spec, rows):
+    """B-2546: names that fill two cells of a wider sheet ("Ref | Memo") are not a label and its value ("Statement
+    date | 2026-09-30"): a first data row holding one of the page's column names ("Invoice", "Service") and numbers was
+    taken for the names, and lost."""
+    from ap_coder.erp import import_specs
+    from ap_coder.web.files import read_sheet
+
+    df, _ = read_sheet("s.xlsx", xlsx(rows), specs=[getattr(import_specs, spec)])
+    assert list(df.columns) == ["Ref", "Memo", "Unnamed: 2", "Unnamed: 3"] and df.values.tolist() == rows[1:]
+
+
+def test_one_column_name_under_a_title_of_one_cell_is_taken_for_the_names():
+    """B-2546: under a title of one cell ("Acme Ltd statement"), a line holding only "Reference", one of the
+    statements page's column names, was taken for them before, and was left a row of data under the title."""
+    from ap_coder.erp import import_specs
+    from ap_coder.web.files import read_sheet
+
+    rows = [["Acme Ltd statement"], ["Reference"], ["Invoice", "A1", 100, 50]]
+    df, _ = read_sheet("s.xlsx", xlsx(rows), specs=[import_specs.STATEMENTS])
+    assert list(df.columns) == ["Reference", "Unnamed: 1", "Unnamed: 2", "Unnamed: 3"]
+    assert df.values.tolist() == [["Invoice", "A1", "100", "50"]]
+
+
+@pytest.mark.parametrize(("spec", "header"), [("STATEMENTS", ["Reference", "", "", ""]),
+                                              ("ERP_REGISTER", ["Reference", "", "", ""]),
+                                              ("STATEMENTS", ["Ref", "Memo"])])  # fmt: skip
+def test_names_of_one_or_two_cells_under_a_label_and_its_value_are_taken_for_the_names(spec, header):
+    """B-2546: under a title and a "Statement date | 2026-09-30" line, names of one or two cells ("Reference",
+    "Ref | Memo") in a wider sheet were left a row of data and the label line taken for the names, as they were not
+    before the fix."""
+    from ap_coder.erp import import_specs
+    from ap_coder.web.files import read_sheet
+
+    rows = [["Acme Ltd statement"], ["Statement date", "2026-09-30"], header, ["A1", "2026-09-01", 100, 100]]
+    df, _ = read_sheet("s.xlsx", xlsx(rows), specs=[getattr(import_specs, spec)])
+    assert [name for name in df.columns if not name.startswith("Unnamed:")] == [cell for cell in header if cell]
+    assert df.values.tolist() == [["A1", "2026-09-01", "100", "100"]]
+
+
+def test_a_statement_whose_column_names_are_not_known_keeps_them_to_pick_from(client, busy):
+    """B-2546, on the page: the column picker offers the statement's own names and the preview shows both lines."""
+    key = busy.vendor_summaries()[0]["vendor_key"]
+    content = b"Txn No.,Posted On,Txn Type,Charge\n88231,2026-09-01,Invoice,100.00\n88232,2026-09-04,Credit,-20.00\n"
+    page = follow(client, client.post("/statements/upload", data={"vendor": key},
+                                      files={"file": ("s.csv", content, "text/csv")}, headers=PAGE))  # fmt: skip
+    assert 'value="Txn No."' in page.text and 'value="Txn Type"' in page.text
+    assert 'value="88231"' not in page.text
+
+
+def test_a_row_with_more_cells_than_the_header_is_refused_not_cut():
+    """B-2545: an unquoted comma in a cell ("Acme, Inc.") gave the row a cell more than the header; with the extra
+    cell dropped, its amount was lost silently. Only an empty extra cell (a trailing delimiter) is dropped."""
+    from ap_coder.web.files import SheetError, read_sheet
+
+    content = b"Invoice,Vendor,Amount\n1001,Acme, Inc.,250.00\n1002,Acme,100.00\n"
+    with pytest.raises(SheetError, match="more cells than"):
+        read_sheet("statement.csv", content)
+
+
+@pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be"])
+def test_a_utf16_csv_without_its_mark_is_read_as_its_text(encoding):
+    """B-2548: UTF-16 with no byte-order mark decoded as UTF-8, a NUL between every letter, and no column matched."""
+    from ap_coder.web.files import read_sheet
+
+    content = "Invoice,Date,Amount\r\nINV-1,2026-09-01,100.00\r\n".encode(encoding)
+    df, _ = read_sheet("statement.csv", content)
+    assert list(df.columns) == ["Invoice", "Date", "Amount"]
+    assert df.values.tolist() == [["INV-1", "2026-09-01", "100.00"]]

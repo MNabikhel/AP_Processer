@@ -198,6 +198,13 @@ def _v26_indexes(store: Any, conn: sqlite3.Connection) -> None:
         conn.execute(sql)
 
 
+def _v28_journal_dates(store: Any, conn: sqlite3.Connection) -> None:
+    """Each journal loaded keeps how its G/L dates were read (``journal_files.dates_read``, B-2543): one loaded
+    before has none ('') and may have read a journal printed day first month first."""
+    if "dates_read" not in dialect.columns(conn, "journal_files"):
+        dialect.add_column(conn, "journal_files", "dates_read", "TEXT NOT NULL DEFAULT ''")
+
+
 # --- The steps whatever the version ---------------------------------------------------------------------------------
 
 
@@ -474,6 +481,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (EVERY_TIME, _register_search),
     (EVERY_TIME, _answer_work),
     (EVERY_TIME, _rule_use_since),
+    (28, _v28_journal_dates),
 )
 MIGRATIONS: dict[int, Step] = {number: step for number, step in STEPS if number is not EVERY_TIME}
 

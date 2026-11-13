@@ -19,13 +19,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from ..core import chart
 from ..core.store import Store
-from ..core.store.journal import supplier_key
+from ..core.store.journal import supplier_key, voucher_identity
 from ..core.tax_setup import RECOVERABLE
 from ..core.ui import plural
 from ..erp import journal as jr
@@ -156,7 +156,13 @@ def _accounts_said(store: Store, lines: list[jr.CodingLine]) -> list[str]:
                      for status, found in by_status.items()]  # fmt: skip
 
 
-def _kept_said(store: Store, journal: jr.Journal, learned: list[jr.CodingLine], same_file: bool) -> list[str]:
+def _kept_said(
+    store: Store,
+    journal: jr.Journal,
+    learned: list[jr.CodingLine],
+    same_file: bool,
+    otherwise: tuple[int, list[str]] | None,
+) -> list[str]:
     vouchers = {line.voucher_row for line in learned}
     affiliates = sum(1 for v in journal.vouchers if v.affiliate)
     unbalanced = sum(1 for v in journal.vouchers if not v.balanced and not v.affiliate)
@@ -170,10 +176,44 @@ def _kept_said(store: Store, journal: jr.Journal, learned: list[jr.CodingLine], 
     if already:
         said.append(f"{plural(already, 'voucher')} of this file {'is' if already == 1 else 'are'} there already "
                     "from a file loaded before: kept with this file too, never counted twice.")  # fmt: skip
+    if otherwise:
+        count, files = otherwise
+        one, them = count == 1, len(files) == 1
+        said.append(f"{plural(count, 'voucher')} of this file {'is' if one else 'are'} there already from "
+                    f"{'a journal' if them else 'journals'} loaded before this version of AP Coder, which read "
+                    f"{'its G/L date' if one else 'their G/L dates'} the other way round (month first), so "
+                    f"{'it' if one else 'they'} would be counted twice. Forget {' and '.join(files)} and load "
+                    f"{'it' if them else 'them'} again, then load this file.")  # fmt: skip
     return said
 
 
-def _brief(store: Store, journal: jr.Journal, learned: list[jr.CodingLine]) -> tuple[str, ...]:
+def _dated_otherwise(store: Store, journal: jr.Journal) -> tuple[int, list[str]] | None:
+    """(how many, the files: '"name" (journal id)') of a journal's vouchers read day first that are there already,
+    counted, with their G/L date read month first (03/04/2024 as 4 March), from a journal loaded before a file kept
+    how its dates were read (``dates_read``, B-2543), when every date was read month first: these would be counted
+    twice. A voucher there under its own date too is not one (the same voucher on 4 March and on 3 April). None when
+    there is none."""
+    if not journal.day_first:
+        return None
+    names = {f["id"]: f["name"] for f in store.journal_files() if not f["dates_read"]}
+    if not names:
+        return None
+    pairs = []
+    for voucher in journal.vouchers:
+        year, month, day = (voucher.gl_date or "--").split("-")
+        if day and int(day) <= 12 and day != month:
+            swapped = replace(voucher, gl_date=f"{year}-{day}-{month}")
+            pairs.append((voucher_identity(voucher), voucher_identity(swapped)))
+    held = store.journal_holding(identity for pair in pairs for identity in pair) if pairs else {}
+    found = [held[swapped] for own, swapped in pairs if own not in held and held.get(swapped) in names]
+    if not found:
+        return None
+    return len(found), [f'"{names[file_id]}" (journal {file_id})' for file_id in sorted(set(found))]
+
+
+def _brief(
+    store: Store, journal: jr.Journal, learned: list[jr.CodingLine], otherwise: tuple[int, list[str]] | None
+) -> tuple[str, ...]:
     """The summary in three lines, for a page to show above the rest: what was read (and whether it matches the
     report's own total), what will be learned from, and what to check (``said`` has each in full)."""
     totals = journal.totals
@@ -195,6 +235,11 @@ def _brief(store: Store, journal: jr.Journal, learned: list[jr.CodingLine]) -> t
     if unbalanced:
         check.append(f"{plural(unbalanced, 'voucher')} that {'does' if unbalanced == 1 else 'do'} not balance "
                      "(kept, not learned from)")  # fmt: skip
+    if otherwise:
+        count, files = otherwise
+        check.append(f"{' and '.join(files)}, loaded before this version of AP Coder, read {count} of these "
+                     f"vouchers' dates otherwise: forget {'it' if len(files) == 1 else 'them'} and load "
+                     f"{'it' if len(files) == 1 else 'them'} again first, or they are counted twice")  # fmt: skip
     known = {supplier_key(erp_id) for _, erp_id in store.master_vendor_ids() if supplier_key(erp_id)}
     if learned and not known:
         check.append("no supplier master is loaded to look the suppliers up in")
@@ -218,6 +263,11 @@ def _state(store: Store, digest: str, journal: jr.Journal, objects: dict[str, tu
     before = next((f for f in store.journal_files() if f["hash"] == digest), None)
     if before is not None:
         who = f" by {before['loaded_by']}" if before["loaded_by"] else ""
+        if otherwise := store.journal_read_otherwise(before["id"], journal):
+            return SAME_FILE, (f"This file is loaded already ({before['loaded_at'][:10]}{who}), but "
+                               f"{plural(otherwise, 'voucher')} of it {'reads' if otherwise == 1 else 'read'} "
+                               "otherwise now: AP Coder reads such files better than when it was loaded. Forget it "
+                               "and load it again to learn from it as it reads now.")  # fmt: skip
         return SAME_FILE, (f"This file is loaded already ({before['loaded_at'][:10]}{who}): there is nothing to "
                            "add. To load it again, with other objects for instance, forget it first.")  # fmt: skip
     if not journal.vouchers:
@@ -254,11 +304,13 @@ def look(store: Store, data: bytes, name: str, *, trade: Any = None, intercompan
         return Look(name, digest, None, none, (), REFUSED, str(exc))
     learned = jr.coding_lines(journal)
     state, problem = _state(store, digest, journal, objects)
+    otherwise = None if state == SAME_FILE else _dated_otherwise(store, journal)
     said = [f"{name}: JD Edwards' Transaction Journal (R09321).", *journal.notes, *taken,
-            *_kept_said(store, journal, learned, state == SAME_FILE)]  # fmt: skip
+            *_kept_said(store, journal, learned, state == SAME_FILE, otherwise)]  # fmt: skip
     if learned:
         said += [_suppliers_said(store, learned), *_accounts_said(store, learned)]
-    return Look(name, digest, journal, objects, tuple(said), state, problem, _brief(store, journal, learned))
+    brief = _brief(store, journal, learned, otherwise)
+    return Look(name, digest, journal, objects, tuple(said), state, problem, brief)
 
 
 def load(store: Store, data: bytes, name: str, *, trade: Any = None, intercompany: Any = None, tax: Any = None,
@@ -276,7 +328,8 @@ def load(store: Store, data: bytes, name: str, *, trade: Any = None, intercompan
         return seen.state, [*said, f"Not loaded: {seen.problem}"]
     try:
         result = store.import_journal(seen.journal, source_name=name, source_hash=seen.hash, actor=actor,
-                                      objects=seen.objects)  # fmt: skip
+                                      objects=seen.objects,
+                                      dates_read="day first" if seen.journal.day_first else "month first")  # fmt: skip
     except ValueError as exc:
         return REFUSED, [*said, f"Not loaded: {exc}"]
     store.save_journal_objects(**seen.objects, actor=actor)

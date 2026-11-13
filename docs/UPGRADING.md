@@ -117,6 +117,12 @@ connects to the internet (ONNX Runtime's own usage reports to Microsoft included
   update doesn't change the database's version), the older version opens the database as it is and keeps the
   triggers: then it refuses even the backups it makes itself afterwards. To restore one of them, update again and
   restore it from this version.
+- **Going back to a version from before schema 28 (November 2026) needs the backup the update made.** This version
+  keeps, for each Transaction Journal loaded, how its G/L dates were read (D-244). The first start of this version
+  on a database of schema 27 makes a backup of it once, `ap_coder-<date>-before-update-from-schema-27.db`, then
+  adds that to the database: an older AP Coder refuses the database from then on (*made by a newer AP Coder*), so
+  go back as below, with that backup. A journal loaded before the update keeps its dates as they were read then:
+  loaded again, or overlapped by another file, it says so, and to forget it and load it again.
 
 ## Going back to the previous version
 

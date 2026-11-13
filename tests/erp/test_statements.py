@@ -180,6 +180,38 @@ def test_a_statement_whose_dates_read_both_ways_still_lists_what_it_leaves_out()
     assert rec.period_unknown and rec.count(stm.NOT_ON_STATEMENT) == 0
 
 
+def test_a_statement_whose_dates_cannot_be_read_says_its_period_is_unknown():
+    """15-Sep-2026, 15.09.2026 or no date column at all: no period, so nothing can be listed Not on statement, and
+    the result says so rather than looking complete (B-2544)."""
+    invoices = [_inv(1, "A-1", 100.0, "2026-09-01"), _inv(2, "A-2", 200.0, "2026-09-12")]
+    for date in ("01-Sep-2026", "01.09.2026", "Sep 1, 2026", "01/09/26"):
+        records = [{"Invoice": "A-1", "Date": date, "Amount": "100.00"}]
+        rec = stm.reconcile(records, stm.map_columns(list(records[0])), invoices)
+        assert rec.dates_unread and not rec.period_unknown and rec.count(stm.NOT_ON_STATEMENT) == 0, date
+    records = [{"Invoice": "A-1", "Amount": "100.00"}]
+    assert stm.reconcile(records, stm.map_columns(list(records[0])), invoices).dates_unread
+    records = [{"Invoice": "A-1", "Date": "2026-09-01", "Amount": "100.00"},
+               {"Invoice": "A-3", "Date": "15-Sep-2026", "Amount": "5.00"}]  # fmt: skip
+    rec = stm.reconcile(records, stm.map_columns(list(records[0])), invoices)
+    assert not rec.dates_unread and not rec.period_unknown  # one date read: the period is known
+    assert not stm.reconcile([], {"number": "Invoice", "amount": "Amount"}, invoices).dates_unread
+
+
+def test_a_date_that_cannot_be_read_is_shown_as_written_and_the_csv_says_the_period_is_unknown():
+    """B-2544: an unread date showed cut to its first word ("1 sept. 2026" as "1"), and the downloaded CSV said
+    nothing of the period being unknown, so it looked complete."""
+    invoices = [_inv(1, "A-1", 100.0, "2026-09-01"), _inv(2, "A-2", 200.0, "2026-09-12")]
+    for date in ("1 sept. 2026", "1er septembre 2026", "September 1 2026"):
+        records = [{"Invoice": "A-1", "Date": date, "Amount": "100.00"}]
+        rec = stm.reconcile(records, stm.map_columns(list(records[0])), invoices)
+        assert [li.date for li in rec.lines] == [date], date
+        assert "dates could not be read" in stm.to_csv(rec).decode("utf-8-sig"), date
+    records = [{"Invoice": "A-1", "Date": "09/10/2026", "Amount": "100.00"}]
+    invoices = [_inv(1, "A-1", 100.0, "2026-08-01")]  # its own date tells neither order
+    rec = stm.reconcile(records, stm.map_columns(list(records[0])), invoices)
+    assert rec.period_unknown and "day or month first" in stm.to_csv(rec).decode("utf-8-sig")
+
+
 def _doc(i, number, date, total, status="approved", batch=None):
     return {**_inv(i, number, total, date, status), "export_batch": batch}
 

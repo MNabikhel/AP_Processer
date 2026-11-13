@@ -629,6 +629,16 @@ def test_a_statement_whose_period_cannot_be_told_says_so(client, busy):
     assert 'id="statement-period-unknown"' in page.text and "period unknown" in page.text
 
 
+def test_a_statement_whose_dates_cannot_be_read_says_its_period_is_unknown(client, busy):
+    """Dates written 01-Sep-2026: none reads, so the page says the invoices left out are not listed (B-2544)."""
+    key = busy.vendor_summaries()[0]["vendor_key"]
+    content = b"Invoice No,Date,Amount\nNOT-HELD-1,01-Sep-2026,10.00\nNOT-HELD-2,30-Sep-2026,20.00\n"
+    page = follow(client, client.post("/statements/upload", data={"vendor": key},
+                                      files={"file": ("s.csv", content, "text/csv")}, headers=PAGE))  # fmt: skip
+    assert 'id="statement-dates-unread"' in page.text and "period unknown" in page.text
+    assert 'id="statement-period-unknown"' not in page.text
+
+
 def test_an_open_items_statement_counts_the_invoices_exported_instead_of_listing_them(client, busy):
     """D-242: ticked on the upload, the choice stays through the page (the Reconcile form, the CSV, another file):
     the vendor's exported invoice is counted in one line, not listed Not on statement; unticked, it is listed."""
@@ -708,8 +718,11 @@ def test_a_statement_from_excel_with_two_sheets(client, busy):
             headers=PAGE,
         ),
     )
-    assert 'name="sheet" data-autosubmit' in page.text and "Nothing here" in page.text
+    # The sheet that is a statement opens first (its columns looked for, B-2546); the other can still be picked.
+    assert 'name="sheet" data-autosubmit' in page.text and "Matched" in page.text
     token = page.url.params["file"]
+    text = client.get("/statements", params={"vendor": key, "file": token, "sheet": "Notes"}).text
+    assert "Nothing here" in text and "Matched" not in text
     text = client.get("/statements", params={"vendor": key, "file": token, "sheet": "Statement"}).text
     assert "Matched" in text
 

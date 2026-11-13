@@ -467,3 +467,19 @@ def test_an_iso_date_with_its_time_is_a_date():
     day into the hour, so the date ended nowhere."""
     assert parse_date("2026-10-20T00:00:00") == "2026-10-20"
     assert parse_date("Invoice Date: 2026-10-20T14:05:09Z") == "2026-10-20"
+
+
+def test_a_french_printed_received_or_service_date_is_not_the_invoice_date_beside_a_bare_date(tmp_path):
+    """B-2536: beside a bare "Date 2026-10-05", "Date d'impression" (or reçue, de service, de paiement, de début...)
+    was the longer label, so its date became the invoice date, as "Date printed" never did."""
+    for decoy in ("Date d'impression", "Date d’impression", "Date de réception", "Date reçue", "Date de service",
+                  "Date de paiement", "Date de début", "Date de fin", "Date d'effet", "Date required",
+                  "Date of last payment"):  # fmt: skip
+        for first in (True, False):
+            rows = [("Date", "2026-10-05"), (decoy, "2026-10-15")]
+            rows = rows if first else rows[::-1]
+            items = [(40, 50, "Les Entreprises Tremblay Ltée"), (40, 80, "Facture no"), (150, 80, "F-7788"),
+                     (40, 110, rows[0][0]), (150, 110, rows[0][1]), (40, 126, rows[1][0]), (150, 126, rows[1][1]),
+                     (350, 300, "Total"), (480, 300, "50.00")]  # fmt: skip
+            got = _read(_pdf(tmp_path, items, name="decoy.pdf")).fields["invoice_date"].value
+            assert got == "2026-10-05", (decoy, first, got)

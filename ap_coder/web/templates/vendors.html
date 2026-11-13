@@ -51,7 +51,7 @@
   </form>
   {% endif %}
   {% elif can("/vendors/master/upload") %}{# server mode: the vendor master is an Admin's (D-98) #}
-  {{ imp.file_box("/vendors/master/upload", vendor_spec.accept, "The vendor list, a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…") }}
+  {{ imp.file_box("/vendors/master/upload", vendor_spec.accept, "The vendor list, a CSV or Excel file (.csv or .xlsx)", "Reading…") }}
   {% else %}
   <p class="muted">{{ imp.done_by("An Admin loads the vendor master.", "The vendor master is loaded") }}</p>
   {% endif %}

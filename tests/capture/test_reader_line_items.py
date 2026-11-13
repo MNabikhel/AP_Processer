@@ -346,3 +346,36 @@ def test_a_number_that_starts_a_description_is_kept_where_no_row_number_is_print
     assert _read(licence) == [("1 year licence", 1.0, 900.0, 900.0)]
     unnumbered = _words(*NUMBERED_HEADINGS, *_numbered(0.24, "", "1 year licence", "1", "900.00", "900.00")[1:])
     assert _read(unnumbered) == [("1 year licence", 1.0, 900.0, 900.0)]
+
+
+def test_an_item_whose_description_starts_with_a_totals_word_is_a_line():
+    """B-2538: "Total Station survey rental | 2 | 250.00 | 500.00" ended the table there (its first word a total's
+    label), so its lines and those under it were dropped; a totals row under the lines still ends them. A row named
+    "Subtotal ..." is still left out as a page's subtotal, but no longer drops the lines under it."""
+    items = [("Widget", "1", "100.00", "100.00"), ("Gadget", "1", "50.00", "50.00"), ("Bracket", "2", "25.00", "50.00")]
+    for named in ("Total Station survey rental", "Subtotal Systems licence", "Amount Due collections software"):
+        for at in (0, 1, 3):
+            rows = [*items[:at], (named, "2", "250.00", "500.00"), *items[at:]]
+            cells = [c for i, r in enumerate(rows) for c in _row(0.24 + 0.03 * i, *r)]
+            totals = [("Total hours", 0.10, 0.20, 0.40), ("4", 0.56, 0.568, 0.40), ("700.00", 0.85, 0.90, 0.40),
+                      ("Subtotal", 0.60, 0.68, 0.43), ("700.00", 0.85, 0.90, 0.43)]  # fmt: skip
+            got = [a for *_r, a in _read(_words(*HEADINGS, *cells, *totals))]
+            want = [float(r[3]) for r in (items if named.startswith("Subtotal") else rows)]
+            assert got == want, (named, at, got)
+
+
+def test_a_totals_row_with_a_quantity_or_three_figures_still_ends_the_lines():
+    """B-2538: a totals row named with more words and two figures or more beside it ("Total Units | 4 |
+    200.00", "Total Current Charges | 200.00 | 10.00 | 210.00") read as one more line, the table's total again. An
+    item named with a total's word is priced as the lines are: its quantity times its price is its amount."""
+    items = [("Widget", "1", "100.00", "100.00"), ("Gadget", "1", "50.00", "50.00"), ("Bracket", "2", "25.00", "50.00")]
+    cells = [c for i, r in enumerate(items) for c in _row(0.24 + 0.03 * i, *r)]
+    rows = {"Total Units": [("4", 0.56, 0.58), ("200.00", 0.84, 0.90)],
+            "Total pieces": [("4", 0.56, 0.58), ("200.00", 0.84, 0.90)],
+            "Total Services Rendered": [("4", 0.56, 0.58), ("35.00", 0.70, 0.76), ("200.00", 0.84, 0.90)],
+            "Total Current Charges": [("200.00", 0.60, 0.66), ("10.00", 0.70, 0.76), ("210.00", 0.84, 0.90)],
+            }  # fmt: skip
+    for label, figures in rows.items():
+        totals = [(label, 0.10, 0.10 + 0.008 * len(label), 0.36), *((t, a, b, 0.36) for t, a, b in figures)]
+        got = [a for *_r, a in _read(_words(*HEADINGS, *cells, *totals))]
+        assert got == [100.0, 50.0, 50.0], (label, got)

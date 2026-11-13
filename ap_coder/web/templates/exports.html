@@ -169,7 +169,7 @@
     </div>
   </form>
   {% else %}
-  {{ imp.file_box("/exports/register/upload", register_spec.accept, "The list of " ~ register_name[:1] | lower ~ register_name[1:] ~ ", a CSV or Excel file (.csv, .xlsx or .xls)", "Reading…") }}
+  {{ imp.file_box("/exports/register/upload", register_spec.accept, "The list of " ~ register_name[:1] | lower ~ register_name[1:] ~ ", a CSV or Excel file (.csv or .xlsx)", "Reading…") }}
   {% endif %}
   {% if register_count %}
   <form method="post" action="/exports/register/clear" data-confirm="Clear the {{ register_count | plural('invoice') }} of “{{ register_name }}”? Invoices are then no longer checked against them.">

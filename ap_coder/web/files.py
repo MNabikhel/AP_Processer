@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import io
 import re
+import warnings
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -45,6 +46,14 @@ HEADER_ROWS = 10  # the rows a report's column names are looked for in, under it
 CANNOT_READ = (
     "This file could not be read as a spreadsheet: it may be empty, damaged or another format. In Excel, save it as "
     "CSV UTF-8 or Excel Workbook (.xlsx) and upload it again."
+)
+OLD_XLS = (
+    "This is an older Excel file (.xls), or a workbook with a password, which AP Coder cannot read. In Excel, save it "
+    "as Excel Workbook (.xlsx) or CSV UTF-8 and upload it again."
+)
+MORE_CELLS = (
+    "A row of this file has more cells than its column names: most often a comma in a cell that is not in quotes "
+    '("Acme, Inc."). In Excel, save it as CSV UTF-8 and upload it again.'
 )
 NOT_A_SHEET = "Upload a CSV or Excel file (.csv or .xlsx)."
 EMPTY = "This file is empty: it has no column names and no rows. Export the list again and upload the file it saved."
@@ -209,11 +218,12 @@ def read_excel(content: bytes, sheet_name: int | None = None) -> Any:
 
 
 def read_csv(content: bytes) -> pd.DataFrame:
-    """An uploaded CSV as text cells, as every page reads one: UTF-8 (with or without its mark) or Windows-1252
-    (Excel's "CSV"), its delimiter found from several lines (``sniff_delimiter``: a semicolon file whose header has a
-    comma in a cell too, B-1400). Raises SheetError when it is neither encoding; pandas' own error for a file that
-    is no CSV."""
-    for encoding in ("utf-8-sig", "cp1252"):
+    """An uploaded CSV as text cells, as every page reads one: UTF-8 (with or without its mark), Windows-1252
+    (Excel's "CSV") or UTF-16 (PowerShell's Out-File, Excel's "Unicode Text": by its mark, or by the NUL beside each
+    letter of a file without it, B-2548), its delimiter found from several lines (``sniff_delimiter``: a semicolon
+    file whose header has a comma in a cell too, B-1400). Raises SheetError when it is no such encoding, or a row has
+    a cell more than the header that is not empty (B-2545); pandas' own error for a file that is no CSV."""
+    for encoding in _encodings(content):
         try:
             text = content.decode(encoding)
         except UnicodeDecodeError:
@@ -223,8 +233,29 @@ def read_csv(content: bytes) -> pd.DataFrame:
         columns = _header_cells(text, sep)
         if columns > MAX_COLUMNS:
             raise SheetError(too_wide(columns))
-        return pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False, sep=sep, engine="python")
+        # index_col=False: rows ending with a delimiter the header line lacks keep their first column (B-2545);
+        # pandas only warns when it drops an extra cell that is not empty ("Acme, Inc." unquoted), so it is refused
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", pd.errors.ParserWarning)
+            try:
+                return pd.read_csv(
+                    io.StringIO(text), dtype=str, keep_default_na=False, sep=sep, engine="python", index_col=False
+                )
+            except pd.errors.ParserWarning as exc:
+                raise SheetError(MORE_CELLS) from exc
     raise SheetError("Could not read this file. In Excel, use Save As → CSV UTF-8 and upload it again.")
+
+
+def _encodings(content: bytes) -> tuple[str, ...]:
+    """The encodings a CSV is tried in: UTF-16 by its mark, or without it when a NUL is beside every other byte
+    (text as UTF-8 or Windows-1252 has none), else UTF-8 then Windows-1252."""
+    if content.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return ("utf-16",)
+    if content[1::2].count(0) * 2 > len(content) // 2:
+        return ("utf-16-le",)
+    if content[::2].count(0) * 2 > len(content) // 2:
+        return ("utf-16-be",)
+    return ("utf-8-sig", "cp1252")
 
 
 _SEPARATORS = (",", ";", "\t", "|")
@@ -329,10 +360,18 @@ def read_sheet(name: str, content: bytes, sheet: str | None = None,
     except SheetError:
         raise
     except Exception as exc:  # noqa: BLE001 - empty file, not really a spreadsheet, damaged workbook...
-        raise SheetError(CANNOT_READ) from exc
+        raise SheetError(cannot_read(content)) from exc
     if not _filled(df):
         raise SheetError(EMPTY)
     return df, names
+
+
+def cannot_read(content: bytes) -> str:
+    """Why a file no reader could read was refused: an old Excel file (.xls) by name, as no reader of one is
+    installed (B-2547), else ``CANNOT_READ``."""
+    from ap_coder.core.chart_file import OLD_EXCEL
+
+    return OLD_XLS if content.startswith(OLD_EXCEL) else CANNOT_READ
 
 
 def _long_report(name: str, content: bytes, sheet: str | None) -> tuple[pd.DataFrame, list[str]]:
@@ -392,8 +431,9 @@ def _named_row(df: pd.DataFrame, specs: Sequence[ImportSpec]) -> pd.DataFrame:
     beside its title is a second cell, B-2273), as it is without ``specs``."""
     if not specs:
         return df
-    at = import_specs.header_row(first_rows(df), specs)
-    if not at:
+    rows = first_rows(df)
+    at = import_specs.header_row(rows, specs)
+    if not at or not (_whole(pd.DataFrame(columns=rows[at]), specs) or _more_names(rows[at], rows[0], specs)):
         return df
     names: list[str] = []
     for j, cell in enumerate(str(v).strip() for v in df.iloc[at - 1].tolist()):
@@ -404,6 +444,25 @@ def _named_row(df: pd.DataFrame, specs: Sequence[ImportSpec]) -> pd.DataFrame:
     out = df.iloc[at:].reset_index(drop=True)
     out.columns = names
     return out
+
+
+def _more_names(row: Sequence[Any], columns: Sequence[Any], specs: Sequence[ImportSpec]) -> bool:
+    """Whether a row that is none of ``specs`` whole is still their column names rather than a line of data (whose
+    "Invoice" in a Type column is a column's name too, B-2546): more of their columns than the columns named now;
+    otherwise two or more and no cell a number. Names of one cell (a title), or of two whose second holds a figure (a
+    label and its value: "Statement date | 2026-09-30", whatever the row's width), are a line under a title: one of
+    their columns is enough ("Reference" alone, or "Ref | Memo", under that line), and a number may be a name
+    ("Invoice | Date | 2025"); names of two cells with no figure ("Ref | Memo") are names."""
+    found = [max(len(import_specs.check(spec, cells).found) for spec in specs) for cells in (row, columns)]
+    filled = [[str(cell).strip() for cell in cells if str(cell).strip() and not str(cell).startswith("Unnamed:")]
+              for cells in (row, columns)]  # fmt: skip
+    if found[0] <= found[1]:
+        return False
+    label = len(filled[1]) == 2 and any(ch.isdigit() for ch in filled[1][1])
+    if len(filled[1]) <= 1 or label:
+        return True
+    numbers = any(_NUMBER_LIKE.fullmatch(str(cell).strip()) for cell in row if str(cell).strip())
+    return found[0] >= 2 and not numbers
 
 
 def _whole(df: pd.DataFrame, specs: Sequence[ImportSpec]) -> bool:
