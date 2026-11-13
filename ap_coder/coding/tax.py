@@ -866,22 +866,8 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
 # them (Quebec's QST Act does the same for the QST input tax refunds). PST is never recoverable: nothing to halve.
 MEALS_RESTRICTED = ("GST", "HST", "QST")
 MEALS_NOTE = "Meals: 50% of the {taxes} is claimable. Billed to a client or a staff event? Use the other account."
-# A tip or gratuity line: a voluntary tip is not taxed, so none of the tax printed is on it. A tip word anywhere makes
-# one, unless a bought thing's word is beside or near it (five words either way): "Excel tips workshop", "Pipette tips
-# for lab", "Tip fee at landfill", "Tip jar", "Thank you cards", "Merci Boutique", or, for "gratuité", what is free
-# ("Livraison gratuite", "Gratuité du stationnement") are not tips (B-2540).
+# A tip or gratuity line: a voluntary tip is not taxed, so none of the tax printed is on it.
 _TIP = re.compile(r"\b(tips?|gratuit(?:y|ies|[ée]s?)|pourboires?|thank\s*you|merci)\b", re.I)
-_BOUGHT = re.compile(
-    r"(?i)\b(?:workshops?|seminars?|courses?|class(?:es)?|(?:tips?|tricks)\s+guides?|guides?\s+d[eu]s?|books?|booklets?"
-    r"|handbooks?|manuals?|tricks|cards|cartes|set(?!\s+(?:at|to)\b)|kits?|pipettes?|pens?|pencils?|markers?|nibs?"
-    r"|drills?|bits?|soldering|nozzles?|sprayers?|filters?|torch(?:es)?|screwdrivers?|landfill|dumpsters?|dump|waste"
-    r"|transfer\s+station|fee\s+at|boutique|gifts?|baskets?|tips?\s+top|jars?(?!\s+donation)|trays?|box(?:es)?|bag"
-    r"|envelopes?|holders?|stand|machines?|readers?|software|calculator|training|polish|nail\s+tips|q-tips|tips?-off"
-    r"|replacement|rack|maintenance|upgrade|cooling|admin|update|license|renewal|file|printer|cartridges?|editor"
-    r"|page|subscription|sheets?|printing|wrap|film|rental|loads|consulting|calendar|filing|daycare|excel|beginners"
-    r"|supplies|free|sign|poster|conseils|thank\s*you\s+(?:lunch|dinner|breakfast|notes?))\b"
-)
-_FREE = re.compile(r"(?i)\b(?:livraison|stationnement|enfants|partir)\b")
 
 
 def meals_note(province: str) -> str:
@@ -941,14 +927,7 @@ def _lines_of_its_rate(lines: list[Any], tax_line: Any, tax_lines: Any) -> list[
 
 
 def is_tip(line: Any) -> bool:
-    text = str(getattr(line, "description", "") or "")
-    for found in _TIP.finditer(text):
-        before = re.search(r"(?:\S+\s+){0,5}\S*$", text[: found.start()]).group()
-        near = before + found.group() + re.match(r"\S*(?:\s+\S+){0,5}", text[found.end() :]).group()
-        free = found.group().lower().startswith("gratuit") and _FREE.search(near)
-        if not (_BOUGHT.search(near) or free):
-            return True
-    return False
+    return bool(_TIP.search(str(getattr(line, "description", "") or "")))
 
 
 def meals_parts(lines: list[Any], tax_line: Any, meals_gl_codes: Any, places: int = 2,
