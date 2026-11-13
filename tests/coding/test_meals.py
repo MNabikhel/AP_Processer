@@ -437,6 +437,30 @@ def test_a_tip_after_the_service_it_is_for_or_given_to_a_person_is_a_tip():
     assert _split(dist) == ([(MEALS, 6.50, 106.50), ("6900", 0.0, 15.0)], [("2310", 6.50)])
 
 
+def test_a_tip_word_is_a_tip_unless_a_bought_things_word_is_near_it():
+    """B-2540: a tip for a person or a meal is a tip whatever words are around it ("Dinner tip for Mike", "Hotel tip
+    for the maid", "Souper pourboire pour Marie", "Thank you for visiting"), as before the fix; a tip word beside or
+    near a bought thing's word ("Tip fee at transfer station", "Tip jar", "Tip Top Cleaners") is a purchase."""
+    from types import SimpleNamespace
+
+    from ap_coder.coding.tax import is_tip
+
+    tips = ("Dinner tip for Mike", "Hotel tip for the maid", "Christmas tip for Joe", "Souper pourboire pour Marie",
+            "Thank you for visiting", "Tip for tour guide", "Guide tip for Maria", "Card tip for server",
+            "Delivery fee and tip", "Tip for bags", "Tip jar donation", "Nail tip for technician", "Gratuité de 18%",
+            "Gratuité pour le personnel", "Livraison pourboire au livreur", "Merci beaucoup pour votre pourboire",
+            "Tip paid by card", "Ski lift ticket and tip for instructor", "Gratuity on 100.00")  # fmt: skip
+    assert [text for text in tips if not is_tip(SimpleNamespace(description=text))] == []
+    words = ("Tips and tricks guide", "Your tips guide", "Guide des pourboires", "Pen tips", "Tip Top Cleaners",
+             "Tip jar", "Tip trays for restaurant", "Tip fee at transfer station", "Tip for load at the landfill",
+             "Dumpster tip fee", "Q-tips for office", "Nail tips for salon", "Delivery tip bag", "Cash tip box",
+             "Gratuity-free", "Thank you gift basket", "Gratuité du stationnement", "Gratuité de la livraison",
+             "Cartes de gratuité", "Tip for the server rack", "Tip calculator software")  # fmt: skip
+    assert [text for text in words if is_tip(SimpleNamespace(description=text))] == []
+    dist = _dist(_on([(100.0, MEALS, "Dinner for 4"), (15.0, "6900", "Dinner tip for Mike")], 13.0))
+    assert _split(dist) == ([(MEALS, 6.50, 106.50), ("6900", 0.0, 15.0)], [("2310", 6.50)])
+
+
 def test_the_excel_and_csv_lines_carry_the_meals_half():
     inv = _jde_invoice()
     rows = exports.line_rows([inv])

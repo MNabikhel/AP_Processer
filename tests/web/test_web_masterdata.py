@@ -1194,6 +1194,22 @@ def test_one_column_name_under_a_title_of_one_cell_is_taken_for_the_names():
     assert df.values.tolist() == [["Invoice", "A1", "100", "50"]]
 
 
+@pytest.mark.parametrize(("spec", "header"), [("STATEMENTS", ["Reference", "", "", ""]),
+                                              ("ERP_REGISTER", ["Reference", "", "", ""]),
+                                              ("STATEMENTS", ["Ref", "Memo"])])  # fmt: skip
+def test_names_of_one_or_two_cells_under_a_label_and_its_value_are_taken_for_the_names(spec, header):
+    """B-2546: under a title and a "Statement date | 2026-09-30" line, names of one or two cells ("Reference",
+    "Ref | Memo") in a wider sheet were left a row of data and the label line taken for the names, as they were not
+    before the fix."""
+    from ap_coder.erp import import_specs
+    from ap_coder.web.files import read_sheet
+
+    rows = [["Acme Ltd statement"], ["Statement date", "2026-09-30"], header, ["A1", "2026-09-01", 100, 100]]
+    df, _ = read_sheet("s.xlsx", xlsx(rows), specs=[getattr(import_specs, spec)])
+    assert [name for name in df.columns if not name.startswith("Unnamed:")] == [cell for cell in header if cell]
+    assert df.values.tolist() == [["A1", "2026-09-01", "100", "100"]]
+
+
 def test_a_statement_whose_column_names_are_not_known_keeps_them_to_pick_from(client, busy):
     """B-2546, on the page: the column picker offers the statement's own names and the preview shows both lines."""
     key = busy.vendor_summaries()[0]["vendor_key"]

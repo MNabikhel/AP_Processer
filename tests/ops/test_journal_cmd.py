@@ -185,6 +185,26 @@ def test_a_journal_loaded_by_this_version_is_never_said_to_read_its_dates_otherw
     assert not any("this version" in line for line in (*seen.said, *seen.brief))
 
 
+def test_a_month_first_journal_does_not_count_the_files_loaded_before(tmp_path, truth, monkeypatch):
+    """B-2543: only a journal read day first can overlap one loaded before that read its dates otherwise, so a month
+    first one does not list the files loaded (a count of each one's vouchers) again to look: once, for the same
+    file loaded already."""
+    store = _store(tmp_path)
+    data = jde_exports.journal_csv(truth)
+    assert journal_cmd.load(store, data, "R09321.csv")[0] == journal_cmd.DONE
+    listed, files = [], store.journal_files
+
+    def counted():
+        listed.append(1)
+        return files()
+
+    monkeypatch.setattr(store, "journal_files", counted)
+    seen = journal_cmd.look(store, jde_exports.journal_csv(replace(truth, vouchers=truth.vouchers[:40])), "May.csv")
+    assert not seen.journal.day_first
+    assert len(listed) == 1
+    assert not any("this version" in line for line in (*seen.said, *seen.brief))
+
+
 def test_two_files_that_overlap_say_how_many_vouchers_were_there(tmp_path, capsys, truth):
     first = _file(tmp_path, replace(truth, vouchers=truth.vouchers[:80]), "to August.csv")
     second = _file(tmp_path, replace(truth, vouchers=truth.vouchers[40:]), "from May.csv")

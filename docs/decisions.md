@@ -5906,3 +5906,15 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     refuses a signed-in laptop folder (its D-211 doesn't know the setting): `--without-sign-in` at every start.
   - **Left out:** more than one account and a Users page on the laptop, a Settings switch, choosing another
     username than admin, admin / admin through `share` (its console still asks), the browser path behind `--proxy`.
+- **D-244** · **Each Transaction Journal loaded keeps how its G/L dates were read: schema 28**
+  (`journal_files.dates_read`, `core/store/migrations.py` `_v28_journal_dates`, `ops/journal_cmd.py`
+  `_dated_otherwise`; B-2543; 13 Nov 2026).
+  - **Why:** a journal printed day first had its dates that read two ways read month first (03/04/2026 as 4 March).
+    Its dates are now read in the file's own order, so a journal loaded before may hold the same vouchers on other
+    dates. Which journal that can be is a fact the file keeps ("day first", "month first"; '' for one loaded before
+    this version), not a guess from its vouchers: only a file with none is named, to forget and load again, and only
+    when the journal looked at is read day first (a month-first one is read as before and lists no files to look).
+  - **Schema 28:** the column `dates_read` of `journal_files`, added by `_v28_journal_dates` to a database of schema
+    27 and made by `_SCHEMA` in a new one. Going back: the first start of this version makes the before-update backup
+    once (`ap_coder-<date>-before-update-from-schema-27.db`); an older version then refuses the database
+    (`DatabaseTooNew`), and `server-update --back` (or the steps of `docs/UPGRADING.md`) puts that backup back.

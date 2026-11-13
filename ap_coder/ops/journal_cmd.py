@@ -193,8 +193,10 @@ def _dated_otherwise(store: Store, journal: jr.Journal) -> tuple[int, list[str]]
     how its dates were read (``dates_read``, B-2543), when every date was read month first: these would be counted
     twice. A voucher there under its own date too is not one (the same voucher on 4 March and on 3 April). None when
     there is none."""
+    if not journal.day_first:
+        return None
     names = {f["id"]: f["name"] for f in store.journal_files() if not f["dates_read"]}
-    if not journal.day_first or not names:
+    if not names:
         return None
     pairs = []
     for voucher in journal.vouchers:

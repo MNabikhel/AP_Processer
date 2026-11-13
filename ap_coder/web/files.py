@@ -450,15 +450,15 @@ def _more_names(row: Sequence[Any], columns: Sequence[Any], specs: Sequence[Impo
     """Whether a row that is none of ``specs`` whole is still their column names rather than a line of data (whose
     "Invoice" in a Type column is a column's name too, B-2546): more of their columns than the columns named now;
     otherwise two or more and no cell a number. Names of one cell (a title), or of two whose second holds a figure (a
-    label and its value: "Statement date | 2026-09-30") fewer than the row's, are a line under a title: one of their
-    columns is enough ("Reference" alone under a title), and a number may be a name ("Invoice | Date | 2025");
-    "Ref | Memo" are names."""
+    label and its value: "Statement date | 2026-09-30", whatever the row's width), are a line under a title: one of
+    their columns is enough ("Reference" alone, or "Ref | Memo", under that line), and a number may be a name
+    ("Invoice | Date | 2025"); names of two cells with no figure ("Ref | Memo") are names."""
     found = [max(len(import_specs.check(spec, cells).found) for spec in specs) for cells in (row, columns)]
     filled = [[str(cell).strip() for cell in cells if str(cell).strip() and not str(cell).startswith("Unnamed:")]
               for cells in (row, columns)]  # fmt: skip
     if found[0] <= found[1]:
         return False
-    label = len(filled[1]) == 2 < len(filled[0]) and any(ch.isdigit() for ch in filled[1][1])
+    label = len(filled[1]) == 2 and any(ch.isdigit() for ch in filled[1][1])
     if len(filled[1]) <= 1 or label:
         return True
     numbers = any(_NUMBER_LIKE.fullmatch(str(cell).strip()) for cell in row if str(cell).strip())
