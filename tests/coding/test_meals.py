@@ -381,7 +381,7 @@ def test_a_tip_line_with_more_words_is_still_a_tip():
 
 def test_a_tip_word_in_the_middle_of_a_tip_line_is_still_a_tip():
     """B-2540: a tip word followed by who or what it is for ("Cash tip for Maria", "Included gratuity at 15%") is a
-    tip, as one that opens or ends the line is; one followed by another noun ("Excel tips workshop") is not."""
+    tip, as one that opens or ends the line is; one beside a bought thing's word ("Excel tips workshop") is not."""
     from types import SimpleNamespace
 
     from ap_coder.coding.tax import is_tip
@@ -449,7 +449,8 @@ def test_a_tip_word_is_a_tip_unless_a_bought_things_word_is_near_it():
             "Thank you for visiting", "Tip for tour guide", "Guide tip for Maria", "Card tip for server",
             "Delivery fee and tip", "Tip for bags", "Tip jar donation", "Nail tip for technician", "Gratuité de 18%",
             "Gratuité pour le personnel", "Livraison pourboire au livreur", "Merci beaucoup pour votre pourboire",
-            "Tip paid by card", "Ski lift ticket and tip for instructor", "Gratuity on 100.00")  # fmt: skip
+            "Tip paid by card", "Ski lift ticket and tip for instructor", "Gratuity on 100.00",
+            "Gratuity set at 18%", "Tip set to 15%")  # fmt: skip
     assert [text for text in tips if not is_tip(SimpleNamespace(description=text))] == []
     words = ("Tips and tricks guide", "Your tips guide", "Guide des pourboires", "Pen tips", "Tip Top Cleaners",
              "Tip jar", "Tip trays for restaurant", "Tip fee at transfer station", "Tip for load at the landfill",

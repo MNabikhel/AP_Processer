@@ -873,8 +873,8 @@ MEALS_NOTE = "Meals: 50% of the {taxes} is claimable. Billed to a client or a st
 _TIP = re.compile(r"\b(tips?|gratuit(?:y|ies|[ée]s?)|pourboires?|thank\s*you|merci)\b", re.I)
 _BOUGHT = re.compile(
     r"(?i)\b(?:workshops?|seminars?|courses?|class(?:es)?|(?:tips?|tricks)\s+guides?|guides?\s+d[eu]s?|books?|booklets?"
-    r"|handbooks?|manuals?|tricks|cards|cartes|set|kits?|pipettes?|pens?|pencils?|markers?|nibs?|drills?|bits?"
-    r"|soldering|nozzles?|sprayers?|filters?|torch(?:es)?|screwdrivers?|landfill|dumpsters?|dump|waste"
+    r"|handbooks?|manuals?|tricks|cards|cartes|set(?!\s+(?:at|to)\b)|kits?|pipettes?|pens?|pencils?|markers?|nibs?"
+    r"|drills?|bits?|soldering|nozzles?|sprayers?|filters?|torch(?:es)?|screwdrivers?|landfill|dumpsters?|dump|waste"
     r"|transfer\s+station|fee\s+at|boutique|gifts?|baskets?|tips?\s+top|jars?(?!\s+donation)|trays?|box(?:es)?|bag"
     r"|envelopes?|holders?|stand|machines?|readers?|software|calculator|training|polish|nail\s+tips|q-tips|tips?-off"
     r"|replacement|rack|maintenance|upgrade|cooling|admin|update|license|renewal|file|printer|cartridges?|editor"
