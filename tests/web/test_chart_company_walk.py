@@ -28,9 +28,9 @@ from tests.webclient import PAGE, client_for, follow, post
 NEW_NUMBER = "99001"  # the new supplier's JD Edwards address number, once it is set up
 TAX_WORDS = {"quebec": "GST + QST", "usd_new_supplier": "No tax charged"}  # each line's tax code as shown; else GST
 # Why a line is left for a person (``suggest.why_left``, D-212), as the line says it.
-SEVERAL = "This supplier's {lines} lines last year went to {accounts} accounts: {shares}: pick the account."
-TOO_FEW = "Only {counted} last year went to {account}: too few to code it alone: pick the account."
-NEW_SUPPLIER = "A new supplier: not in last year's journal: pick the account."
+SEVERAL = "This supplier's {lines} lines posted in JD Edwards went to {accounts} accounts: {shares}: pick the account."
+TOO_FEW = "Only {counted} posted in JD Edwards went to {account}: too few to code it alone: pick the account."
+NEW_SUPPLIER = "A new supplier: not in the past invoice coding: pick the account."
 PICK = "Pick a GL account for {lines} and a cost center for {lines} to approve"  # why Approve is closed
 
 
@@ -166,7 +166,7 @@ def test_an_invoice_of_a_supplier_always_coded_to_one_account_arrives_coded_and_
     invoice, page, stored = _arrived(chart_company, chart_company_client, name)
     assert _last_year(chart_company.truth, invoice.supplier) == [invoice.parts[0].account] * lines
     assert [row.account for row in page.lines] == [line.parts[0].account for line in invoice.lines]
-    counted = f"{lines} of this supplier's {lines} lines last year"
+    counted = f"{lines} of this supplier's {lines} lines posted in JD Edwards"
     assert all(row.reason == counted or row.reason.startswith(f"{counted}; ") for row in page.lines)
     by = {"source": "supplier", "lines": lines, "of": lines, "share": 1.0}
     assert [line["decided_by"] for line in stored] == [by] * len(invoice.lines)

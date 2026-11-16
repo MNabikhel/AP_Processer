@@ -47,7 +47,7 @@ SCHEMA_VERSION = 28  # 19: the invoices' summary and its triggers (summary.py, `
 # purchasing.py, D-194), and answer_wants (by _SCHEMA, no version of its own either: the settled answers the server's
 # background process works out again, reports.py, D-198), and chart_accounts and business_units (by _SCHEMA, no version
 # of their own either: the chart of accounts and the business units as JD Edwards exports them, chart.py, D-209), and
-# journal_files, journal_vouchers and journal_lines (by _SCHEMA, no version of their own either: last year's coding as
+# journal_files, journal_vouchers and journal_lines (by _SCHEMA, no version of their own either: past invoice coding as
 # JD Edwards' Transaction Journal has it, journal.py), and coding_rule_history (by _SCHEMA) and summary_rules (with the
 # summary's tables), no version of their own either: the history of the fixed coding rules and the lines each coded,
 # rules.py, D-217; and why_questions (by _SCHEMA: the question asked after an approval, lessons.py, D-218); and

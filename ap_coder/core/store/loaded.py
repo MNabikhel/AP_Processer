@@ -1,5 +1,5 @@
 """What is loaded of JD Edwards' files, read a page at a time (D-221): the chart of accounts, the business units, the
-suppliers, last year's coding (the journal's lines) and the vouchers already in JD Edwards (the register's bills).
+suppliers, the past invoice coding (the journal's lines) and the vouchers already in JD Edwards (the register's bills).
 
 A chart is 15,000 rows, a supplier list 20,000, a year's journal 25,000 lines and a register up to 600,000 bills, so
 nothing here reads a table whole: the search, the filters, the count and the page are SQLite's (``loaded_page``:

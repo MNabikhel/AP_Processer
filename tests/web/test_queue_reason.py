@@ -37,7 +37,9 @@ def test_the_first_thing_to_fix_in_order():
         {
             "line_number": 4,
             "predicted_gl_code": "UNASSIGNED",
-            "reasoning_justification": "This supplier's 9 lines last year went to 3 accounts: pick the account.",
+            "reasoning_justification": (
+                "This supplier's 9 lines posted in JD Edwards went to 3 accounts: pick the account."
+            ),
         },
     ]
     output = {"line_items": lines}
@@ -45,7 +47,7 @@ def test_the_first_thing_to_fix_in_order():
         "Subtotal + tax = 105.00 but the total is 150.00 (and 2 more)"
     )
     assert first_to_fix((pick, "", 0, 1, False, ""), issues[:2], output, "") == (
-        "Line 4: this supplier's 9 lines last year went to 3 accounts: pick the account (and 1 more)"
+        "Line 4: this supplier's 9 lines posted in JD Edwards went to 3 accounts: pick the account (and 1 more)"
     )
     assert first_to_fix((pick, "", 0, 0, False, ""), [], {"line_items": [{"line_number": 4}]}, "") == pick
     assert first_to_fix(("", "Pick the account to pay from", 0, 1, False, ""), issues[:1], output, "") == (

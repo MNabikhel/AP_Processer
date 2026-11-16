@@ -1,12 +1,12 @@
 """What is loaded of JD Edwards' files (D-221), opened from the JD Edwards files page's "What is loaded": the rows
-themselves of the chart of accounts, the business units, the suppliers, last year's coding and the vouchers already
+themselves of the chart of accounts, the business units, the suppliers, the past invoice coding and the vouchers already
 in JD Edwards, each a table with a search, its cheap column filters, a count and pages, all of them SQLite's
 (``Store.loaded_page``: a register of 600,000 bills is never read whole), and a download of what the search and the
 filters keep as CSV (``Store.loaded_batches``, sent as it is read).
 
 Whoever opens the JD Edwards files page sees them (in server mode a Clerk and above, web/roles.py). An Admin changes
 a row of the first three by hand (``Store.edit_chart_account``, ``edit_business_unit``, ``edit_supplier``): the
-change is kept when a newer file is loaded, with what the file says beside it, and recorded in Activity. Last year's
+change is kept when a newer file is loaded, with what the file says beside it, and recorded in Activity. Past invoice
 coding and the vouchers are a record of what happened: looked at, and forgotten whole by the buttons there were.
 """
 
@@ -53,7 +53,7 @@ LISTS = {
                    "Every business unit of the business unit master as loaded."),
     loaded.SUPPLIERS: ("Suppliers", "suppliers", "name, supplier number, tax number…",
                        "Every supplier of the supplier master as loaded."),
-    loaded.JOURNAL: ("Last year's coding", "journal", "supplier, account, remark, 2025-03…",
+    loaded.JOURNAL: ("Past invoice coding", "journal", "supplier, account, remark, 2025-03…",
                      "Every line of the journals loaded, a voucher's lines together, the oldest first. A record of "
                      "what was keyed: it is not changed here."),
     loaded.VOUCHERS: ("Invoices already in JD Edwards", "vouchers", "supplier, invoice number, date…",

@@ -688,7 +688,7 @@ def test_the_journal_dropped_on_another_card_is_named_with_its_card(client, stor
         answer = _send(client, f"/jde-files/{card}/upload", exports, made.JOURNAL_FILE)
         assert answer.status_code == 400, card
         said = answer.json()["error"]
-        assert "Transaction Journal" in said and "under 4. Last year's coding" in said, card
+        assert "Transaction Journal" in said and "under 4. Past invoice coding" in said, card
 
 
 def test_the_journal_saved_as_a_workbook_is_told_to_be_saved_as_csv(client, store, exports):

@@ -1,7 +1,7 @@
-"""Last year's coding as JD Edwards printed it: the Transaction Journal's vouchers and lines (report R09321, read by
-``erp/journal.read_journal``), kept in tables of their own and never pressed into ``feedback``. It is another kind of
-evidence than an approved invoice line: the department's own 30-character remarks, a voucher at a time, keyed by the
-SUPPLIER NUMBER, with splits.
+"""The past invoice coding as JD Edwards printed it, of any period: the Transaction Journal's vouchers and lines
+(report R09321, read by ``erp/journal.read_journal``), kept in tables of their own and never pressed into
+``feedback``. It is another kind of evidence than an approved invoice line: the department's own 30-character
+remarks, a voucher at a time, keyed by the SUPPLIER NUMBER, with splits.
 
 * ``journal_files``: a row a file loaded (its name, its hash, who, when, the period, the counts). The same file
   again adds nothing; ``forget_journal`` takes a file out again.

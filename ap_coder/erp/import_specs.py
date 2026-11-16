@@ -246,10 +246,11 @@ def _journal_find(headers: list[str]) -> dict[str, str]:
 
 
 JOURNAL = ImportSpec(
-    key="journal", card="4. Last year's coding", title="Last year's coding", jde=True, page="/jde-files#journal",
-    purpose="How each supplier's invoices were coded before: what the suggestions learn from.",
+    key="journal", card="4. Past invoice coding", title="Past invoice coding", jde=True, page="/jde-files#journal",
+    purpose="Lines of invoices already posted in JD Edwards (the Transaction Journal export), any period: the "
+            "more history, the better the suggestions.",
     source="JD Edwards' Transaction Journal, report R09321: run it for document type PV (vouchers), your company and "
-           "12 months of G/L dates, and save it as CSV.",
+           "the G/L dates to learn from (a year or more), and save it as CSV.",
     more="The report is read as it prints: its title rows, page headers and totals are left out; the header's two "
          "rows (Document / Number, Address / Number) are read as one. Excel's Unicode Text (.txt) is read too.",
     report="JD Edwards' Transaction Journal (report R09321) saved as CSV", file_types=(CSV, TXT),

@@ -17,7 +17,8 @@ You drop supplier invoices (PDFs, scans, phone pictures) into AP Coder. For each
 4. shows you the invoice beside its lines, with a reason for anything it was not sure of;
 5. after you approve, puts the voucher on a keying sheet (Excel) to key into JD Edwards, or in a batch file.
 
-It learns from last year's voucher journal before the first invoice, and from every approval after it.
+It learns from the voucher journal of past invoices (any period: the more history, the better) before the first
+invoice, and from every approval after it.
 
 ## 1. Install (once, about 20 minutes)
 
@@ -95,7 +96,7 @@ python -m ap_coder demo --company
 python -m ap_coder serve
 ```
 
-Type these in `scripts\terminal.bat`. `demo --company` loads a made-up chart, suppliers, last year's journal and
+Type these in `scripts\terminal.bat`. `demo --company` loads a made-up chart, suppliers, a year's journal and
 seven invoices to review; `serve` opens them in the browser, without signing in (the data is made up), on the next
 free port while your own AP Coder is open (the window says "AP Coder is running at ..."). When you are done, press
 Ctrl+C in that window, close it (it still points at the made-up company) and delete `C:\APCoder\try`. Your own data
@@ -111,7 +112,7 @@ delete. The top of the page (*What is loaded*) ticks off what is loaded.
 | 1 | Chart of accounts (Excel) | every account string a line may be coded to, and which can be posted to | account master |
 | 2 | Business units (Excel) | their names, and which are closed | business unit master |
 | 3 | Suppliers (Excel): two exports, loaded one after the other in either order | the supplier master's grid: supplier numbers, names, payment holds; the vendor information list: each supplier's tax ID, currency, payment terms, address and e-mail | supplier master; vendor information list |
-| 4 | Last year's coding (CSV) | what each supplier's lines were coded to, and their remarks | the Transaction Journal, saved as CSV |
+| 4 | Past invoice coding (CSV) | what each supplier's lines were coded to, and their remarks, of any period (the more history, the better the suggestions) | the Transaction Journal, saved as CSV |
 | 5 | Invoices already in JD Edwards: the voucher list (Excel) | the duplicate check, and the voucher and batch numbers | supplier ledger inquiry |
 
 Each card says which report to export and how (**How to get it**), the columns it needs and the optional ones (the
@@ -134,7 +135,7 @@ box, filters, a count and *Download ... as CSV* (codes keep their leading zeros)
 the suppliers, **Change** beside a row lets you correct it: an account's description, whether it can be posted to
 and its meals tick; a business unit's name and status; a supplier's name, hold, note, tax numbers and terms. What
 you change is kept when you load a newer file (the page shows what the file says beside it), and every change is in
-**Activity** with who made it. Last year's coding and the vouchers are a record of what happened: you can look and
+**Activity** with who made it. Past invoice coding and the vouchers are a record of what happened: you can look and
 download, not change; forget the file to take them out.
 
 Under the chart, **The chart's settings** has three boxes worth a look:
@@ -163,7 +164,7 @@ JD Edwards, a description, its currency, and a tick on the default of each curre
 *Remove* takes one off the list. Where people sign in, an Approver or an Admin does this; a Clerk sees the list and
 picks from it. With no bank account entered, nothing changes and nothing asks for one.
 
-## 4. See how it would have coded last year (5 minutes)
+## 4. See how it would have coded past invoices (5 minutes)
 
 Before relying on it, score it against what was really keyed. Both commands are typed in `scripts\terminal.bat` (a
 new window, not the made-up company's of section 2), run on this laptop only and change nothing in AP Coder; the
@@ -190,7 +191,7 @@ python -m ap_coder pilot-score --proposed --vouchers HEADERS.xlsx --journal R093
 
 Its answer starts "Of 50 invoices read by AP Coder here ...": how many it found in the voucher list and the journal,
 and how what it proposed compares with what was keyed; `proposed_score.md` has each voucher. [PILOT.md](PILOT.md),
-"How well would it have coded last year?", explains every figure of both.
+"How well would it have coded past invoices?", explains every figure of both.
 
 ## 5. A day with it
 
@@ -200,11 +201,11 @@ and how what it proposed compares with what was keyed; `proposed_score.md` has e
 2. **To review:** each row says in words the first thing to fix. Open one: the invoice is on the left, its lines
    on the right.
    - **Account:** one box a line holds the whole string. A line AP Coder is sure of arrives filled, with why
-     ("this supplier's usual account: 14 of 15 lines last year"). A line it is not sure of is left empty with up to
+     ("this supplier's usual account: 14 of 15 past lines"). A line it is not sure of is left empty with up to
      three accounts offered: pick one, or type a number or a word of the account's name. A string the chart does not
      have is refused, never replaced. The Account box's list has every account kept for the line: for a supplier
      billed to many business units, each unit its lines went to, the one the line or the invoice's ship-to or "Attn:"
-     names first. A supplier not in last year's journal is offered the accounts other suppliers' lines like it went to.
+     names first. A supplier not in the past invoice coding is offered the accounts other suppliers' lines like it went to.
    - **Remark:** suggested from the supplier's past remarks, 30 characters at most, yours to change.
    - **Tax:** every line says which tax it carries and how much, each tax its own amount ("read" when the invoice
      prints it on the line). A line taxed differently from the rest is marked. A sum that does not match the invoice

@@ -49,7 +49,7 @@ Each item ends with something a person can check. The company's IT and the JDE t
       always makes the final check in E1. Fill in the JDE worksheet first ([JDE_E1.md](JDE_E1.md)).
 - [ ] **Job costing** (job, cost code, cost type on a line): built in AP Coder, about 3 to 4 weeks of work.
 - [ ] **The company's master data:** the GL accounts and cost centers, how each sales tax posts, the vendor list
-      with each vendor's address number (AN8), open POs, bank accounts, and last year's posted AP lines
+      with each vendor's address number (AN8), open POs, bank accounts, and the posted AP lines of past invoices
       (*Learning & accuracy → Teach from past coding*), so each vendor is coded from its first invoice. Imported on
       the pilot's machine as soon as it is set up, before job costing ([HANDOFF.md](HANDOFF.md) section 8, step 2).
 - [ ] **A security review** by the company's IT security team (to OWASP ASVS Level 2), and **a penetration test if

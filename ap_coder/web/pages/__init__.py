@@ -121,8 +121,8 @@ PAGES: list[Page] = [
         "/jde-files",
         "drive_folder_upload",
         M,
-        "Load JD Edwards' own exports: the chart of accounts, the business units, the suppliers, last year's coding "
-        "and the vouchers already entered.",
+        "Load JD Edwards' own exports: the chart of accounts, the business units, the suppliers, the past invoice "
+        "coding and the vouchers already entered.",
         module="jde_files",
         more=True,
     ),

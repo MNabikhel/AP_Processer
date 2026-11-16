@@ -169,7 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--remove", action="store_true", help="Remove the demo invoices and their lessons instead")
     p.add_argument("--company", action="store_true",
                    help="Instead, make a new database a made-up company's that codes to JD Edwards account strings: "
-                   "its chart of accounts, business units, suppliers and last year's journal loaded, seven invoices "
+                   "its chart of accounts, business units, suppliers and past invoice coding loaded, seven invoices "
                    "to review. For a data folder of its own (set AP_PRIVATE_DIR to an empty folder first)")  # fmt: skip
 
     _add_users_command(sub)
@@ -188,7 +188,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     from . import journal_cmd
 
-    journal_cmd.add_parser(sub)  # last year's coding from JD Edwards' Transaction Journal
+    journal_cmd.add_parser(sub)  # the past invoice coding from JD Edwards' Transaction Journal
 
     _add_hub_command(sub)
 
@@ -319,7 +319,7 @@ def _add_report_commands(sub: Any, private: Path, out_dir: Path) -> None:
     p.add_argument("--distribution", default=None, help="The F0911 G/L distribution export (optional: the coding)")
     p.add_argument(
         "--journal", nargs="?", const="", default=None, metavar="FILE",
-        help="How AP Coder would have coded last year's vouchers: the last months of the Transaction Journal "
+        help="How AP Coder would have coded past vouchers: the last months of the Transaction Journal "
              "(R09321 as CSV; no FILE: the journal loaded here) held out and coded from the months before. With "
              "--proposed: the journal the keyed accounts are read from",
     )  # fmt: skip
@@ -1157,7 +1157,7 @@ def cmd_export_training(args: argparse.Namespace) -> int:
 
 
 def _pilot_score_of_past_vouchers(args: argparse.Namespace) -> int:
-    """``pilot-score --journal`` (last year's journal, its last months held out) and ``pilot-score --proposed`` (what
+    """``pilot-score --journal`` (the Transaction Journal, last months held out) and ``pilot-score --proposed`` (what
     AP Coder proposed for real invoices against the vouchers keyed for them): the report's first paragraph, said."""
     from . import journal_score, proposed_score
     from .pilot_score import ExportError
@@ -1192,7 +1192,7 @@ def cmd_pilot_score(args: argparse.Namespace) -> int:
     if args.proposed or args.journal is not None:
         return _pilot_score_of_past_vouchers(args)
     if not args.vouchers:
-        print("pilot-score needs the voucher export: --vouchers F0411.xlsx (or --journal, for last year's journal)",
+        print("pilot-score needs the voucher export: --vouchers F0411.xlsx (or --journal, for the Transaction Journal)",
               file=sys.stderr)  # fmt: skip
         return 2
     try:

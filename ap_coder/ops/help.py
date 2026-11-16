@@ -412,7 +412,7 @@ CHECKS: dict[str, CheckHelp] = {
         "A vendor master was imported from the ERP and this vendor is in it neither by name nor by GST/HST "
         "number. Invoices from vendors nobody set up are a classic fraud route. Or the name is in it more than once: "
         "several suppliers go by it, each with its own supplier number, and the name alone does not say which (the "
-        "check lists them, with how many vouchers each had in last year's journal when it is loaded).",
+        "check lists them, with how many vouchers each had in the past invoice coding when it is loaded).",
         "Pick the vendor from the list on the review screen (it may be there under another name). Of several "
         "suppliers under one name, each is offered with its number (\u201cLAKESIDE CATERING LTD #2004\u201d): pick "
         "the one the invoice is from, by its address or by which one you usually pay. A vendor that is really new: add "
@@ -573,8 +573,8 @@ CHECKS: dict[str, CheckHelp] = {
     "ACCOUNTS_ALL_GUESSED": CheckHelp(
         CODING, "Every account is a guess",
         "Every line's GL account on this invoice was chosen by the chat model, from the words of an account's name "
-        "or from other vendors' lines: not one comes from what AP approved for this vendor, from last year's journal "
-        "or from a coding rule. One click would approve them all and teach them as this vendor's coding.",
+        "or from other vendors' lines: not one comes from what AP approved for this vendor, from the past invoice "
+        "coding or from a coding rule. One click would approve them all and teach them as this vendor's coding.",
         "Look at each line's account. Change the wrong ones (a line you change is yours, and the finding goes once "
         "one is); to keep them all as they are, tick Approve anyway and say why.",
     ),
@@ -1076,7 +1076,7 @@ FAQ: list[tuple[str, str]] = [
         "exports carry the ERP vendor IDs.",
     ),
     (
-        "Can the AI start from what we coded last year?",
+        "Can the AI start from what we coded before?",
         "Yes: on Learning & accuracy, 'Teach from past coding' imports posted AP lines from the ERP (vendor, "
         "description, GL account, cost center). The AI then sees each vendor's usual coding from the first "
         "invoice. Past lines never count in the accuracy figures and can be forgotten in one click.",

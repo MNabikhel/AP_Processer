@@ -6026,3 +6026,22 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Not done:** a signature of our own (the SHA-256 comes from the same release: it proves the download is whole,
     and TLS that it is GitHub's); updating a checkout with git (it gets a folder beside it like a ZIP); a limit on how
     often a build is released (each merge to main that passes CI is one, so the tester is asked after each).
+- **D-248** · **An import shows the columns it needs; the optional ones are folded, and the Transaction Journal is
+  "Past invoice coding", of any period** (`web/templates/_import.html` `columns`, `preview`, `check_row`;
+  `web/templates/_sheet.html` `columns`, `choice`; `web/files.py` `spec_sheet`; `erp/import_specs.py` `JOURNAL`;
+  16 Nov 2026).
+  - **Why:** the pilot tester asked why the import panels listed so many optional columns, and why the journal was
+    always "last year's coding" when it is the coding of past invoices, whatever period it covers.
+  - **The columns:** a panel shows the needed columns (and "one of" columns) as chips; the optional ones are under a
+    closed "More columns it can use (optional): N", each with what it gives and the other names read. A file shown
+    keeps its needed columns in sight, missing or found, and folds the optional ones ("3 of 7 in this file"). The
+    column picker shows the needed fields; the optional ones are folded too ("1 of 9 with a column", counted again
+    as the choices change: `imports.js`), and a choice folded is sent all the same. What a person must act on is never
+    folded: a needed column missing or named twice, and an optional one guessed by a word in its header (the
+    Accounts tables), which the verdict asks to check.
+  - **The journal:** nothing limited it to a year: the reader reads any period, the store keeps every file loaded
+    (a voucher in two files counted once) and the supplier prior counts every line; `pilot-score --journal` holds out
+    the last N months of whatever it covers. Only the words said a year (and "12 months of G/L dates" in how to get
+    it). The card, the pages, the suggestions' reasons ("14 lines posted in JD Edwards", "this supplier's usual
+    account: 14 of 15 past lines"), the command line and the guides now say past invoice coding. The code's names
+    (`journal`, `journal_files`) stay.

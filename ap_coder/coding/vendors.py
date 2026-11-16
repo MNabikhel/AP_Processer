@@ -594,7 +594,7 @@ def _hold_findings(own: dict[str, Any] | None, master: dict[str, Any] | None,
 
 def _not_in_master(store: Store, coding: InvoiceCoding) -> tuple[str, str, str]:
     """VENDOR_NOT_IN_MASTER. In its own words when several suppliers in use go by the name printed, each under a
-    supplier number of its own: which they are and, when last year's journal is loaded, how many vouchers each had
+    supplier number of its own: which they are and, when the past invoice coding is loaded, how many vouchers each had
     (the most used said). The name alone is none of them: the one picked from the list carries its number (B-2161)."""
     several = store.vendors_sharing(coding.vendor_name)
     if not several:
@@ -609,7 +609,7 @@ def _not_in_master(store: Store, coding: InvoiceCoding) -> tuple[str, str, str]:
     most = max(counts) if counts.count(max(counts)) == 1 else 0
     said = []
     for vendor, count in zip(several, counts, strict=True):
-        journal = f" ({count:,} voucher{'' if count == 1 else 's'} in last year's journal" if count else ""
+        journal = f" ({count:,} voucher{'' if count == 1 else 's'} posted in JD Edwards" if count else ""
         said.append(f"{str(vendor['erp_id']).strip()} {vendor['display_name']}{journal}"
                     + ((", the most)" if count == most else ")") if count else ""))  # fmt: skip
     return (ERROR, "VENDOR_NOT_IN_MASTER",

@@ -98,11 +98,11 @@ def test_two_suppliers_printed_with_the_same_26_characters_are_not_told_apart_by
         *monthly(2004, "HEARTHSIDE BUILDING SERVIC", CARPET, "carpets", 3),
     ])  # fmt: skip
     cut = prior_for(store, "Hearthside Building Services East Ltd.")  # which of the two? Neither is taken.
-    assert not cut and "2 suppliers of last year's journal print the start of this name (2003, 2004)" in cut.note
+    assert not cut and "2 suppliers of the past invoice coding print the start of this name (2003, 2004)" in cut.note
     # The same whole name under two numbers is one vendor in the vendor list: counted together, and said.
     whole = prior_for(store, "Alderbrook Office Products")
     assert whole.lines == 6 and {a.account for a in whole.accounts} == {COURIER, JANITOR} and whole.sure() is None
-    assert whole.note == "2 supplier numbers of last year's journal go by this name (2001, 2002)"
+    assert whole.note == "2 supplier numbers of the past invoice coding go by this name (2001, 2002)"
 
 
 def test_a_line_approved_here_outweighs_the_journal_and_a_correction_more(store, tmp_path):
@@ -118,7 +118,7 @@ def test_a_line_approved_here_outweighs_the_journal_and_a_correction_more(store,
     after = prior_for(store, "Brightway Janitorial Ltd.")
     assert after is not before and [(a.account, a.weight) for a in after.accounts] == [(CARPET, 5.0), (JANITOR, 4.0)]
     assert after.latest_approved == CARPET and after.sure() is None and after.total_said() == (
-        "5 lines (4 last year, 1 approved here)")  # fmt: skip
+        "5 lines (4 posted in JD Edwards, 1 approved here)")  # fmt: skip
     # Kept as proposed the next time: 3 more for that account.
     again = code_from_capture(captured("Brightway Janitorial Ltd.", "Nightly office cleaning", number="INV-2"),
                               reference, store.feedback_rows(), store).coding  # fmt: skip
@@ -128,15 +128,16 @@ def test_a_line_approved_here_outweighs_the_journal_and_a_correction_more(store,
 
 
 def test_a_supplier_with_one_line_last_year_is_counted_in_the_singular(store):
-    """ "1 line last year" where the line left for a person said "this supplier's 1 lines" (B-2182)."""
+    """ "1 line posted in JD Edwards" where the line left for a person said "this supplier's 1 lines" (B-2182)."""
     reference = load_chart(store)
     _vendor(store, "BRIGHTWAY JANITORIAL LTD.", 740075)
     load_journal(store, monthly(740075, "BRIGHTWAY JANITORIAL LTD.", JANITOR, "{month} janitorial", 1))
-    assert prior_for(store, "Brightway Janitorial Ltd.").total_said() == "1 line last year"
+    assert prior_for(store, "Brightway Janitorial Ltd.").total_said() == "1 line posted in JD Edwards"
     coding = code_from_capture(captured("Brightway Janitorial Ltd.", "Nightly office cleaning"), reference,
                                store.feedback_rows(), store).coding  # fmt: skip
     assert coding.line_items[0].reasoning_justification == (
-        f"Only 1 of this supplier's 1 line last year went to {JANITOR}: too few to code it alone: pick the account."
+        f"Only 1 of this supplier's 1 line posted in JD Edwards went to {JANITOR}: too few to code it alone: "
+        "pick the account."
     )
 
 
@@ -165,7 +166,7 @@ def test_thirty_lines_of_history_are_not_sure_for_a_line_like_one_a_person_coded
                                                  number="INV-2"), reference, store.feedback_rows(),
                                         store).coding.line_items  # fmt: skip
     assert porter.predicted_gl_code == "7340.3307"
-    assert porter.reasoning_justification == "30 of this supplier's 31 lines (30 last year, 1 approved here)"
+    assert porter.reasoning_justification == "30 of this supplier's 31 lines (30 posted in JD Edwards, 1 approved here)"
     assert carpets.predicted_gl_code == "UNASSIGNED"
     assert [c["account"] for c in carpets.candidates[:2]] == [CARPET, JANITOR]
 
@@ -181,7 +182,7 @@ def test_rank_orders_by_share_and_words_and_says_why_with_the_counts(store):
     prior = prior_for(store, "Rapidway Courier Canada Ltd.")
     plain = rank(prior, "Fuel surcharge", reference)  # no word says anything: the shares
     assert [c.account for c in plain] == [COURIER, f"{MAIN}.7420.4213", JANITOR]
-    assert plain[0].reason == "9 of this supplier's 15 lines last year" and plain[0].source == "supplier"
+    assert plain[0].reason == "9 of this supplier's 15 lines posted in JD Edwards" and plain[0].source == "supplier"
     assert (plain[0].lines, plain[0].of, round(plain[0].share, 2), plain[0].example) == (
         9,
         15,
@@ -190,11 +191,11 @@ def test_rank_orders_by_share_and_words_and_says_why_with_the_counts(store):
     )
     customs = rank(prior, "Customs brokerage - entry 77812", reference)
     assert customs[0].account == f"{MAIN}.7420.4213"
-    assert customs[0].reason == "4 of this supplier's 15 lines last year; 4 of its 4 “custom” lines"
+    assert customs[0].reason == "4 of this supplier's 15 lines posted in JD Edwards; 4 of its 4 “custom” lines"
     cleaning = rank(prior, "Cleaning of the mailroom", reference)
     assert cleaning[0].account == JANITOR and cleaning[0].reason == (
-        "2 of this supplier's 15 lines last year; 2 of its 2 “cleaning” lines; the word “cleaning” in the account's "
-        "name")  # fmt: skip
+        "2 of this supplier's 15 lines posted in JD Edwards; 2 of its 2 “cleaning” lines; the word “cleaning” in "
+        "the account's name")  # fmt: skip
     named = rank(prior, "Courier", reference)[0]
     assert named.account == COURIER and "the word “courier” in the account's name" in named.reason
 
@@ -224,7 +225,7 @@ def test_a_line_that_plainly_says_another_kind_of_thing_is_not_coded_to_the_supp
     for text in ("Ground shipment waybill 77812", "Fuel surcharge", "Courier charges March", "Desk to desk delivery"):
         line = _line_of(store, reference, vendor, text)
         assert f"{line.predicted_cost_center}.{line.predicted_gl_code}" == COURIER, text
-        assert line.reasoning_justification.startswith("12 of this supplier's 12 lines last year")
+        assert line.reasoning_justification.startswith("12 of this supplier's 12 lines posted in JD Edwards")
     lunch = _line_of(store, reference, vendor, "Working lunch for the project kickoff, 12 people")
     assert lunch.predicted_gl_code == "UNASSIGNED" and lunch.candidates[0]["account"] == COURIER
     assert lunch.reasoning_justification == (
@@ -246,7 +247,7 @@ def test_a_meal_on_the_invoice_of_a_supplier_of_meals_is_coded_to_its_one_accoun
     load_journal(store, monthly(5200, "HARVEST TABLE CATERING INC", f"{MAIN}.7410.4107", "{month} staff lunch", 12))
     line = _line_of(store, reference, "Harvest Table Catering Inc.", "Sandwich platters - board lunch")
     assert line.predicted_gl_code == "7410.4107"
-    assert line.reasoning_justification.startswith("12 of this supplier's 12 lines last year")
+    assert line.reasoning_justification.startswith("12 of this supplier's 12 lines posted in JD Edwards")
 
 
 @pytest.mark.parametrize("remark", ["", "{month} 2025", "884501"])
@@ -264,7 +265,7 @@ def test_a_suppliers_one_account_with_no_words_in_its_remarks_still_codes_its_li
 
 
 def _courier(chart_company):
-    """(the name its invoices print, its one account) of the supplier whose eight lines last year went to one
+    """(the name its invoices print, its one account) of the supplier whose eight lines posted in JD Edwards went to one
     account, Courier - Cross Border."""
     supplier = chart_company.invoices["one_line"][0].supplier
     return printed_name(supplier.name), supplier.accounts[0]
@@ -312,7 +313,7 @@ def test_a_line_that_names_another_account_of_the_chart_is_not_coded_to_the_supp
            "Ergonomic office chair", "Late payment interest")  # fmt: skip
     for line in _coded(chart_company, vendor, *own, number="INV-2").line_items:
         assert _account(line) == courier, line.description
-        assert line.reasoning_justification.startswith("8 of this supplier's 8 lines last year")
+        assert line.reasoning_justification.startswith("8 of this supplier's 8 lines posted in JD Edwards")
 
 
 def test_a_line_alike_to_nothing_of_the_suppliers_account_and_to_another_accounts_name_is_left(chart_company):
@@ -405,11 +406,14 @@ def test_a_line_coded_by_hand_to_another_account_says_nothing_of_the_suppliers_o
     later = _coded(chart_company, vendor, "Courier service airport", "Ground shipment waybill 77812", board,
                    "Working lunch", "Team dinner", number="INV-2").line_items  # fmt: skip
     assert [_account(line) for line in later] == [courier, courier, "", meals, ""]
-    assert later[0].reasoning_justification.startswith("9 of this supplier's 10 lines (8 last year, 2 approved here)")
+    assert later[0].reasoning_justification.startswith(
+        "9 of this supplier's 10 lines (8 posted in JD Edwards, 2 approved here)"
+    )
     # A lunch like the one approved: the supplier's two accounts, and the shares say why no one is sure.
     assert [c["account"] for c in later[2].candidates[:2]] == [meals, courier]
     assert later[2].reasoning_justification == (
-        "This supplier's 10 lines (8 last year, 2 approved here) went to 2 accounts: 69% / 31%: pick the account."
+        "This supplier's 10 lines (8 posted in JD Edwards, 2 approved here) went to 2 accounts: 69% / 31%: "
+        "pick the account."
     )
     assert later[3].reasoning_justification.startswith("coded this way 1 time for similar lines from this vendor")
     # A meal worded otherwise: left as a meal, the meals account this supplier's lunch went to offered next.
@@ -435,7 +439,7 @@ def test_the_business_unit_a_line_names_puts_the_suppliers_account_on_it_first(c
 
 # --- the supplier billed to thirteen business units, and a supplier never seen (D-226) ----------------------------
 
-NEW_SUPPLIER = "A new supplier: not in last year's journal: pick the account."
+NEW_SUPPLIER = "A new supplier: not in the past invoice coding: pick the account."
 
 
 def _windrow(chart_company):
@@ -550,7 +554,7 @@ def test_a_new_suppliers_line_is_offered_the_accounts_the_journal_has_for_its_wo
     assert customs.candidates[0]["account"] == cross_border and customs.candidates[0]["source"] == "others"
     assert customs.candidates[0]["reason"].startswith("AP wrote “")
     assert {c["account"] for c in ground.candidates[:2]} == {cross_border, domestic}
-    assert "suppliers named “courier” had lines on it last year" in ground.candidates[0]["reason"]
+    assert "suppliers named “courier” had lines on it in JD Edwards" in ground.candidates[0]["reason"]
     # Near no remark and no account's name: what suppliers named alike went to, by the name alone.
     assert {c["account"] for c in saas.candidates} == {cross_border, domestic}
     assert all(c["reason"].startswith("1 of the 2 suppliers named “courier”") for c in saas.candidates)

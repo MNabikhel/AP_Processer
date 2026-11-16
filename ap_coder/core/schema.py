@@ -359,8 +359,8 @@ class TaxLine(BaseModel):
 
 
 # What may decide a line's account (``LineItem.decided_by``'s "source", D-212): a fixed coding rule; this vendor's own
-# approved lines; the supplier's coding (last year's journal and its approvals); other vendors' lines like it; the
-# words of an account's name; the chat model (a guess); a person on the review screen.
+# approved lines; the supplier's coding (the journal of past invoices and its approvals); other vendors' lines like
+# it; the words of an account's name; the chat model (a guess); a person on the review screen.
 DECIDED_SOURCES = ("rule", "vendor", "supplier", "others", "words", "model", "person")
 CANDIDATES_KEPT = 5  # accounts kept with a line left for a person...
 CANDIDATES_MOST = 15  # ...and with a chart imported, the supplier's other business units of those, in all (D-226)

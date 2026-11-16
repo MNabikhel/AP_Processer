@@ -1,4 +1,5 @@
-"""Last year's coding out of JD Edwards: report R09321 "Transaction Journal" saved as CSV, read as it comes.
+"""The past invoice coding out of JD Edwards, of any period (D-248): report R09321 "Transaction Journal" saved as
+CSV, read as it comes.
 
 The file is a printed report, not a table: five title rows, a header split over two rows, rows of 3 to 84 cells,
 the page header again every page, total rows at the end and no document number. So:

@@ -16,7 +16,7 @@ of the [exceptions](#what-leaves-the-laptop).
 
 | | |
 |---|---|
-| **One department, one laptop** | Built: a prototype for one department on a Windows laptop, working from JD Edwards' own exports (the chart of accounts, the business units, the suppliers, last year's coding), with a keying sheet to type vouchers from. It scores itself against last year before anyone relies on it: [docs/PROTOTYPE.md](docs/PROTOTYPE.md). The same laptop can then serve a few colleagues, with logins (`python -m ap_coder share`). Not yet run on a company's real invoices. |
+| **One department, one laptop** | Built: a prototype for one department on a Windows laptop, working from JD Edwards' own exports (the chart of accounts, the business units, the suppliers, the past invoice coding), with a keying sheet to type vouchers from. It scores itself against past invoices before anyone relies on it: [docs/PROTOTYPE.md](docs/PROTOTYPE.md). The same laptop can then serve a few colleagues, with logins (`python -m ap_coder share`). Not yet run on a company's real invoices. |
 | **Laptop release** | Ready: checked end to end, the way a pilot tester uses it. Next: Phase 0 connects AP Coder to the company's inbox, sign-in and JD Edwards, then Phase 1, a live pilot with up to 10 people ([docs/PILOT_PLAN.md](docs/PILOT_PLAN.md)). |
 | **Company server** | Built for Windows, Linux and macOS, with HTTPS, logins with a code from an authenticator app, and four roles; reviewed for security within the project and sized for 300 to 400 people, not yet reviewed by a company's IT security team. Not installed yet: [docs/SERVER.md](docs/SERVER.md). |
 | **JD Edwards E1** | Approved invoices go out as a keying sheet (one block a voucher, to type from) or as JDE's standard batch files (F0411Z1/F0911Z1). The direct API connection is built and waits for the JDE team: [docs/JDE_E1.md](docs/JDE_E1.md). In the pilot they go in as pending batches that AP approves and posts in E1, so E1's batch approval keeps a person's final check. |
@@ -30,7 +30,7 @@ of the [exceptions](#what-leaves-the-laptop).
 2. **Codes each line** to your GL accounts and cost centers: from what AP approved before, then fixed rules, then a
    local model for what is left. It can only pick codes from your chart. With a JD Edwards chart loaded, a line gets
    one account string that exists and can be posted to, the supplier's usual accounts are offered first (learned
-   from last year's journal on day one), and the 30-character remark is suggested. A line it is not sure of is left
+   from the journal of past invoices on day one), and the 30-character remark is suggested. A line it is not sure of is left
    to a person, with the reason and its best candidates.
 3. **Checks everything in code, not by AI:** totals, each line's tax and the rate for the province and date, the
    GST/HST number against the supplier list, duplicates (under another vendor name too, or already in the ERP),
@@ -58,7 +58,7 @@ invoice (PDF, scan, photo, email) ─► read on the machine: text layer or OCR,
 
 | | |
 |---|---|
-| ![An invoice in review: the page with every value boxed, one account string a line, each line's tax, and the approve bar](docs/screenshots/invoice-review.png) | ![JD Edwards files: the chart of accounts, business units, suppliers, last year's coding and vouchers, each loaded from JD Edwards' own export](docs/screenshots/jde-files.png) |
+| ![An invoice in review: the page with every value boxed, one account string a line, each line's tax, and the approve bar](docs/screenshots/invoice-review.png) | ![JD Edwards files: the chart of accounts, business units, suppliers, past invoice coding and vouchers, each loaded from JD Edwards' own export](docs/screenshots/jde-files.png) |
 | ![To key into JDE: the approved invoices ready for a keying sheet or a batch file](docs/screenshots/keying-sheet.png) | ![What was learned: how often the coding is right, and what each approval taught](docs/screenshots/learning.png) |
 | ![The invoice directory: every invoice in one table, filtered by any column](docs/screenshots/invoice-directory.png) | ![Sales tax: the GST/HST and QST to claim back for a period](docs/screenshots/sales-tax.png) |
 
@@ -98,9 +98,9 @@ to stop AP Coder. Your data lives outside the code (`~/APCoder`), so an update n
 Next: real data step by step in [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), or the one printable page in
 [docs/QUICK_START.md](docs/QUICK_START.md) (also under Help → Quick start).
 
-Trying it on one Windows laptop with your own JD Edwards exports (the chart of accounts, last year's journal)?
+Trying it on one Windows laptop with your own JD Edwards exports (the chart of accounts, the journal of past invoices)?
 [docs/PROTOTYPE.md](docs/PROTOTYPE.md) is the whole path on one page: install, load the five files, score it
-against last year, a day with it.
+against past invoices, a day with it.
 
 ## What leaves the laptop
 

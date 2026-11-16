@@ -1,4 +1,4 @@
-"""``python -m ap_coder journal import FILE``, ``journal list`` and ``journal forget ID|all``: last year's coding
+"""``python -m ap_coder journal import FILE``, ``journal list`` and ``journal forget ID|all``: the past invoice coding
 loaded from JD Edwards' Transaction Journal (report R09321 saved as CSV), from the console.
 
 A journal is looked at first and loaded second. ``look`` reads a file's bytes and says, in plain words and writing
@@ -375,7 +375,7 @@ def forget(store: Store, which: str, actor: str | None = None) -> tuple[bool, st
 
 
 def add_parser(sub: Any) -> None:
-    p = sub.add_parser("journal", help="Last year's coding from JD Edwards' Transaction Journal (R09321 saved as "
+    p = sub.add_parser("journal", help="Past invoice coding from JD Edwards' Transaction Journal (R09321 saved as "
                        "CSV): import, list, forget")  # fmt: skip
     p.add_argument("action", choices=["import", "list", "forget"])
     p.add_argument("target", nargs="?", default=None, metavar="FILE|ID|all",

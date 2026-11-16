@@ -40,7 +40,7 @@ def test_one_account_with_nine_of_ten_lines_codes_the_line_and_says_what_decided
     reference = _books(store, vouchers)
     line = _line(store, reference, "Fuel surcharge").coding.line_items[0]
     assert (line.predicted_cost_center, line.predicted_gl_code) == (MAIN, "7340.3307")
-    assert line.reasoning_justification == "24 of this supplier's 24 lines last year"
+    assert line.reasoning_justification == "24 of this supplier's 24 lines posted in JD Edwards"
     assert line.decided_by == {"source": "supplier", "lines": 24, "of": 24, "share": 1.0} and line.candidates == []
     stored = json.loads(json.dumps(line.model_dump(mode="json")))
     assert stored["decided_by"]["source"] == "supplier" and "candidates" not in stored  # (nothing offered: not kept)
@@ -55,20 +55,21 @@ def test_a_line_is_left_with_the_specific_reason_and_the_accounts_offered(store)
     result = _line(store, reference, "Day porter service")
     line = result.coding.line_items[0]
     assert line.predicted_gl_code == UNASSIGNED and line.decided_by == {}
-    assert line.reasoning_justification == ("This supplier's 20 lines last year went to 3 accounts: 60% / 25% / 15%: "
-                                            "pick the account.")  # fmt: skip
+    assert line.reasoning_justification == ("This supplier's 20 lines posted in JD Edwards went to 3 accounts: "
+                                            "60% / 25% / 15%: pick the account.")  # fmt: skip
     assert [c["account"] for c in line.candidates[:3]] == [JANITOR, CARPET, f"{FACILITIES}.7340.3307"]
     assert line.candidates[0] == {
         "account": JANITOR, "business_unit": MAIN, "code": "7340.3307", "name": "Janitorial Contract",
-        "reason": "12 of this supplier's 20 lines last year", "source": "supplier", "lines": 12, "of": 20,
+        "reason": "12 of this supplier's 20 lines posted in JD Edwards", "source": "supplier", "lines": 12, "of": 20,
         "share": 0.6}  # fmt: skip
     assert len(line.candidates) <= 5 and result.offered[1][0].account == JANITOR  # (all of them, for the chat model)
     new = _line(store, reference, "Day porter service", vendor="Never Seen Cleaning Inc.").coding.line_items[0]
     assert new.predicted_gl_code == UNASSIGNED
-    assert new.reasoning_justification == "A new supplier: not in last year's journal: pick the account."
+    assert new.reasoning_justification == "A new supplier: not in the past invoice coding: pick the account."
     few = _line(store, reference, "Parcel", vendor="Two Line Supply Co").coding.line_items[0]
     assert few.predicted_gl_code == UNASSIGNED and few.reasoning_justification == (
-        f"Only 2 of this supplier's 2 lines last year went to {COURIER}: too few to code it alone: pick the account."
+        f"Only 2 of this supplier's 2 lines posted in JD Edwards went to {COURIER}: too few to code it alone: "
+        "pick the account."
     )
 
 

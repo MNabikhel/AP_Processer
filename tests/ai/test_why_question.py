@@ -35,7 +35,7 @@ def test_an_account_ap_coder_coded_by_itself_and_a_person_changed_is_asked_about
                                              lessons.line_pattern(line["description"]))  # fmt: skip
     assert [r["code"] for r in found["reasons"]] == [lessons.KIND, lessons.CHANGED, lessons.ONE_OFF]
     assert [r["label"] for r in found["reasons"]] == ["This supplier's lines like this go there",
-                                                      "Last year's account no longer applies",
+                                                      "The account it was posted to before no longer applies",
                                                       "One-off: don't learn from it"]  # fmt: skip
     assert lessons.surprise(store, proposed, copy.deepcopy(proposed)) is None  # nothing changed: nothing asked
 

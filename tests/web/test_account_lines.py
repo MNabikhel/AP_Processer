@@ -46,7 +46,7 @@ def test_a_coded_line_says_the_accounts_name_its_business_unit_and_why(chart_com
     assert f'name="{LINE_ACCOUNT}" value="{account}"' in row and 'class="acct-row"' in row
     caption = re.search(r'data-live-line="cap">(.*?)</td>', row, flags=re.S).group(1)
     assert pairs.description(unit, code) in caption and pairs.name_of(unit).replace("&", "&amp;") in caption
-    assert "this supplier's usual account: 8 of 8 lines last year" in caption.replace("&#39;", "'")
+    assert "this supplier's usual account: 8 of 8 past lines" in caption.replace("&#39;", "'")
 
 
 def test_a_line_left_for_a_person_is_marked_with_why_and_the_accounts_offered(chart_company, chart_company_client):
@@ -128,7 +128,7 @@ def test_a_reason_a_person_picked_keeps_what_the_line_says_of_its_tax():
     from ap_coder.coding.line_tax import GUESS_NOTE
     from ap_coder.coding.review import decided_on_screen
 
-    left = "This supplier's 3 lines last year went to 3 accounts: 33% / 33% / 33%: pick the account."
+    left = "This supplier's 3 lines posted in JD Edwards went to 3 accounts: 33% / 33% / 33%: pick the account."
     proposed = [{"line_number": n, "description": f"item {n}", "predicted_gl_code": "UNASSIGNED",
                  "predicted_cost_center": "UNASSIGNED", "reasoning_justification": f"{left} {GUESS_NOTE}"}
                 for n in (1, 2)]  # fmt: skip
@@ -188,7 +188,7 @@ def test_the_box_as_posted():
 
 def test_why_a_line_was_coded_in_plain_words():
     why = account_lines.why_words
-    assert why({"source": "supplier", "lines": 8, "of": 8}) == "this supplier's usual account: 8 of 8 lines last year"
+    assert why({"source": "supplier", "lines": 8, "of": 8}) == "this supplier's usual account: 8 of 8 past lines"
     assert why({"source": "vendor", "lines": 3}) == "approved this way 3 times"
     assert why({"source": "rule", "rule": "Courier → 7420"}) == "the rule “Courier → 7420”"
     assert why({"source": "person"}) == "picked by a person"

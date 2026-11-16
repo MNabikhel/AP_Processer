@@ -534,14 +534,16 @@ settings* on in Settings → About); a test checks that each one stays covered.
   the automation columns of the pay item.
 * Exchange rates: E1's table (VLCRR blank) or AP Coder's.
 
-## Last year's coding: the Transaction Journal (R09321)
+## Past invoice coding: the Transaction Journal (R09321)
 
 How AP coded each supplier before is in JD Edwards already. AP Coder reads it from report **R09321, "Transaction
 Journal"**, and keeps it apart from what it learns from approved invoices (`ap_coder/erp/journal.py` reads the file,
 `ap_coder/core/store/journal.py` keeps it).
 
-**Pull it.** Run R09321 for document type **PV** (vouchers), the **company**, and **12 months** of G/L dates, and
-save the report **as CSV**. Leave the file as it comes: the title rows, the page headers and the total rows are
+**Pull it.** Run R09321 for document type **PV** (vouchers), the **company**, and the G/L dates to learn from, and
+save the report **as CSV**. Any period is read, and nothing limits it to a year: the more history, the better the
+suggestions (a year is about 25,000 lines; two journals of different years can both be loaded, a voucher in both
+counted once). Leave the file as it comes: the title rows, the page headers and the total rows are
 expected, and the `Grand Total` row at the end is what the load is checked against.
 
 **Load it.** Either way shows a summary first and writes nothing until asked:

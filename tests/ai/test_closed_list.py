@@ -140,5 +140,5 @@ def test_the_models_account_is_a_guess_and_its_silence_is_said_on_the_line(store
     reference, result = _left(store, "Day porter service")
     (line,) = _pipeline_asks(monkeypatch, result, silent)
     assert line.predicted_gl_code == UNASSIGNED and line.reasoning_justification == (
-        "This supplier's 20 lines last year went to 3 accounts: 60% / 25% / 15%: pick the account. The chat model "
-        "was asked and gave no answer (LM Studio gave an empty answer).")  # fmt: skip
+        "This supplier's 20 lines posted in JD Edwards went to 3 accounts: 60% / 25% / 15%: pick the account. The "
+        "chat model was asked and gave no answer (LM Studio gave an empty answer).")  # fmt: skip

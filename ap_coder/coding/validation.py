@@ -181,7 +181,7 @@ def validate_coding(
     _line_issues(coding, reference, add)
     guesses = [li for li in coding.line_items if (li.decided_by or {}).get("source") in GUESS_SOURCES]
     if guesses and len(guesses) == len(coding.line_items):
-        # Not one account a person, a rule, last year's journal or an approval decided: "Approve anyway" with a
+        # Not one account a person, a rule, the past invoice coding or an approval decided: "Approve anyway" with a
         # reason passes it, or changing an account (then a person decided that one).
         add(ERROR, "ACCOUNTS_ALL_GUESSED", guessed_message(len(guesses)))
     for line, message in long_remarks(coding):  # held back only where the remark goes to JD Edwards (D-213)
@@ -223,9 +223,9 @@ def validate_coding(
 def guessed_message(n: int) -> str:
     """ACCOUNTS_ALL_GUESSED's words for an invoice of ``n`` lines."""
     if n == 1:
-        return ("its account is still a guess: look at it. Nothing AP approved, keyed last year or set as a rule "
+        return ("its account is still a guess: look at it. Nothing AP approved, posted in JD Edwards or set as a rule "
                 "backs it; change it, or tick “Approve anyway” and say why to keep it")  # fmt: skip
-    return (f"{n} accounts are still guesses: look at them. Nothing AP approved, keyed last year or set as a rule "
+    return (f"{n} accounts are still guesses: look at them. Nothing AP approved, posted in JD Edwards or set as a rule "
             "backs any of them; change the wrong ones, or tick “Approve anyway” and say why to keep them")  # fmt: skip
 
 

@@ -1,4 +1,4 @@
-"""How AP Coder would have coded last year's vouchers (``python -m ap_coder pilot-score --journal [FILE]``).
+"""How AP Coder would have coded past vouchers (``python -m ap_coder pilot-score --journal [FILE]``).
 
 JD Edwards' Transaction Journal (report R09321 saved as CSV: the file given, else the journal loaded in this data
 folder) is cut in two by G/L date. The older part is loaded into a TEMPORARY database, which gets a copy of the chart
@@ -370,7 +370,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     groups = [(name, s) for part in ("by_supplier_seen", "by_voucher_lines", "by_class")
               for name, s in report[part].items()]  # fmt: skip
     lines = [
-        "# How AP Coder would have coded last year's vouchers", "",
+        "# How AP Coder would have coded past vouchers", "",
         paragraph(report), "", *gate_table(report["gate"]), UPPER_BOUND, "",
         f"Made {report.get('made', '')} from {report.get('source', 'the journal')}.", "",
         "## What was scored", "",
