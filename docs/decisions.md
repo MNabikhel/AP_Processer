@@ -5963,7 +5963,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Not confirmed:** whether Azure's answer names its region (`x-ms-region` is read when present; the 2024-11-30
     reference lists no such header): Test connection says so, and IT confirms Canada Central in the portal.
   - **Left out of v1:** sign-in through Entra ID or a managed identity, a proxy, other models and query fields,
-    Azure's words as the layout, Azure's lines replacing the page's, the discount, amount due, addresses and bank
+    Azure's words as the layout (this computer's OCR reads a scan first; Azure's words only for a page it can't),
+    Azure's lines replacing the page's, the discount, amount due, addresses and bank
     details, a monthly cost cap, the batch API, parallel calls, touchless approval on a value only Azure read, and
     the developer `extract` command (still the SDK, behind `AP_ALLOW_INTERNET=1`). No recorded answers are committed
     for the benchmark yet: `bench record-di` records them on a developer's computer.

@@ -4,10 +4,13 @@ D-245), with answers made here from the made-up invoices' truth (nothing is aske
 import gzip
 import json
 
+import pytest
+
 from ap_coder.bench import di_compare
 from ap_coder.bench.generator import load_cases
 from ap_coder.bench.harness import run
 from ap_coder.capture import DI_FIELDS
+from ap_coder.capture.layout import ocr_available
 from ap_coder.capture.types import AMOUNT_FIELDS, DATE_FIELDS
 
 TAX_RATES = {"gst_amount": "5%", "hst_amount": "13%", "pst_amount": "7%", "qst_amount": "9.975%"}
@@ -60,6 +63,9 @@ def test_each_case_is_read_with_and_without_azure_and_compared_field_by_field(tm
     assert "| invoice_number | 2 |" in text and "Answers not used" in text
 
 
+@pytest.mark.skipif(
+    not ocr_available(), reason="its quick cases include scans: local OCR not installed (pip install -e .[ocr])"
+)
 def test_azure_agreeing_never_makes_a_field_less_sure_than_ap_coder_alone_on_the_quick_cases(tmp_path):
     """D-245: with Azure's answer among the readers, a field Azure reads the same is never less sure, nor less than
     verified when AP Coder alone verified it; one Azure reads otherwise goes to a person. Over the benchmark's quick

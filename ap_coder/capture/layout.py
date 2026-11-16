@@ -1262,18 +1262,25 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
     suffix = path.suffix.lower()
     use_ocr = ocr is True or (ocr == "auto" and ocr_available())
     if suffix in IMAGE_EXTENSIONS:
-        if di_raw:
-            di = layout_from_di(di_raw)
+        # This computer's OCR first; Azure's words (D-245) only when OCR isn't installed or can't read the photo.
+        di = layout_from_di(di_raw) if di_raw else None
+        no_heif = suffix in HEIF_EXTENSIONS and not register_heif()
+        if not use_ocr or no_heif:
             if di:
                 return di
-        if suffix in HEIF_EXTENSIONS and not register_heif():
-            raise CannotRead(NO_HEIF)
-        if not use_ocr:
+            if no_heif:
+                raise CannotRead(NO_HEIF)
             if ocr == "auto":
                 raise CannotRead(NO_OCR)
             return DocLayout([], "none")
-        frames = _image_pages(path, max_pages or read_pages())
-        return DocLayout([ocr_image(page, i) for i, page in enumerate(frames, 1)], "ocr")
+        try:
+            frames = _image_pages(path, max_pages or read_pages())
+            return DocLayout([ocr_image(page, i) for i, page in enumerate(frames, 1)], "ocr")
+        except Exception as exc:
+            if not di:
+                raise
+            log.warning("%s: OCR failed (%s); Azure Document Intelligence's words are read", path.name, exc)
+            return di
 
     pages: list[PageLayout] = []
     sources: set[str] = set()
@@ -1303,11 +1310,10 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                 pages.append(text_page)
                 sources.add("text")
                 continue
-            di_page = next((p for p in di.pages if p.number == number), None) if di else None
-            if di_page and di_page.words:
-                pages.append(di_page)
-                sources.add("di")
-            elif use_ocr:
+            # This computer's OCR first; Azure's words (D-245) stand in only when OCR isn't installed or can't read
+            # the page. Azure's fields are compared with what OCR read either way (``capture._di_sources``).
+            di_page = next((p for p in di.pages if p.number == number and p.words), None) if di else None
+            if use_ocr:
                 try:
                     scanned = ocr_image(_pdf_page(sha, doc, page, i), number)
                     with PDF_LOCK:  # rendered finer than it was scanned; one of its own shapes, never scanned (B-1761)
@@ -1316,11 +1322,18 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                     sources.add("ocr")
                 except Exception as exc:  # a page OCR cannot read is kept empty and counted unread, never fatal
                     log.warning("%s page %d: OCR failed (%s)", path.name, number, exc)
+                    if di_page:
+                        pages.append(di_page)
+                        sources.add("di")
+                        continue
                     pages.append(text_page)
                     if texted:  # a scan with a text layer: that text, the best there is
                         sources.add("text")
                     else:
                         not_read.append(number)
+            elif di_page:
+                pages.append(di_page)
+                sources.add("di")
             else:
                 with PDF_LOCK:
                     scanned_page = ocr == "auto" and _looks_scanned(page)

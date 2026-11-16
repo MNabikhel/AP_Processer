@@ -726,6 +726,11 @@ Invoices are put in line when they are processed (`azure_checks`), and sent afte
 running. Processing never waits for Azure. Azure's answer is kept in the data folder's `.cache/di`, by the file's
 SHA-256, the model and the API version (never in a backup), so Azure is never asked twice for one file.
 
+**Working with this computer's readers** (`layout.build_layout`): a scan or a photo is still read by this computer's
+OCR first, and the rule reader and the vision model read what OCR read; Azure's fields are then compared with theirs
+(agreeing raises a field's confidence, disagreeing sends it to Check). Azure's words stand in for a page only when OCR
+isn't installed or can't read that page.
+
 **Mapping** (`_di_readings`, `_di_lines`): VendorName, InvoiceId, InvoiceDate, DueDate, PurchaseOrder, PaymentTerm,
 SubTotal, TotalTax and InvoiceTotal as their fields; the currency from the totals' currency code; each tax of
 TaxDetails by a rate that names one tax (5 GST, 13/14/15 HST, 9.975 QST, 6/7 PST: the number before "%", or Azure's
