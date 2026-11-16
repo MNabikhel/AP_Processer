@@ -451,7 +451,7 @@ def _server_accounts(store: Any) -> Check:
                      "the password admin, in a browser on this server (https://127.0.0.1:<port>, D-243), with the "
                      f"setup code {store.first_setup_code()}; or is added with python -m ap_coder users add --admin "
                      "<name>")  # fmt: skip
-    admins = [u for u in users if u["role"] == "admin" and u["active"]]
+    admins = [u for u in users if "users" in u["permissions"] and u["active"]]  # who manages them (D-250)
     if not admins:
         return Check("server accounts", FAIL, f"{len(users)} account(s), but no active Admin: python -m ap_coder users "
                      "add --admin <name>")  # fmt: skip

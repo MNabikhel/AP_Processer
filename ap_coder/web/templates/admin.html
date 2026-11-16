@@ -11,7 +11,7 @@
 {% block content %}
 {% include "_admin_tabs.html" %}
 <div class="col">
-<div class="apc-tiles apc-anim">
+<div class="apc-tiles apc-anim {{ 'n3' if server_mode else 'n2' }}">
   {% if server_mode %}
   {{ ui.tile("People", active | num, "group", "blue", ((people | length) - active) ~ " turned off" if (people | length) > active else "all active") }}
   {% endif %}
@@ -36,6 +36,16 @@
   </div>
 </section>
 
+{% if server_mode and can("/admin/roles", "GET") %}
+<section class="card" id="roles">
+  <div class="card-head">
+    <div><h4><span class="ms" aria-hidden="true">badge</span> Roles</h4>
+      <p class="muted">What each role may do: the five built in, and the ones you make from them.</p></div>
+    <a class="btn" href="/admin/roles"><span class="ms" aria-hidden="true">arrow_forward</span>Open Roles</a>
+  </div>
+</section>
+{% endif %}
+
 <section class="card" id="sign-in">
   <div class="card-head">
     <div><h4><span class="ms" aria-hidden="true">lock_clock</span> Sign-in</h4>
@@ -59,7 +69,7 @@
     <table class="apc-table fit">
       <thead><tr><th>When</th><th>What</th><th>Details</th></tr></thead>
       <tbody>
-        {% for e in recent %}<tr><td class="w">{{ e.when }}</td><td>{{ ui.pill(e.what, e.tone, e.icon) }}</td><td>{{ e.details }}</td></tr>{% endfor %}
+        {% for e in recent %}<tr><td>{{ e.when }}</td><td>{{ ui.pill(e.what, e.tone, e.icon) }}</td><td class="w">{{ e.details }}</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

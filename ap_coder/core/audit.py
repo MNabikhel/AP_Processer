@@ -124,6 +124,9 @@ ACTIONS = {
     "authenticator_enrolled": ("verified_user", "info", "Authenticator app set up"),  # (D-146)
     "authenticator_reset": ("phonelink_erase", "warn", "Authenticator reset"),
     "sessions_ended": ("logout", "warn", "Signed out everywhere"),  # by an Admin (D-249)
+    "role_created": ("badge", "info", "Role made"),  # the roles an Admin makes (D-250)
+    "role_edited": ("badge", "warn", "Role changed"),
+    "role_deleted": ("badge", "warn", "Role deleted"),
 }
 
 
@@ -580,7 +583,13 @@ def _account_text(action: str, d: dict[str, Any]) -> str | None:
             str(d.get("by")), "5 tries that didn't match for this username from one address")  # fmt: skip
         if action == "login_locked" and d.get("by") == "account":  # (D-109) a few minutes at first, from anywhere
             return f"{by} ({d.get('username') or 'an unknown account'}): logging in paused from new addresses"
-        roles = {"role": role(d.get("role")), "was": role(d.get("from")), "now": role(d.get("to"))}
+        if action.startswith("role_") and action != "role_changed":  # a role made, changed or deleted (D-250)
+            return _role_text(action, d)
+        roles = {
+            "role": role(d.get("role")),
+            "was": d.get("from_name") or role(d.get("from")),
+            "now": d.get("to_name") or role(d.get("to")),
+        }  # (a role made here: its name then, D-250)
         if d.get("account") == "unknown":  # the text typed is not kept (D-101)
             words = _ACCOUNT_WORDS["login_failed_unknown" if action == "login_failed" else action]
             return words.format(user="an unknown account", name="", by=by, address="?", **roles)
@@ -660,7 +669,28 @@ _ACCOUNT_WORDS = {  # server mode's accounts (D-97): who, in plain words
     "authenticator_enrolled": "{user} set up their authenticator app: a code from it at every login",
     "authenticator_reset": "{user} sets their authenticator app up again at the next login (logged out everywhere)",
     "sessions_ended": "{user} was signed out on every computer and browser",
+    "role_created": "",
+    "role_edited": "",
+    "role_deleted": "",
 }
+
+
+def _role_text(action: str, d: dict[str, Any]) -> str:
+    """A role an Admin made, changed or deleted (D-250), with what it may do or what changed, in words."""
+    from .permissions import PERMISSIONS
+
+    def said(keys: Any) -> str:
+        return ", ".join(PERMISSIONS[k][0] for k in keys or () if k in PERMISSIONS) or "nothing"
+
+    name = d.get("name") or "?"
+    if action == "role_created":
+        return f"{name}: {said(d.get('permissions'))}"
+    if action == "role_deleted":
+        return f"{name} deleted"
+    parts = [f"renamed from {d['was']}"] if d.get("was") else []
+    parts += [f"may now: {said(d['added'])}"] if d.get("added") else []
+    parts += [f"no longer: {said(d['removed'])}"] if d.get("removed") else []
+    return f"{name}: {'; '.join(parts) or 'unchanged'}"
 
 
 def _approved_text(d: dict[str, Any]) -> str:

@@ -780,6 +780,15 @@ usernames); *Activity*; and links to the Azure, JD Edwards AIS and backup settin
 | Admin | Everything else: Settings, users, the JD Edwards setup, GL accounts and vendors imports, backups and restore, deleting, Azure Document Intelligence (D-245), updating. |
 | Manager | Only confirms, or sends back, the coding of the invoices AP sends them (*Manager confirmations*): sees those invoices and nothing else of AP Coder. An Admin sets each Manager's cost centers on the users page; AP picks the Manager when sending (D-138). |
 
+These five are built in and fixed. On *Admin* → *Roles* an Admin makes others (D-250): a name and tick boxes of
+what the role may do (see invoices and reports, the activity log, bring invoices in, review and code, approve, give
+the second approval, make export batches, post to JD Edwards, lift holds and keep bank accounts, change the setup,
+delete and undo, change settings, manage users and roles, confirm coding as a manager), from scratch or from a copy of
+another role; then gives it to people on *Users* or their own page. A role is changed for everyone who has it from
+their next click, and deleted only once no account has it. An Admin can't take *Manage users and roles* from
+themselves, and the last active account that has it keeps it. Every role made, changed, deleted or given is in the
+Activity log.
+
 Pages show each person only what their role may use; the server refuses the rest anyway. The JD Edwards settings
 are on *Settings* → *JD Edwards E1* from the start on the server (step 2).
 
@@ -792,6 +801,7 @@ From the server's console, the same:
 
 ```bat
 .venv\Scripts\python.exe -m ap_coder users list
+.venv\Scripts\python.exe -m ap_coder users roles
 .venv\Scripts\python.exe -m ap_coder users add mlee --name "Mary Lee" --role approver
 .venv\Scripts\python.exe -m ap_coder users role mlee clerk
 .venv\Scripts\python.exe -m ap_coder users reset mlee
@@ -801,7 +811,8 @@ From the server's console, the same:
 ```
 
 `users add` takes `--name` (the name on their approvals; default: the user name) and `--role` (`readonly`, `clerk`,
-`approver` or `admin`; default `clerk`; `--admin` is `--role admin`). On the console the temporary password is the one
+`approver`, `admin`, `manager` or the name of a role made on *Roles*; default `clerk`; `--admin` is `--role admin`);
+`users role` takes the same. On the console the temporary password is the one
 you type, twice (`add` and `reset`); the person changes it at their first sign-in. `activate` turns an account that
 was turned off on again, with its password as it was. `reset-2fa` forgets a person's authenticator app and resets
 their password, printing a temporary one once (see below): the way back in for the last Admin, whom no other Admin

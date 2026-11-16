@@ -69,7 +69,7 @@
         {% if account %}
         {# Server mode (D-97): the person logged in, their role, their password and Log out (the users: Admin, D-249). #}
         {# (a Manager approves no invoice: only the role) #}
-        {% set mine = account.role_label ~ ("" if account.role == "manager" else " · " ~ (approved_today | num) ~ " approved today") %}
+        {% set mine = account.role_label ~ ("" if not account.counts_approvals else " · " ~ (approved_today | num) ~ " approved today") %}
         <div class="apc-me" title="{{ account.username }} · {{ mine }}">
           {{ ui.avatar(account.name, "sm") }}
           <div><div class="name">{{ account.name }}</div><div class="role">{{ mine }}</div></div>

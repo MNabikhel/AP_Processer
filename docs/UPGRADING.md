@@ -123,6 +123,11 @@ connects to the internet (ONNX Runtime's own usage reports to Microsoft included
   adds that to the database: an older AP Coder refuses the database from then on (*made by a newer AP Coder*), so
   go back as below, with that backup. A journal loaded before the update keeps its dates as they were read then:
   loaded again, or overlapped by another file, it says so, and to forget it and load it again.
+- **Going back to a version from before schema 29 (November 2026) needs the backup the update made.** This version
+  keeps the roles an Admin makes (D-250). The first start of this version on a database of schema 28 makes a backup
+  of it once, `ap_coder-<date>-before-update-from-schema-28.db`: an older AP Coder refuses the database from then on
+  (*made by a newer AP Coder*), as it knows the five built-in roles only. Go back as below, with that backup; the
+  roles made since, and the people given them, are not in it.
 
 ## Going back to the previous version
 

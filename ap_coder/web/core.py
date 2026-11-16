@@ -879,7 +879,7 @@ def can(request: Request, path: str, method: str = "POST") -> bool:
         return found is None or not identity.here_only(path, method.upper())
     from ap_coder.web import roles
 
-    return found is not None and roles.can(request.app, found.role, method, path)
+    return found is not None and roles.can(request.app, found.granted, method, path)
 
 
 def _shown_rail(request: Request, store: Store) -> dict[str, list[dict[str, Any]]]:
@@ -901,10 +901,12 @@ def account(request: Request) -> dict[str, Any] | None:
     found = identity.person()
     if not server_mode(request) or found is None or not found.user_id:
         return None
+    from ap_coder.core.permissions import VIEW
     from ap_coder.core.store.users import ROLE_LABELS
 
     return {"name": found.name, "username": found.username, "role": found.role,
-            "role_label": ROLE_LABELS.get(found.role, found.role)}  # fmt: skip
+            "role_label": found.role_label or ROLE_LABELS.get(found.role, found.role),
+            "counts_approvals": VIEW in found.granted}  # (a Manager's: none, D-138)  # fmt: skip
 
 
 def admin_notice(request: Request) -> dict[str, str] | None:

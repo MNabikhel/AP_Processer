@@ -43,7 +43,7 @@ def test_one_admin_entry_opens_the_panel_and_only_for_an_admin(store):
     panel = boss.get("/admin")
     assert panel.status_code == 200
     tabs = re.findall(r'<nav class="tabs" aria-label="Admin">(.*?)</nav>', panel.text, re.S)[0]
-    assert re.findall(r">([^<]+)</a>", tabs) == ["Overview", "Users", "Sign-in", "Activity"]
+    assert re.findall(r">([^<]+)</a>", tabs) == ["Overview", "Users", "Roles", "Sign-in", "Activity"]
     for link in (
         'href="/admin/users"',
         'href="/admin/sign-in"',

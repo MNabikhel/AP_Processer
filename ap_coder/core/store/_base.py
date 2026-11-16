@@ -35,7 +35,7 @@ from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unre
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104) and
 # vendor_aliases (by _SCHEMA: a vendor name read wrong, as AP corrected it, D-119), line_texts (by _SCHEMA: a
 # supplier's line descriptions as AP approved them, D-120)
-SCHEMA_VERSION = 28  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
+SCHEMA_VERSION = 29  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
 # (B-1581), 22: the ERP register's vendor names and invoice numbers as the quick search compares them (D-157), 24: the
 # events' indexes by day and by person, the register's by number (D-156), 25: the lessons' approvals counted off an
 # index (B-1714), 26: the import queue (import_batches, import_files, import_turns by _SCHEMA, its indexes; D-168),
@@ -53,6 +53,8 @@ SCHEMA_VERSION = 28  # 19: the invoices' summary and its triggers (summary.py, `
 # rules.py, D-217; and why_questions (by _SCHEMA: the question asked after an approval, lessons.py, D-218); and
 # vendor_info (by _SCHEMA: what JD Edwards' vendor information list says of each supplier, vendor_master.py, D-219);
 # 28: journal_files.dates_read, how the G/L dates of a journal loaded were read ('' for one loaded before, B-2543)
+# 29: roles (by _SCHEMA: the roles an Admin makes, roles.py, D-250), a version of its own: an older AP Coder knows the
+# five built-in roles only, so it would let nobody with a role made here do anything; it refuses the database instead
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -326,6 +328,8 @@ CREATE TABLE IF NOT EXISTS invoice_drafts (invoice_id INTEGER NOT NULL, person T
 CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL DEFAULT '', role TEXT NOT NULL DEFAULT 'clerk', pw_hash TEXT NOT NULL, active INTEGER
     NOT NULL DEFAULT 1, must_change INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, last_login TEXT);
+CREATE TABLE IF NOT EXISTS roles (key TEXT PRIMARY KEY, name TEXT NOT NULL, permissions TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created_at REAL NOT NULL,
     last_seen REAL NOT NULL, ip TEXT NOT NULL DEFAULT '', user_agent TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS login_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL DEFAULT '',

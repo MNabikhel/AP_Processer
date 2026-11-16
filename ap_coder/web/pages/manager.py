@@ -25,9 +25,9 @@ from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from ap_coder.coding.manager_mail import request_email
+from ap_coder.core.permissions import CODE, CONFIRM
 from ap_coder.core.store.backup_files import in_data_folder
 from ap_coder.core.store.managers import CONFIRMED, EMAIL, SCREEN, SENT_BACK, WAITING
-from ap_coder.core.store.users import MANAGER
 from ap_coder.web import document, identity
 from ap_coder.web.core import done, flash_message, get_store, page_router, refuse, render, reviewer, server_mode
 
@@ -43,7 +43,7 @@ def _me() -> identity.Person | None:
 
 def _is_manager() -> bool:
     me = _me()
-    return bool(me and me.user_id and me.role == MANAGER)
+    return bool(me and me.user_id and CONFIRM in me.granted and CODE not in me.granted)  # (D-138): AP sees all
 
 
 def _request(request: Request, request_id: int) -> dict[str, Any]:

@@ -203,7 +203,8 @@ def test_an_admin_releases_a_voucher_jde_holds_another_invoice_under_after_check
     assert 1 not in jde_post.left_out_of_files(store, batch)  # the files hold it again
     (event,) = store.events(actions=["jde_voucher_released"])
     assert event["invoice_id"] == 1 and event["detail"]["note"].startswith("77777") and event["actor"]
-    assert roles.RULES[("POST", "/exports/batches/{batch:int}/jde-api/release")] == roles.ADMIN
+    need = roles.RULES[("POST", "/exports/batches/{batch:int}/jde-api/release")]  # of the built-in roles, an Admin's
+    assert [r for r in ("readonly", "clerk", "approver", "admin", "manager") if roles.allowed(r, need)] == ["admin"]
 
 
 # --- S9. The hub's invoice links on the server --------------------------------------------------------------------

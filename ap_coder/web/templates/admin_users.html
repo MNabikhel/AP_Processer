@@ -37,7 +37,7 @@
               </select>
               <button class="btn" type="submit">Change</button>
             </form>
-            {% if u.role == "manager" %}
+            {% if "confirm" in u.permissions %}
             <form method="post" action="/admin/users/{{ u.id }}/cost-centers" class="row">
               <input type="text" name="cost_centers" value="{{ u.cost_centers }}" maxlength="500" placeholder="their cost centers, e.g. CC-200, CC-300" aria-label="Cost centers {{ u.username }} answers for">
               <button class="btn" type="submit">Save</button>
@@ -96,14 +96,15 @@
     login.</p>
 </section>
 
-<section class="card">
-  <h4>The roles</h4>
+<section class="card" id="the-roles">
+  <div class="card-head">
+    <div><h4>The roles</h4></div>
+    {% if can("/admin/roles", "GET") %}<a class="btn" href="/admin/roles"><span class="ms" aria-hidden="true">badge</span>Open Roles</a>{% endif %}
+  </div>
   <ul>
-    <li><b>Read-only</b>: looks at the review queue, invoices, reports, exports, Insights, Spend, Activity and Help. Changes nothing.</li>
-    <li><b>Clerk</b>: also imports invoices, reviews, checks and approves them (the first approval), parks, rejects and reopens them, approves in bulk and makes export batches.</li>
-    <li><b>Approver</b>: also gives the second approval to invoices over the approval limit. It must be another person than the first approver.</li>
-    <li><b>Admin</b>: everything, including Settings, users, the GL accounts and tax setup, imports, JD Edwards, backups and restore, and deleting.</li>
-    <li><b>Manager</b>: outside the others. Only confirms, or sends back, the coding of the invoices AP sends them (Manager confirmations), for the cost centers set in their row above; sees those invoices and nothing else.</li>
+    {% for r in all_roles %}
+    <li><b>{{ r.name }}</b>: {% if r.built_in %}{{ r.note }}{% else %}made here. May: {% for p in r.permissions %}{{ permissions[p][0] | lower }}{{ "." if loop.last else ", " }}{% endfor %}{% endif %}</li>
+    {% endfor %}
   </ul>
 </section>
 </div>

@@ -341,19 +341,19 @@ def _add_report_commands(sub: Any, private: Path, out_dir: Path) -> None:
 
 
 def _add_users_command(sub: Any) -> None:
-    """``users``: server mode's accounts (add, list, reset, reset-2fa, deactivate, activate, role); a laptop's sign-in
-    (``sign-in on|off``, D-243)."""
-    from ..core.store.users import ROLES
-
+    """``users``: server mode's accounts (add, list, reset, reset-2fa, deactivate, activate, role) and the roles
+    (``roles``, D-250); a laptop's sign-in (``sign-in on|off``, D-243)."""
     p = sub.add_parser("users", help="Server mode: the people who log in (add, list, reset, reset-2fa, deactivate, "
-                       "activate, role)")  # fmt: skip
+                       "activate, role, roles)")  # fmt: skip
     users = p.add_subparsers(dest="users_command", required=True)
     u = users.add_parser("add", help="Add a person (the password is asked for, twice)")
     u.add_argument("username")
-    u.add_argument("--role", choices=ROLES, default="clerk", help="Default: clerk")
+    u.add_argument("--role", default="clerk", help="readonly, clerk, approver, admin, manager, or the name of a role "
+                   "made on the Admin panel's Roles page (users roles lists them). Default: clerk")  # fmt: skip
     u.add_argument("--admin", action="store_true", help="The same as --role admin (the first Admin)")
     u.add_argument("--name", default="", help="The name on their approvals (default: the username)")
     users.add_parser("list", help="Everyone who can log in, with their role")
+    users.add_parser("roles", help="Every role and what it may do: the five built in, and those made on Roles")
     u = users.add_parser("reset", help="A new temporary password (asked for, twice); they choose their own at login")
     u.add_argument("username")
     u = users.add_parser("reset-2fa", help="Forget a person's authenticator app (a phone lost or replaced; the last "
@@ -364,9 +364,9 @@ def _add_users_command(sub: Any) -> None:
     u.add_argument("username")
     u = users.add_parser("activate", help="Turn an account that was turned off on again: it can log in again")
     u.add_argument("username")
-    u = users.add_parser("role", help="Change a person's role")
+    u = users.add_parser("role", help="Change a person's role: a built-in one or one made on Roles (its name)")
     u.add_argument("username")
-    u.add_argument("role", choices=ROLES)
+    u.add_argument("role")
     u = users.add_parser("sign-in", help="A laptop: turn its Admin's sign-in off (no one signs in on this computer) "
                          "or on again, from its next start (D-243); never on a team's data folder")  # fmt: skip
     u.add_argument("state", choices=("on", "off"))
@@ -1275,7 +1275,8 @@ def _new_password(username: str, name: str = "") -> str | None:
 
 def cmd_users(args: argparse.Namespace) -> int:
     """The accounts of server mode, from the server's console (D-97): the first Admin is added here."""
-    from ..core.store.users import ADMIN, ROLE_LABELS, USERNAME, fold_username
+    from ..core.permissions import PERMISSIONS
+    from ..core.store.users import ADMIN, USERNAME, fold_username
 
     store = Store(args.db)
     actor = "the server console"
@@ -1287,7 +1288,13 @@ def cmd_users(args: argparse.Namespace) -> int:
         for u in found:
             state = "turned off" if not u["active"] else ("temporary password" if u["must_change"] else "active")
             codes = "codes set up" if u["totp_on"] else "codes not set up"  # the authenticator app (D-146)
-            print(f"{u['username']:<24} {ROLE_LABELS[u['role']]:<10} {u['display_name']:<30} {state}, {codes}")
+            print(f"{u['username']:<24} {u['role_label']:<10} {u['display_name']:<30} {state}, {codes}")
+        return 0
+    if action == "roles":
+        for r in store.all_roles():
+            kind = "built in" if r["built_in"] else "made here"
+            print(f"{r['name']} ({kind}, {r['people']} account{'s' if r['people'] != 1 else ''}): "
+                  + ", ".join(PERMISSIONS[k][0] for k in r["permissions"]))  # fmt: skip
         return 0
     if action == "sign-in":
         return _sign_in_command(store, args.state == "on", actor)
@@ -1298,7 +1305,10 @@ def cmd_users(args: argparse.Namespace) -> int:
             print(taken or "A username is 1 to 64 letters, digits, dots, dashes, underscores or @ (e.g. ann.lee).",
                   file=sys.stderr)  # fmt: skip
             return 1
-        role = ADMIN if args.admin else args.role
+        role = ADMIN if args.admin else _role_key(store, args.role)
+        if store.role_info(role) is None:  # said before the password is asked for
+            print(f"There is no role {args.role}: python -m ap_coder users roles lists them.", file=sys.stderr)
+            return 1
         password = _new_password(username, args.name)
         if password is None:
             return 1
@@ -1307,8 +1317,8 @@ def cmd_users(args: argparse.Namespace) -> int:
         except ValueError as exc:
             print(exc, file=sys.stderr)
             return 1
-        print(f"Added {username} ({ROLE_LABELS[role]}). They choose their own password at their first login, then "
-              "set up an authenticator app for a code at every login.")  # fmt: skip
+        print(f"Added {username} ({store.find_user(username)['role_label']}). They choose their own password at "
+              "their first login, then set up an authenticator app for a code at every login.")  # fmt: skip
         return 0
     user = store.find_user(username)
     if user is None:
@@ -1333,12 +1343,19 @@ def cmd_users(args: argparse.Namespace) -> int:
             store.activate_user(user["id"], actor=actor)
             print(f"{username} can log in again, with the same password as before.")
         else:
-            store.set_role(user["id"], args.role, actor=actor)
-            print(f"{username} is now {ROLE_LABELS[args.role]}.")
+            store.set_role(user["id"], _role_key(store, args.role), actor=actor)
+            print(f"{username} is now {store.user(user['id'])['role_label']}.")
     except ValueError as exc:
         print(exc, file=sys.stderr)
         return 1
     return 0
+
+
+def _role_key(store: Store, said: str) -> str:
+    """The role typed at the console: a built-in one's key, or a role's name (any case); else what was typed, which
+    the store refuses in words."""
+    said = said.casefold()
+    return next((r["key"] for r in store.all_roles() if said in (r["key"].casefold(), r["name"].casefold())), said)
 
 
 def _sign_in_command(store: Store, on: bool, actor: str) -> int:

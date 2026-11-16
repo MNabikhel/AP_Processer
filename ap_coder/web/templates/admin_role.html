@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{# One role (pages/admin_roles.py, D-250): a built-in one as it is (fixed), a new one, or one made here to change or
+   delete. #}
+{% block header %}
+<header class="apc-head apc-anim"><div>
+  {{ ui.breadcrumbs(["AP Coder", "Admin", "Roles"]) }}
+  <h1 class="apc-title">{{ role.name or "New role" }}</h1>
+  <div class="apc-sub">{% if role.built_in %}A built-in role: it can't be changed. Copy it to make your own from it.{% elif role.key %}A role made here: {{ role.people }} account{{ "" if role.people == 1 else "s" }} {{ "has" if role.people == 1 else "have" }} it.{% elif copied %}A copy of {{ copied }}: name it, change what it may do, and save.{% else %}Name it and tick what it may do.{% endif %}</div>
+</div></header>
+{% endblock %}
+{% block content %}
+{% include "_admin_tabs.html" %}
+<div class="col">
+<section class="card" id="role">
+  {% set fixed = role.built_in %}
+  {% if fixed %}<div class="stack">{% else %}<form method="post" action="{{ '/admin/roles/' ~ role.key ~ '/save' if role.key else '/admin/roles/add' }}" class="stack" data-busy="Saving…">{% endif %}
+    <label class="field">Name
+      <input type="text" name="name" value="{{ role.name }}" maxlength="40" required placeholder="e.g. AP lead"{% if fixed %} disabled{% endif %}></label>
+    <fieldset class="stack">
+      <legend>May</legend>
+      {% for key, (label, what) in permissions.items() %}
+      <label class="check"><input type="checkbox" name="permissions" value="{{ key }}"{% if key in role.permissions %} checked{% endif %}{% if fixed %} disabled{% endif %}>
+        <span><b>{{ label }}</b> <span class="muted">· {{ what }}</span></span></label>
+      {% endfor %}
+    </fieldset>
+    {% if not fixed %}
+    <div class="row">
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>{{ "Save" if role.key else "Make the role" }}</button>
+      <a class="btn" href="/admin/roles">Cancel</a>
+    </div>
+    {% endif %}
+  {% if fixed %}</div>{% else %}</form>{% endif %}
+  {% if fixed or role.key %}
+  <div class="row">
+    <a class="btn" href="/admin/roles/new?copy={{ role.key }}"><span class="ms" aria-hidden="true">content_copy</span>Copy as a new role</a>
+    {% if not fixed %}
+    {% if role.people %}
+    <span class="muted">To delete it, give its {{ role.people }} account{{ "" if role.people == 1 else "s" }} another role first.</span>
+    {% else %}
+    <form method="post" action="/admin/roles/{{ role.key }}/delete" data-confirm="Delete the role {{ role.name }}? No account has it.">
+      <button class="btn danger" type="submit"><span class="ms" aria-hidden="true">delete</span>Delete</button>
+    </form>
+    {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
+
+{% if holders %}
+<section class="card" id="holders">
+  <h4><span class="ms" aria-hidden="true">group</span> Who has it</h4>
+  <ul>
+    {% for u in holders %}<li><a href="/admin/users/{{ u.id }}">{{ u.name }}</a> <span class="muted">{{ u.username }}{% if not u.active %} · turned off{% endif %}</span></li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
+</div>
+{% endblock %}

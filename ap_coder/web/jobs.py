@@ -252,12 +252,12 @@ def forget_ended(event: threading.Event) -> None:
 def _may_not(store: Any, kept: dict[str, Any]) -> str:
     """Why the person who asked may no longer approve: on the server, their account turned off or its role lowered
     since (an Admin's change applies to the invoices not approved yet); "" when they still may."""
-    from ap_coder.web import roles
+    from ap_coder.core.permissions import APPROVE
 
     if not kept.get("user_id"):
         return ""
     user = store.user(kept["user_id"])
-    allowed = user is not None and user.get("active") and roles.allowed(user["role"], roles.CLERK)
+    allowed = user is not None and user.get("active") and APPROVE in user["permissions"]
     return "" if allowed else NO_LONGER
 
 

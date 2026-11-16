@@ -1,50 +1,65 @@
-"""Who may do what in server mode (D-98): one table from each route to what it needs, read by the ``Identity``
-middleware (web/identity.py) before any page runs.
+"""Who may do what in server mode (D-98, D-250): one table from each route to the permission it needs, read by the
+``Identity`` middleware (web/identity.py) before any page runs.
 
-The roles, each able to do everything the one before it can (``core/store/users.py`` ``ROLES``):
+A role is a set of permissions (``core/permissions.py``, where each is described): the five built in, fixed, and the
+ones an Admin makes on the Admin panel's Roles page (``core/store/roles.py``). The built-in roles give exactly what
+they gave when they were a ladder of minimum roles (``tests/web/test_role_permissions.py`` compares every route with
+the table kept from before):
 
-* **Read-only** (``READ``): looks at the review queue, the invoices and their pages, the reports, the list of
+* **Read-only**: view, activity. Looks at the review queue, the invoices and their pages, the reports, the list of
   exports, Help, Insights, Spend, the Activity log and their own account. Changes nothing.
-* **Clerk** (``CLERK``): imports invoices, reviews and checks them, gives the first approval, parks, rejects,
-  reopens, undoes their own approval, approves in bulk, makes export batches and downloads them, puts vendors on hold
-  and keeps their notes (taking a vendor off hold is an Approver's, D-142: ``access.may_lift_hold``), and adds,
-  changes, removes and undoes the fixed coding rules (each change kept in their history, D-217).
-* **Approver** (``APPROVER``): also gives the second approval (over the approval limit) or sends the invoice back,
-  gives the go-ahead to post vouchers to JD Edwards through the API (D-104; a Clerk may run its dry run), takes
-  a vendor off hold, and adds, changes and removes the company's bank accounts (D-220).
-* **Admin** (``ADMIN``): everything else: Settings, the people who log in, JD Edwards setup (the API connection and
-  its sync too), the account lists and tax setup, imports of the vendor master and the like, backups and restore,
-  deleting, the Azure check, the learning memory's resets, the finance hub feed.
-
-A **Manager** (``MANAGER_ROLE``, D-138) is outside that ladder: it opens the requests sent to it to confirm an
-invoice's cost allocation (``MANAGE`` routes, ``web/pages/manager.py``, each checking the request is its own), its own
-account and Help, nothing else. A Clerk and above open those routes too (every request), to send, record an answer
-given by email, or withdraw.
+* **Clerk**: also import, code, approve, export. Imports invoices, reviews and checks them, gives the first approval,
+  parks, rejects, reopens, undoes their own approval, approves in bulk, makes export batches and downloads them, puts
+  vendors on hold and keeps their notes (taking a vendor off hold is an Approver's, D-142: ``access.may_lift_hold``),
+  and adds, changes, removes and undoes the fixed coding rules (each change kept in their history, D-217).
+* **Approver**: also final_approve, post, controls. Gives the second approval (over the approval limit) or sends the
+  invoice back, gives the go-ahead to post vouchers to JD Edwards through the API (D-104; a Clerk may run its dry
+  run), takes a vendor off hold, and adds, changes and removes the company's bank accounts (D-220).
+* **Admin**: also setup, undo, settings, users: everything else: Settings, the people who log in and the roles, JD
+  Edwards setup (the API connection and its sync too), the account lists and tax setup, imports of the vendor master
+  and the like, backups and restore, deleting, the Azure check, the learning memory's resets, the finance hub feed.
+* **Manager** (``MANAGER_ROLE``, D-138): confirm, nothing else. It opens the requests sent to it to confirm an
+  invoice's cost allocation (``MANAGE`` routes, ``web/pages/manager.py``, each checking the request is its own), its
+  own account. A role with code opens those routes too (every request), to send, record an answer given by email, or
+  withdraw.
 
 ``OPEN`` routes answer anyone (the login page and its steps before a session, ``/healthz``, the styles and
 scripts; ``/readyz`` and ``/shutdown`` check who asks themselves); ``SIGNED_IN`` ones anyone
 logged in, also while they must still choose a new password (logging out, changing it). A route not in ``RULES``
-needs an Admin: a route added without a rule is closed, and ``tests/web/test_roles.py`` fails until it gets one.
-Hiding a button a role can't use is only for the eye; this table is what is enforced.
+needs every permission an Admin has (``ADMIN``): a route added without a rule is closed, and
+``tests/web/test_roles.py`` fails until it gets one. Hiding a button a role can't use is only for the eye; this table
+is what is enforced.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from starlette.routing import Match
 
-from ap_coder.core.store.users import ADMIN as ADMIN_ROLE
-from ap_coder.core.store.users import APPROVER as APPROVER_ROLE
-from ap_coder.core.store.users import CLERK as CLERK_ROLE
-from ap_coder.core.store.users import MANAGER as MANAGER_ROLE
-from ap_coder.core.store.users import READONLY
+from ap_coder.core.permissions import (
+    ACTIVITY,
+    APPROVE,
+    BUILT_IN,
+    CODE,
+    CONFIRM,
+    CONTROLS,
+    EXPORT,
+    FINAL,
+    IMPORT,
+    POST,
+    SETTINGS,
+    SETUP,
+    UNDO,
+    USERS,
+    VIEW,
+)
+from ap_coder.core.permissions import ADMIN as ADMIN_ROLE
+from ap_coder.core.permissions import MANAGER as MANAGER_ROLE  # noqa: F401  (named in the docstring)
 
-OPEN, SIGNED_IN, READ, CLERK, APPROVER, ADMIN = "open", "signed in", "read", "clerk", "approver", "admin"
-MANAGE = "manage"  # a Manager's own requests, or a Clerk and above (D-138)
-RANK = {READONLY: 1, CLERK_ROLE: 2, APPROVER_ROLE: 3, ADMIN_ROLE: 4, MANAGER_ROLE: 0}  # a role's rank (a Manager: 0,
-# only what anyone signed in can do, besides MANAGE)
-NEEDS = {SIGNED_IN: 0, READ: 1, CLERK: 2, APPROVER: 3, ADMIN: 4}  # the rank a need asks for
+OPEN, SIGNED_IN, ADMIN = "open", "signed in", "admin"  # ADMIN: every permission an Admin has (a route without a rule)
+MANAGE = "manage"  # a Manager's own requests (confirm), or anyone who reviews invoices (code, D-138)
 MOUNTS_OPEN = ("/static", "/fonts", "/assets")  # the styles, scripts, fonts and logo: anyone (the login page too)
 
 
@@ -75,7 +90,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /account/sessions/end-others", "GET /",
     ),
     **_rules(
-        READ,
+        VIEW,
         # The review queue and the invoices, their pages and approved copies.
         "GET /review", "GET /review/{invoice_id:int}", "GET /review/{invoice_id:int}/page/{number:int}.png",
         "GET /review/{invoice_id:int}/words", "GET /review/{invoice_id:int}/reader",
@@ -90,11 +105,14 @@ RULES: dict[tuple[str, str], str] = {
         "GET /statements", "GET /statements/reconciliation.csv",
         "GET /spend", "GET /spend/data.xlsx",
         "GET /insights", "GET /insights/business-case",
-        "GET /activity", "GET /activity/events.csv", "GET /activity/controls-report",
         "GET /help", "GET /help/quick-start", "GET /help/report",
-        "GET /jobs/{name}",  # how far a job got: the job's own role besides (JOB_NEEDS)
+        "GET /jobs/{name}",  # how far a job got: the job's own permission besides (JOB_NEEDS)
         # How far a download made by the server's background process got (D-169): the asker's own, asked by its route.
         "GET /downloads/{job_id:int}",
+    ),
+    **_rules(
+        ACTIVITY,
+        "GET /activity", "GET /activity/events.csv", "GET /activity/controls-report",
     ),
     **_rules(
         MANAGE,
@@ -103,17 +121,20 @@ RULES: dict[tuple[str, str], str] = {
         "POST /manager/{request_id:int}/answer",
     ),
     **_rules(
-        CLERK,
-        # Bringing invoices in.
+        IMPORT,
+        # Bringing invoices in, several files that are one voucher (D-216), the emails' files, a failed one again.
         "GET /process", "POST /process/upload", "POST /process/folder", "GET /process/status",
-        # Several files that are one voucher, and making them separate invoices again while in review (D-216).
-        "POST /process/voucher", "POST /review/{invoice_id:int}/separate",
-        "POST /spend/data",  # the Spend data workbook made in the background, for everyone (D-156)
+        "POST /process/voucher",
         "GET /process/inbox/{entry_id}/file/{n}", "POST /process/inbox/{entry_id}/to-queue/{n}",
         "POST /process/inbox/{entry_id}/done", "POST /review/{invoice_id}/retry",
-        # The review screen: edits, checks, the first approval, park, reject, reopen, undo (their own approval).
+        # Statements compared.
+        "POST /statements/upload", "POST /statements/emailed/{entry_id}/{n}",
+    ),
+    **_rules(
+        CODE,
+        # The review screen: edits, checks, park, reject, reopen; making joined files separate invoices again (D-216).
+        "POST /review/{invoice_id:int}/separate",
         "POST /review/{invoice_id:int}/vendor", "POST /review/{invoice_id:int}/check",
-        "POST /review/{invoice_id:int}/approve", "POST /review/{invoice_id:int}/undo-approve",
         "POST /review/{invoice_id:int}/why",
         "POST /review/{invoice_id:int}/park", "POST /review/{invoice_id:int}/reject",
         "POST /review/{invoice_id:int}/note", "POST /review/{invoice_id:int}/teach",
@@ -127,24 +148,17 @@ RULES: dict[tuple[str, str], str] = {
         "POST /manager/{request_id:int}/record", "POST /manager/{request_id:int}/withdraw",
         "GET /manager/{request_id:int}/reply",  # the reply kept with an answer given by email (B-1552)
         "POST /review/{invoice_id:int}/correct",
-        # The queue: bulk approval, reopen, back from parked.
-        "POST /review/bulk-approve", "POST /review/{invoice_id}/reopen", "POST /review/{invoice_id}/unpark",
-        "GET /review/bulk", "GET /review/bulk/status",  # how far the person's own bulk approval got (D-185)
+        # The queue: reopen, back from parked; the directory's saved views.
+        "POST /review/{invoice_id}/reopen", "POST /review/{invoice_id}/unpark",
         "POST /search/{invoice_id:int}/unpark",
         "POST /search/presets", "POST /search/presets/default", "POST /search/presets/delete",  # their saved views
-        # Export batches and their downloads.
-        "POST /exports/create", "GET /exports/batches/{batch:int}/download",
-        "POST /exports/batches/{batch:int}/download",  # the JD Edwards ZIP: its download is recorded (D-135)
-        "GET /exports/batches/{batch:int}/approved-pdfs.zip", "GET /exports/jde/dry-run.txt",
-        "POST /exports/batches/{batch:int}/jde-api/dry-run",  # the JDE API's dry run: nothing posted (D-104)
-        # Statements compared, vendors' hold and notes (off hold: an Approver's, D-142), the setup, what was learned.
-        "POST /statements/upload", "POST /statements/emailed/{entry_id}/{n}",
+        # Vendors' hold and notes (off hold: controls, D-142), the setup's pages, what was learned.
         "GET /vendors", "POST /vendors/save",
         "GET /accounts", "GET /accounts/{table}.csv", "GET /accounts/bank/template.csv",
-        "GET /jde-files",  # what is loaded of JD Edwards' exports (loading them: an Admin's)
+        "GET /jde-files",  # what is loaded of JD Edwards' exports (loading them: setup)
         "GET /jde-files/template/{key}",  # a blank template of a report's columns (D-234)
         "GET /imports/template/{key}",  # the same, of any import of the app
-        # The rows of what is loaded, and their CSV (D-221): whoever opens the page; changing a row is an Admin's.
+        # The rows of what is loaded, and their CSV (D-221): whoever opens the page; changing a row is setup.
         "GET /jde-files/loaded/{what}", "GET /jde-files/loaded/{what}.csv",
         "GET /purchase-orders", "GET /purchase-orders/template.csv",
         "GET /learning", "POST /learning/lessons/explain",
@@ -153,21 +167,43 @@ RULES: dict[tuple[str, str], str] = {
         "GET /rules", "POST /rules", "POST /rules/add", "POST /rules/undo",
     ),
     **_rules(
-        APPROVER,
+        APPROVE,
+        # The first approval, undoing one's own, bulk approval and how far one's own got (D-185).
+        "POST /review/{invoice_id:int}/approve", "POST /review/{invoice_id:int}/undo-approve",
+        "POST /review/bulk-approve", "GET /review/bulk", "GET /review/bulk/status",
+    ),
+    **_rules(
+        EXPORT,
+        # Export batches and their downloads.
+        "POST /exports/create", "GET /exports/batches/{batch:int}/download",
+        "POST /exports/batches/{batch:int}/download",  # the JD Edwards ZIP: its download is recorded (D-135)
+        "GET /exports/batches/{batch:int}/approved-pdfs.zip", "GET /exports/jde/dry-run.txt",
+        "POST /exports/batches/{batch:int}/jde-api/dry-run",  # the JDE API's dry run: nothing posted (D-104)
+        "POST /spend/data",  # the Spend data workbook made in the background, for everyone (D-156)
+    ),
+    **_rules(
+        FINAL,
         "POST /review/{invoice_id}/final-approve", "POST /review/{invoice_id}/send-back",
+    ),
+    **_rules(
+        POST,
         # The go-ahead to post vouchers to JD Edwards through the API, and its queue (D-104).
         "POST /exports/batches/{batch:int}/jde-api/post", "POST /exports/jde-api/retry",
+    ),
+    **_rules(
+        CONTROLS,
         # Our bank accounts typed in, changed and removed: the AP manager's, as an Admin's (D-220). A Clerk sees them
-        # and picks one on an invoice; importing a file of them stays an Admin's.
+        # and picks one on an invoice; importing a file of them is setup.
         "POST /accounts/bank/save", "POST /accounts/bank/remove",
     ),
     **_rules(
-        ADMIN,
-        # Written out, though a route without a rule needs an Admin anyway: so the test sees each was decided.
-        "POST /review/{invoice_id}/delete", "POST /review/sample-gl", "POST /process/open-folder",
-        "POST /demo/load", "POST /demo/remove",
-        "POST /exports/batches/{batch:int}/undo", "POST /exports/layout", "POST /exports/layout/preview",
+        UNDO,
+        "POST /review/{invoice_id}/delete", "POST /exports/batches/{batch:int}/undo",
         "POST /exports/batches/{batch:int}/jde-api/release",  # a voucher checked in JD Edwards, released (D-107)
+    ),
+    **_rules(
+        SETUP,
+        "POST /review/sample-gl",
         "POST /exports/register/upload", "POST /exports/register/import", "POST /exports/register/clear",
         "POST /accounts/sample", "POST /accounts/bank/upload", "POST /accounts/bank/import",
         "POST /accounts/{table}/upload", "POST /accounts/{table}/import", "POST /accounts/{table}/save",
@@ -188,6 +224,11 @@ RULES: dict[tuple[str, str], str] = {
         "POST /jde-files/vouchers/upload", "POST /jde-files/vouchers/load",
         "POST /jde-files/meals", "POST /jde-files/company",
         "POST /jde-files/loaded/{what}/edit",  # a row of the chart, the business units or the suppliers, by hand
+    ),
+    **_rules(
+        SETTINGS,
+        "POST /process/open-folder", "POST /demo/load", "POST /demo/remove",
+        "POST /exports/layout", "POST /exports/layout/preview",
         "POST /insights/assumptions",
         "GET /settings", "GET /settings/{tab}", "GET /settings/azure-check", "POST /settings/azure-check",
         "POST /settings/azure-check/test", "POST /settings/review",
@@ -206,6 +247,10 @@ RULES: dict[tuple[str, str], str] = {
         "POST /settings/jde/worksheet/upload", "POST /settings/jde/worksheet",
         "POST /settings/jde/api", "POST /settings/jde/api/test", "POST /settings/jde/api/sync",  # D-104
         "POST /settings/hub", "POST /settings/hub/run",  # the finance hub feed (D-103)
+        "GET /help/report/setup",  # the server's versions, settings and names (D-109)
+    ),
+    **_rules(
+        USERS,
         "GET /admin/users", "POST /admin/users/add", "POST /admin/users/{user_id:int}/reset",
         "POST /admin/users/{user_id:int}/role", "POST /admin/users/{user_id:int}/deactivate",
         "POST /admin/users/{user_id:int}/cost-centers",
@@ -215,25 +260,42 @@ RULES: dict[tuple[str, str], str] = {
         # The Admin panel (D-249): its overview, a person's page, signing someone out everywhere, the sign-in.
         "GET /admin", "GET /admin/users/{user_id:int}", "POST /admin/users/{user_id:int}/sign-out",
         "GET /admin/sign-in",
-        "GET /help/report/setup",  # the server's versions, settings and names (D-109)
+        # Its roles (D-250): the list, a new one (from a copy), one role, made, saved, deleted.
+        "GET /admin/roles", "GET /admin/roles/new", "GET /admin/roles/{key}", "POST /admin/roles/add",
+        "POST /admin/roles/{key}/save", "POST /admin/roles/{key}/delete",
     ),
 }  # fmt: skip
 
-# What seeing a job's progress needs (GET /jobs/{name}): the role that may start it (D-109), or use what it makes (the
-# Spend workbook, D-156). Any other job: an Admin.
-JOB_NEEDS = {"process": READ, "jde-api": CLERK, "jde-sync": ADMIN, "settings-doctor": ADMIN, "azure-test": ADMIN,
-             "spend-data": READ}  # fmt: skip
+# What seeing a job's progress needs (GET /jobs/{name}): the permission that may start it (D-109), or use what it
+# makes (the Spend workbook, D-156). Any other job: every permission an Admin has.
+JOB_NEEDS = {"process": VIEW, "jde-api": EXPORT, "jde-sync": SETTINGS, "settings-doctor": SETTINGS,
+             "azure-test": SETTINGS, "spend-data": VIEW}  # fmt: skip
 
 
-def allowed(role: str | None, need: str) -> bool:
-    """Whether someone with ``role`` may use a route that needs ``need``."""
+def granted(who: str | Iterable[str] | None) -> frozenset[str] | None:
+    """The permissions of ``who``: a set of them as it is, a built-in role's by its key; None for nobody, or a role
+    key that is not a built-in one (a role made by an Admin comes with its permissions: ``Person.granted``)."""
+    if who is None:
+        return None
+    if isinstance(who, str):
+        return BUILT_IN.get(who)
+    return frozenset(who)
+
+
+def allowed(who: str | Iterable[str] | None, need: str) -> bool:
+    """Whether someone with the permissions ``who`` (or a built-in role's key) may use a route that needs ``need``."""
     if need == OPEN:
         return True
-    if not role or role not in RANK:
+    have = granted(who)
+    if have is None:
         return False
+    if need == SIGNED_IN:
+        return True
     if need == MANAGE:
-        return role == MANAGER_ROLE or RANK[role] >= NEEDS[CLERK]
-    return RANK[role] >= NEEDS.get(need, NEEDS[ADMIN])
+        return CONFIRM in have or CODE in have
+    if need == ADMIN:
+        return BUILT_IN[ADMIN_ROLE] <= have
+    return need in have
 
 
 def leaf_routes(routes: Any) -> list[Any]:
@@ -276,10 +338,10 @@ def need_for(app: Any, scope: dict[str, Any]) -> str:
 NEEDS_KEPT = 4096  # (method, path) needs ``can`` remembers per app: the rail's, the buttons', each invoice opened
 
 
-def can(app: Any, role: str | None, method: str, path: str) -> bool:
-    """Whether ``role`` may send ``method`` to ``path`` (for the pages, to hide what can't be used). What the path
-    needs is remembered per app: a page asks it for every rail entry and button it draws, and each answer walks the
-    routes."""
+def can(app: Any, who: str | Iterable[str] | None, method: str, path: str) -> bool:
+    """Whether ``who`` (permissions, or a built-in role) may send ``method`` to ``path`` (for the pages, to hide what
+    can't be used). What the path needs is remembered per app: a page asks it for every rail entry and button it
+    draws, and each answer walks the routes."""
     key = (method.upper(), path)
     kept = getattr(app.state, "_needs", None)
     if kept is None or len(kept) > NEEDS_KEPT:
@@ -287,4 +349,4 @@ def can(app: Any, role: str | None, method: str, path: str) -> bool:
     if key not in kept:
         scope = {"type": "http", "method": key[0], "path": path, "root_path": "", "query_string": b"", "headers": []}
         kept[key] = need_for(app, scope)
-    return allowed(role, kept[key])
+    return allowed(who, kept[key])

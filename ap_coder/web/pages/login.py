@@ -36,6 +36,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from markupsafe import Markup
 
 from ap_coder.core import authenticator, paths
+from ap_coder.core.permissions import CONFIRM, USERS, VIEW
 from ap_coder.core.store.users import (
     ACCOUNT_PAUSED,
     ADMIN,
@@ -44,7 +45,6 @@ from ap_coder.core.store.users import (
     FIRST_USERNAME,
     KEY_MISSING,
     LOCKED,
-    MANAGER,
     SETUP_CODE_WHY,
     SETUP_CODE_WRONG,
     TEMPORARY_EXPIRED,
@@ -229,7 +229,8 @@ def login_save(request: Request, username: str = Form(""), password: str = Form(
     store.end_pending(_pending(request))  # nor a login half way
     pending = store.start_pending(user["id"])  # the password alone is no session (D-146)
     wanted = _next(next)
-    if user.get("role") == MANAGER and wanted == HOME:
+    have = user.get("permissions") or ()
+    if CONFIRM in have and VIEW not in have and wanted == HOME:  # a Manager's role (D-250)
         wanted = "/manager"  # a Manager's own page: the review queue is not theirs (D-138)
     if user["must_change"]:
         answer = done(request, _step_url(user, wanted),
@@ -266,7 +267,7 @@ def _refusal(store: Any, said: str, username: str, server: bool = True) -> str:
     if said != TEMPORARY_EXPIRED:
         return said
     account = store.find_user(username) or {}
-    admins = [u["id"] for u in store.list_users() if u["role"] == ADMIN and u["active"]]
+    admins = [u["id"] for u in store.list_users() if USERS in u["permissions"] and u["active"]]
     where = "on the server" if server else "in scripts\\terminal.bat on this computer"
     return ONLY_ADMIN.format(username=account["username"], where=where) if admins == [account.get("id")] else said
 
@@ -300,7 +301,7 @@ def _step_page(request: Request, step: str, next: str) -> Response:  # noqa: A00
                "flashes": take_flash(request.query_params.get("flash")), "error": "",
                "title": {identity.NEW_PASSWORD_PATH: "Your password", identity.SET_UP_PATH: "Set up your "
                          "authenticator app"}.get(step, "Your code")}  # fmt: skip
-    admins = [u["id"] for u in store.list_users() if u["role"] == ADMIN and u["active"]]
+    admins = [u["id"] for u in store.list_users() if USERS in u["permissions"] and u["active"]]
     context["only_admin"] = admins == [user["id"]]  # their lost phone: the console's command, no Admin to ask
     if step == identity.SET_UP_PATH:
         try:

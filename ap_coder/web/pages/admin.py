@@ -18,7 +18,6 @@ from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ap_coder.core.audit import ACTIONS, describe
-from ap_coder.core.store.users import ROLE_LABELS, ROLES
 from ap_coder.web import identity
 from ap_coder.web.core import can, done, get_store, page_router, refuse, render, reviewer, server_mode, signs_in
 from ap_coder.web.pages import activity, users
@@ -27,6 +26,7 @@ router = page_router()  # each plain handler: one connection a request
 
 PATH = "/admin"
 SIGN_IN_PATH = "/admin/sign-in"
+ROLES_PATH = "/admin/roles"  # pages/admin_roles.py (D-250)
 EVENTS_SHOWN = 50  # a person's events a page of theirs shows; the older ones are on the next
 SIGN_INS_SHOWN = 20
 # The Settings tabs an Admin looks after, linked from the panel (not moved: D-249).
@@ -88,11 +88,11 @@ def _event_row(event: dict[str, Any]) -> dict[str, Any]:
 def common(request: Request) -> dict[str, Any]:
     """What every page of the panel shows: its tabs, those this person may open (on a laptop's own sign-in, not the
     people and the roles: the server's)."""
-    tabs = [(PATH, "Overview"), (users.PATH, "Users"), (SIGN_IN_PATH, "Sign-in"),
+    tabs = [(PATH, "Overview"), (users.PATH, "Users"), (ROLES_PATH, "Roles"), (SIGN_IN_PATH, "Sign-in"),
             ("/activity", "Activity")]  # fmt: skip
     server = server_mode(request)
     shown = [(path, label) for path, label in tabs if can(request, path, "GET")
-             and (server or path not in (users.PATH, "/admin/roles"))]  # fmt: skip
+             and (server or path not in (users.PATH, ROLES_PATH))]  # fmt: skip
     return {"admin_tabs": shown, "server_mode": server}
 
 
@@ -137,7 +137,7 @@ def user_page(request: Request, user_id: int, before: int = 0, shown: str = "") 
     if len(events) > EVENTS_SHOWN:
         older = f"{users.PATH}/{user_id}?{urlencode({'before': events[EVENTS_SHOWN - 1]['id']})}#activity"
     return render(request, "admin_user.html", "admin", title=found["name"], **common(request), user=found,
-                  own_account=me is not None and me.user_id == found["id"], roles=[(r, ROLE_LABELS[r]) for r in ROLES],
+                  own_account=me is not None and me.user_id == found["id"], roles=users.role_choices(store),
                   temporary=users.take_temporary(request, shown), sessions=_sessions(store, found["id"]),
                   sign_ins=[_event_row(e) for e in store.sign_in_events(found["username"], SIGN_INS_SHOWN)],
                   events=[_event_row(e) for e in events[:EVENTS_SHOWN]], older=older,

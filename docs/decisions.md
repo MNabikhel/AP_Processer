@@ -6066,3 +6066,36 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     people (and, D-250, the roles) stay the server's, `/admin/users` answering 404 there as before.
   - **Left as it was:** what a person did is found by their name, as on Activity: two accounts with one name share it
     (the page says so).
+- **D-250** · **Roles are sets of permissions; the five built in stay as they were, and an Admin makes others:
+  schema 29** (`core/permissions.py`, `core/store/roles.py`, `web/roles.py` `RULES` by permission,
+  `web/pages/admin_roles.py`; `tests/web/test_role_permissions.py`; 16 Nov 2026). The owner asked for roles the Admin
+  can make and edit.
+  - **The permissions** (fixed in the code, one per route, from what the minimum roles guarded): view (invoices and
+    reports), activity (the log), import (bring invoices in, statements), code (review and code, the setup pages,
+    the coding rules, send to a manager), approve (the first approval, bulk), final_approve (the second, send back),
+    export (batches, the dry run, the Spend workbook), post (to JD Edwards' API), controls (lift holds, bank
+    accounts), setup (the imports and lists, the learning's resets), undo (delete, undo batches and anyone's
+    approval, release a held voucher), settings (Settings, the demo, the export layout, the server's own details),
+    users (people, roles, sign-ins) and confirm (a manager's own requests, D-138). A route without a rule needs every
+    permission an Admin has, as it needed an Admin.
+  - **The built-in roles give exactly what they gave:** Read-only view and activity; Clerk also import, code,
+    approve, export; Approver also final_approve, post, controls; Admin also setup, undo, settings, users (not
+    confirm: an Admin opens every request as AP, and is never offered as a manager); Manager confirm. Proved by a
+    table made by the code before the change (`tests/fixtures/role_access_before.json`: every route, every job's
+    progress and each check written in the pages, for each role), compared with the code now. The checks in the pages
+    name permissions too (`access.has`, `Person.granted`): the Logins events need users, the server's details
+    settings, lifting a hold controls, undoing another's approval undo, a bulk approval going on approve.
+  - **Made roles** (`roles`: a key `role-<n>` kept in `users.role`, a name, a JSON list): from scratch or a copy,
+    changed (from the next click), deleted only while no account has it; the built-in ones are shown, never changed.
+    Given on Users or a person's page, and at the console (`users role ann "AP lead"`, `users roles` lists them).
+  - **Guardrails:** an Admin never takes Manage users and roles from themselves (their role, their role's ticks, or
+    turning their own account off); the last active account that has it keeps it (`LAST_ADMIN`, now counting any
+    role with users). Segregation is unchanged: the second approval is another account's, `vouched_for`, the poster
+    who approved. Every role made, changed, deleted or given is in the Activity log with who and what changed, the
+    names kept in it. A restore keeps the roles with the accounts (`KEPT_TABLES`).
+  - **No approval limit per role:** the code has one limit, the company's (Settings → Automation), over which a
+    second approval is needed; a limit per person would be a new control, not part of this.
+  - **Schema 29:** the table comes from `_SCHEMA`; the version is its own so an older AP Coder, which knows the five
+    roles only (it would let a person with a made role do nothing, and its console's list fails on one), refuses the
+    database; going back uses the before-update backup (docs/UPGRADING.md).
+  - **A laptop's own sign-in** has no Roles page: only its Admin signs in there (D-243).

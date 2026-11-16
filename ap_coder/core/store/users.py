@@ -2,7 +2,8 @@
 that did not match.
 
 * **Accounts** (``users``): a username (kept case-folded: "Ann" and "ann" are one account), the name shown, a role
-  (``ROLES``: Read-only, Clerk, Approver, Admin, D-98), the password's scrypt hash, active or turned off, and whether
+  (a built-in one, ``ROLES``, D-98, or one an Admin made, ``roles.py``: its permissions, ``core/permissions.py``,
+  D-250), the password's scrypt hash, active or turned off, and whether
   the person must choose a new password at their next login (a new account, a reset).
 * **Passwords**: scrypt (n=2^14, r=8, p=1, a 16-byte salt) from the standard library, stored as
   ``scrypt$n$r$p$<salt>$<hash>`` (base64) and compared in constant time. At least 12 characters, not the username
@@ -52,14 +53,9 @@ from pathlib import Path
 from typing import Any
 
 from .. import authenticator
+from ..permissions import ADMIN, APPROVER, CLERK, MANAGER, READONLY, ROLE_LABELS, ROLES, permissions_of  # noqa: F401
 from ._base import _now
 from .dialect import begin_write, json_get
-
-READONLY, CLERK, APPROVER, ADMIN = "readonly", "clerk", "approver", "admin"
-MANAGER = "manager"  # confirms the cost allocation of the invoices sent to them, nothing else (D-138)
-ROLES = (READONLY, CLERK, APPROVER, ADMIN, MANAGER)  # each of the first four can do what the one before it can, and
-# more; a Manager is outside that ladder (web/roles.py)
-ROLE_LABELS = {READONLY: "Read-only", CLERK: "Clerk", APPROVER: "Approver", ADMIN: "Admin", MANAGER: "Manager"}
 
 MIN_PASSWORD = 12
 SCRYPT_N, SCRYPT_R, SCRYPT_P = 2**14, 8, 1
@@ -103,6 +99,7 @@ ACCOUNT_PAUSED = (
     "it logged in lately. Wait, then try again, or ask an Admin."
 )
 LAST_ADMIN = "AP Coder needs at least one active Admin: make another person an Admin first."
+OWN_OFF = "This is your own account: another Admin turns it off, so AP Coder always has someone who manages the people."
 WRONG_CODE = ("That code doesn't match, or it was used already. Type the 6 digits your authenticator app shows now "
               "(a new code every 30 seconds). Refused again? Check that this computer's clock and your phone's show "
               "the right time: a minute off and the codes don't match.")  # fmt: skip
@@ -254,7 +251,11 @@ def _clean_display(name: Any) -> str:
     return " ".join(kept.split())[:MAX_DISPLAY_NAME].strip()
 
 
-_USER_COLUMNS = "id, username, display_name, role, active, must_change, created_at, last_login, cost_centers, totp_on"
+# An account's columns, and its role's name and permissions when it is one an Admin made (D-250).
+_USER_COLUMNS = (", ".join(f"users.{c}" for c in ("id", "username", "display_name", "role", "active", "must_change",
+                                                  "created_at", "last_login", "cost_centers", "totp_on"))
+                 + ", (SELECT r.name FROM roles r WHERE r.key = users.role) AS role_name, (SELECT r.permissions FROM "
+                 "roles r WHERE r.key = users.role) AS role_permissions")  # fmt: skip
 
 
 def _public(row: Any) -> dict[str, Any] | None:
@@ -265,8 +266,14 @@ def _public(row: Any) -> dict[str, Any] | None:
     found["active"], found["must_change"] = bool(found.get("active")), bool(found.get("must_change"))
     found["totp_on"] = bool(found.get("totp_on"))
     found["name"] = found.get("display_name") or found.get("username") or ""
-    found["role_label"] = ROLE_LABELS.get(found.get("role") or "", found.get("role") or "")
+    named = found.pop("role_name", None) or found.get("role") or ""
+    found["role_label"] = ROLE_LABELS.get(found.get("role") or "", named)
+    found["permissions"] = permissions_of(found.get("role"), found.pop("role_permissions", None))
     return found
+
+
+def unknown_role(role: str) -> str:
+    return f"There is no role {role!r}: choose one of {', '.join(ROLE_LABELS.values())}, or one made on Roles."
 
 
 ACCOUNT_LOGIN = "user:"  # the login of a person's account in server mode (web/core.py ``login``, D-98)
@@ -324,7 +331,8 @@ def add_columns(conn: Any) -> None:
 
 # --- A restore keeps the accounts (D-101) ----------------------------------------------------------------------------
 
-KEPT_TABLES = ("users", "login_attempts")  # kept as they are across a restore on the server
+KEPT_TABLES = ("users", "login_attempts", "roles")  # kept as they are across a restore on the server (the roles
+# with the people who have them, D-250)
 ACCOUNT_TABLES = (*KEPT_TABLES, "sessions")  # sessions: every one ends at a restore
 
 
@@ -393,8 +401,6 @@ class UsersMixin:
                 "A username is 1 to 64 letters, digits, dots, dashes, underscores or @, starting with a letter or "
                 "digit (e.g. ann.lee)."
             )
-        if role not in ROLES:
-            raise ValueError(f"There is no role {role!r}: choose one of {', '.join(ROLE_LABELS.values())}.")
         shown = _clean_display(display_name) or name
         problem = password_problem(password, name, shown)
         if problem:
@@ -404,6 +410,8 @@ class UsersMixin:
             begin_write(conn)
             if only_first and conn.execute("SELECT 1 FROM users LIMIT 1").fetchone():
                 raise ValueError(FIRST_DONE)
+            if not self._role_known(conn, role):
+                raise ValueError(unknown_role(role))
             if conn.execute("SELECT 1 FROM users WHERE username = ?", (name,)).fetchone():
                 raise ValueError(f"There is already an account {name}.")
             cur = conn.execute(
@@ -428,37 +436,18 @@ class UsersMixin:
         """Every account, Admins first, then by username."""
         order = " ".join(f"WHEN '{r}' THEN {n}" for n, r in enumerate((ADMIN, APPROVER, CLERK, READONLY, MANAGER)))
         with self._conn() as conn:
-            rows = conn.execute(f"SELECT {_USER_COLUMNS} FROM users ORDER BY CASE role {order} END, username")
+            rows = conn.execute(f"SELECT {_USER_COLUMNS} FROM users ORDER BY CASE role {order} ELSE 5 END, username")
             return [u for u in map(_public, rows.fetchall()) if u is not None]
 
     def user_count(self) -> int:
         with self._conn() as conn:
             return int(conn.execute("SELECT COUNT(*) FROM users").fetchone()[0])
 
-    @staticmethod
-    def _active_admins(conn: Any) -> int:
-        return int(conn.execute("SELECT COUNT(*) FROM users WHERE role = ? AND active = 1", (ADMIN,)).fetchone()[0])
-
     def _account(self, conn: Any, user_id: int) -> Any:
         row = conn.execute("SELECT * FROM users WHERE id = ?", (int(user_id),)).fetchone()
         if row is None:
             raise KeyError(user_id)
         return row
-
-    def set_role(self, user_id: int, role: str, *, actor: str = "") -> None:
-        """A new role; the last active Admin keeps theirs (ValueError ``LAST_ADMIN``)."""
-        if role not in ROLES:
-            raise ValueError(f"There is no role {role!r}: choose one of {', '.join(ROLE_LABELS.values())}.")
-        with self._conn() as conn:
-            begin_write(conn)
-            row = self._account(conn, user_id)
-            if row["role"] == role:
-                return
-            if row["role"] == ADMIN and row["active"] and self._active_admins(conn) <= 1:
-                raise ValueError(LAST_ADMIN)
-            conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, row["id"]))
-            self._log(conn, "role_changed", None, actor or None,
-                      {"username": row["username"], "from": row["role"], "to": role})  # fmt: skip
 
     def set_user_cost_centers(self, user_id: int, codes: str, *, actor: str = "") -> str:
         """The cost centers a Manager account answers for (D-138), as typed ("CC-200, CC-300"): kept cleaned, comma
@@ -471,15 +460,18 @@ class UsersMixin:
                       {"username": row["username"], "cost_centers": kept[:500]})  # fmt: skip
         return kept[:500]
 
-    def deactivate_user(self, user_id: int, *, actor: str = "") -> None:
-        """The account can no longer log in, and its sessions end; the last active Admin stays (``LAST_ADMIN``)."""
+    def deactivate_user(self, user_id: int, *, actor: str = "", by_user: int | None = None) -> None:
+        """The account can no longer log in, and its sessions end; the last active Admin stays (``LAST_ADMIN``), and an
+        Admin never turns their own account off (``by_user``: ``OWN_OFF``, D-250)."""
         with self._conn() as conn:
             begin_write(conn)
             row = self._account(conn, user_id)
             if not row["active"]:
                 return
-            if row["role"] == ADMIN and self._active_admins(conn) <= 1:
+            if self._manages(conn, row["role"]) and self._active_admins(conn) <= 1:
                 raise ValueError(LAST_ADMIN)
+            if by_user is not None and int(by_user) == row["id"]:
+                raise ValueError(OWN_OFF)
             conn.execute("UPDATE users SET active = 0 WHERE id = ?", (row["id"],))
             conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
             self._log(conn, "user_deactivated", None, actor or None, {"username": row["username"]})
@@ -725,7 +717,8 @@ class UsersMixin:
                 f"'password_reset') AND {json_get('detail', '$.username')} = ? ORDER BY created_at DESC, id DESC",
                 (row["username"],),
             ).fetchone() or (None, None)
-            first = by is None and row["role"] == ADMIN and row["active"] and self._active_admins(conn) == 1 and not (
+            only = self._manages(conn, row["role"]) and row["active"] and self._active_admins(conn) == 1  # (D-250)
+            first = by is None and only and not (
                 conn.execute("SELECT 1 FROM users WHERE last_login IS NOT NULL").fetchone())  # fmt: skip
         try:
             when = dt.datetime.fromisoformat(given or row["created_at"]).timestamp()
@@ -933,9 +926,8 @@ class UsersMixin:
         digest, now = token_hash(token), _clock()
         with self._conn() as conn:
             row = conn.execute(
-                f"SELECT s.created_at AS session_created, s.last_seen, "
-                f"{', '.join('u.' + c.strip() for c in _USER_COLUMNS.split(','))} "
-                "FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?",
+                f"SELECT s.created_at AS session_created, s.last_seen, {_USER_COLUMNS} "
+                "FROM sessions s JOIN users ON users.id = s.user_id WHERE s.token_hash = ?",
                 (digest,),
             ).fetchone()
             if row is None:

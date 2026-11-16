@@ -575,7 +575,8 @@ def test_the_finance_hub_is_an_admins_and_records_who_ran_it_on_the_server(store
 
     for route in ("POST /settings/hub", "POST /settings/hub/run"):
         method, _, path = route.partition(" ")
-        assert roles.RULES[(method, path)] == roles.ADMIN
+        need = roles.RULES[(method, path)]  # of the built-in roles, an Admin's (D-250)
+        assert [r for r in ("readonly", "clerk", "approver", "admin", "manager") if roles.allowed(r, need)] == ["admin"]
     run.save_config(store, csv_config(folder=str(tmp_path / "share")))
     app = create_app(web_settings(), store, start_reader=False, server=True)
     uid = store.add_user(

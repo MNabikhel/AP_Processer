@@ -1,7 +1,8 @@
 """Users (/admin/users), for an Admin when AP Coder runs as the company's server (D-97): who can log in, with which
-role; add a person (with a temporary password shown once), reset a password or an authenticator app (D-146), change
-a role, turn an account off or back on. The last active Admin can't be demoted or turned off
-(``core/store/users.py``). Every change is in the Activity log.
+role (a built-in one or one made on Roles, D-250); add a person (with a temporary password shown once), reset a
+password or an authenticator app (D-146), change a role, turn an account off or back on. The last active account
+that manages the people can't lose that or be turned off, and an Admin never takes it from themselves
+(``core/store/roles.py``). Every change is in the Activity log.
 
 A temporary password is never put in a message kept for the next page or in the database as it is: it waits in
 this process's memory under a one-off key, for the Admin who made it, and is shown once. With several web workers
@@ -22,7 +23,8 @@ from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ap_coder.core import authenticator
-from ap_coder.core.store.users import ANYWHERE, ROLE_LABELS, ROLES
+from ap_coder.core.permissions import PERMISSIONS
+from ap_coder.core.store.users import ANYWHERE
 from ap_coder.web import identity
 from ap_coder.web.core import done, flash_message, get_store, page_router, refuse, render, reviewer, server_mode
 
@@ -126,10 +128,16 @@ def users_page(request: Request, shown: str = "") -> HTMLResponse:
 
     server_only(request)
     me = identity.person()
-    return render(request, "admin_users.html", "admin", title="Users", users=get_store(request).list_users(),
-                  roles=[(r, ROLE_LABELS[r]) for r in ROLES], temporary=take_temporary(request, shown),
-                  **paused_context(get_store(request)), me=me.user_id if me else 0,
-                  **admin.common(request))  # fmt: skip
+    store = get_store(request)
+    return render(request, "admin_users.html", "admin", title="Users", users=store.list_users(),
+                  roles=role_choices(store), all_roles=store.all_roles(), permissions=PERMISSIONS,
+                  temporary=take_temporary(request, shown),
+                  **paused_context(store), me=me.user_id if me else 0, **admin.common(request))  # fmt: skip
+
+
+def role_choices(store: Any) -> list[tuple[str, str]]:
+    """The roles a person may be given: (key, name), the built-in ones first (D-250)."""
+    return [(r["key"], r["name"]) for r in store.all_roles()]
 
 
 @router.post(f"{PATH}/add")
@@ -214,11 +222,13 @@ def _clock_text(epoch: float) -> str:
 def change_role(request: Request, user_id: int, role: str = Form(""), back: str = Form("")) -> JSONResponse:
     server_only(request)
     found = account(request, user_id)
+    me = identity.person()
     try:
-        get_store(request).set_role(user_id, role, actor=reviewer())
+        get_store(request).set_role(user_id, role, actor=reviewer(), by_user=me.user_id if me else None)
     except ValueError as exc:
         return refuse(str(exc))
-    return done(request, _back(user_id, back), f"{found['username']} is now {ROLE_LABELS.get(role, role)}.")
+    now = (get_store(request).user(user_id) or {}).get("role_label") or role
+    return done(request, _back(user_id, back), f"{found['username']} is now {now}.")
 
 
 @router.post(PATH + "/{user_id:int}/cost-centers")
@@ -235,8 +245,9 @@ def change_cost_centers(request: Request, user_id: int, cost_centers: str = Form
 def deactivate(request: Request, user_id: int, back: str = Form("")) -> JSONResponse:
     server_only(request)
     found = account(request, user_id)
+    me = identity.person()
     try:
-        get_store(request).deactivate_user(user_id, actor=reviewer())
+        get_store(request).deactivate_user(user_id, actor=reviewer(), by_user=me.user_id if me else None)
     except ValueError as exc:
         return refuse(str(exc))
     return done(request, _back(user_id, back), f"{found['username']} can no longer log in (logged out everywhere).")

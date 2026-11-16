@@ -53,7 +53,7 @@
       </select></label>
     <button class="btn" type="submit">Change the role</button>
   </form>
-  {% if user.role == "manager" %}
+  {% if "confirm" in user.permissions %}
   <form method="post" action="/admin/users/{{ user.id }}/cost-centers" class="row st-end">
     <input type="hidden" name="back" value="user">
     <label class="field">Cost centers they answer for
@@ -102,7 +102,7 @@
     <table class="apc-table fit">
       <thead><tr><th>Browser</th><th>Address</th><th>Signed in</th><th>Last used</th></tr></thead>
       <tbody>
-        {% for s in sessions %}<tr><td>{{ s.browser_name }}</td><td>{{ s.address }}</td><td class="w">{{ s.since_text }}</td><td class="w">{{ s.seen_text }}</td></tr>{% endfor %}
+        {% for s in sessions %}<tr><td>{{ s.browser_name }}</td><td>{{ s.address }}</td><td>{{ s.since_text }}</td><td>{{ s.seen_text }}</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
@@ -118,7 +118,7 @@
     <table class="apc-table fit">
       <thead><tr><th>When</th><th>What</th><th>Address</th><th>Details</th></tr></thead>
       <tbody>
-        {% for e in sign_ins %}<tr><td class="w">{{ e.when }}</td><td>{{ ui.pill(e.what, e.tone, e.icon) }}</td><td>{{ e.address or "" }}</td><td>{{ e.details }}{% if e.who and e.who != user.name %} <span class="muted">(by {{ e.who }})</span>{% endif %}</td></tr>{% endfor %}
+        {% for e in sign_ins %}<tr><td>{{ e.when }}</td><td>{{ ui.pill(e.what, e.tone, e.icon) }}</td><td>{{ e.address or "" }}</td><td class="w">{{ e.details }}{% if e.who and e.who != user.name %} <span class="muted">(by {{ e.who }})</span>{% endif %}</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
@@ -137,9 +137,9 @@
       <thead><tr><th>When</th><th>What</th><th>Invoice</th><th>Details</th></tr></thead>
       <tbody>
         {% for e in events %}
-        <tr><td class="w">{{ e.when }}</td><td>{{ ui.pill(e.what, e.tone, e.icon) }}</td>
-          <td>{% if e.invoice_id and e.invoice and not e.invoice.endswith("(deleted)") %}<a href="/review/{{ e.invoice_id }}">{{ e.invoice }}</a>{% else %}{{ e.invoice }}{% endif %}</td>
-          <td>{{ e.details }}</td></tr>
+        <tr><td>{{ e.when }}</td><td>{{ ui.pill(e.what, e.tone, e.icon) }}</td>
+          <td class="w">{% if e.invoice_id and e.invoice and not e.invoice.endswith("(deleted)") %}<a href="/review/{{ e.invoice_id }}">{{ e.invoice }}</a>{% else %}{{ e.invoice }}{% endif %}</td>
+          <td class="w">{{ e.details }}</td></tr>
         {% endfor %}
       </tbody>
     </table>
