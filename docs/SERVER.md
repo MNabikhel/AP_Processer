@@ -1812,14 +1812,14 @@ the *Users* page, so add the second approver from the console (`users add`), or 
 It checks what sharing needs, says each missing thing in plain words with its next step, does itself what needs no
 administrator rights, then serves AP Coder with sign-in over HTTPS from the laptop's own data folder until its window
 is closed (or `python -m ap_coder share --stop` from another window). Run it again after each step it names: it
-starts once the certificate and the first Admin are there. To start it with a double-click, make a file `Share AP Coder.cmd` on the desktop
-holding these three lines (the last keeps the window open, so what it said can be read):
+starts once the certificate and the first Admin are there.
 
-```bat
-cd /d <the AP Coder folder>
-.venv\Scripts\python.exe -m ap_coder share
-pause
-```
+From then on the *AP Coder* desktop shortcut (or `APProcessor.bat`) does it in one double-click (D-246): it sets up
+and checks AP Coder as on any start, then runs `share` in the same window, its lines shown there (and kept in
+`launch.log`), and opens `https://127.0.0.1:8501` in the browser once it answers. When `share` refuses, or stops on
+its own, the window stays open on why. A second double-click while it serves only opens the browser. No desktop
+file of your own is needed. This holds while no service is installed (a service's server, stopped, is said and not
+started), and `APProcessor.bat --without-sign-in` still opens the data in laptop mode, on purpose.
 
 What it does, and what it leaves to a person:
 
@@ -1827,7 +1827,7 @@ What it does, and what it leaves to a person:
 |---|---|
 | A certificate (step 3 below) | Uses `server.json`'s, else `tls\apcoder.pem` and `tls\apcoder.key.pem` in the data folder, else makes that self-signed one for the laptop's name when the laptop has `openssl` (Git for Windows brings it). Without `openssl` it says so, with the command: **this step cannot be made simpler**, Windows has no tool of its own that writes the two files, and installing Git needs administrator rights on most company laptops. |
 | The first Admin (step 6) | The laptop's own Admin when its owner signs in on it already (D-243). Otherwise asks for the owner's name (the one on their approvals), a username and a password, and makes the account. A scripted set-up gives the three on its input, one a line: `share --admin-from-stdin` (Windows' password question reads only the keyboard). |
-| `server.json` (step 4) | Writes the certificate's two files and the port, once the first Admin is there. From then on a double-click on AP Coder's own shortcut refuses to open this data without sign-in (D-211). |
+| `server.json` (step 4) | Writes the certificate's two files and the port, once the first Admin is there. From then on a double-click on AP Coder's own shortcut never opens this data without sign-in (D-211): it runs `share` (D-246). |
 | The second backup folder (step 7) | The first time, allows the folder chosen in laptop mode; later `share --allow-folder "<folder>"` allows another, also while AP Coder is being shared (no restart). |
 | The firewall (step 5) | **Never changes it**: the rule needs administrator rights. It looks whether the rule "AP Coder" is there and, when it is not, prints the command to run once in an administrator Command Prompt (ask IT without those rights). It starts all the same: the owner can sign in on the laptop. |
 | The address | Prints what colleagues type, `https://AP-LAPTOP:8501`. |
@@ -1950,8 +1950,8 @@ name with no way past it (section 3, *825 days*) until the new one is trusted to
     authenticator app.
 
 **The old desktop shortcut** (and `APProcessor.bat`) is safe to keep: while the server runs, a double-click opens
-`https://AP-LAPTOP:8501` in the browser and starts nothing; while it is stopped, it says so and starts nothing
-(step 6). To go back to laptop mode for good, stop the server (and `service remove`), take `AP_SERVER_MODE` out of
+`https://AP-LAPTOP:8501` in the browser and starts nothing; while it is stopped, it runs `share` on a laptop shared
+that way (above), and with a service installed it says so and starts nothing (step 6). To go back to laptop mode for good, stop the server (and `service remove`), take `AP_SERVER_MODE` out of
 the system's environment variables, and start with `APProcessor.bat --without-sign-in`: the data has sign-in
 accounts, so each laptop-mode start asks for that option, on purpose (D-211).
 

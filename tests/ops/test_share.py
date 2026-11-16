@@ -118,7 +118,8 @@ def test_after_share_the_refusal_names_share_where_no_service_is_installed(lapto
                          ask=answers("Pat Lee", "pat"), password=lambda username, name: GOOD) is not None  # fmt: skip
     _why, to_do = safety.team_server(data, db).refusal()
     assert ("service start" in to_do) is installed
-    assert ("Start it again with python -m ap_coder share, typed in scripts\\terminal.bat" in to_do) is not installed
+    assert ("Start it again with a double-click on the AP Coder shortcut" in to_do) is not installed
+    assert ("python -m ap_coder share, typed in scripts\\terminal.bat" in to_do) is not installed
     assert "--without-sign-in" in to_do
 
 

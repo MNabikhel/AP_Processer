@@ -286,8 +286,8 @@ def stop(data: Path, s: service.ServerSettings, say: Say) -> int:
         say("AP Coder did not stop: close its window, or end python.exe in Task Manager (Details).")
         return 1
     say(
-        "Stopped: nobody can sign in until it is started again (python -m ap_coder share). A double-click on AP "
-        "Coder's own shortcut does not open this data without sign-in."
+        "Stopped: nobody can sign in until it is started again: a double-click on the AP Coder shortcut shares it "
+        "again, with sign-in (or python -m ap_coder share)."
     )
     return 0
 

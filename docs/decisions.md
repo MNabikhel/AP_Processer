@@ -5968,3 +5968,21 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     details, a monthly cost cap, the batch API, parallel calls, touchless approval on a value only Azure read, and
     the developer `extract` command (still the SDK, behind `AP_ALLOW_INTERNET=1`). No recorded answers are committed
     for the benchmark yet: `bench record-di` records them on a developer's computer.
+- **D-246** · **On a laptop shared with `share`, the AP Coder shortcut runs `share` itself** (`scripts/launch.py`
+  `start_share`, `shared_here`; 16 Nov 2026). Replaces B-2353's ending, "AP Coder is set up ... start it with share".
+  - **Why:** the owner shares the laptop every morning; typing `share` in scripts\terminal.bat, or making a desktop
+    file for it, was one more thing to learn. The double-click now does all the set-up and checks of any start, then
+    runs `python -m ap_coder share` in the same window (unbuffered, read as it comes, so the first Admin's questions
+    show; every line also in launch.log), and opens the browser at the address of its "AP Coder is running at" line
+    (`https://127.0.0.1:<port>`, as a laptop's start does: the certificate names the laptop, so the browser warns
+    there as at the laptop's name until it is trusted). A code that is not 0 keeps the window open on why.
+  - **Only there:** a laptop shared with `share` is a team's data folder whose server is stopped and has no service
+    installed (`team_server_instead`'s `SHARED_LAPTOP`). A laptop never shared starts in laptop mode as before; a
+    running team server is only opened in the browser; a company server with a service, stopped, is said and not
+    started; `--without-sign-in` is laptop mode on purpose. A database that can't be read beside the codes' key is
+    said and nothing starts (`share` would begin a new one with a new Admin).
+  - **A second double-click** while the first sets up holds the lock and waits; `share`'s server answers over HTTPS
+    only, which the wait for a laptop's dashboard never sees, so it also asks server.json's port
+    (`shared_here`) and opens it once it serves.
+  - Rejected: starting `share` in-process (its server's output would not be read or logged, nor its address seen);
+    the installer's own start stays as it was (it is not the morning's double-click).
