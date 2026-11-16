@@ -223,12 +223,14 @@ def test_the_same_version_built_later_is_newer():
 
 @pytest.mark.parametrize("how", ["no answer", "too slow"])
 def test_github_not_answering_is_one_line_and_this_version_starts(launch, github, monkeypatch, capsys, how):
+    # Both within the check's own time (made short here): Windows takes about 2 s to give up on a refused
+    # connection to this computer, retrying it, so the time is the check's, not the network's.
+    monkeypatch.setattr(launch.releases, "CHECK_SECONDS", 0.5)
     if how == "no answer":
         github.httpd.shutdown()
         github.httpd.server_close()
     else:
         github.delay = 2.0
-        monkeypatch.setattr(launch.releases, "CHECK_SECONDS", 0.5)
     started = time.monotonic()
     assert _offer(launch) is None and launch.handed == []
     assert time.monotonic() - started < 1.9
