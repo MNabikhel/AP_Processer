@@ -80,3 +80,29 @@ def test_the_page_readers_and_azures_disagreement_is_said_once_each():
     fr = _fuse(by_source, ("invoice_number",))["invoice_number"]
     assert fr.value == "INV-1001" and fr.status == CHECK
     assert sum(AZURE in r for r in fr.reasons) == 1
+
+
+# --- Never below the readers on this computer alone (the review of D-245) ------------------------------------------
+
+
+def test_the_total_tax_the_page_works_out_stays_verified_when_azure_reads_it_too():
+    from ap_coder.capture import analyze
+    from tests.conftest import SAMPLES
+    from tests.fake_di import recorded
+
+    stem = "northwind_ON_HST_NW-2026-0912"
+    alone = analyze(SAMPLES / f"{stem}.pdf")
+    both = analyze(SAMPLES / f"{stem}.pdf", di_raw=recorded(stem))
+    local, merged = alone.fields["tax_total"], both.fields["tax_total"]
+    assert local.status == VERIFIED and "computed" in local.sources
+    assert merged.status == VERIFIED and merged.confidence >= local.confidence and merged.value == local.value
+    assert merged.sources.get("di") and "computed" in merged.sources
+
+
+def test_a_total_tax_only_azure_read_that_differs_from_the_taxes_goes_to_a_person():
+    by_source = {"rules": {"subtotal": [_rules("subtotal", 100.0)], "hst_amount": [_rules("hst_amount", 13.0)],
+                           "grand_total": [_rules("grand_total", 113.0)]},
+                 "di": {"tax_total": [_azure("tax_total", 31.0)]}}  # fmt: skip
+    fr = _fuse(by_source, ("subtotal", "hst_amount", "tax_total", "grand_total"))["tax_total"]
+    assert fr.value == 13.0 and fr.status == CHECK
+    assert any(r.startswith(f"{AZURE} read 31.00") for r in fr.reasons) and fr.sources.get("other:31.0") == "di"

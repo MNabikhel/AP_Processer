@@ -60,6 +60,40 @@ def test_each_case_is_read_with_and_without_azure_and_compared_field_by_field(tm
     assert "| invoice_number | 2 |" in text and "Answers not used" in text
 
 
+def test_azure_agreeing_never_makes_a_field_less_sure_than_ap_coder_alone_on_the_quick_cases(tmp_path):
+    """D-245: with Azure's answer among the readers, a field Azure reads the same is never less sure, nor less than
+    verified when AP Coder alone verified it; one Azure reads otherwise goes to a person. Over the benchmark's quick
+    cases (scans included), with answers made from their truth, one field in five read otherwise."""
+    from ap_coder.bench.__main__ import QUICK
+    from ap_coder.bench.harness import prepare_cases, received_date
+    from ap_coder.capture import analyze
+    from ap_coder.capture.normalize import same_value
+    from ap_coder.capture.types import CHECK, VERIFIED
+
+    sizes = QUICK["run"]
+    cases = prepare_cases(tmp_path / "cases", sizes["n"], 1, sizes["scanned"], 1, False)
+    lowered, unflagged = [], []
+    for n, case in enumerate(cases):
+        wrong = {"invoice_number": "WRONG-1"} if n % 5 == 0 else {}
+        printed = {f: (e or {}).get("value") for f, e in (case.truth.get("fields") or {}).items()}
+        taxes = [float(printed[f]) for f in TAX_RATES if printed.get(f) not in (None, "")]
+        if printed.get("tax_total") in (None, "") and taxes:  # Azure gives a total tax the page doesn't print
+            wrong["tax_total"] = round(sum(taxes), 2)
+        day = received_date(case.truth)
+        alone = analyze(case.path, today=day)
+        both = analyze(case.path, today=day, di_raw=_answer(case.truth, **wrong))
+        for name, fa in alone.fields.items():
+            fb, theirs = both.fields[name], (wrong.get(name) or (case.truth["fields"].get(name) or {}).get("value"))
+            if fa.value in (None, "") or theirs in (None, ""):
+                continue
+            if not same_value(name, fa.value, theirs):
+                if fb.status != CHECK:
+                    unflagged.append((case.id, name, fa.value, theirs, fb.status))
+            elif fb.confidence + 1e-9 < fa.confidence or (fa.status == VERIFIED and fb.status != VERIFIED):
+                lowered.append((case.id, name, fa.status, round(fa.confidence, 4), fb.status, round(fb.confidence, 4)))
+    assert lowered == [] and unflagged == []
+
+
 def test_the_command_line_takes_the_answers_and_record_di_asks_azure_only_for_developers(tmp_path, monkeypatch,
                                                                                          capsys):  # fmt: skip
     from ap_coder.bench.__main__ import main

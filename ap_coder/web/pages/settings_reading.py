@@ -432,9 +432,10 @@ def reading_context(request: Request) -> dict[str, Any]:
         "models": model_rows(settings),
         "poll_seconds": TEST_POLL_SECONDS,
         "developer": internet_allowed(),
-        # The Azure check's card: only where the internet is allowed (the offline build uses no cloud service), or
-        # while it is still switched on from before, so it can be switched off.
-        "show_azure_check": internet_allowed() or azure_check_on(store),
+        # Azure Document Intelligence's card, for the Admin (Settings is theirs), in the offline build too: the
+        # company's own resource is the one named cloud exception, off until they switch it on (D-245). The
+        # developers' own cloud card stays where the internet is allowed (``developer``, B-516).
+        "show_azure_check": True,
     }
     if status is not None:
         context["reader"] = page_reader_context(settings, store, status, server_mode(request))

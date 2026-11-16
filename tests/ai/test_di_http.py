@@ -70,7 +70,7 @@ def test_busy_is_tried_again_after_retry_after_then_given_up(fake):
 
 
 def test_a_server_error_is_tried_again_twice_at_two_then_five_seconds(fake):
-    fake.script("analyze", 503, 502)
+    fake.script("analyze", 503, 503)
     pauses = []
     assert _client(fake, pauses=pauses).analyze(_pdf()) == recorded(STEM)
     assert pauses[:2] == [2.0, 5.0]
@@ -78,6 +78,63 @@ def test_a_server_error_is_tried_again_twice_at_two_then_five_seconds(fake):
     with pytest.raises(di_http.DiError) as down:
         _client(fake).analyze(_pdf())
     assert down.value.kind == di_http.UNREACHABLE and down.value.status == 503
+    fake.script("poll", 502)  # a poll may be asked again after any 5xx: nothing is billed twice
+    assert _client(fake).analyze(_pdf()) == recorded(STEM)
+
+
+@pytest.mark.parametrize("status", [500, 502, 504])
+def test_an_analyze_azure_may_have_taken_is_never_sent_again(fake, status):
+    """After a 500, 502 or 504 Azure may have taken the file: sent again, it could be read, and billed, twice. Only a
+    429 or a 503 (nothing taken) is sent again."""
+    fake.script("analyze", status)
+    with pytest.raises(di_http.DiError) as down:
+        _client(fake).analyze(_pdf())
+    assert down.value.kind == di_http.UNREACHABLE and len(fake.steps("POST")) == 1
+
+
+def test_a_file_azure_refuses_fails_that_file_only(fake):
+    fake.script("analyze", 400)
+    with pytest.raises(di_http.DiError) as refused:
+        _client(fake).analyze(_pdf())
+    assert refused.value.kind == di_http.REFUSED and not refused.value.permanent
+
+
+def test_a_404_on_a_poll_fails_that_reading_and_on_the_analyze_the_endpoint(fake):
+    fake.script("poll", 404)
+    client = _client(fake)
+    with pytest.raises(di_http.DiError) as gone:
+        client.analyze(_pdf())
+    assert gone.value.kind == di_http.REFUSED and not gone.value.permanent and client.accepted
+    fake.script("analyze", 404)
+    with pytest.raises(di_http.DiError) as wrong:
+        client.analyze(_pdf())
+    assert wrong.value.kind == di_http.NOT_FOUND and wrong.value.permanent and not client.accepted
+    fake.script("analyze", 302)
+    with pytest.raises(di_http.DiError) as moved:
+        client.analyze(_pdf())
+    assert moved.value.kind == di_http.NOT_FOUND and "redirect" in str(moved.value)
+
+
+def test_azure_taking_the_file_is_said_at_once(fake):
+    taken = []
+    client = _client(fake)
+    client.analyze(_pdf(), on_accepted=lambda: taken.append(len(fake.steps("GET"))))
+    assert taken == [0] and client.accepted  # before the first poll
+
+
+def test_a_key_with_an_invisible_character_is_a_key_failure(fake):
+    client = _client(fake, key="S3cretKeyForTests0123456789abcd\u200bWXYZ")
+    with pytest.raises(di_http.DiError) as bad:
+        client.model_info()
+    assert bad.value.kind == di_http.KEY and bad.value.permanent and "\u200b" not in str(bad.value)
+    assert not fake.calls
+
+
+def test_the_result_address_port_is_not_used(fake):
+    fake.script("analyze", "port")
+    client = _client(fake)
+    assert client.analyze(_pdf()) == recorded(STEM)
+    assert {port for _, port in client.asked} == {443}  # the endpoint's port, not the one Azure named
 
 
 def test_a_refused_key_is_never_tried_again_and_never_quoted(fake):

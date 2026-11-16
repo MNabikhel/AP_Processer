@@ -1046,13 +1046,44 @@ def _totals_that_add_up(chosen: dict[str, Any], all_groups: dict[str, list[Any]]
             contest[f] = max(contest.get(f, 0.0), others[0].strength() / max(g.strength(), 1e-9) if others else 0.0)
 
 
+def _worked_out_beside_azure(results: dict[str, FieldResult], azure: FieldResult, parts: list[FieldResult]) -> None:
+    """The total tax worked out from the taxes read on this computer, never less sure than without Azure: the same
+    as Azure's, it keeps Azure as a source; another, the field goes to a person with both named."""
+    total = round(sum(float(p.value) for p in parts), 2)
+    sure = all(p.status == VERIFIED for p in parts)
+    status = VERIFIED if sure else (CHECK if any(p.status == CHECK for p in parts) else LIKELY)
+    reasons = ["worked out: " + " + ".join(LABELS[p.field] for p in parts)]
+    sources: dict[str, str] = {"computed": "sum of the taxes"}
+    theirs = azure.sources.get(AZURE, "")
+    try:
+        same = abs(float(azure.value) - total) <= 0.011
+    except (TypeError, ValueError):
+        same = False
+    if same:
+        sources[AZURE] = theirs
+        reasons.append(f"{AZURE_NAME} read the same")
+    else:
+        status = CHECK
+        sources[f"other:{azure.value}"] = AZURE
+        reasons.append(f"{AZURE_NAME} read {float(azure.value):,.2f}, the taxes add up to {total:,.2f}")
+    results["tax_total"] = FieldResult("tax_total", total, min(p.confidence for p in parts), status, [], sources,
+                                       reasons)  # fmt: skip
+
+
 def _derive_tax_total(results: dict[str, FieldResult]) -> None:
-    """When only the separate taxes are printed, the total tax is their sum (marked as worked out)."""
+    """When only the separate taxes are printed, the total tax is their sum (marked as worked out). One only Azure
+    read is worked out from the taxes the readers on this computer read just the same (D-245): Azure agreeing is one
+    more source of it; differing, a person checks it."""
     tt = results.get("tax_total")
-    if tt is None or tt.status != MISSING:
+    azure_only = tt is not None and {k for k in tt.sources if not k.startswith("other:")} == {AZURE}
+    if tt is None or (tt.status != MISSING and not azure_only):
         return
-    parts = [results[f] for f in TAX_FIELDS if f in results and results[f].status != MISSING]
+    parts = [results[f] for f in TAX_FIELDS if f in results and results[f].status != MISSING
+             and {k for k in results[f].sources if not k.startswith("other:")} != {AZURE}]  # fmt: skip
     if not parts:
+        return
+    if azure_only:
+        _worked_out_beside_azure(results, tt, parts)
         return
     conf = min(p.confidence for p in parts)
     status = (

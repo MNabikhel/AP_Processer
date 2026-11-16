@@ -48,7 +48,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.config import Settings
-from .di_http import API_VERSION, KEY, NOT_FOUND, REFUSED, TIMEOUT, UNREACHABLE, DiClient, DiError, endpoint_host
+from .di_http import API_VERSION, KEY, NOT_FOUND, UNREACHABLE, DiClient, DiError, endpoint_host
 from .extraction import TEXT_EXTENSIONS
 
 log = logging.getLogger(__name__)
@@ -180,8 +180,11 @@ def save_settings(store: Any, *, enabled: bool, endpoint: str, api_key: str = ""
     if not 0 <= int(daily_pages) <= MAX_CAP:
         raise ValueError(f"The daily cap is a number of pages from 0 to {MAX_CAP:,}.")
     api_key = (api_key or "").strip()
-    if any(c.isspace() for c in api_key):
-        raise ValueError("The key has spaces in it: paste it again from the Azure portal (Keys and Endpoint).")
+    if api_key and not re.fullmatch(r"[A-Za-z0-9]+", api_key):
+        raise ValueError(
+            "A key is letters and digits only, and this one has something else in it (a space, an "
+            "invisible character): paste it again from the Azure portal (Keys and Endpoint)."
+        )
 
     before = load_settings(store, settings)
     changed: list[str] = []
@@ -452,13 +455,17 @@ class Plan:
 
 def prepare(store: Any, settings: Settings | None, invoice_id: int | None, capture: Any, report: Any,
             path: str | Path) -> Plan:  # fmt: skip
-    """Before the touchless decision on an invoice being processed (``pipeline.InvoicePipeline.process``). An invoice
-    Azure has already checked (read again by the page reader) gets that check folded in again: its fields Azure read
-    differently are Check, with the review issue. Otherwise, with the check on: why it goes in line, and whether it
-    waits for it. Never raises: the Azure check is an extra."""
+    """Before the touchless decision on an invoice being processed (``pipeline.InvoicePipeline.process``). Switched
+    off, nothing of Azure is used (a comparison stored before included). An invoice Azure has already checked (read
+    again by the page reader) gets that check folded in again: its fields Azure read differently are Check, with the
+    review issue. Otherwise: why it goes in line, and whether it waits for it. Never raises: the Azure check is an
+    extra."""
     if store is None or capture is None:
         return Plan()
     try:
+        cfg = load_settings(store, settings)
+        if not cfg.enabled:
+            return Plan()
         check = store.azure_check(invoice_id) if invoice_id else None
         if check and check.get("status") == "done" and check.get("result"):
             values = (check["result"] or {}).get("azure") or {}
@@ -469,7 +476,6 @@ def prepare(store: Any, settings: Settings | None, invoice_id: int | None, captu
                 report.issues = [i for i in report.issues if i.code not in CODES] + [found]
                 report.requires_review = True
             return Plan(differ=differ)
-        cfg = load_settings(store, settings)
         reason = decide(store, cfg, capture, path)
         if not reason:
             return Plan()
@@ -506,9 +512,9 @@ class AzureUnavailable(RuntimeError):
     """The Azure check can't run (off, no endpoint or key) or a request was refused. ``kind``: ``di_http``'s, when
     Azure was asked."""
 
-    def __init__(self, message: str, kind: str = "") -> None:
+    def __init__(self, message: str, kind: str = "", accepted: bool = False, pages: int = 0) -> None:
         super().__init__(message)
-        self.kind = kind
+        self.kind, self.accepted, self.pages = kind, accepted, pages  # Azure took the file: ``pages`` billed
 
 
 # --- When Azure can't be reached: the queue pauses, AP Coder carries on with its own readers -----------------------
@@ -516,7 +522,13 @@ class AzureUnavailable(RuntimeError):
 DOWN_KEY = "azure_check_down"  # the outage, as JSON: since, failures, until, error, permanent
 FAILURES_TO_PAUSE, PAUSE_MINUTES = 3, 15
 NOT_REACHED = f"not read by {NAME}: not reached; read by AP Coder's own readers"
-OUTAGE_KINDS = (UNREACHABLE, TIMEOUT, KEY, NOT_FOUND, REFUSED)
+# Azure not reached (counted: 3 in a row pause the queue), or the key or the endpoint refused (paused until the
+# settings change). Any other failure (Azure refusing one file, a reading too slow) fails that invoice only.
+OUTAGE_KINDS = (UNREACHABLE, KEY, NOT_FOUND)
+SETTINGS_KINDS = (KEY, NOT_FOUND)
+TAKEN = (f"{NAME} took the file (it is billed) but its reading didn't come back: not sent again, so it isn't "
+         "billed twice; AP Coder's own readers read it")  # fmt: skip
+UNREADABLE = f"{NAME}'s answer couldn't be read: not kept; AP Coder's own readers read it"
 
 
 def outage(store: Any) -> dict[str, Any] | None:
@@ -576,13 +588,35 @@ def make_client(cfg: AzureCheckSettings) -> DiClient:
     return DiClient(cfg.endpoint, cfg.api_key)
 
 
-def read(cfg: AzureCheckSettings, path: str | Path, client: Any = None, pages: str = "") -> dict[str, Any]:
-    """Azure's reading of the file (its ``analyzeResult``), ``pages`` of it ("1-4,9"; all when empty)."""
+def read(cfg: AzureCheckSettings, path: str | Path, client: Any = None, pages: str = "",
+         on_accepted: Callable[[], None] | None = None) -> dict[str, Any]:  # fmt: skip
+    """Azure's reading of the file (its ``analyzeResult``), ``pages`` of it ("1-4,9"; all when empty).
+    ``on_accepted``: called once Azure has taken the file (billed from then)."""
     client = client if client is not None else make_client(cfg)
     try:
-        return client.analyze(Path(path).read_bytes(), pages=pages) or {}
+        if on_accepted is None:
+            return client.analyze(Path(path).read_bytes(), pages=pages) or {}
+        return client.analyze(Path(path).read_bytes(), pages=pages, on_accepted=on_accepted) or {}
     except DiError as exc:
-        raise AzureUnavailable(str(exc), exc.kind) from None
+        raise AzureUnavailable(str(exc), exc.kind, accepted=bool(getattr(client, "accepted", False))) from None
+
+
+def readable(raw: Any) -> bool:
+    """Whether Azure's answer reads as capture reads it (its fields and lines): only such an answer is kept."""
+    from ..capture import _di_lines, _di_readings
+
+    if not isinstance(raw, dict) or not isinstance(raw.get("pages", []), list):
+        return False
+    docs = raw.get("documents", [])
+    if not isinstance(docs, list) or (docs and not (isinstance(docs[0], dict)
+                                                    and isinstance(docs[0].get("fields", {}), dict))):  # fmt: skip
+        return False
+    try:
+        _di_readings(raw)
+        _di_lines(raw)
+    except Exception:  # noqa: BLE001 - an answer of another shape: not kept, not used
+        return False
+    return True
 
 
 def scrub(text: str, cfg: AzureCheckSettings) -> str:
@@ -677,13 +711,13 @@ def check_one(settings: Settings | None, store: Any, *, client: Any = None) -> C
     try:
         return _check(cfg, store, row, client, settings)
     except AzureUnavailable as exc:
-        if exc.kind not in OUTAGE_KINDS:
-            message = scrub(f"{type(exc).__name__}: {exc}", cfg)
-            log.warning("Azure check: invoice %s failed (%s)", iid, message)
-            store.finish_azure_check(iid, "failed", error=message)
+        if exc.accepted or exc.kind not in OUTAGE_KINDS:  # this invoice only (one Azure took is never sent again)
+            message = TAKEN if exc.accepted else scrub(f"{NAME}: {exc}", cfg)
+            log.warning("Azure check: invoice %s failed (%s)", iid, exc.kind or type(exc).__name__)
+            store.finish_azure_check(iid, "failed", error=message, pages=exc.pages)
             return CheckOutcome(iid, "failed", message)
-        # Azure not reached, or refusing: the invoice stays as AP Coder's own readers read it, back in line.
-        _not_reached(store, scrub(str(exc), cfg), permanent=exc.kind in (KEY, NOT_FOUND, REFUSED))
+        # Azure not reached, or the key or endpoint refused: the invoice stays as AP Coder's own readers read it.
+        _not_reached(store, scrub(str(exc), cfg), permanent=exc.kind in SETTINGS_KINDS)
         log.warning("Azure check: %s not reached (%s)", cfg.host, exc.kind)
         store.finish_azure_check(iid, "waiting", error=NOT_REACHED)
         return CheckOutcome(iid, "postponed", NOT_REACHED)
@@ -720,8 +754,18 @@ def _check(cfg: AzureCheckSettings, store: Any, row: dict[str, Any], client: Any
         store.finish_azure_check(iid, "waiting", error=message)
         return CheckOutcome(iid, "postponed", message)
 
-    raw = read(cfg, path, client, pages=pages_to_send(count, cfg.invoice_pages))
+    def taken() -> None:  # billed from here: the daily cap counts it now, and a failure won't send it again
+        store.finish_azure_check(iid, "failed", error=TAKEN, pages=pages)
+
+    try:
+        raw = read(cfg, path, client, pages=pages_to_send(count, cfg.invoice_pages), on_accepted=taken)
+    except AzureUnavailable as exc:
+        exc.pages = pages if exc.accepted else 0
+        raise
     _reached(store)
+    if not readable(raw):
+        store.finish_azure_check(iid, "failed", error=UNREADABLE, pages=pages)
+        return CheckOutcome(iid, "failed", UNREADABLE)
     digest = inv.get("file_sha256") or ""
     if digest:
         keep_reading(digest, raw)  # read again later (the page reader, a person's Read again), Azure isn't asked
@@ -753,11 +797,13 @@ def _read_again(settings: Settings | None, store: Any, iid: int, identity: Any) 
     differs, a person checks. Read by the page reader already: it goes back in the page reader's line (its pages are
     kept, so nothing is read twice). Otherwise it is read again now. Not while another check holds it (the AI
     reviewer decides then, on the proposal it has). Never raises."""
+    from ..capture.workflow import has_draft
     from ..core.store import REVIEW
     from .verifier import held
 
     inv = store.get_invoice(iid) or {}
-    worked_on = inv.get("final_output") or inv.get("reviewer") or inv.get("edits")
+    worked_on = inv.get("final_output") or inv.get("reviewer") or inv.get("edits") or store.open_by(iid)
+    worked_on = worked_on or has_draft(store, iid)
     if inv.get("status") != REVIEW or worked_on or not settings or held((inv.get("meta") or {}).get("capture") or {}):
         return ""
     try:
@@ -786,7 +832,7 @@ def _process_again(settings: Settings, store: Any, iid: int, identity: Any) -> b
         return False
     capture = result.capture.to_dict() if result.capture is not None else None
     updated = store.replace_proposal(iid, result.output, result.report.to_dict(), capture, pipeline_meta(result),
-                                     expect=identity)  # fmt: skip
+                                     expect=identity, unless_in_use=True)  # fmt: skip
     untrusted = chat_trust(store, result.header_model) if updated and result.autonomy.get("auto") else ""
     if updated and result.autonomy.get("auto") and not untrusted and not has_draft(store, iid):
         try:

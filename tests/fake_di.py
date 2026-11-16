@@ -16,9 +16,9 @@ version 2024-11-30, as far as AP Coder uses it:
 The answer: the made-up recorded one (``tests/fixtures/di/<sample>.json``) of the sample whose bytes were sent, else
 ``answer``. ``script(step, *what)``: what the next requests of ``step`` ("analyze", "poll", "delete", "model") do
 instead: an HTTP status (429 and 503 with ``Retry-After``), "drop" (close the connection without an answer),
-"failed" (the reading failed), "elsewhere" (an ``Operation-Location`` on another host), "slow" (wait
-``slow_seconds`` before answering). ``region``: sent as ``x-ms-region`` when set. Every request is recorded in
-``calls`` as (method, path, query, whether the right key came); the key itself is never kept.
+"failed" (the reading failed), "elsewhere" (an ``Operation-Location`` on another host), "port" (one on another
+port), "slow" (wait ``slow_seconds`` before answering). ``region``: sent as ``x-ms-region`` when set. Every request
+is recorded in ``calls`` as (method, path, query, whether the right key came); the key itself is never kept.
 """
 
 from __future__ import annotations
@@ -193,7 +193,7 @@ class FakeDi:
         result_id = str(uuid.uuid4())
         with self.lock:
             self.results[result_id] = {"polls": 0, "answer": answer, "failed": scripted == "failed"}
-        host = "elsewhere.example.com" if scripted == "elsewhere" else HOST
+        host = {"elsewhere": "elsewhere.example.com", "port": f"{HOST}:8443"}.get(scripted, HOST)
         location = f"https://{host}{PREFIX}/analyzeResults/{result_id}?api-version={API}"
         self._send(req, 202, None, {"Operation-Location": location, "Retry-After": "0"})
 

@@ -728,8 +728,9 @@ SHA-256, the model and the API version (never in a backup), so Azure is never as
 
 **Mapping** (`_di_readings`, `_di_lines`): VendorName, InvoiceId, InvoiceDate, DueDate, PurchaseOrder, PaymentTerm,
 SubTotal, TotalTax and InvoiceTotal as their fields; the currency from the totals' currency code; each tax of
-TaxDetails by a rate that names one tax (5 GST, 13/14/15 HST, 9.975 QST, 6/7 PST; two amounts at one rate say
-neither); VendorTaxId to the GST/HST or the QST number by its pattern (neither: left out); CustomerTaxId never.
+TaxDetails by a rate that names one tax (5 GST, 13/14/15 HST, 9.975 QST, 6/7 PST: the number before "%", or Azure's
+number; two amounts at one rate say neither; none on an invoice in another currency or from a supplier abroad);
+VendorTaxId to the GST/HST or the QST number by its pattern (neither: left out); CustomerTaxId never.
 Each reading's confidence is Azure's, its box where Azure read it. Items become line items (`source="di"`): marked
 agreed when they match the page's own rows, used only where the page gave none.
 
@@ -743,10 +744,16 @@ agreed when they match the page's own rows, used only where the page gave none.
   and never makes a value less certain than the local readers alone (no `+di` evidence pattern is measured yet);
   the box shown is the local reader's word;
 - **a value only Azure read is at most likely** ("read only by Azure Document Intelligence"), however a check
-  confirms it: never verified, so never approved without a person.
+  confirms it: never verified, so never approved without a person; but a total tax only Azure read is worked out
+  from the taxes read on this computer, as without it (Azure agreeing is one more source; differing, Check), so
+  Azure never makes a field less sure than the local readers alone;
+- **a line only Azure read** (the page gave none) is never approved without a person;
+- **an answer of another shape** is never kept, and any part of one is left out: the invoice is read without it.
+  Switched off, nothing of Azure is used, a comparison stored before included.
 
 After a check, an invoice still untouched in review (held by no other check) is read again with Azure among the
-readers: at once, or back in the page reader's line when OvisOCR2 has read it (its pages are kept). The comparison
+readers: at once, or back in the page reader's line when OvisOCR2 has read it (its pages are kept); never over an
+invoice a person has open or keeps a draft of. The comparison
 is recorded too ("Azure agrees on 11 of 11 fields"), the review issue `AZURE_DI_DISAGREES` names the fields read
 differently, and an invoice picked for a spot-check is held from touchless approval until Azure has checked it, then
 approved if Azure agrees, nobody touched it and touchless processing still applies (`workflow.still_touchless`).
@@ -756,14 +763,16 @@ compares the two readers on the benchmark's invoices (`bench/di_compare.py`, rea
 **The network**: only the saved endpoint's host is contacted, over HTTPS (TLS 1.2 or later), by AP Coder's own
 client: every address, the result address Azure gives included, is checked before a socket opens; no redirect is
 followed, no proxy used. It analyzes, polls (at most every 2 seconds, 120 seconds in all) and deletes the result, so
-Azure keeps nothing of it. A 429 waits for its Retry-After (3 tries), a 500-504 or no connection is tried again at 2
-then 5 seconds, a 400/401/403/404 never; an analyze that reached Azure is never sent again. `AP_ALLOW_INTERNET` stays
+Azure keeps nothing of it. A 429 waits for its Retry-After (3 tries), a poll's 500-504 or no connection is tried
+again at 2 then 5 seconds, a 400/401/403/404 never; the analyze request is sent again only after a 429 or a 503, and
+a file Azure took (202) is counted against the daily cap at once and never sent again. `AP_ALLOW_INTERNET` stays
 off. The key is kept in the .env (`AZURE_DOCUMENT_INTELLIGENCE_KEY`), shown only as its last four characters, never
 logged, backed up or put in the database, and scrubbed from errors. No Azure package is needed.
 
 **When Azure can't be reached**, the invoice stays as AP Coder's own readers read it and goes back in line ("not read
 by Azure Document Intelligence: not reached; read by AP Coder's own readers"); after 3 failures in a row the queue
-pauses 15 minutes, and a refused key or endpoint pauses it until the settings change. The Reading status lists
+pauses 15 minutes, and a refused key or a wrong endpoint pauses it until the settings change; Azure refusing one
+file (a 400, a 404 on a poll) fails that invoice only. The Reading status lists
 "Azure Document Intelligence: not reached since 10:42 — invoices are read on this computer", and the card says so.
 *Test connection* reads the made-up sample invoice, shows the comparison and the region Azure's answer names
 (`x-ms-region`, when it names one); like the check itself, it sends nothing until it is switched on.

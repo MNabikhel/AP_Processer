@@ -432,7 +432,7 @@ def azure_checks(store: Any, settings: Settings | None = None, online: bool = Fa
             info = di_http.DiClient(cfg.endpoint, cfg.api_key).model_info()
             api = info.get("apiVersion") or di_http.API_VERSION
             checks.append(Check(f"{area} connection", PASS, f"{di_http.MODEL} answers (API {api})"))
-        except di_http.DiError as exc:
+        except (di_http.DiError, ValueError, OSError) as exc:  # a key that can't be sent, a socket error: said
             checks.append(Check(f"{area} connection", FAIL, azure_check.scrub(str(exc), cfg)))
     return checks
 

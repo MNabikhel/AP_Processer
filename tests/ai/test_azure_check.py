@@ -69,9 +69,11 @@ class FakeClient:
     def __init__(self, raw):
         self.raw, self.calls = raw, []
 
-    def analyze(self, data, pages=""):
+    def analyze(self, data, pages="", on_accepted=None):
         assert data
         self.calls.append(pages)
+        if on_accepted is not None:  # Azure took the file, as the real client says
+            on_accepted()
         return self.raw
 
 
@@ -282,9 +284,25 @@ def test_switched_off_its_kept_reading_is_not_used(store, monkeypatch):
     again = InvoicePipeline(_settings(), store.reference_data(), store=store).process(
         SAMPLES / f"{STEM}.pdf", save=False, invoice_id=result.invoice_id
     )
-    # The comparison stored then is still folded in (``prepare``); Azure's reading no longer lifts any field.
+    # Off means ignored entirely: neither Azure's kept reading nor the comparison stored then is used.
     assert again.capture.fields["invoice_number"].status == "likely"
     assert not azure_check.kept_reading(store, SAMPLES / f"{STEM}.pdf")
+    assert not any("di" in fr.sources or any(k.startswith("other:") and "di" in v for k, v in fr.sources.items())
+                   for fr in again.capture.fields.values())  # fmt: skip
+
+
+def test_switched_off_a_comparison_azure_disagreed_with_is_not_folded_in(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    total = float(result.capture.fields["grand_total"].value)
+    azure_check.check_one(_settings(), store, client=FakeClient(_raw_from(result.capture, grand_total=total + 100)))
+    azure_check.save_settings(store, enabled=False, endpoint=ENDPOINT)
+    again = InvoicePipeline(_settings(), store.reference_data(), store=store).process(
+        SAMPLES / f"{STEM}.pdf", save=False, invoice_id=result.invoice_id
+    )
+    assert again.capture.fields["grand_total"].status != CHECK
+    assert azure_check.ISSUE_CODE not in [i.code for i in again.report.issues]
 
 
 def test_an_invoice_the_page_reader_read_goes_back_in_its_line(store, monkeypatch):
@@ -596,6 +614,159 @@ def test_azure_not_reading_a_file_fails_that_invoice_only(store, monkeypatch):
     assert azure_check.outage(store) is None
 
 
+def _real_client(fake):
+    return lambda cfg: di_http.DiClient(cfg.endpoint, cfg.api_key, ca_file=str(fake_di.CA_FILE),
+                                        connect_to=fake.connect_to, sleep=lambda s: None)  # fmt: skip
+
+
+@pytest.mark.parametrize("step", ["analyze 400", "poll 404"])
+def test_a_file_azure_refuses_fails_that_invoice_and_the_queue_carries_on(store, monkeypatch, step):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    first = _process(store)
+    second = _process(store, SAMPLES / "pacific_BC_GST_PST_PO-77120.pdf")
+    where, status = step.split()
+    with fake_di.FakeDi() as fake:
+        fake.script(where, int(status))
+        monkeypatch.setattr(azure_check, "make_client", _real_client(fake))
+        refused = azure_check.check_one(_settings(), store)
+        assert refused.invoice_id == first.invoice_id and refused.status == "failed"
+        assert azure_check.paused(store) == "" and azure_check.outage(store) is None
+        assert "Azure" in store.azure_check(first.invoice_id)["error"]
+        assert azure_check.check_one(_settings(), store).invoice_id == second.invoice_id
+    assert store.azure_check(second.invoice_id)["status"] == "done"
+
+
+def test_a_wrong_endpoint_pauses_the_queue_until_the_settings_change(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    _process(store)
+    with fake_di.FakeDi() as fake:
+        fake.script("analyze", 404)
+        monkeypatch.setattr(azure_check, "make_client", _real_client(fake))
+        assert azure_check.check_one(_settings(), store).status == "postponed"
+    assert "endpoint" in azure_check.paused(store)
+
+
+def test_a_file_azure_took_is_counted_at_once_and_never_sent_again(store, monkeypatch):
+    """Azure took the file (202), then didn't finish in time: the pages count against the daily cap (they are
+    billed), and the invoice is not sent again: it fails, saying why."""
+    _turn_on(store, monkeypatch, cap=2)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)  # two pages
+    counted = []
+    with fake_di.FakeDi(running_polls=10**6) as fake:
+
+        def client(cfg):
+            made = _real_client(fake)(cfg)
+            made.poll_seconds = 0.2
+            return made
+
+        monkeypatch.setattr(azure_check, "make_client", client)
+        real = store.azure_pages_on
+        for _ in range(4):
+            monkeypatch.setattr(azure_check, "paused", lambda store, now=None: "")
+            outcome = azure_check.check_one(_settings(), store)
+            counted.append(real())
+    assert len(fake.steps("POST")) == 1 and counted[0] == 2
+    check = store.azure_check(result.invoice_id)
+    assert check["status"] == "failed" and "not sent again" in check["error"]
+    assert outcome is None
+
+
+def test_the_daily_cap_counts_a_file_while_azure_reads_it(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    _process(store)
+    seen = []
+
+    class Watch(FakeClient):
+        def analyze(self, data, pages="", on_accepted=None):
+            on_accepted()
+            seen.append(store.azure_pages_on())
+            return super().analyze(data, pages)
+
+    assert azure_check.check_one(_settings(), store, client=Watch(fake_di.recorded(STEM))).status == "done"
+    assert seen == [2] and store.azure_pages_on() == 2  # counted at the 202, not twice
+
+
+def test_a_key_with_anything_but_letters_and_digits_is_refused_when_saved(store, monkeypatch):
+    for bad in ("S3cretKeyForTests0123456789abcd\u200bWXYZ", "S3cretKey-ForTests0123456789abcd"):
+        with pytest.raises(ValueError, match="letters and digits"):
+            azure_check.save_settings(store, enabled=True, endpoint=ENDPOINT, api_key=bad)
+    assert azure_check.load_settings(store).api_key == ""
+
+
+def test_a_key_that_cant_be_sent_fails_as_a_key_and_the_doctor_says_so(store, monkeypatch):
+    from ap_coder.ops import doctor
+
+    _turn_on(store, monkeypatch)
+    monkeypatch.setenv(azure_check.KEY_ENV, "S3cretKeyForTests0123456789abcd\u200bWXYZ")  # put in the .env by hand
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    _process(store)
+    with fake_di.FakeDi() as fake:
+        monkeypatch.setattr(azure_check, "make_client", _real_client(fake))
+        assert azure_check.check_one(_settings(), store).status == "postponed"
+        assert "key" in azure_check.paused(store)
+        real = di_http.DiClient
+        monkeypatch.setattr(di_http, "DiClient", lambda endpoint, key: real(
+            endpoint, key, ca_file=str(fake_di.CA_FILE), connect_to=fake.connect_to, sleep=lambda s: None))  # fmt: skip
+        line = doctor.azure_checks(store, _settings(), online=True)[-1]
+    assert line.status == doctor.FAIL and "key" in line.detail
+
+
+@pytest.mark.parametrize("busy", ["open", "draft"])
+def test_an_invoice_a_person_has_open_or_a_draft_of_is_not_read_again(store, monkeypatch, busy):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    iid = result.invoice_id
+    before = store.get_invoice(iid)["ai_output"]
+    if busy == "open":
+        store.keep_open(iid, "mia-browser", "Mia", 300, 30)
+    else:
+        draft = dict(before)
+        draft["invoice_number"] = "MIA-TYPED-THIS"
+        store.save_invoice_draft(iid, "mia-browser", draft)
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(fake_di.recorded(STEM)))
+    assert outcome.status == "done" and outcome.read_again == ""
+    assert store.get_invoice(iid)["ai_output"] == before
+
+
+def test_a_proposal_is_not_replaced_once_a_person_opened_it_meanwhile(store, monkeypatch):
+    """Checked in the same transaction as the replacement: a person opening the invoice while it is read again."""
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    iid = result.invoice_id
+    before = store.get_invoice(iid)["ai_output"]
+    real = InvoicePipeline.process
+
+    def opened_meanwhile(self, *args, **kwargs):
+        done = real(self, *args, **kwargs)
+        store.keep_open(iid, "mia-browser", "Mia", 300, 30)
+        return done
+
+    monkeypatch.setattr(InvoicePipeline, "process", opened_meanwhile)
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(fake_di.recorded(STEM)))
+    assert outcome.read_again == "" and store.get_invoice(iid)["ai_output"] == before
+
+
+def test_an_answer_that_cant_be_read_is_not_kept_and_fails_that_invoice(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    raw = fake_di.recorded(STEM)
+    raw["documents"] = "x"
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(raw))
+    assert outcome.status == "failed" and "couldn't be read" in outcome.message
+    assert not azure_check.cache_path(store.get_invoice(result.invoice_id)["file_sha256"]).exists()
+    again = InvoicePipeline(_settings(), store.reference_data(), store=store).process(
+        SAMPLES / f"{STEM}.pdf", save=False, invoice_id=result.invoice_id
+    )
+    assert again.ok and again.capture.fields["invoice_number"].value == "NW-2026-0912"
+
+
 def test_off_there_is_no_reading_status_line(store):
     from ap_coder.ai import reading
 
@@ -820,12 +991,10 @@ def test_the_card_can_be_included_anywhere_without_context(store):
 
 
 def test_settings_reading_shows_the_azure_card_and_its_own_page_is_not_taken_for_a_tab(store, monkeypatch):
-    """Settings → Reading includes the card where the internet is allowed (the offline build uses no cloud service,
-    docs/PILOT.md); /settings/azure-check is the card's page, not "Settings has no such tab" from Settings'
-    /settings/{tab}."""
+    """Settings → Reading includes the card for the Admin, off as it is, in the offline build too (D-245: the owner's
+    decision; the developers' own cloud card stays where the internet is allowed, B-516); /settings/azure-check is
+    the card's page, not "Settings has no such tab" from Settings' /settings/{tab}."""
     client = _client(store)
-    assert 'id="azure-check"' not in client.get("/settings/reading").text
-    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
     reading = client.get("/settings/reading")
     assert reading.status_code == 200 and 'id="azure-check"' in reading.text
     assert "works fully offline without it" in reading.text

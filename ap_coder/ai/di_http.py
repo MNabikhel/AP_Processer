@@ -13,10 +13,13 @@ Every address, the ``Operation-Location`` Azure gives included, is checked again
 (``endpoint_host``) before a socket is opened: no other host is ever contacted, no redirect is followed, no proxy is
 used (``http.client`` uses none), and TLS is 1.2 or later. The key never goes in an error, a log line or a record.
 
-A failure is a ``DiError`` with a ``kind``: ``KEY`` (401/403: the key was refused), ``NOT_FOUND`` (404),
-``REFUSED`` (another host, a redirect, a 400), ``UNREACHABLE`` (no connection, Azure busy or failing after the
-retries), ``TIMEOUT`` (the reading took too long), ``FAILED`` (Azure could not read the file). ``permanent`` says
-which are not worth trying again (the key, the address, the request): the reader pauses its queue for those.
+A failure is a ``DiError`` with a ``kind``: ``KEY`` (401/403, or a key that can't be sent: the key was refused),
+``NOT_FOUND`` (a 404 or a redirect on the analyze request itself: the endpoint is wrong), ``REFUSED`` (Azure refused
+this file or this reading: a 400, a 404 on a poll, a result address on another host, an answer too long),
+``UNREACHABLE`` (no connection, Azure busy or failing after the retries), ``TIMEOUT`` (the reading took too long),
+``FAILED`` (Azure could not read the file). ``permanent`` says which are not worth trying again until someone changes
+the settings (the key, the endpoint): the reader pauses its queue for those. ``accepted``: Azure took the file (202),
+so it is billed; it is never sent again automatically.
 """
 
 from __future__ import annotations
@@ -46,8 +49,11 @@ MAX_ANSWER = 64 * 1024 * 1024  # an answer longer than this is not read
 KEY, NOT_FOUND, REFUSED, UNREACHABLE, TIMEOUT, FAILED = (
     "key", "not found", "refused", "unreachable", "timeout", "failed",
 )  # fmt: skip
-PERMANENT = (KEY, NOT_FOUND, REFUSED)
+PERMANENT = (KEY, NOT_FOUND)
 SERVER_ERRORS = (500, 502, 503, 504)
+# The analyze request is sent again only when Azure said it took nothing: busy (429) or unavailable (503). After a
+# 500, 502 or 504 it may have taken the file, and a second one would be read, and billed, twice.
+ANALYZE_AGAIN = (429, 503)
 
 # The hosts of Azure Document Intelligence (a resource's own name, or a region's): nothing else is contacted, so
 # invoices can't be sent to any https:// address typed in (B-978).
@@ -102,24 +108,31 @@ class DiClient:
         if not key:
             raise DiError(KEY, "No key is saved for Azure Document Intelligence.")
         self.base = endpoint.strip().rstrip("/")
+        self.port = urlsplit(self.base).port or 443  # every request goes here, whatever port Azure names
         self._key = key
         self._ca_file, self._connect_to = ca_file, connect_to
         self._sleep, self._clock, self.poll_seconds = sleep, clock, poll_seconds
         self.region = ""  # the region Azure's answer names (``x-ms-region``), when it names one
         self.deleted = False  # the last reading was deleted from Azure
+        self.accepted = False  # Azure took the last file (202): it is billed, and never sent again automatically
 
     # -- the readings
-    def analyze(self, data: bytes, pages: str = "") -> dict[str, Any]:
+    def analyze(self, data: bytes, pages: str = "", on_accepted: Callable[[], None] | None = None) -> dict[str, Any]:
         """Azure's reading of ``data`` (a PDF or a picture) with ``prebuilt-invoice``: its ``analyzeResult``.
-        ``pages``: which pages ("1-4,9"), all when empty. The reading is deleted from Azure once it is taken."""
+        ``pages``: which pages ("1-4,9"), all when empty. ``on_accepted``: called as soon as Azure has taken the file
+        (it is billed from then: the daily cap counts it). The reading is deleted from Azure once it is taken."""
         query = {"api-version": API_VERSION, "stringIndexType": "unicodeCodePoint"}
         if pages:
             query["pages"] = pages
         url = f"{self.base}/documentintelligence/documentModels/{MODEL}:analyze?{urlencode(query)}"
         body = json.dumps({"base64Source": base64.b64encode(data).decode("ascii")}).encode("ascii")
-        status, headers, answer = self._send("POST", url, body, repeat=False)
+        self.accepted = False
+        status, headers, answer = self._send("POST", url, body, repeat=False, analyzing=True)
         if status != 202:
-            raise self._refusal(status, answer, "the reading was not accepted")
+            raise self._refusal(status, answer, "the reading was not accepted", analyzing=True)
+        self.accepted = True
+        if on_accepted is not None:
+            on_accepted()
         location = headers.get("operation-location", "")
         if endpoint_host(location) != self.host:
             raise DiError(REFUSED, f"Azure gave a result address on another host ({_host_of(location)}): it is not "
@@ -133,9 +146,9 @@ class DiClient:
     def model_info(self) -> dict[str, Any]:
         """The model's description (no invoice is sent): whether the endpoint, the key and the model answer."""
         url = f"{self.base}/documentintelligence/documentModels/{MODEL}?{urlencode({'api-version': API_VERSION})}"
-        status, _, answer = self._send("GET", url)
+        status, _, answer = self._send("GET", url, analyzing=True)
         if status != 200:
-            raise self._refusal(status, answer, "the model was not found")
+            raise self._refusal(status, answer, "the model was not found", analyzing=True)
         return answer if isinstance(answer, dict) else {}
 
     def _result(self, location: str, wait: float) -> dict[str, Any]:
@@ -166,16 +179,18 @@ class DiClient:
             log.info("Azure Document Intelligence: the reading was not deleted (%s)", exc.kind)
 
     # -- one request, tried again where that is safe
-    def _send(self, method: str, url: str, body: bytes | None = None, *,
-              repeat: bool = True) -> tuple[int, dict[str, str], Any]:  # fmt: skip
+    def _send(self, method: str, url: str, body: bytes | None = None, *, repeat: bool = True,
+              analyzing: bool = False) -> tuple[int, dict[str, str], Any]:  # fmt: skip
         """(status, headers in lower case, the JSON answer). ``repeat``: the request may be sent twice (a POST that
-        reached Azure is never sent again: it would be read, and billed, twice)."""
+        reached Azure is sent again only after a 429 or a 503: else it might be read, and billed, twice).
+        ``analyzing``: the request names the endpoint itself (analyze, the model): a redirect says the endpoint is
+        wrong."""
         if endpoint_host(url) != self.host:
             raise DiError(REFUSED, f"refused: AP Coder only contacts {self.host} (not {_host_of(url)})")
         busy, failing = 0, 0
         while True:
             try:
-                status, headers, answer = self._once(method, url, body)
+                status, headers, answer = self._once(method, url, body, analyzing)
             except _Unsent as exc:
                 failing += 1
                 if failing > len(SERVER_PAUSES):
@@ -199,18 +214,19 @@ class DiClient:
                 busy += 1
                 self._sleep(min(_seconds(headers.get("retry-after")) or POLL_EVERY, LONGEST_WAIT))
                 continue
-            if status in SERVER_ERRORS and failing < len(SERVER_PAUSES):
+            if status in SERVER_ERRORS and failing < len(SERVER_PAUSES) and (repeat or status in ANALYZE_AGAIN):
                 failing += 1
                 self._sleep(SERVER_PAUSES[failing - 1])
                 continue
             return status, headers, answer
 
-    def _once(self, method: str, url: str, body: bytes | None) -> tuple[int, dict[str, str], Any]:
+    def _once(self, method: str, url: str, body: bytes | None,
+              analyzing: bool = False) -> tuple[int, dict[str, str], Any]:  # fmt: skip
         parts = urlsplit(url)
-        conn = http.client.HTTPSConnection(self.host, parts.port or 443, timeout=CONNECT_SECONDS,
+        conn = http.client.HTTPSConnection(self.host, self.port, timeout=CONNECT_SECONDS,
                                            context=self._context())  # fmt: skip
         if self._connect_to is not None:
-            where = self._connect_to(self.host, parts.port or 443)
+            where = self._connect_to(self.host, self.port)
 
             def pinned(_: Any, *args: Any, **kwargs: Any) -> socket.socket:
                 return socket.create_connection(where, *args, **kwargs)
@@ -230,15 +246,20 @@ class DiClient:
                        "User-Agent": "AP-Coder"}  # fmt: skip
             if body is not None:
                 headers["Content-Type"] = "application/json"
-            conn.request(method, path, body=body, headers=headers)
+            try:
+                conn.request(method, path, body=body, headers=headers)
+            except (ValueError, UnicodeError):  # a character no header can carry, pasted in with the key
+                raise DiError(KEY, "The key has a character a key can't have (a space, an invisible character): "
+                              "paste it again from the Azure portal (Keys and Endpoint).") from None  # fmt: skip
             answer = conn.getresponse()
             raw = answer.read(MAX_ANSWER + 1)
             found = {k.lower(): v for k, v in answer.getheaders()}
         finally:
             conn.close()
         if 300 <= answer.status < 400:
-            raise DiError(REFUSED, f"{self.host} answered with a redirect ({answer.status}), which AP Coder never "
-                          "follows: check the endpoint.", status=answer.status)  # fmt: skip
+            raise DiError(NOT_FOUND if analyzing else REFUSED, f"{self.host} answered with a redirect "
+                          f"({answer.status}), which AP Coder never follows: check the endpoint.",
+                          status=answer.status)  # fmt: skip
         if len(raw) > MAX_ANSWER:
             raise DiError(REFUSED, "Azure's answer was too long to read.", status=answer.status)
         try:
@@ -254,14 +275,14 @@ class DiClient:
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         return ctx
 
-    def _refusal(self, status: int, answer: Any, what: str) -> DiError:
+    def _refusal(self, status: int, answer: Any, what: str, analyzing: bool = False) -> DiError:
         error = answer.get("error") if isinstance(answer, dict) else None
         detail = self._clean(str((error or {}).get("message") or (error or {}).get("code") or ""))
         said = f": {detail}" if detail else ""
         if status in (401, 403):
             return DiError(KEY, f"Azure refused the key (HTTP {status}){said}. Paste it again from the Azure portal "
                            "(Keys and Endpoint).", status)  # fmt: skip
-        if status == 404:
+        if status == 404 and analyzing:
             return DiError(NOT_FOUND, f"Azure answered 'not found' (HTTP 404){said}: check the endpoint.", status)
         if status == 429:
             return DiError(UNREACHABLE, f"Azure is busy (HTTP 429){said}: tried again later.", status)

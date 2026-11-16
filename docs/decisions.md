@@ -5937,10 +5937,27 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **The client:** AP Coder's own, standard library only (`http.client`): the Azure SDK isn't needed. Every address,
     Azure's result address included, is checked against the saved host before a socket opens. The result is deleted
     once read (`DELETE .../analyzeResults/{resultId}`, as the 2024-11-30 REST reference documents it), so Azure keeps
-    nothing. A 429 waits for Retry-After (3 tries), a 5xx or no connection is tried again at 2 then 5 seconds, a
-    400/401/403/404 never; an analyze that reached Azure is never sent twice (it would be billed twice).
-  - **Down:** nothing waits on Azure. After 3 failures in a row the queue pauses 15 minutes (a refused key: until the
-    settings change); the Reading status, the card and the invoice's check say invoices are read on this computer.
+    nothing. A 429 waits for Retry-After (3 tries), a poll's 5xx or no connection is tried again at 2 then 5 seconds;
+    the analyze request is sent again only after a 429 or a 503 (after a 500, 502 or 504 Azure may have taken it:
+    a second one would be billed twice); every request on another port than the endpoint's is pinned to its port.
+  - **Down, and refused:** nothing waits on Azure. After 3 failures to reach it in a row the queue pauses 15
+    minutes; only a refused key (401/403, or one that can't be sent) or a wrong endpoint (a 404 or a redirect on the
+    analyze request) pauses it until the settings change. Azure refusing one file (a 400, a 404 on a poll) fails that
+    invoice only, and the queue carries on. A file Azure took (202) is counted against the daily cap at once, and
+    never sent again: its reading not back in time, that invoice fails, saying why. The Reading status, the card and
+    the invoice's check say invoices are read on this computer.
+  - **Shapes and taxes:** an answer is kept only once it reads; any part of another shape (text for a number, NaN,
+    a box off its page) is left out, and the invoice is read without an answer that can't be read. A total tax only
+    Azure read is worked out from the taxes read on this computer all the same (Azure agreeing is one more source;
+    differing, a person checks it), so Azure never makes a field less sure than the local readers alone
+    (`tests/bench/test_di_compare.py`, over the quick cases). A tax rate is the number before "%" (or Azure's
+    number); rates name no tax on an invoice in another currency or from a supplier abroad. A line only Azure read
+    is never approved without a person.
+  - **Off is off:** switched off, nothing of Azure is used, a comparison stored before included. A reading again is
+    never written over an invoice a person has open or keeps a draft of (checked in the same transaction).
+  - **Where:** the card is the Admin's, under Settings → Reading and at `/settings/azure-check`, in the offline build
+    too (the owner's decision; the developers' own cloud card stays where the internet is allowed, B-516). A key is
+    letters and digits only.
   - **The key:** in the data folder's .env only: never in the database, a log, the Activity detail, a backup or an
     error, shown back only as its last four characters.
   - **Not confirmed:** whether Azure's answer names its region (`x-ms-region` is read when present; the 2024-11-30

@@ -438,13 +438,14 @@ class LessonsMixin:
         return counts
 
     def azure_pages_on(self, day: str | None = None) -> int:
-        """The pages sent to Azure on ``day`` (YYYY-MM-DD, default today): what the daily cap counts."""
+        """The pages sent to Azure on ``day`` (YYYY-MM-DD, default today): what the daily cap counts. A file Azure took
+        and didn't read back in time is billed too (``failed`` with its pages, D-245)."""
         day = day or dt.date.today().isoformat()
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT COALESCE(SUM(pages), 0) FROM azure_checks WHERE status = 'done' "
-                "AND substr(compared_at, 1, 10) = ?",
-                (day,),
+                "SELECT COALESCE(SUM(pages), 0) FROM azure_checks WHERE (status = 'done' "
+                "AND substr(compared_at, 1, 10) = ?) OR (status = 'failed' AND substr(updated_at, 1, 10) = ?)",
+                (day, day),
             ).fetchone()
         return int(row[0] or 0)
 
@@ -545,7 +546,7 @@ class LessonsMixin:
 
     def replace_proposal(
         self, invoice_id: int, output: dict[str, Any], report: Any, capture: Any, meta: dict[str, Any] | None = None,
-        actor: str = "AP Coder", *, expect: tuple[Any, ...] | None = None,
+        actor: str = "AP Coder", *, expect: tuple[Any, ...] | None = None, unless_in_use: bool = False,
     ) -> bool:  # fmt: skip
         """Replace what AP Coder proposes for an invoice nobody has worked on yet (the page reader read it after
         it was processed): the coding, its checks and confidence, the columns the queue shows, the capture
@@ -554,8 +555,9 @@ class LessonsMixin:
 
         Only while the invoice waits in the review queue untouched: no edits recorded and never approved (a
         reopened invoice keeps the reviewer's coding), and still ``expect`` (``row_identity``, taken before the page
-        reader read it: a backup restored meanwhile may hold another invoice under the same number). Otherwise
-        nothing changes and it returns False."""
+        reader read it: a backup restored meanwhile may hold another invoice under the same number).
+        ``unless_in_use``: nor while a person has it open or keeps a draft of it (checked in the same transaction:
+        Azure Document Intelligence's reading again, D-245). Otherwise nothing changes and it returns False."""
         if not output:
             return False
         validation = report.to_dict() if hasattr(report, "to_dict") else dict(report or {})
@@ -575,6 +577,8 @@ class LessonsMixin:
             ).fetchone()
             if (row is None or row["status"] != REVIEW or row["final_output"] or row["reviewer"]
                     or json.loads(row["edits"] or "null") or not _same_row(row, expect)):  # fmt: skip
+                return False
+            if unless_in_use and self._in_use(conn, invoice_id):
                 return False
             merged = {**(json.loads(row["meta"] or "null") or {}), **(meta or {})}
             conn.execute(
@@ -596,6 +600,16 @@ class LessonsMixin:
                 "requires_review": bool(validation.get("requires_review", True)),
             })  # fmt: skip
         return True
+
+    @staticmethod
+    def _in_use(conn: sqlite3.Connection, invoice_id: int) -> bool:
+        """A person has the invoice open now (``keep_open``) or keeps a draft of it (D-86)."""
+        from .dialect import NOW_SECONDS
+
+        opened = conn.execute(f"SELECT 1 FROM ephemeral WHERE kind = ? AND expires_at > {NOW_SECONDS}",
+                              (f"open:{invoice_id}",)).fetchone()  # fmt: skip
+        return opened is not None or conn.execute(
+            "SELECT 1 FROM invoice_drafts WHERE invoice_id = ?", (invoice_id,)).fetchone() is not None  # fmt: skip
 
     @staticmethod
     def _merge_lesson_rows(conn: sqlite3.Connection, gone_id: int, situation: str) -> None:

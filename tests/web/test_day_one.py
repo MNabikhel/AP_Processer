@@ -204,13 +204,14 @@ def test_an_export_held_back_for_a_supplier_number_links_to_the_address_numbers(
 # --- 6. Settings → Reading: no cloud card offline, optional parts in grey ---------------------------------------
 
 
-def test_the_reading_tab_shows_the_azure_check_only_where_the_internet_is_allowed(client, store, monkeypatch):
-    from ap_coder.ai import azure_check
-
-    assert 'id="azure-check"' not in client.get("/settings/reading").text  # the offline build: no cloud card
-    store.set_setting(azure_check.ENABLED_KEY, "on")  # switched on before: shown, so it can be switched off
-    assert 'id="azure-check"' in client.get("/settings/reading").text
-    store.set_setting(azure_check.ENABLED_KEY, "off")
+def test_the_reading_tab_shows_azure_document_intelligence_to_the_admin_not_the_developer_cloud_card(
+    client, monkeypatch
+):
+    """D-245: the Admin finds Azure Document Intelligence's card (off) under Settings → Reading in the offline build
+    too; the developers' cloud services card stays where the internet is allowed (B-516)."""
+    reading = client.get("/settings/reading").text
+    assert 'id="azure-check"' in reading and "Off — AP Coder works fully offline without it." in reading
+    assert 'id="azure"' not in reading  # the developers' Azure OpenAI / Document Intelligence settings
     monkeypatch.setenv("AP_ALLOW_INTERNET", "1")  # a developer's computer
     assert 'id="azure-check"' in client.get("/settings/reading").text
 
