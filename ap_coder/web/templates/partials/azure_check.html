@@ -1,6 +1,7 @@
 {#- The Azure check's card (Settings → Reading). It draws itself from azure_check_card(request)
     (ap_coder/web/pages/azure.py): include it anywhere, nothing to pass. The key is never put in the page. -#}
 {%- set az = azure_check_card(request) -%}
+{%- set here = "on the server" if server_mode else "on this computer" -%}
 <section class="card azure-check" id="azure-check" aria-labelledby="azure-check-title">
   <style>
     .azure-check input[type="password"], .azure-check input[type="url"] {height: 34px; border: 1px solid var(--lg-border);
@@ -14,7 +15,7 @@
   <div class="card-head">
     <div>
       <h4 id="azure-check-title">Azure Document Intelligence <span class="muted">· optional</span></h4>
-      {% if not az.enabled %}<p class="muted">Off. AP Coder reads every invoice on this computer and needs nothing from
+      {% if not az.enabled %}<p class="muted">Off. AP Coder reads every invoice {{ here }} and needs nothing from
         the internet.</p>{% endif %}
       <p class="muted">Switched on, AP Coder also sends invoice pages to your company's own Azure Document Intelligence
         (Canada Central) and compares its reading with its own. Where they agree, AP Coder is surer; where they
@@ -28,7 +29,7 @@
   {% else %}
   <div class="flash {{ 'ok' if az.ready and not az.outage else ('warn' if az.enabled else 'info') }}" role="status">
     <span class="ms" aria-hidden="true">{{ "verified_user" if az.ready and not az.outage else "wifi_off" }}</span>
-    <div>{% if not az.enabled %}Off — AP Coder works fully offline without it.{% elif az.outage %}{{ az.outage }}
+    <div>{% if not az.enabled %}Off — AP Coder works fully offline without it.{% elif az.outage %}{{ az.outage | replace("on this computer", here) }}
       {{ az.paused }}{% else %}{{ az.note }}{% endif %}
       {% if az.enabled and not az.ready %}Turned on, but nothing is sent until this is fixed.{% endif %}</div>
   </div>
