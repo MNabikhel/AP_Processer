@@ -14,6 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # No job asks GitHub for a newer build (D-247): the launcher jobs stay the same whatever is released.
+  AP_UPDATE_CHECK: "0"
   # the one test Windows runs on main only (windows-sync-volume)
   SYNC_VOLUME: tests/erp/test_jde_sync_volume.py::test_the_sync_at_the_companys_size
 

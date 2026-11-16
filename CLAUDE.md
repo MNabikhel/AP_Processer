@@ -77,10 +77,12 @@ guides, the bug log (BUGS.md), decisions (decisions.md) and the owner's to-do li
 
 ## Rules
 - Fully offline at run time: nothing connects to the internet unless `AP_ALLOW_INTERNET=1` (developers, the bundle
-  builder). One exception, the first setup from GitHub's ZIP: the launcher downloads packages and OCR models once,
-  saying so first (D-94); the offline bundle never does. Azure Document Intelligence, the company's own resource, may
-  be enabled by an Admin: only its saved endpoint (D-245). A named internal system may be enabled by an Admin: JD
-  Edwards' AIS Server, only its saved address on the company network (D-104).
+  builder). Two exceptions, both the launcher's, only from GitHub's ZIP or a checkout (never the offline bundle,
+  never with `AP_ALLOW_INTERNET=0`): the first setup downloads packages and OCR models once, saying so first (D-94);
+  and each start asks GitHub's releases for a newer tested build, downloading it only when the person answers yes to
+  "Update now?" (D-247; `--no-update` or `AP_UPDATE_CHECK=0` switch it off). Azure Document Intelligence, the
+  company's own resource, may be enabled by an Admin: only its saved endpoint (D-245). A named internal system may be
+  enabled by an Admin: JD Edwards' AIS Server, only its saved address on the company network (D-104).
 - No company data in the repo: the data folder (`private/` or `~/APCoder`) and `.env` are git-ignored.
 - User-facing wording: "pilot tester" for the person running the pilot, never "manager". Plain English.
 - A bug fix starts with a failing test, then the fix, then one line at the end of docs/BUGS.md (format at its top).
