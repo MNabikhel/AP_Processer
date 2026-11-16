@@ -1816,7 +1816,7 @@ starts once the certificate and the first Admin are there.
 
 From then on the *AP Coder* desktop shortcut (or `APProcessor.bat`) does it in one double-click (D-246): it sets up
 and checks AP Coder as on any start, then runs `share` in the same window, its lines shown there (and kept in
-`launch.log`), and opens `https://127.0.0.1:8501` in the browser once it answers. When `share` refuses, or stops on
+`launch.log`), and opens `https://AP-LAPTOP:8501` (the address colleagues use) in the browser once it answers. When `share` refuses, or stops on
 its own, the window stays open on why. A second double-click while it serves only opens the browser. No desktop
 file of your own is needed. This holds while no service is installed (a service's server, stopped, is said and not
 started), and `APProcessor.bat --without-sign-in` still opens the data in laptop mode, on purpose.

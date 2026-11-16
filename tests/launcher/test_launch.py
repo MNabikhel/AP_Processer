@@ -493,7 +493,8 @@ def _share_stand_in(launch, monkeypatch, said: str, code: int = 0) -> list[list[
 def test_on_a_laptop_shared_with_share_a_double_click_sets_up_then_starts_share(double_click, capsys, monkeypatch):
     """B-2353, then D-246: an update unzipped on a laptop shared with ``share`` was refused before anything was set
     up. The double-click sets this folder up (it starts nothing itself), then runs ``share`` in its own window: its
-    lines shown and logged, the browser opened at this computer's own address once it answers."""
+    lines shown and logged, the browser opened once it answers: at the team's address colleagues open (the one the
+    certificate names), else at the address its "AP Coder is running at" line gives."""
     d = double_click
     _shared_laptop(d, monkeypatch)
     set_up: list[bool] = []
@@ -502,13 +503,41 @@ def test_on_a_laptop_shared_with_share_a_double_click_sets_up_then_starts_share(
                               "AP Coder is running at https://127.0.0.1:8501\nYour name: ")  # fmt: skip
     assert d.launch.main([]) == 0 and set_up == [True]
     assert started == [[sys.executable, "-u", "-m", "ap_coder", "share"]]
-    assert d.opened == ["https://127.0.0.1:8501"]
+    assert d.opened == ["https://127.0.0.1:8501"]  # (no team's address worked out here: the line's)
     out = capsys.readouterr().out
     assert "starting it with python -m ap_coder share" in out and "it was not started without sign-in" not in out
     assert "The firewall: Windows has no rule named “AP Coder” yet." in out and out.rstrip().endswith("Your name:")
     logged = d.launch.log_path().read_text(encoding="utf-8")
     assert "The firewall: Windows has no rule named “AP Coder” yet.\n" in logged and "Your name: " in logged
     assert "AP Coder is running at https://127.0.0.1:8501\n" in logged
+    monkeypatch.setattr(d.launch, "shared_here", lambda: "https://ap-laptop:8501")
+    assert d.launch.main([]) == 0 and d.opened == ["https://127.0.0.1:8501", "https://ap-laptop:8501"]
+
+
+def test_the_shared_laptops_address_is_the_one_colleagues_open(double_click, monkeypatch):
+    """What the double-click opens once ``share`` serves: the team's address, by this computer's name, as ``share``
+    prints it for colleagues and a later double-click opens it; nothing while no server-mode AP Coder answers."""
+    from ap_coder.ops import safety, service
+    from tests.ops.test_safety import team_server_stand_in
+
+    d = double_click
+    _shared_laptop(d, monkeypatch)
+    httpd, port = team_server_stand_in(d.data, server_mode=False)
+    try:
+        service.write_config(d.data, port=port)
+        assert d.launch.shared_here() == ""  # (a laptop-mode AP Coder: not the team's)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    httpd, port = team_server_stand_in(d.data)
+    try:
+        service.write_config(d.data, port=port)
+        found = d.launch.shared_here()
+        assert found == f"https://{socket.gethostname()}:{port}" == safety.team_server(d.data, d.db).address
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert d.launch.shared_here() == ""  # stopped
 
 
 def test_when_share_refuses_the_double_clicks_window_stays_open_on_why(double_click, capsys, monkeypatch):
@@ -547,7 +576,7 @@ def test_a_second_double_click_while_the_first_starts_share_opens_it(double_clic
     other = _other_start_holds_the_lock(d.launch)
     try:
         assert d.launch.main([]) == 0 and asked == [True] and d.went_on == []
-        answers = iter(["", "https://127.0.0.1:8501"])
+        answers = iter(["", "https://ap-laptop:8501"])
         monkeypatch.setattr(d.launch, "shared_here", lambda: next(answers))
         for name in ("running_dashboard", "other_users_dashboard", "open_elsewhere"):
             monkeypatch.setattr(d.launch, name, lambda argv, state: None)
@@ -555,8 +584,8 @@ def test_a_second_double_click_while_the_first_starts_share_opens_it(double_clic
         assert real_wait_for_other([], every=0, shared=True) == 0
     finally:
         other.close()
-    assert d.opened == ["https://127.0.0.1:8501"]
-    assert "opening https://127.0.0.1:8501" in capsys.readouterr().out
+    assert d.opened == ["https://ap-laptop:8501"]
+    assert "opening https://ap-laptop:8501" in capsys.readouterr().out
 
 
 def test_laptop_mode_again_on_a_team_servers_data_is_asked_for_by_name(double_click, monkeypatch, capsys):

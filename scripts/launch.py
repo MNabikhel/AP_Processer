@@ -2079,8 +2079,9 @@ def share_command() -> list[str]:
 def start_share() -> int:
     """How a double-click on a laptop shared with ``share`` ends, once this folder is set up (D-246): ``share`` runs
     in this window, with its own checks (it says what is missing, or serves with sign-in until the window is closed).
-    Its output is shown as it comes and logged, as the dashboard's is, and the browser opens at this computer's own
-    address once it answers (its "AP Coder is running at" line). Returns share's exit code."""
+    Its output is shown as it comes and logged, as the dashboard's is, and the browser opens once it answers (its
+    "AP Coder is running at" line) at the team's address (:func:`shared_here`), else at that line's. Returns share's
+    exit code."""
     import codecs
 
     from ap_coder.ops.safety import team_server
@@ -2124,7 +2125,7 @@ def start_share() -> int:
                 if opened:
                     proc.wait()
                 elif up.wait(0.5):
-                    open_browser(ready[0])
+                    open_browser(shared_here() or ready[0])
                     opened = True
             break
         except KeyboardInterrupt:  # Ctrl+C reached share too: it ends once its server finished what is under way
@@ -2139,18 +2140,21 @@ def start_share() -> int:
 
 
 def shared_here() -> str:
-    """The address of this laptop's ``share`` at 127.0.0.1 once it serves, "" until then (or with no server.json)."""
+    """The team's address of this laptop's ``share`` once it serves, "" until then (or with no server.json): what
+    colleagues open (``https://AP-LAPTOP:8501``, server.json's first allowed host or this computer's name), so the
+    owner's browser, once it trusts the certificate (which names the laptop, not 127.0.0.1), no longer warns."""
     from ap_coder.ops import service
+    from ap_coder.ops.safety import team_server
 
     data = paths.private_dir()
     try:
-        s = service.settings(data)
+        found = service.dashboard_answer(data, service.settings(data), timeout=1.0)
     except service.SettingsError:
         return ""
-    found = service.dashboard_answer(data, s, timeout=1.0)
     if not found or not found[1].get("server_mode"):
         return ""
-    return f"{found[0]}://127.0.0.1:{found[1].get('port') or s.port}"
+    team = team_server(data, paths.default_db_path())  # (answering: Windows' service list is not asked)
+    return team.address if team is not None else ""
 
 
 # --- One start at a time ----------------------------------------------------------------------------------------
