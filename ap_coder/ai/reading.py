@@ -33,6 +33,7 @@ PDF_TEXT, OCR, TABLE_FINDER, PAGE_READER, RULES, TEMPLATES, CHECKS, GL_MODEL, RE
     "PDF text layer", "OCR (two engines)", "Table finder", "Page reader (OvisOCR2)", "Rule reader",
     "Supplier templates", "Business checks", "GL coding model", "AI reviewer",
 )  # fmt: skip
+AZURE_DI = "Azure Document Intelligence"  # the optional cloud reader, listed only while it is on (D-245)
 
 
 CHECKS_DETAIL = ("Totals add up, tax at the official rate, GST/HST and QST numbers, vendor master, purchase order, "
@@ -85,9 +86,37 @@ def reading_status(settings: Any, store: Any, *, use_cache: bool = True) -> Read
         _safe(GL_MODEL, lambda: _gl_model(settings, use_cache, out)),
     ]
     out.readers.append(_safe(REVIEWER, lambda: _reviewer(store, out)))  # after the chat model's row
+    try:
+        azure = _azure_di(settings, store)
+    except Exception as exc:  # noqa: BLE001 - not known to be on: no line, as while it is off
+        log.debug("reading status: %s not checked (%s)", AZURE_DI, exc)
+        azure = None
+    if azure is not None:  # only once an Admin switched it on (D-245)
+        out.readers.append(azure)
     _queue(settings, store, out)
     out.banner = _banner(out)
     return out
+
+
+def _azure_di(settings: Any, store: Any) -> ReaderLine | None:
+    """The optional cloud reader (D-245): None while it is off (nothing is sent: no line at all); otherwise whether
+    it is reached, and when it isn't, that invoices are read on this computer."""
+    from . import azure_check
+
+    if store is None:
+        return None
+    cfg = azure_check.load_settings(store, settings)
+    if not cfg.enabled:
+        return None
+    state, why = azure_check.status(cfg)
+    if state != azure_check.READY:
+        return ReaderLine(AZURE_DI, WARN, f"Switched on, but nothing is sent: {why}")
+    down = azure_check.outage_line(store)
+    if down:
+        return ReaderLine(AZURE_DI, WARN, down)
+    which = "every invoice" if cfg.mode == azure_check.ALL else "the invoices AP Coder is unsure of"
+    return ReaderLine(AZURE_DI, OK, f"Reads {which} alongside AP Coder's own readers; only {cfg.host} is "
+                                    "contacted.")  # fmt: skip
 
 
 def _safe(name: str, make: Any) -> ReaderLine:

@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.config import Settings
-from .di_http import DiClient, DiError, endpoint_host
+from .di_http import KEY, NOT_FOUND, REFUSED, TIMEOUT, UNREACHABLE, DiClient, DiError, endpoint_host
 from .extraction import TEXT_EXTENSIONS
 
 log = logging.getLogger(__name__)
@@ -202,6 +202,7 @@ def save_settings(store: Any, *, enabled: bool, endpoint: str, api_key: str = ""
         os.environ.update(env)  # the dashboard reads settings from the environment
         changed += ["endpoint" if k == ENDPOINT_ENV else "key" for k in env]
     if changed:
+        _reached(store)  # a new key, endpoint or setting: Azure is asked again at once
         store.log_event("settings_changed", actor=actor, detail={"azure_check": changed})
     return changed
 
@@ -497,7 +498,69 @@ def queue(store: Any, invoice_id: int | None, plan: Plan) -> bool:
 
 
 class AzureUnavailable(RuntimeError):
-    """The Azure check can't run (off, no endpoint or key) or a request was refused."""
+    """The Azure check can't run (off, no endpoint or key) or a request was refused. ``kind``: ``di_http``'s, when
+    Azure was asked."""
+
+    def __init__(self, message: str, kind: str = "") -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
+# --- When Azure can't be reached: the queue pauses, AP Coder carries on with its own readers -----------------------
+
+DOWN_KEY = "azure_check_down"  # the outage, as JSON: since, failures, until, error, permanent
+FAILURES_TO_PAUSE, PAUSE_MINUTES = 3, 15
+NOT_REACHED = f"not read by {NAME}: not reached; read by AP Coder's own readers"
+OUTAGE_KINDS = (UNREACHABLE, TIMEOUT, KEY, NOT_FOUND, REFUSED)
+
+
+def outage(store: Any) -> dict[str, Any] | None:
+    """The outage under way ({since, failures, until, error, permanent}), or None while Azure answers."""
+    saved = store.get_json(DOWN_KEY)
+    return saved if isinstance(saved, dict) and saved.get("since") else None
+
+
+def _not_reached(store: Any, error: str, permanent: bool) -> None:
+    """One more failure in a row: after ``FAILURES_TO_PAUSE`` the queue pauses ``PAUSE_MINUTES``; a refused key (or
+    address) pauses it until the settings change."""
+    now = dt.datetime.now()
+    down = outage(store) or {"since": now.isoformat(timespec="seconds"), "failures": 0}
+    down["failures"] = int(down.get("failures") or 0) + 1
+    down.update(error=error, permanent=permanent, last=now.isoformat(timespec="seconds"))
+    if permanent or down["failures"] >= FAILURES_TO_PAUSE:
+        down["until"] = (now + dt.timedelta(minutes=PAUSE_MINUTES)).isoformat(timespec="seconds")
+    store.set_setting(DOWN_KEY, json.dumps(down))
+
+
+def _reached(store: Any) -> None:
+    if store.get_setting(DOWN_KEY, ""):
+        store.set_setting(DOWN_KEY, "")
+
+
+def paused(store: Any, now: dt.datetime | None = None) -> str:
+    """Why the queue waits (nothing is sent), in plain words; "" when it doesn't."""
+    down = outage(store)
+    if down is None:
+        return ""
+    since = str(down.get("since") or "")[11:16]
+    if down.get("permanent"):
+        return f"{NAME} refused AP Coder's request since {since} ({down.get('error')}): the key or the endpoint " \
+               "needs changing in Settings → Reading."  # fmt: skip
+    until = str(down.get("until") or "")
+    if until and (now or dt.datetime.now()).isoformat(timespec="seconds") < until:
+        return f"{NAME}: not reached since {since}; tried again at {until[11:16]}."
+    return ""
+
+
+def outage_line(store: Any) -> str:
+    """The outage in a line for the Reading status and the card ("" while Azure answers)."""
+    down = outage(store)
+    if down is None:
+        return ""
+    since = str(down.get("since") or "")[11:16]
+    if down.get("permanent"):
+        return f"{NAME}: the key or the endpoint was refused at {since}: invoices are read on this computer."
+    return f"{NAME}: not reached since {since} — invoices are read on this computer."
 
 
 def make_client(cfg: AzureCheckSettings) -> DiClient:
@@ -514,7 +577,7 @@ def read(cfg: AzureCheckSettings, path: str | Path, client: Any = None, pages: s
     try:
         return client.analyze(Path(path).read_bytes(), pages=pages) or {}
     except DiError as exc:
-        raise AzureUnavailable(str(exc)) from None
+        raise AzureUnavailable(str(exc), exc.kind) from None
 
 
 def scrub(text: str, cfg: AzureCheckSettings) -> str:
@@ -600,7 +663,7 @@ def check_one(settings: Settings | None, store: Any, *, client: Any = None) -> C
     if store.restoring():  # AP is restoring a backup: nothing is taken from a database being replaced
         return None
     cfg = load_settings(store, settings)
-    if not usable(cfg):
+    if not usable(cfg) or paused(store):
         return None
     row = store.next_azure_check(after_page_reader=_page_reader_running(settings, store))
     if not row:
@@ -608,6 +671,17 @@ def check_one(settings: Settings | None, store: Any, *, client: Any = None) -> C
     iid = int(row["invoice_id"])
     try:
         return _check(cfg, store, row, client, settings)
+    except AzureUnavailable as exc:
+        if exc.kind not in OUTAGE_KINDS:
+            message = scrub(f"{type(exc).__name__}: {exc}", cfg)
+            log.warning("Azure check: invoice %s failed (%s)", iid, message)
+            store.finish_azure_check(iid, "failed", error=message)
+            return CheckOutcome(iid, "failed", message)
+        # Azure not reached, or refusing: the invoice stays as AP Coder's own readers read it, back in line.
+        _not_reached(store, scrub(str(exc), cfg), permanent=exc.kind in (KEY, NOT_FOUND, REFUSED))
+        log.warning("Azure check: %s not reached (%s)", cfg.host, exc.kind)
+        store.finish_azure_check(iid, "waiting", error=NOT_REACHED)
+        return CheckOutcome(iid, "postponed", NOT_REACHED)
     except Exception as exc:  # noqa: BLE001 - one invoice must never stop the queue
         message = scrub(f"{type(exc).__name__}: {exc}", cfg)
         log.warning("Azure check: invoice %s failed (%s)", iid, message)
@@ -642,6 +716,7 @@ def _check(cfg: AzureCheckSettings, store: Any, row: dict[str, Any], client: Any
         return CheckOutcome(iid, "postponed", message)
 
     raw = read(cfg, path, client, pages=pages_to_send(count, cfg.invoice_pages))
+    _reached(store)
     digest = inv.get("file_sha256") or ""
     if digest:
         keep_reading(digest, raw)  # read again later (the page reader, a person's Read again), Azure isn't asked
@@ -841,6 +916,7 @@ def connection_test(store: Any, settings: Settings | None = None, *, client: Any
 
         ours = analyze(sample, today=dt.date.today())
         rows = compare(ours, azure_values(raw))
+        _reached(store)
         record = {"ok": True, "when": when, "summary": summary(rows), "rows": rows, "host": cfg.host,
                   "pages": len(raw.get("pages") or []), "seconds": round(time.perf_counter() - t0, 1),
                   "sample": sample.name}  # fmt: skip
@@ -885,4 +961,5 @@ def overview(store: Any, settings: Settings | None = None, days: int = 30) -> di
         "fields_agreed": sum(int(c["agreed"] or 0) for c in checks),
         "disagreements": disagreements[:50], "waiting": counts["waiting"] + counts["checking"],
         "failed": counts["failed"], "pages_today": store.azure_pages_on(), "test": last_test(store),
+        "outage": outage_line(store), "paused": paused(store),
     }  # fmt: skip

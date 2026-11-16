@@ -2,6 +2,7 @@
 default. Azure is never called: every test that "reads with Azure" hands in a fake client, or the real client
 (``di_http``) asking the stand-in on 127.0.0.1 (tests/fake_di.py)."""
 
+import datetime as dt
 import json
 import logging
 from dataclasses import replace
@@ -9,7 +10,7 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.ai import azure_check
+from ap_coder.ai import azure_check, di_http
 from ap_coder.ai.pipeline import InvoicePipeline
 from ap_coder.capture.supplier import AUTONOMOUS, should_auto_approve
 from ap_coder.capture.types import CHECK, CaptureResult
@@ -525,6 +526,80 @@ def test_nothing_compared_is_not_nothing_differs(store, monkeypatch):
     assert any(i["code"] == azure_check.NOT_COMPARED_CODE for i in inv["validation"]["issues"])
     again = _process(store, page_text=None, save=False, invoice_id=result.invoice_id)  # read again: still flagged
     assert any(i.code == azure_check.NOT_COMPARED_CODE for i in again.report.issues) and again.report.requires_review
+
+
+# --- When Azure can't be reached ----------------------------------------------------------------------------------
+
+
+class Down:
+    """Azure not reached (``di_http`` already tried again): each call fails as ``kind`` says."""
+
+    def __init__(self, kind=di_http.UNREACHABLE):
+        self.kind, self.calls = kind, 0
+
+    def analyze(self, *args, **kwargs):
+        self.calls += 1
+        raise di_http.DiError(self.kind, "ap-test.cognitiveservices.azure.com can't be reached (ConnectionError).")
+
+
+def test_azure_down_leaves_the_invoice_read_locally_and_in_line_then_pauses(store, monkeypatch):
+    from ap_coder.ai import reading
+
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    before = store.get_invoice(result.invoice_id)
+    down = Down()
+    for _ in range(azure_check.FAILURES_TO_PAUSE):
+        outcome = azure_check.check_one(_settings(), store, client=down)
+        assert outcome.status == "postponed" and "read by AP Coder's own readers" in outcome.message
+        check = store.azure_check(result.invoice_id)
+        assert check["status"] == "waiting" and "not reached" in check["error"]
+    # Three failures in a row: the queue pauses (15 minutes), nothing is asked meanwhile.
+    assert azure_check.check_one(_settings(), store, client=NeverCalled()) is None
+    assert down.calls == azure_check.FAILURES_TO_PAUSE
+    after = store.get_invoice(result.invoice_id)
+    assert after["status"] == REVIEW and after["ai_output"] == before["ai_output"]  # read on this computer, as it was
+    assert not any(i["code"] in azure_check.CODES for i in after["validation"]["issues"])  # no finding of its own
+    line = reading.reading_status(_settings(), store).reader(reading.AZURE_DI)
+    assert line.state == reading.WARN and "not reached since" in line.detail and "on this computer" in line.detail
+    assert "not reached since" in azure_check.overview(store, _settings())["outage"]
+    # After the pause, and once Azure answers, the outage is over.
+    later = dt.datetime.now() + dt.timedelta(minutes=azure_check.PAUSE_MINUTES + 1)
+    assert azure_check.paused(store, now=later) == ""
+    monkeypatch.setattr(azure_check, "paused", lambda store, now=None: "")
+    assert azure_check.check_one(_settings(), store, client=FakeClient(_raw_from(result.capture))).status == "done"
+    assert azure_check.outage(store) is None
+    assert reading.reading_status(_settings(), store).reader(reading.AZURE_DI).state == reading.OK
+
+
+def test_a_refused_key_pauses_the_queue_until_the_settings_change(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    _process(store)
+    outcome = azure_check.check_one(_settings(), store, client=Down(di_http.KEY))
+    assert outcome.status == "postponed"
+    assert "key" in azure_check.paused(store)
+    assert azure_check.check_one(_settings(), store, client=NeverCalled()) is None
+    later = dt.datetime.now() + dt.timedelta(days=1)
+    assert azure_check.paused(store, now=later)  # not by time: by a new key
+    azure_check.save_settings(store, enabled=True, endpoint=ENDPOINT, api_key="AnotherKey0123456789abcdWXYZ")
+    assert azure_check.paused(store) == ""
+
+
+def test_azure_not_reading_a_file_fails_that_invoice_only(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    outcome = azure_check.check_one(_settings(), store, client=Down(di_http.FAILED))
+    assert outcome.status == "failed" and store.azure_check(result.invoice_id)["status"] == "failed"
+    assert azure_check.outage(store) is None
+
+
+def test_off_there_is_no_reading_status_line(store):
+    from ap_coder.ai import reading
+
+    assert reading.reading_status(_settings(), store).reader(reading.AZURE_DI) is None
 
 
 # --- Readers scorecard --------------------------------------------------------------------------------------------
