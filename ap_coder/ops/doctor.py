@@ -157,9 +157,9 @@ def _runtime_checks(add: Callable[[str, str, str], None]) -> None:
     for pkg in _PACKAGES:
         v = _version(pkg)
         add(f"package {pkg}", PASS if v else FAIL, v or f"not installed{_PACKAGES[pkg]}: {_INSTALL_FIX}")
-    v = _version("azure-ai-documentintelligence")  # optional: only for the Azure check, when it is switched on
+    v = _version("azure-ai-documentintelligence")  # optional: only a developer's extract (the reader needs none)
     add("package azure-ai-documentintelligence", PASS if v else SKIP,
-        v or "not installed (optional: only the Azure check needs it, when it is switched on)")  # fmt: skip
+        v or "not installed (optional: Azure Document Intelligence, when switched on, needs no package)")  # fmt: skip
     v = _version("pillow-heif")  # the ocr extra: without it an iPhone photo is refused, every other picture is read
     add(
         "package pillow-heif",
@@ -406,6 +406,34 @@ def store_checks(store: Any, server: bool) -> list[Check]:
             ok = bool(last.get("ok"))
             checks.append(Check("finance hub last run", PASS if ok else WARN,
                                 f"{last.get('at')}: {last.get('summary') or last.get('error') or ''}"))  # fmt: skip
+    return checks
+
+
+def azure_checks(store: Any, settings: Settings | None = None, online: bool = False) -> list[Check]:
+    """Azure Document Intelligence, the optional reader (D-245), from its settings and its queue: off, ready, or its
+    last failure. Nothing is sent; with ``online`` and it switched on, only its endpoint is asked for the model's
+    description (no invoice)."""
+    from ..ai import azure_check, di_http
+
+    cfg = azure_check.load_settings(store, settings)
+    area = azure_check.NAME
+    if not cfg.enabled:
+        return [Check(area, SKIP, "off: AP Coder reads every invoice on this computer (Settings → Reading)")]
+    state, why = azure_check.status(cfg)
+    if state != azure_check.READY:
+        return [Check(area, FAIL, f"on, but nothing is sent: {why}")]
+    counts = store.azure_check_counts()
+    down = azure_check.outage_line(store)
+    detail = (f"on: only {cfg.host} is contacted; {counts['waiting'] + counts['checking']} waiting, "
+              f"{store.azure_pages_on()} of {cfg.daily_pages} pages today")  # fmt: skip
+    checks = [Check(area, WARN if down else PASS, down or detail)]
+    if online:
+        try:
+            info = di_http.DiClient(cfg.endpoint, cfg.api_key).model_info()
+            api = info.get("apiVersion") or di_http.API_VERSION
+            checks.append(Check(f"{area} connection", PASS, f"{di_http.MODEL} answers (API {api})"))
+        except (di_http.DiError, ValueError, OSError) as exc:  # a key that can't be sent, a socket error: said
+            checks.append(Check(f"{area} connection", FAIL, azure_check.scrub(str(exc), cfg)))
     return checks
 
 

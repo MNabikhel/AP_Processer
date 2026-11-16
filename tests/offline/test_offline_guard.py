@@ -38,7 +38,7 @@ import pytest
 
 from ap_coder.ai import local_llm
 from ap_coder.core.config import LocalLLMSettings, Settings
-from ap_coder.ops import offline
+from ap_coder.ops import doctor, offline
 from tests import offline_flow
 from tests import offline_guard as guard_module
 from tests.conftest import chromium_path
@@ -101,13 +101,15 @@ TOUCHPOINTS = {
     "ap_coder/ai/page_reader.py": "OvisOCR2 in LM Studio: same gate as local_llm",
     "ap_coder/ai/inference.py": "Azure OpenAI only with AP_ALLOW_INTERNET=1 (local_llm.resolve_provider); else LM "
     "Studio",
-    "ap_coder/ai/extraction.py": "Azure Document Intelligence client: AP_ALLOW_INTERNET=1, or the Azure check's client",
-    "ap_coder/ai/azure_check.py": "Azure Document Intelligence: only switched on in Settings, only its endpoint host "
-    "(only_host)",
+    "ap_coder/ai/extraction.py": "Azure Document Intelligence's SDK client: AP_ALLOW_INTERNET=1 only (developers)",
+    "ap_coder/ai/di_http.py": "Azure Document Intelligence (D-245): only once an Admin switched it on in Settings, "
+    "only the saved endpoint's host (every address checked before a socket opens; no proxy, no redirect followed)",
     "ap_coder/erp/jde_ais.py": "the JD Edwards AIS Server: only once an Admin switched a step on in Settings, only the "
     "AIS address saved (no proxy, no redirect followed), which must be on the company network (private addresses) "
     "unless AP_ALLOW_INTERNET=1 (D-104)",
-    "ap_coder/ops/doctor.py": "doctor --online: Azure only with AP_ALLOW_INTERNET=1; LM Studio as local_llm",
+    "ap_coder/ops/doctor.py": "doctor --online: Azure OpenAI and the SDK only with AP_ALLOW_INTERNET=1; Azure Document "
+    "Intelligence's model description through di_http, only once an Admin switched it on (D-245); LM Studio as "
+    "local_llm",
     "ap_coder/ops/offline.py": "import_azure: imports only; free_port binds and connects on this computer's dashboard "
     "address (no proxy)",
     "ap_coder/core/paths.py": "git log -1 on this checkout, for its build (no network)",
@@ -313,12 +315,11 @@ def _azure_store(tmp_path):
 
 def test_the_azure_check_sends_nothing_until_it_is_switched_on(offline_guard, tmp_path, monkeypatch):
     """Endpoint and key saved but the check off: "Test connection" and the background check send nothing. Switched
-    on, only the endpoint's host is contacted (here the guard stops it)."""
-    from ap_coder.ai import azure_check
+    on, only the endpoint's host is contacted (here the guard stops it). No Azure package is needed (D-245)."""
+    from ap_coder.ai import azure_check, di_http
 
     _bait(monkeypatch)
-    installed = azure_check.packages_installed()
-    monkeypatch.setattr(azure_check, "packages_installed", lambda: True)
+    monkeypatch.setattr(di_http, "SERVER_PAUSES", (0.0, 0.0))
     store = _azure_store(tmp_path)
     endpoint, host = "https://ap-proof.cognitiveservices.azure.com/", "ap-proof.cognitiveservices.azure.com"
     azure_check.save_settings(store, enabled=False, endpoint=endpoint, api_key="k" * 32)
@@ -326,17 +327,47 @@ def test_the_azure_check_sends_nothing_until_it_is_switched_on(offline_guard, tm
     assert record["ok"] is False and "off" in record["error"].lower()
     assert azure_check.check_one(Settings(), store) is None
     assert not azure_check.overview(store, Settings())["can_test"]
+    assert [c.status for c in doctor.azure_checks(store, Settings(), online=True)] == [doctor.SKIP]
+    _process_sample(store)  # an invoice read and saved, the check off: nothing queued, nothing sent
+    assert store.azure_check_counts()["waiting"] == 0
     assert offline_guard.attempts == []
 
-    if not installed:
-        pytest.skip("the Azure packages (optional) aren't installed: switched on, it would say so and send nothing")
-    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
-        monkeypatch.delenv(name, raising=False)
+    # Switched on, the proxies still pointing at the bait: only the endpoint's host is ever asked (no proxy).
     azure_check.save_settings(store, enabled=True, endpoint=endpoint, api_key="k" * 32)
     assert azure_check.overview(store, Settings())["can_test"]
     record = azure_check.connection_test(store, Settings())
     assert record["ok"] is False  # the guard refused the connection
+    assert doctor.azure_checks(store, Settings(), online=True)[-1].status == doctor.FAIL
     assert offline_guard.attempts and all(host in a for a in offline_guard.attempts), offline_guard.attempts
+
+
+def test_switched_on_an_invoice_ap_coder_is_sure_of_is_not_sent(offline_guard, tmp_path, monkeypatch):
+    """In "only those AP Coder is unsure of" mode (the default), an invoice whose every field is verified, picked for no
+    spot-check, never leaves this computer."""
+    from ap_coder.ai import azure_check
+
+    _bait(monkeypatch)
+    store = _azure_store(tmp_path)
+    azure_check.save_settings(store, enabled=True, endpoint="https://ap-proof.cognitiveservices.azure.com/",
+                              api_key="k" * 32, spot_percent=0)  # fmt: skip
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)
+    _process_sample(store)
+    assert store.azure_check_counts()["waiting"] == 0
+    assert azure_check.check_one(Settings(), store) is None
+    assert offline_guard.attempts == []
+
+
+def _process_sample(store):
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.core.store import load_sample_setup
+
+    load_sample_setup(store)
+    settings = replace(Settings(), llm=replace(Settings().llm, provider="off"))
+    result = InvoicePipeline(settings, store.reference_data(), store=store).process(
+        ROOT / "samples" / "northwind_ON_HST_NW-2026-0912.pdf"
+    )
+    assert result.ok, result.error
+    return result
 
 
 def test_the_jde_api_sends_nothing_until_it_is_switched_on_and_only_to_its_address(offline_guard, tmp_path,

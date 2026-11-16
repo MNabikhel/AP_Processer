@@ -1,4 +1,4 @@
-"""The Azure check's card (Settings → Reading): Azure AI Document Intelligence as an optional second opinion.
+"""The card of Azure Document Intelligence, the optional reader (Settings → Reading; D-245).
 
 The card is ``templates/partials/azure_check.html``; Settings → Reading includes it, and ``/settings/azure-check``
 shows it on its own. It draws itself: the template global ``azure_check_card(request)`` gives it what it shows
@@ -51,20 +51,10 @@ def card(request: Request) -> dict[str, Any]:
 templates.env.globals["azure_check_card"] = card
 
 
-def shown(request: Request) -> bool:
-    """Whether the Azure check's page shows its card: where the internet is allowed, while the check is on, or with the
-    developer tools (IT setting it up). The offline pilot build otherwise says it isn't part of it (B-516)."""
-    from ap_coder.ops.offline import internet_allowed
-    from ap_coder.web.core import developer_tools
-    from ap_coder.web.pages.settings_reading import azure_check_on
-
-    store = get_store(request)
-    return internet_allowed() or azure_check_on(store) or developer_tools(store)
-
-
 @router.get(HOME, response_class=HTMLResponse)
 def azure_check_page(request: Request) -> HTMLResponse:
-    return render(request, "azure_check_page.html", "settings", shown=shown(request))
+    """The card on a page of its own, for the Admin, in the offline build too (D-245; it was a developer's, B-516)."""
+    return render(request, "azure_check_page.html", "settings")
 
 
 def _number(text: str, what: str) -> float:
@@ -80,21 +70,23 @@ def _number(text: str, what: str) -> float:
 @router.post(HOME)
 def save_azure_check(
     request: Request, enabled: str = Form(""), endpoint: str = Form(""), api_key: str = Form(""),
-    forget_key: str = Form(""), model: str = Form(azure_check.DEFAULT_MODEL), spot_percent: str = Form("5"),
-    daily_pages: str = Form(str(azure_check.DEFAULT_CAP)), back: str = Form(HOME),
+    forget_key: str = Form(""), spot_percent: str = Form("5"), daily_pages: str = Form(str(azure_check.DEFAULT_CAP)),
+    mode: str = Form(azure_check.UNSURE), invoice_pages: str = Form(str(azure_check.DEFAULT_PAGES)),
+    back: str = Form(HOME),
 ) -> JSONResponse:  # fmt: skip
     store = get_store(request)
     try:
         changed = azure_check.save_settings(
             store, enabled=bool(enabled), endpoint=endpoint, api_key=api_key, forget_key=bool(forget_key),
-            model=model, spot_percent=_number(spot_percent, "spot-check share"),
+            spot_percent=_number(spot_percent, "spot-check share"),
             daily_pages=int(_number(daily_pages, "daily cap")), actor=reviewer(), settings=get_settings(request),
+            mode=mode, invoice_pages=int(_number(invoice_pages, "pages of an invoice")),
         )  # fmt: skip
     except ValueError as exc:
         return refuse(str(exc))
     cfg = azure_check.load_settings(store, get_settings(request))
     _, note = azure_check.status(cfg)
-    text = f"Azure check saved ({', '.join(changed)}). {note}" if changed else "Nothing changed."
+    text = f"{azure_check.NAME} saved ({', '.join(changed)}). {note}" if changed else "Nothing changed."
     tone = "ok" if not cfg.enabled or azure_check.usable(cfg) else "warn"
     return done(request, local_url(back, HOME), text, tone=tone)
 

@@ -438,11 +438,10 @@ def test_the_offline_doctor_report_has_no_cloud_lines(monkeypatch):
     assert "AOAI connectivity" in format_checks(checks)
 
 
-def test_the_azure_check_page_says_it_is_not_part_of_the_offline_build(client, monkeypatch):
+def test_the_azure_document_intelligence_page_shows_its_card_in_the_offline_build(client):
+    """D-245: the Admin sets it up without the developer tools (it was "Not part of this build", B-516)."""
     page = client.get("/settings/azure-check").text
-    assert "Not part of this build" in page and 'id="azure-check"' not in page
-    monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")
-    assert 'id="azure-check"' in client.get("/settings/azure-check").text
+    assert "Not part of this build" not in page and 'id="azure-check"' in page
 
 
 # --- No cost centers for the pilot (D-53) ---------------------------------------------------------------------------

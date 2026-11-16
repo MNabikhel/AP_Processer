@@ -1,0 +1,759 @@
+{
+ "apiVersion": "2024-11-30",
+ "modelId": "prebuilt-invoice",
+ "stringIndexType": "unicodeCodePoint",
+ "content": "",
+ "pages": [
+  {
+   "pageNumber": 1,
+   "angle": 0,
+   "width": 8.5,
+   "height": 11,
+   "unit": "inch",
+   "words": [],
+   "lines": [],
+   "spans": []
+  },
+  {
+   "pageNumber": 2,
+   "angle": 0,
+   "width": 8.5,
+   "height": 11,
+   "unit": "inch",
+   "words": [],
+   "lines": [],
+   "spans": []
+  }
+ ],
+ "documents": [
+  {
+   "docType": "invoice",
+   "boundingRegions": [
+    {
+     "pageNumber": 1,
+     "polygon": [
+      0,
+      0,
+      8.5,
+      0,
+      8.5,
+      11,
+      0,
+      11
+     ]
+    }
+   ],
+   "fields": {
+    "VendorName": {
+     "type": "string",
+     "content": "Northwind IT Solutions Inc.",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        0.6944,
+        0.4864,
+        3.2117,
+        0.4864,
+        3.2117,
+        0.7541,
+        0.6944,
+        0.7541
+       ]
+      }
+     ],
+     "confidence": 0.94,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 27
+      }
+     ],
+     "valueString": "Northwind IT Solutions Inc."
+    },
+    "VendorTaxId": {
+     "type": "string",
+     "content": "123456782 RT0001",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        1.7989,
+        1.0462,
+        2.9038,
+        1.0462,
+        2.9038,
+        1.2179,
+        1.7989,
+        1.2179
+       ]
+      }
+     ],
+     "confidence": 0.9,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 16
+      }
+     ],
+     "valueString": "123456782 RT0001"
+    },
+    "InvoiceId": {
+     "type": "string",
+     "content": "NW-2026-0912",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        1.3544,
+        1.699,
+        2.2019,
+        1.699,
+        2.2019,
+        1.8707,
+        1.3544,
+        1.8707
+       ]
+      }
+     ],
+     "confidence": 0.97,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 12
+      }
+     ],
+     "valueString": "NW-2026-0912"
+    },
+    "InvoiceDate": {
+     "type": "date",
+     "content": "September 14, 2026",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        1.4587,
+        1.8795,
+        2.5913,
+        1.8795,
+        2.5913,
+        2.0513,
+        1.4587,
+        2.0513
+       ]
+      }
+     ],
+     "confidence": 0.96,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 18
+      }
+     ],
+     "valueDate": "2026-09-14"
+    },
+    "DueDate": {
+     "type": "date",
+     "content": "October 14, 2026",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        1.2919,
+        2.0601,
+        2.2578,
+        2.0601,
+        2.2578,
+        2.2318,
+        1.2919,
+        2.2318
+       ]
+      }
+     ],
+     "confidence": 0.95,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 16
+      }
+     ],
+     "valueDate": "2026-10-14"
+    },
+    "PurchaseOrder": {
+     "type": "string",
+     "content": "PO-88213",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        1.4238,
+        2.2406,
+        1.9936,
+        2.2406,
+        1.9936,
+        2.4124,
+        1.4238,
+        2.4124
+       ]
+      }
+     ],
+     "confidence": 0.95,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 8
+      }
+     ],
+     "valueString": "PO-88213"
+    },
+    "CustomerName": {
+     "type": "string",
+     "content": "Fabrikam Canada Ltd.",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        1.6462,
+        2.6017,
+        2.8828,
+        2.6017,
+        2.8828,
+        2.7735,
+        1.6462,
+        2.7735
+       ]
+      }
+     ],
+     "confidence": 0.9,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 20
+      }
+     ],
+     "valueString": "Fabrikam Canada Ltd."
+    },
+    "SubTotal": {
+     "type": "currency",
+     "content": "15,945.00",
+     "boundingRegions": [
+      {
+       "pageNumber": 2,
+       "polygon": [
+        7.0217,
+        1.9903,
+        7.6394,
+        1.9903,
+        7.6394,
+        2.1815,
+        7.0217,
+        2.1815
+       ]
+      }
+     ],
+     "confidence": 0.95,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 9
+      }
+     ],
+     "valueCurrency": {
+      "amount": 15945.0,
+      "currencySymbol": "$",
+      "currencyCode": "CAD"
+     }
+    },
+    "TotalTax": {
+     "type": "currency",
+     "content": "2,072.85",
+     "boundingRegions": [
+      {
+       "pageNumber": 2,
+       "polygon": [
+        7.0217,
+        2.2125,
+        7.5622,
+        2.2125,
+        7.5622,
+        2.4038,
+        7.0217,
+        2.4038
+       ]
+      }
+     ],
+     "confidence": 0.95,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 8
+      }
+     ],
+     "valueCurrency": {
+      "amount": 2072.85,
+      "currencySymbol": "$",
+      "currencyCode": "CAD"
+     }
+    },
+    "InvoiceTotal": {
+     "type": "currency",
+     "content": "18,017.85",
+     "boundingRegions": [
+      {
+       "pageNumber": 2,
+       "polygon": [
+        7.0217,
+        2.4347,
+        7.6394,
+        2.4347,
+        7.6394,
+        2.626,
+        7.0217,
+        2.626
+       ]
+      }
+     ],
+     "confidence": 0.96,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 9
+      }
+     ],
+     "valueCurrency": {
+      "amount": 18017.85,
+      "currencySymbol": "$",
+      "currencyCode": "CAD"
+     }
+    },
+    "TaxDetails": {
+     "type": "array",
+     "valueArray": [
+      {
+       "type": "object",
+       "confidence": 0.9,
+       "content": "2,072.85",
+       "valueObject": {
+        "Amount": {
+         "type": "currency",
+         "content": "2,072.85",
+         "boundingRegions": [
+          {
+           "pageNumber": 2,
+           "polygon": [
+            7.0217,
+            2.2125,
+            7.5622,
+            2.2125,
+            7.5622,
+            2.4038,
+            7.0217,
+            2.4038
+           ]
+          }
+         ],
+         "confidence": 0.9,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 8
+          }
+         ],
+         "valueCurrency": {
+          "amount": 2072.85,
+          "currencySymbol": "$",
+          "currencyCode": "CAD"
+         }
+        },
+        "Rate": {
+         "type": "string",
+         "valueString": "13%",
+         "content": "13%",
+         "confidence": 0.9
+        }
+       }
+      }
+     ]
+    },
+    "Items": {
+     "type": "array",
+     "valueArray": [
+      {
+       "type": "object",
+       "valueObject": {
+        "Description": {
+         "type": "string",
+         "content": "Dell Latitude 7450 laptop, 32GB RAM",
+         "boundingRegions": [
+          {
+           "pageNumber": 1,
+           "polygon": [
+            1.0417,
+            3.3889,
+            2.8944,
+            3.3889,
+            2.8944,
+            3.5416,
+            1.0417,
+            3.5416
+           ]
+          }
+         ],
+         "confidence": 0.93,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 35
+          }
+         ],
+         "valueString": "Dell Latitude 7450 laptop, 32GB RAM"
+        },
+        "Quantity": {
+         "type": "number",
+         "valueNumber": 3,
+         "content": "3",
+         "confidence": 0.92
+        },
+        "UnitPrice": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 1450.0,
+          "currencyCode": "CAD"
+         },
+         "content": "1,450.00",
+         "confidence": 0.91
+        },
+        "Amount": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 4350.0,
+          "currencyCode": "CAD"
+         },
+         "content": "4,350.00",
+         "confidence": 0.94
+        }
+       },
+       "content": "Dell Latitude 7450 laptop, 32GB RAM 3 1,450.00 4,350.00",
+       "boundingRegions": [
+        {
+         "pageNumber": 1,
+         "polygon": [
+          0.6,
+          3.3611,
+          7.9,
+          3.3611,
+          7.9,
+          3.5693,
+          0.6,
+          3.5693
+         ]
+        }
+       ],
+       "confidence": 0.9
+      },
+      {
+       "type": "object",
+       "valueObject": {
+        "Description": {
+         "type": "string",
+         "content": "Dell PowerEdge R760 rack server - datacentre",
+         "boundingRegions": [
+          {
+           "pageNumber": 1,
+           "polygon": [
+            1.0417,
+            3.7222,
+            3.3388,
+            3.7222,
+            3.3388,
+            3.8749,
+            1.0417,
+            3.8749
+           ]
+          }
+         ],
+         "confidence": 0.93,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 44
+          }
+         ],
+         "valueString": "Dell PowerEdge R760 rack server - datacentre"
+        },
+        "Quantity": {
+         "type": "number",
+         "valueNumber": 1,
+         "content": "1",
+         "confidence": 0.92
+        },
+        "UnitPrice": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 8900.0,
+          "currencyCode": "CAD"
+         },
+         "content": "8,900.00",
+         "confidence": 0.91
+        },
+        "Amount": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 8900.0,
+          "currencyCode": "CAD"
+         },
+         "content": "8,900.00",
+         "confidence": 0.94
+        }
+       },
+       "content": "Dell PowerEdge R760 rack server - datacentre 1 8,900.00 8,900.00",
+       "boundingRegions": [
+        {
+         "pageNumber": 1,
+         "polygon": [
+          0.6,
+          3.6944,
+          7.9,
+          3.6944,
+          7.9,
+          3.9027,
+          0.6,
+          3.9027
+         ]
+        }
+       ],
+       "confidence": 0.9
+      },
+      {
+       "type": "object",
+       "valueObject": {
+        "Description": {
+         "type": "string",
+         "content": "Microsoft 365 E3 licences - monthly",
+         "boundingRegions": [
+          {
+           "pageNumber": 1,
+           "polygon": [
+            1.0417,
+            4.0556,
+            2.7953,
+            4.0556,
+            2.7953,
+            4.2082,
+            1.0417,
+            4.2082
+           ]
+          }
+         ],
+         "confidence": 0.93,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 35
+          }
+         ],
+         "valueString": "Microsoft 365 E3 licences - monthly"
+        },
+        "Quantity": {
+         "type": "number",
+         "valueNumber": 25,
+         "content": "25",
+         "confidence": 0.92
+        },
+        "UnitPrice": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 32.0,
+          "currencyCode": "CAD"
+         },
+         "content": "32.00",
+         "confidence": 0.91
+        },
+        "Amount": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 800.0,
+          "currencyCode": "CAD"
+         },
+         "content": "800.00",
+         "confidence": 0.94
+        }
+       },
+       "content": "Microsoft 365 E3 licences - monthly 25 32.00 800.00",
+       "boundingRegions": [
+        {
+         "pageNumber": 1,
+         "polygon": [
+          0.6,
+          4.0278,
+          7.9,
+          4.0278,
+          7.9,
+          4.236,
+          0.6,
+          4.236
+         ]
+        }
+       ],
+       "confidence": 0.9
+      },
+      {
+       "type": "object",
+       "valueObject": {
+        "Description": {
+         "type": "string",
+         "content": "Implementation consulting - endpoint rollout (hours)",
+         "boundingRegions": [
+          {
+           "pageNumber": 2,
+           "polygon": [
+            1.0417,
+            1.3194,
+            3.5736,
+            1.3194,
+            3.5736,
+            1.4721,
+            1.0417,
+            1.4721
+           ]
+          }
+         ],
+         "confidence": 0.93,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 52
+          }
+         ],
+         "valueString": "Implementation consulting - endpoint rollout (hours)"
+        },
+        "Quantity": {
+         "type": "number",
+         "valueNumber": 12,
+         "content": "12",
+         "confidence": 0.92
+        },
+        "UnitPrice": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 150.0,
+          "currencyCode": "CAD"
+         },
+         "content": "150.00",
+         "confidence": 0.91
+        },
+        "Amount": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 1800.0,
+          "currencyCode": "CAD"
+         },
+         "content": "1,800.00",
+         "confidence": 0.94
+        }
+       },
+       "content": "Implementation consulting - endpoint rollout (hours) 12 150.00 1,800.00",
+       "boundingRegions": [
+        {
+         "pageNumber": 2,
+         "polygon": [
+          0.6,
+          1.2917,
+          7.9,
+          1.2917,
+          7.9,
+          1.4999,
+          0.6,
+          1.4999
+         ]
+        }
+       ],
+       "confidence": 0.9
+      },
+      {
+       "type": "object",
+       "valueObject": {
+        "Description": {
+         "type": "string",
+         "content": "Delivery & handling",
+         "boundingRegions": [
+          {
+           "pageNumber": 2,
+           "polygon": [
+            0.6944,
+            1.7267,
+            1.7712,
+            1.7267,
+            1.7712,
+            1.8985,
+            0.6944,
+            1.8985
+           ]
+          }
+         ],
+         "confidence": 0.93,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 19
+          }
+         ],
+         "valueString": "Delivery & handling"
+        },
+        "Quantity": {
+         "type": "number",
+         "valueNumber": 1,
+         "content": "1",
+         "confidence": 0.92
+        },
+        "UnitPrice": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 95.0,
+          "currencyCode": "CAD"
+         },
+         "content": "95.00",
+         "confidence": 0.91
+        },
+        "Amount": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 95.0,
+          "currencyCode": "CAD"
+         },
+         "content": "95.00",
+         "confidence": 0.94
+        }
+       },
+       "content": "Delivery & handling 1 95.00 95.00",
+       "boundingRegions": [
+        {
+         "pageNumber": 2,
+         "polygon": [
+          0.6,
+          1.699,
+          7.9,
+          1.699,
+          7.9,
+          1.9263,
+          0.6,
+          1.9263
+         ]
+        }
+       ],
+       "confidence": 0.9
+      }
+     ]
+    }
+   },
+   "confidence": 1,
+   "spans": [
+    {
+     "offset": 0,
+     "length": 0
+    }
+   ]
+  }
+ ],
+ "contentFormat": "text"
+}

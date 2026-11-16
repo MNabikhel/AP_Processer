@@ -5918,3 +5918,53 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     27 and made by `_SCHEMA` in a new one. Going back: the first start of this version makes the before-update backup
     once (`ap_coder-<date>-before-update-from-schema-27.db`); an older version then refuses the database
     (`DatabaseTooNew`), and `server-update --back` (or the steps of `docs/UPGRADING.md`) puts that backup back.
+- **D-245** · **Azure Document Intelligence is the one named cloud exception to the offline rule: one more reader,
+  never first** (`ai/di_http.py`, `ai/azure_check.py`, `capture/__init__.py` `_di_readings` `_di_lines`,
+  `capture/confidence.py` `_local_first` `_azure_differs`, `bench/di_compare.py`; `tests/offline/test_offline_guard.py`,
+  `tests/ai/test_di_http.py`, `tests/fake_di.py`; 16 Nov 2026).
+  - **The choice:** as D-104 is for JD Edwards' AIS, Azure Document Intelligence is a named exception: the company's
+    own resource in Canada Central, off by default, switched on by an Admin with its endpoint and key. When on, AP
+    Coder contacts only that one host (analyze, poll, delete, at API 2024-11-30), over HTTPS (TLS 1.2 or later),
+    with no proxy and no redirect, and only with an invoice's pages (at most 5 by default, under the daily cap of
+    200). `AP_ALLOW_INTERNET` is neither needed nor changed. Nothing else goes online.
+  - **Why:** the owner wants the two readers compared on the same invoices, and a fallback where the local models are
+    weak, while the laptop stays offline.
+  - **How it reads:** the Azure check (D-02) becomes a reader. Azure's answer is kept by the file's SHA-256 and read
+    with the invoice: local readers win a disagreement, which goes to a person; agreeing raises the confidence (never
+    below the local readers alone); a value only Azure read is at most likely, so never approved without a person.
+    Which invoices: those AP Coder is unsure of (and the spot-check share), or every invoice, to compare. Azure's
+    lines are marked agreed with the page's, and used only where the page gave none.
+  - **The client:** AP Coder's own, standard library only (`http.client`): the Azure SDK isn't needed. Every address,
+    Azure's result address included, is checked against the saved host before a socket opens. The result is deleted
+    once read (`DELETE .../analyzeResults/{resultId}`, as the 2024-11-30 REST reference documents it), so Azure keeps
+    nothing. A 429 waits for Retry-After (3 tries), a poll's 5xx or no connection is tried again at 2 then 5 seconds;
+    the analyze request is sent again only after a 429 or a 503 (after a 500, 502 or 504 Azure may have taken it:
+    a second one would be billed twice); every request on another port than the endpoint's is pinned to its port.
+  - **Down, and refused:** nothing waits on Azure. After 3 failures to reach it in a row the queue pauses 15
+    minutes; only a refused key (401/403, or one that can't be sent) or a wrong endpoint (a 404 or a redirect on the
+    analyze request) pauses it until the settings change. Azure refusing one file (a 400, a 404 on a poll) fails that
+    invoice only, and the queue carries on. A file Azure took (202) is counted against the daily cap at once, and
+    never sent again: its reading not back in time, that invoice fails, saying why. The Reading status, the card and
+    the invoice's check say invoices are read on this computer.
+  - **Shapes and taxes:** an answer is kept only once it reads; any part of another shape (text for a number, NaN,
+    a box off its page) is left out, and the invoice is read without an answer that can't be read. A total tax only
+    Azure read is worked out from the taxes read on this computer all the same (Azure agreeing is one more source;
+    differing, a person checks it), so Azure never makes a field less sure than the local readers alone
+    (`tests/bench/test_di_compare.py`, over the quick cases). A tax rate is the number before "%" (or Azure's
+    number); rates name no tax on an invoice in another currency or from a supplier abroad. A line only Azure read
+    is never approved without a person.
+  - **Off is off:** switched off, nothing of Azure is used, a comparison stored before included. A reading again is
+    never written over an invoice a person has open or keeps a draft of (checked in the same transaction).
+  - **Where:** the card is the Admin's, under Settings → Reading and at `/settings/azure-check`, in the offline build
+    too (the owner's decision; the developers' own cloud card stays where the internet is allowed, B-516). A key is
+    letters and digits only.
+  - **The key:** in the data folder's .env only: never in the database, a log, the Activity detail, a backup or an
+    error, shown back only as its last four characters.
+  - **Not confirmed:** whether Azure's answer names its region (`x-ms-region` is read when present; the 2024-11-30
+    reference lists no such header): Test connection says so, and IT confirms Canada Central in the portal.
+  - **Left out of v1:** sign-in through Entra ID or a managed identity, a proxy, other models and query fields,
+    Azure's words as the layout (this computer's OCR reads a scan first; Azure's words only for a page it can't),
+    Azure's lines replacing the page's, the discount, amount due, addresses and bank
+    details, a monthly cost cap, the batch API, parallel calls, touchless approval on a value only Azure read, and
+    the developer `extract` command (still the SDK, behind `AP_ALLOW_INTERNET=1`). No recorded answers are committed
+    for the benchmark yet: `bench record-di` records them on a developer's computer.

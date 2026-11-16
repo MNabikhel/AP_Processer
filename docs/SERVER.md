@@ -772,7 +772,7 @@ app, changes a role, and turns an account off or on again (an Admin can't turn o
 | Read-only | Look at invoices, the review queue, reports, the exports list and Help. Change nothing. |
 | Clerk | Also import and process invoices, review and correct them, approve within the limit, park, reject, reopen, bulk approve, export batches, make the Spend page's Excel workbook, and put a vendor on hold or edit its notes (not take it off hold, nor change a held vendor's tax numbers, D-142). Add, change, remove and undo the coding rules: each change is kept with who made it (D-217). |
 | Approver | Also give the second approval (always by another account than the first), take a vendor off hold, change a held vendor's tax numbers, approve a held vendor's invoice coded to another vendor, and post vouchers to JD Edwards through the API. |
-| Admin | Everything else: Settings, users, the JD Edwards setup, GL accounts and vendors imports, backups and restore, deleting, the Azure check, updating. |
+| Admin | Everything else: Settings, users, the JD Edwards setup, GL accounts and vendors imports, backups and restore, deleting, Azure Document Intelligence (D-245), updating. |
 | Manager | Only confirms, or sends back, the coding of the invoices AP sends them (*Manager confirmations*): sees those invoices and nothing else of AP Coder. An Admin sets each Manager's cost centers on the users page; AP picks the Manager when sending (D-138). |
 
 Pages show each person only what their role may use; the server refuses the rest anyway. The JD Edwards settings

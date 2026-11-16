@@ -925,18 +925,18 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "AZURE_DI_DISAGREES": CheckHelp(
         READING, "Azure reads it differently",
-        "The optional Azure Document Intelligence check (Settings → Reading) read a field differently from what "
-        "AP Coder proposes. The fields it disagrees on are named in the warning and marked Check.",
+        "Your company's Azure Document Intelligence, the optional reader an Admin switched on (Settings → Reading), "
+        "read a field differently from AP Coder's own readers. AP Coder keeps its own reading: the fields they "
+        "disagree on are named in the warning and marked Check, with both readings in the reasons.",
         "Look at the page: correct the field if Azure is right (the warning goes once it matches), or approve as "
         "it is if the proposal is right. It isn't approved without a person until they agree.",
     ),
     "AZURE_DI_NOT_COMPARED": CheckHelp(
         READING, "Azure checked nothing",
-        "The invoice was sent to Azure Document Intelligence for a check, but Azure read none of the fields AP Coder "
-        "read, so nothing was compared. This happens when the Azure model in Settings → Reading is not "
-        "prebuilt-invoice (prebuilt-layout and prebuilt-read find no invoice fields), or Azure found no invoice.",
-        "Check the invoice against the page yourself, then approve. It isn't approved without a person. Set the "
-        "Azure model back to prebuilt-invoice if it was changed.",
+        "The invoice was sent to Azure Document Intelligence, but Azure read none of the fields AP Coder read, so "
+        "nothing was compared. This happens when Azure found no invoice on the pages sent (a statement, a cover "
+        "page, a picture it could not read).",
+        "Check the invoice against the page yourself, then approve. It isn't approved without a person.",
     ),
     "NOT_AN_INVOICE": CheckHelp(
         READING, "May not be an invoice",

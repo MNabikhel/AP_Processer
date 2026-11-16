@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -109,7 +110,9 @@ COARSE_DPI = 140
 
 __all__ = ["LABELS", "analyze", "build_layout", "read_fields", "locate", "CaptureResult", "CannotRead"]
 
-# Document Intelligence prebuilt-invoice field -> capture field
+# Azure Document Intelligence's ``prebuilt-invoice`` fields (API 2024-11-30) -> capture's (D-245). VendorTaxId goes
+# where its pattern says (``_di_tax_id``); CustomerTaxId, the customer's, never. The currency is the totals' code.
+# Every part of an answer is checked for its shape: one of another shape is left out, never a crash.
 DI_FIELDS = {
     "VendorName": "vendor_name",
     "InvoiceId": "invoice_number",
@@ -122,37 +125,212 @@ DI_FIELDS = {
     "InvoiceTotal": "grand_total",
     "PaymentTerm": "payment_terms",
 }
+# TaxDetails' rate -> the tax it is: only a rate that names one tax (13 % is HST, 9.975 % QST); any other is left to
+# TotalTax. Read only off an invoice in Canadian dollars from a Canadian supplier: a US 7 % sales tax is no PST.
+DI_TAX_RATES = {0.05: "gst_amount", 0.13: "hst_amount", 0.14: "hst_amount", 0.15: "hst_amount",
+                0.09975: "qst_amount", 0.06: "pst_amount", 0.07: "pst_amount"}  # fmt: skip
+_RATE = re.compile(r"(\d+(?:[.,]\d+)?)\s*%")
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+_DI_LARGEST = 1e12  # an amount past this is no invoice's
+_DI_MOST_LINES = 2000
+
+
+def _di_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _di_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _di_number(value: Any) -> float | None:
+    """A finite number of a sane size, else None (text, NaN, 1e300, a boolean)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) and abs(number) < _DI_LARGEST else None
+
+
+def _di_value(fld: Any) -> Any:
+    """A field's value: an amount (a sane number), a date or a text; None for anything else."""
+    fld = _di_dict(fld)
+    if "valueCurrency" in fld:
+        return _di_number(_di_dict(fld["valueCurrency"]).get("amount"))
+    for key in ("valueString", "valueDate", "valueNumber", "content"):
+        if key in fld:
+            value = fld[key]
+            if key == "valueNumber":
+                return _di_number(value)
+            return " ".join(value.split()) if isinstance(value, str) else None
+    return None
+
+
+def _di_score(fld: dict[str, Any]) -> float:
+    score = _di_number(fld.get("confidence"))
+    return 0.5 if score is None else min(1.0, max(0.0, score))
+
+
+def _di_pages(raw: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    pages = {}
+    for i, page in enumerate(_di_list(raw.get("pages"))):
+        number = _di_number(_di_dict(page).get("pageNumber"))
+        pages[int(number) if number is not None else i + 1] = _di_dict(page)
+    return pages
+
+
+def _di_boxes(fld: dict[str, Any], pages: dict[int, dict[str, Any]]) -> list[Box]:
+    """Where Azure read it: each region's polygon (inches on a PDF, pixels on a picture) as a page-relative box; one
+    of another shape, or off its page, is left out."""
+    boxes = []
+    for region in _di_list(fld.get("boundingRegions")):
+        region = _di_dict(region)
+        number = _di_number(region.get("pageNumber"))
+        page = pages.get(int(number)) if number is not None else None
+        poly = [_di_number(v) for v in _di_list(region.get("polygon"))]
+        w, h = (_di_number(page.get("width")), _di_number(page.get("height"))) if page else (None, None)
+        if not page or len(poly) < 8 or None in poly or not w or not h or w <= 0 or h <= 0:
+            continue
+        xs, ys = poly[0::2], poly[1::2]
+        x0, y0, x1, y1 = min(xs) / w, min(ys) / h, max(xs) / w, max(ys) / h
+        if 0.0 <= x0 <= x1 <= 1.0 and 0.0 <= y0 <= y1 <= 1.0:
+            boxes.append(Box(int(number), x0, y0, x1, y1))
+    return boxes
+
+
+def _di_reading(field: str, fld: dict[str, Any], pages: dict[int, dict[str, Any]], value: Any = None) -> Reading:
+    value = _di_value(fld) if value is None else value
+    content = fld.get("content")
+    raw = content if isinstance(content, str) and content.strip() else str(value)
+    return Reading(field, value, raw, _di_boxes(fld, pages), _di_score(fld), "di")
+
+
+def _di_tax_id(value: Any) -> str:
+    """Where Azure's VendorTaxId goes: the GST/HST number or the QST number, by its pattern; "" for neither."""
+    from .normalize import gst_valid, qst_valid
+
+    if gst_valid(str(value)):
+        return "gst_hst_registration_number"
+    return "qst_registration_number" if qst_valid(str(value)) else ""
+
+
+def _di_rate(fld: dict[str, Any]) -> float | None:
+    """A TaxDetails rate as a fraction: Azure's number (13, or 0.13), else the number before a "%" in its text
+    ("GST 2026: 5 %", "9,975 %"), else its only number; None when there is none."""
+    number = _di_number(fld.get("valueNumber"))
+    if number is None:
+        text = fld.get("valueString") if isinstance(fld.get("valueString"), str) else fld.get("content")
+        text = text if isinstance(text, str) else ""
+        found = _RATE.search(text) or (_NUMBER.fullmatch(text.strip()) if text.strip() else None)
+        if found is None:
+            return None
+        number = float((found.group(1) if found.groups() else found.group()).replace(",", "."))
+    return round(number if number < 1 else number / 100, 5)
+
+
+def _di_canadian(fields: dict[str, Any]) -> bool:
+    """The invoice is in Canadian dollars from a supplier in Canada, as far as Azure's answer says."""
+    total = _di_dict(fields.get("InvoiceTotal") or fields.get("SubTotal"))
+    code = _di_dict(total.get("valueCurrency")).get("currencyCode")
+    if isinstance(code, str) and code.strip() and code.strip().upper() != "CAD":
+        return False
+    country = _di_dict(_di_dict(fields.get("VendorAddress")).get("valueAddress")).get("countryRegion")
+    return not (isinstance(country, str) and country.strip().upper() not in ("CA", "CAN", "CANADA"))
+
+
+def _di_taxes(fields: dict[str, Any], pages: dict[int, dict[str, Any]]) -> dict[str, list[Reading]]:
+    """Each tax of TaxDetails by its rate (``DI_TAX_RATES``); two amounts at one rate say neither."""
+    if not _di_canadian(fields):
+        return {}
+    found: dict[str, list[Reading]] = {}
+    for item in _di_list(_di_dict(fields.get("TaxDetails")).get("valueArray")):
+        detail = _di_dict(_di_dict(item).get("valueObject"))
+        amount, rate = _di_dict(detail.get("Amount")), _di_dict(detail.get("Rate"))
+        name = DI_TAX_RATES.get(_di_rate(rate) or -1.0)
+        if name and _di_value(amount) is not None:
+            found.setdefault(name, []).append(_di_reading(name, amount, pages))
+    return {name: readings for name, readings in found.items() if len(readings) == 1}
+
+
+def _di_document(raw: Any) -> dict[str, Any]:
+    """The answer's first document's fields ({} for an answer of another shape)."""
+    docs = _di_list(_di_dict(raw).get("documents"))
+    return _di_dict(_di_dict(docs[0]).get("fields")) if docs else {}
 
 
 def _di_readings(raw: dict[str, Any]) -> dict[str, list[Reading]]:
-    docs = raw.get("documents") or []
-    if not docs:
+    """Azure's reading of the header, one reading a field (``DI_FIELDS``, the taxes by rate, the currency)."""
+    fields = _di_document(raw)
+    if not fields:
         return {}
-    pages = {int(p.get("pageNumber") or i + 1): p for i, p in enumerate(raw.get("pages") or [])}
+    pages = _di_pages(raw)
     out: dict[str, list[Reading]] = {}
     for di_name, field in DI_FIELDS.items():
-        fld = (docs[0].get("fields") or {}).get(di_name)
-        if not fld:
-            continue
-        if "valueCurrency" in fld:
-            value: Any = (fld["valueCurrency"] or {}).get("amount")
-        else:
-            value = next((fld[k] for k in ("valueString", "valueDate", "valueNumber") if k in fld), fld.get("content"))
+        fld = _di_dict(fields.get(di_name))
+        value = _di_value(fld)
         if value in (None, ""):
             continue
-        boxes = []
-        for region in fld.get("boundingRegions") or []:
-            page = pages.get(int(region.get("pageNumber") or 1))
-            poly = region.get("polygon") or []
-            if page and len(poly) >= 8 and page.get("width") and page.get("height"):
-                xs, ys = poly[0::2], poly[1::2]
-                w, h = float(page["width"]), float(page["height"])
-                boxes.append(
-                    Box(int(region.get("pageNumber") or 1), min(xs) / w, min(ys) / h, max(xs) / w, max(ys) / h)
-                )
-        out[field] = [Reading(field, value, str(fld.get("content") or value), boxes,
-                              float(fld.get("confidence") or 0.5), "di")]  # fmt: skip
+        if di_name == "VendorTaxId":
+            field = _di_tax_id(value)
+            if not field:
+                continue
+        out[field] = [_di_reading(field, fld, pages, value)]
+    out.update(_di_taxes(fields, pages))
+    total = _di_dict(fields.get("InvoiceTotal") or fields.get("SubTotal"))
+    code = _di_dict(total.get("valueCurrency")).get("currencyCode")
+    code = code.strip().upper() if isinstance(code, str) else ""
+    if re.fullmatch(r"[A-Z]{3}", code):
+        out["currency"] = [Reading("currency", code, code, [], _di_score(total), "di")]
     return out
+
+
+def _di_lines(raw: dict[str, Any]) -> list[LineReading]:
+    """Azure's line items (Items), each boxed where Azure read its row; a row without an amount is left out."""
+    fields = _di_document(raw)
+    if not fields:
+        return []
+    pages = _di_pages(raw)
+    lines = []
+    for item in _di_list(_di_dict(fields.get("Items")).get("valueArray"))[:_DI_MOST_LINES]:
+        item = _di_dict(item)
+        row = _di_dict(item.get("valueObject"))
+
+        def number(name: str, row: dict[str, Any] = row) -> float | None:
+            value = _di_value(row.get(name))
+            return float(value) if isinstance(value, (int, float)) else None
+
+        amount, tax = number("Amount"), number("Tax")
+        if amount is None:
+            continue
+        description = _di_value(row.get("Description"))
+        lines.append(LineReading(description if isinstance(description, str) else "", number("Quantity"),
+                                 number("UnitPrice"), amount, _di_boxes(item, pages), _di_score(item), "di",
+                                 taxes_read=None if tax is None else {"TAX": tax}))  # fmt: skip
+    return lines
+
+
+def _di_sources(raw: dict[str, Any] | None) -> tuple[dict[str, list[Reading]], list[LineReading]]:
+    """Azure's readings and lines, or none of either when its answer can't be read: the invoice is read without it."""
+    if not raw:
+        return {}, []
+    try:
+        return _di_readings(raw), _di_lines(raw)
+    except Exception as exc:  # noqa: BLE001 - an extra reader: never stops the invoice
+        log.warning("Azure Document Intelligence's answer not read (%s)", type(exc).__name__)
+        return {}, []
+
+
+def _with_di_lines(items: list[LineReading], di_items: list[LineReading]) -> list[LineReading]:
+    """The page's line items, each marked read the same by Azure when Azure's rows agree with them; Azure's rows only
+    where the page gave none (D-245: they never replace the page's own)."""
+    from .line_items import agree, mark_agreed
+
+    if not di_items:
+        return items
+    if not items:
+        return di_items
+    if agree(items, di_items):
+        mark_agreed(items, "di")
+    return items
 
 
 def _ai_readings(layout: DocLayout, ai_values: dict[str, Any]) -> dict[str, list[Reading]]:
@@ -509,8 +687,9 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
             sources["template"] = apply_template(template, layout)
         except Exception as exc:  # a bad template must not stop the capture
             log.warning("%s: template not applied (%s)", path.name, exc)
-    if di_raw:
-        sources["di"] = _di_readings(di_raw)
+    di_fields, di_items = _di_sources(di_raw)  # Azure's answer, when it reads (D-245)
+    if di_fields:
+        sources["di"] = di_fields
     if ai_values:
         sources["ai"] = _ai_readings(layout, ai_values)
     if second_read and layout.source == "ocr":
@@ -564,6 +743,8 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
             mark_agreed(vlm_items, agreeing[0].source)
         items = _choose_lines(layout, fields, items, vlm_items)
         agreement = agreement_check(readings, vlm_items, agreeing[0].source if agreeing else None)
+    if di_items:
+        items = _with_di_lines(items, di_items)
     if items is not words:
         fields, checks = fused(items)  # the lines-add-up check on the lines kept
     if agreement is not None:

@@ -1,7 +1,8 @@
 """The Azure check (ap_coder/ai/azure_check.py): Azure AI Document Intelligence as an optional second opinion, off by
-default. Azure is never called: every test that "reads with Azure" hands in a fake client, and the host guard is
-tested on the real client with a transport that sends nothing."""
+default. Azure is never called: every test that "reads with Azure" hands in a fake client, or the real client
+(``di_http``) asking the stand-in on 127.0.0.1 (tests/fake_di.py)."""
 
+import datetime as dt
 import json
 import logging
 from dataclasses import replace
@@ -9,7 +10,7 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.ai import azure_check
+from ap_coder.ai import azure_check, di_http
 from ap_coder.ai.pipeline import InvoicePipeline
 from ap_coder.capture.supplier import AUTONOMOUS, should_auto_approve
 from ap_coder.capture.types import CHECK, CaptureResult
@@ -17,6 +18,7 @@ from ap_coder.capture.workflow import AUTONOMOUS_REVIEWER, audit_pick, reader_ou
 from ap_coder.core.config import Settings
 from ap_coder.core.store import APPROVED, REVIEW, Store, load_sample_setup
 from ap_coder.web.app import create_app
+from tests import fake_di
 from tests.conftest import SAMPLES
 from tests.webclient import PAGE
 
@@ -48,10 +50,9 @@ def store(tmp_path, env):
     return store
 
 
-def _turn_on(store, monkeypatch, rate=5.0, cap=200):
-    monkeypatch.setattr(azure_check, "packages_installed", lambda: True)  # whether or not the extra is installed
+def _turn_on(store, monkeypatch, rate=5.0, cap=200, mode="unsure", invoice_pages=5):
     azure_check.save_settings(store, enabled=True, endpoint=ENDPOINT, api_key=KEY, spot_percent=rate,
-                              daily_pages=cap, actor="Mia")  # fmt: skip
+                              daily_pages=cap, actor="Mia", mode=mode, invoice_pages=invoice_pages)  # fmt: skip
 
 
 def _process(store, path=None, **kw):
@@ -63,24 +64,21 @@ def _process(store, path=None, **kw):
 
 
 class FakeClient:
-    """Stands in for DocumentIntelligenceClient: answers with ``raw``, remembers each call."""
+    """Stands in for ``di_http.DiClient``: answers with ``raw``, remembers the pages asked for each call."""
 
     def __init__(self, raw):
         self.raw, self.calls = raw, []
 
-    def begin_analyze_document(self, model_id, body=None, content_type=None, **kwargs):
-        self.calls.append(model_id)
-        raw = self.raw
-
-        class Poller:
-            def result(self):
-                return type("Result", (), {"as_dict": lambda self: raw})()
-
-        return Poller()
+    def analyze(self, data, pages="", on_accepted=None):
+        assert data
+        self.calls.append(pages)
+        if on_accepted is not None:  # Azure took the file, as the real client says
+            on_accepted()
+        return self.raw
 
 
 class NeverCalled:
-    def begin_analyze_document(self, *args, **kwargs):
+    def analyze(self, *args, **kwargs):
         raise AssertionError("Azure must not be called")
 
 
@@ -110,7 +108,6 @@ def _raw_from(capture, **changes):
 
 
 def test_off_by_default_nothing_is_queued_or_sent(store, monkeypatch):
-    monkeypatch.setattr(azure_check, "packages_installed", lambda: True)
     monkeypatch.setenv(azure_check.ENDPOINT_ENV, ENDPOINT)  # configured, but not turned on
     monkeypatch.setenv(azure_check.KEY_ENV, KEY)
     cfg = azure_check.load_settings(store)
@@ -126,22 +123,27 @@ def test_off_by_default_nothing_is_queued_or_sent(store, monkeypatch):
     assert store.azure_check_counts()["waiting"] == 0
 
 
-def test_missing_package_is_said_plainly_and_nothing_happens(store, monkeypatch):
+def test_no_azure_package_is_needed(store, monkeypatch):
+    """The check asks Azure with AP Coder's own plain-HTTPS client (D-245): the optional ``azure`` extra isn't
+    needed, and its absence stops nothing."""
+    import builtins
+
+    real = builtins.__import__
+
+    def no_azure(name, *args, **kwargs):
+        if name.startswith("azure"):
+            raise ImportError(name)
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_azure)
     _turn_on(store, monkeypatch)
-    monkeypatch.setattr(azure_check, "packages_installed", lambda: False)
-    state, why = azure_check.status(azure_check.load_settings(store))
-    assert state == azure_check.NO_PACKAGE and "aren't installed" in why and "offline" in why
-    result = _process(store)
-    assert store.azure_check(result.invoice_id) is None  # nothing queued
-    assert azure_check.check_one(_settings(), store, client=NeverCalled()) is None
-    record = azure_check.connection_test(store, _settings(), client=NeverCalled())
-    assert record["ok"] is False and "aren't installed" in record["error"]
-    with pytest.raises(azure_check.AzureUnavailable, match="aren't installed"):
-        azure_check.make_client(azure_check.load_settings(store))
+    cfg = azure_check.load_settings(store)
+    assert azure_check.status(cfg)[0] == azure_check.READY
+    client = azure_check.make_client(cfg)
+    assert client.host == HOST and type(client).__module__ == "ap_coder.ai.di_http"
 
 
 def test_no_endpoint_or_key_or_http_endpoint_sends_nothing(store, monkeypatch):
-    monkeypatch.setattr(azure_check, "packages_installed", lambda: True)
     azure_check.save_settings(store, enabled=True, endpoint="", api_key="")
     assert azure_check.status(azure_check.load_settings(store))[0] == azure_check.NO_ENDPOINT
     azure_check.save_settings(store, enabled=True, endpoint=ENDPOINT, api_key="")
@@ -218,6 +220,111 @@ def test_the_daily_cap_bounds_the_pages_sent(store, monkeypatch, tmp_path):
     assert len(client.calls) == 1
 
 
+def test_every_invoice_mode_sends_the_ones_ap_coder_is_sure_of_too(store, monkeypatch, tmp_path):
+    _turn_on(store, monkeypatch, rate=0, mode=azure_check.ALL)
+    cfg = azure_check.load_settings(store)
+    assert cfg.mode == azure_check.ALL and cfg.invoice_pages == 5
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)
+    capture = CaptureResult(fields={}, page_count=1)
+    assert azure_check.decide(store, cfg, capture, SAMPLES / f"{STEM}.pdf") == azure_check.EVERY
+    result = _process(store)
+    check = store.azure_check(result.invoice_id)
+    assert check["reason"] == azure_check.EVERY and azure_check.REASONS[check["reason"]] == "Every invoice"
+    with pytest.raises(ValueError, match="which invoices"):
+        azure_check.save_settings(store, enabled=True, endpoint=ENDPOINT, mode="some")
+    _turn_on(store, monkeypatch, rate=0)  # back to "only those AP Coder is unsure of": a sure one isn't sent
+    assert azure_check.decide(store, azure_check.load_settings(store), capture, SAMPLES / f"{STEM}.pdf") == ""
+
+
+def test_a_long_invoice_sends_its_first_pages_and_its_last():
+    assert azure_check.pages_to_send(3, 5) == "" and azure_check.pages_to_send(5, 5) == ""
+    assert azure_check.pages_to_send(12, 5) == "1-4,12"
+    assert azure_check.pages_to_send(12, 2) == "1,12" and azure_check.pages_to_send(12, 1) == "1"
+    cfg = azure_check.AzureCheckSettings(invoice_pages=5)
+    assert azure_check.sent_pages(12, cfg) == 5 and azure_check.sent_pages(2, cfg) == 2
+
+
+def test_a_long_invoice_is_counted_by_the_pages_sent(store, monkeypatch):
+    _turn_on(store, monkeypatch, invoice_pages=1)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)  # two pages
+    client = FakeClient(_raw_from(result.capture))
+    assert azure_check.check_one(_settings(), store, client=client).status == "done"
+    assert client.calls == ["1"] and store.azure_pages_on() == 1
+
+
+# --- Azure's reading as one more reader (D-245) -------------------------------------------------------------------
+
+
+def test_azures_reading_is_kept_and_the_invoice_read_again_with_it(store, monkeypatch):
+    """Azure agreeing makes the fields the rule reader alone read (likely) verified; the reading is kept, so the
+    invoice read again later (the page reader, a person's Read again) has it without asking Azure again."""
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    assert result.capture.fields["invoice_number"].status == "likely"  # one reader: never verified alone
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(fake_di.recorded(STEM)))
+    assert outcome.status == "done" and outcome.read_again == "now"
+    inv = store.get_invoice(result.invoice_id)
+    assert azure_check.cache_path(inv["file_sha256"]).is_file()
+    fr = CaptureResult.from_dict(store.get_capture(result.invoice_id)).fields["invoice_number"]
+    assert fr.sources == {"rules": "NW-2026-0912", "di": "NW-2026-0912"} and fr.status == "verified"
+    again = InvoicePipeline(_settings(), store.reference_data(), store=store).process(
+        SAMPLES / f"{STEM}.pdf", save=False, invoice_id=result.invoice_id
+    )
+    assert again.capture.fields["invoice_number"].status == "verified"
+
+
+def test_switched_off_its_kept_reading_is_not_used(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    azure_check.check_one(_settings(), store, client=FakeClient(fake_di.recorded(STEM)))
+    azure_check.save_settings(store, enabled=False, endpoint=ENDPOINT)
+    again = InvoicePipeline(_settings(), store.reference_data(), store=store).process(
+        SAMPLES / f"{STEM}.pdf", save=False, invoice_id=result.invoice_id
+    )
+    # Off means ignored entirely: neither Azure's kept reading nor the comparison stored then is used.
+    assert again.capture.fields["invoice_number"].status == "likely"
+    assert not azure_check.kept_reading(store, SAMPLES / f"{STEM}.pdf")
+    assert not any("di" in fr.sources or any(k.startswith("other:") and "di" in v for k, v in fr.sources.items())
+                   for fr in again.capture.fields.values())  # fmt: skip
+
+
+def test_switched_off_a_comparison_azure_disagreed_with_is_not_folded_in(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    total = float(result.capture.fields["grand_total"].value)
+    azure_check.check_one(_settings(), store, client=FakeClient(_raw_from(result.capture, grand_total=total + 100)))
+    azure_check.save_settings(store, enabled=False, endpoint=ENDPOINT)
+    again = InvoicePipeline(_settings(), store.reference_data(), store=store).process(
+        SAMPLES / f"{STEM}.pdf", save=False, invoice_id=result.invoice_id
+    )
+    assert again.capture.fields["grand_total"].status != CHECK
+    assert azure_check.ISSUE_CODE not in [i.code for i in again.report.issues]
+
+
+def test_an_invoice_the_page_reader_read_goes_back_in_its_line(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    store.update_after_check(result.invoice_id, None, None, (), {"page_reader": {"model": "ovisocr2", "pages": 2}})
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(fake_di.recorded(STEM)))
+    assert outcome.read_again == "page reader"
+    assert store.next_page_read()["invoice_id"] == result.invoice_id
+
+
+def test_an_invoice_a_person_worked_on_is_not_read_again(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET reviewer = 'Mia' WHERE id = ?", (result.invoice_id,))
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(fake_di.recorded(STEM)))
+    assert outcome.status == "done" and outcome.read_again == ""
+
+
 # --- Comparing --------------------------------------------------------------------------------------------------
 
 
@@ -227,7 +334,7 @@ def test_agreement_is_recorded(store, monkeypatch):
     result = _process(store)
     client = FakeClient(_raw_from(result.capture))
     outcome = azure_check.check_one(_settings(), store, client=client)
-    assert outcome.status == "done" and outcome.differ == [] and client.calls == ["prebuilt-invoice"]
+    assert outcome.status == "done" and outcome.differ == [] and client.calls == [""]
     check = store.azure_check(result.invoice_id)
     assert check["compared"] >= 5 and check["agreed"] == check["compared"]
     assert check["result"]["summary"] == f"Azure agrees on {check['compared']} of {check['compared']} fields"
@@ -250,7 +357,8 @@ def test_a_disagreement_marks_the_field_check_and_blocks_touchless(store, monkey
     assert sorted(outcome.differ) == ["grand_total", "invoice_number"]
     capture = CaptureResult.from_dict(store.get_capture(result.invoice_id))
     fr = capture.fields["grand_total"]
-    assert fr.status == CHECK and f"Azure Document Intelligence read {float(total) + 100:,.2f}" in fr.reasons
+    said = f"Azure Document Intelligence read {float(total) + 100:,.2f}"
+    assert fr.status == CHECK and any(r.startswith(said) for r in fr.reasons)
     assert "di" in fr.sources[f"other:{float(total) + 100}"]
     issues = store.get_invoice(result.invoice_id)["validation"]["issues"]
     issue = next(i for i in issues if i["code"] == azure_check.ISSUE_CODE)
@@ -373,9 +481,9 @@ def test_a_check_under_way_when_ap_restores_is_dropped_and_none_starts_meanwhile
     monkeypatch.setattr(Store, "_check_backup_file", staticmethod(probe))
 
     class Client(FakeClient):
-        def begin_analyze_document(self, *args, **kwargs):
+        def analyze(self, *args, **kwargs):
             store.restore_from(backup)
-            return super().begin_analyze_document(*args, **kwargs)
+            return super().analyze(*args, **kwargs)
 
     outcome = azure_check.check_one(_settings(), store, client=Client(raw))
     assert seen == {"restoring": True, "started": None}
@@ -438,6 +546,233 @@ def test_nothing_compared_is_not_nothing_differs(store, monkeypatch):
     assert any(i.code == azure_check.NOT_COMPARED_CODE for i in again.report.issues) and again.report.requires_review
 
 
+# --- When Azure can't be reached ----------------------------------------------------------------------------------
+
+
+class Down:
+    """Azure not reached (``di_http`` already tried again): each call fails as ``kind`` says."""
+
+    def __init__(self, kind=di_http.UNREACHABLE):
+        self.kind, self.calls = kind, 0
+
+    def analyze(self, *args, **kwargs):
+        self.calls += 1
+        raise di_http.DiError(self.kind, "ap-test.cognitiveservices.azure.com can't be reached (ConnectionError).")
+
+
+def test_azure_down_leaves_the_invoice_read_locally_and_in_line_then_pauses(store, monkeypatch):
+    from ap_coder.ai import reading
+
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    before = store.get_invoice(result.invoice_id)
+    down = Down()
+    for _ in range(azure_check.FAILURES_TO_PAUSE):
+        outcome = azure_check.check_one(_settings(), store, client=down)
+        assert outcome.status == "postponed" and "read by AP Coder's own readers" in outcome.message
+        check = store.azure_check(result.invoice_id)
+        assert check["status"] == "waiting" and "not reached" in check["error"]
+    # Three failures in a row: the queue pauses (15 minutes), nothing is asked meanwhile.
+    assert azure_check.check_one(_settings(), store, client=NeverCalled()) is None
+    assert down.calls == azure_check.FAILURES_TO_PAUSE
+    after = store.get_invoice(result.invoice_id)
+    assert after["status"] == REVIEW and after["ai_output"] == before["ai_output"]  # read on this computer, as it was
+    assert not any(i["code"] in azure_check.CODES for i in after["validation"]["issues"])  # no finding of its own
+    line = reading.reading_status(_settings(), store).reader(reading.AZURE_DI)
+    assert line.state == reading.WARN and "not reached since" in line.detail and "on this computer" in line.detail
+    assert "not reached since" in azure_check.overview(store, _settings())["outage"]
+    # After the pause, and once Azure answers, the outage is over.
+    later = dt.datetime.now() + dt.timedelta(minutes=azure_check.PAUSE_MINUTES + 1)
+    assert azure_check.paused(store, now=later) == ""
+    monkeypatch.setattr(azure_check, "paused", lambda store, now=None: "")
+    assert azure_check.check_one(_settings(), store, client=FakeClient(_raw_from(result.capture))).status == "done"
+    assert azure_check.outage(store) is None
+    assert reading.reading_status(_settings(), store).reader(reading.AZURE_DI).state == reading.OK
+
+
+def test_a_refused_key_pauses_the_queue_until_the_settings_change(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    _process(store)
+    outcome = azure_check.check_one(_settings(), store, client=Down(di_http.KEY))
+    assert outcome.status == "postponed"
+    assert "key" in azure_check.paused(store)
+    assert azure_check.check_one(_settings(), store, client=NeverCalled()) is None
+    later = dt.datetime.now() + dt.timedelta(days=1)
+    assert azure_check.paused(store, now=later)  # not by time: by a new key
+    azure_check.save_settings(store, enabled=True, endpoint=ENDPOINT, api_key="AnotherKey0123456789abcdWXYZ")
+    assert azure_check.paused(store) == ""
+
+
+def test_azure_not_reading_a_file_fails_that_invoice_only(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    outcome = azure_check.check_one(_settings(), store, client=Down(di_http.FAILED))
+    assert outcome.status == "failed" and store.azure_check(result.invoice_id)["status"] == "failed"
+    assert azure_check.outage(store) is None
+
+
+def _real_client(fake):
+    return lambda cfg: di_http.DiClient(cfg.endpoint, cfg.api_key, ca_file=str(fake_di.CA_FILE),
+                                        connect_to=fake.connect_to, sleep=lambda s: None)  # fmt: skip
+
+
+@pytest.mark.parametrize("step", ["analyze 400", "poll 404"])
+def test_a_file_azure_refuses_fails_that_invoice_and_the_queue_carries_on(store, monkeypatch, step):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    first = _process(store)
+    second = _process(store, SAMPLES / "pacific_BC_GST_PST_PO-77120.pdf")
+    where, status = step.split()
+    with fake_di.FakeDi() as fake:
+        fake.script(where, int(status))
+        monkeypatch.setattr(azure_check, "make_client", _real_client(fake))
+        refused = azure_check.check_one(_settings(), store)
+        assert refused.invoice_id == first.invoice_id and refused.status == "failed"
+        assert azure_check.paused(store) == "" and azure_check.outage(store) is None
+        assert "Azure" in store.azure_check(first.invoice_id)["error"]
+        assert azure_check.check_one(_settings(), store).invoice_id == second.invoice_id
+    assert store.azure_check(second.invoice_id)["status"] == "done"
+
+
+def test_a_wrong_endpoint_pauses_the_queue_until_the_settings_change(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    _process(store)
+    with fake_di.FakeDi() as fake:
+        fake.script("analyze", 404)
+        monkeypatch.setattr(azure_check, "make_client", _real_client(fake))
+        assert azure_check.check_one(_settings(), store).status == "postponed"
+    assert "endpoint" in azure_check.paused(store)
+
+
+def test_a_file_azure_took_is_counted_at_once_and_never_sent_again(store, monkeypatch):
+    """Azure took the file (202), then didn't finish in time: the pages count against the daily cap (they are
+    billed), and the invoice is not sent again: it fails, saying why."""
+    _turn_on(store, monkeypatch, cap=2)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)  # two pages
+    counted = []
+    with fake_di.FakeDi(running_polls=10**6) as fake:
+
+        def client(cfg):
+            made = _real_client(fake)(cfg)
+            made.poll_seconds = 0.2
+            return made
+
+        monkeypatch.setattr(azure_check, "make_client", client)
+        real = store.azure_pages_on
+        for _ in range(4):
+            monkeypatch.setattr(azure_check, "paused", lambda store, now=None: "")
+            outcome = azure_check.check_one(_settings(), store)
+            counted.append(real())
+    assert len(fake.steps("POST")) == 1 and counted[0] == 2
+    check = store.azure_check(result.invoice_id)
+    assert check["status"] == "failed" and "not sent again" in check["error"]
+    assert outcome is None
+
+
+def test_the_daily_cap_counts_a_file_while_azure_reads_it(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    _process(store)
+    seen = []
+
+    class Watch(FakeClient):
+        def analyze(self, data, pages="", on_accepted=None):
+            on_accepted()
+            seen.append(store.azure_pages_on())
+            return super().analyze(data, pages)
+
+    assert azure_check.check_one(_settings(), store, client=Watch(fake_di.recorded(STEM))).status == "done"
+    assert seen == [2] and store.azure_pages_on() == 2  # counted at the 202, not twice
+
+
+def test_a_key_with_anything_but_letters_and_digits_is_refused_when_saved(store, monkeypatch):
+    for bad in ("S3cretKeyForTests0123456789abcd\u200bWXYZ", "S3cretKey-ForTests0123456789abcd"):
+        with pytest.raises(ValueError, match="letters and digits"):
+            azure_check.save_settings(store, enabled=True, endpoint=ENDPOINT, api_key=bad)
+    assert azure_check.load_settings(store).api_key == ""
+
+
+def test_a_key_that_cant_be_sent_fails_as_a_key_and_the_doctor_says_so(store, monkeypatch):
+    from ap_coder.ops import doctor
+
+    _turn_on(store, monkeypatch)
+    monkeypatch.setenv(azure_check.KEY_ENV, "S3cretKeyForTests0123456789abcd\u200bWXYZ")  # put in the .env by hand
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    _process(store)
+    with fake_di.FakeDi() as fake:
+        monkeypatch.setattr(azure_check, "make_client", _real_client(fake))
+        assert azure_check.check_one(_settings(), store).status == "postponed"
+        assert "key" in azure_check.paused(store)
+        real = di_http.DiClient
+        monkeypatch.setattr(di_http, "DiClient", lambda endpoint, key: real(
+            endpoint, key, ca_file=str(fake_di.CA_FILE), connect_to=fake.connect_to, sleep=lambda s: None))  # fmt: skip
+        line = doctor.azure_checks(store, _settings(), online=True)[-1]
+    assert line.status == doctor.FAIL and "key" in line.detail
+
+
+@pytest.mark.parametrize("busy", ["open", "draft"])
+def test_an_invoice_a_person_has_open_or_a_draft_of_is_not_read_again(store, monkeypatch, busy):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    iid = result.invoice_id
+    before = store.get_invoice(iid)["ai_output"]
+    if busy == "open":
+        store.keep_open(iid, "mia-browser", "Mia", 300, 30)
+    else:
+        draft = dict(before)
+        draft["invoice_number"] = "MIA-TYPED-THIS"
+        store.save_invoice_draft(iid, "mia-browser", draft)
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(fake_di.recorded(STEM)))
+    assert outcome.status == "done" and outcome.read_again == ""
+    assert store.get_invoice(iid)["ai_output"] == before
+
+
+def test_a_proposal_is_not_replaced_once_a_person_opened_it_meanwhile(store, monkeypatch):
+    """Checked in the same transaction as the replacement: a person opening the invoice while it is read again."""
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    iid = result.invoice_id
+    before = store.get_invoice(iid)["ai_output"]
+    real = InvoicePipeline.process
+
+    def opened_meanwhile(self, *args, **kwargs):
+        done = real(self, *args, **kwargs)
+        store.keep_open(iid, "mia-browser", "Mia", 300, 30)
+        return done
+
+    monkeypatch.setattr(InvoicePipeline, "process", opened_meanwhile)
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(fake_di.recorded(STEM)))
+    assert outcome.read_again == "" and store.get_invoice(iid)["ai_output"] == before
+
+
+def test_an_answer_that_cant_be_read_is_not_kept_and_fails_that_invoice(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    raw = fake_di.recorded(STEM)
+    raw["documents"] = "x"
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(raw))
+    assert outcome.status == "failed" and "couldn't be read" in outcome.message
+    assert not azure_check.cache_path(store.get_invoice(result.invoice_id)["file_sha256"]).exists()
+    again = InvoicePipeline(_settings(), store.reference_data(), store=store).process(
+        SAMPLES / f"{STEM}.pdf", save=False, invoice_id=result.invoice_id
+    )
+    assert again.ok and again.capture.fields["invoice_number"].value == "NW-2026-0912"
+
+
+def test_off_there_is_no_reading_status_line(store):
+    from ap_coder.ai import reading
+
+    assert reading.reading_status(_settings(), store).reader(reading.AZURE_DI) is None
+
+
 # --- Readers scorecard --------------------------------------------------------------------------------------------
 
 
@@ -476,7 +811,6 @@ def _client(store):
 
 
 def test_the_key_never_appears_in_the_page_logs_or_activity(store, monkeypatch, caplog, env):
-    monkeypatch.setattr(azure_check, "packages_installed", lambda: True)
     caplog.set_level(logging.DEBUG)
     client = _client(store)
     monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")  # IT sets it up with the developer tools on (B-516)
@@ -497,7 +831,7 @@ def test_the_key_never_appears_in_the_page_logs_or_activity(store, monkeypatch, 
     result = _process(store)
 
     class Leaky:
-        def begin_analyze_document(self, *args, **kwargs):
+        def analyze(self, *args, **kwargs):
             raise RuntimeError(f"401: bad key {KEY}")
 
     outcome = azure_check.check_one(_settings(), store, client=Leaky())
@@ -511,57 +845,32 @@ def test_the_key_never_appears_in_the_page_logs_or_activity(store, monkeypatch, 
     assert azure_check.load_settings(store).api_key == ""
 
 
-def test_only_the_configured_host_is_contacted():
-    check = azure_check.only_host(HOST)
-    check(type("R", (), {"http_request": type("H", (), {"url": f"https://{HOST}/documentintelligence/x"})()})())
-    for url in ("https://evil.example.com/x", f"http://{HOST}/x", f"https://{HOST}.evil.com/x"):
-        with pytest.raises(azure_check.AzureUnavailable, match="only contacts"):
-            check(type("R", (), {"http_request": type("H", (), {"url": url})()})())
-    assert azure_check.endpoint_host("https://user:pw@evil.com@x/") == ""
+def test_the_check_reads_through_the_real_client_and_contacts_only_its_host(store, monkeypatch):
+    """The real client (``di_http``) against the stand-in for Azure on 127.0.0.1: the invoice is read (and the
+    reading deleted from Azure), and every socket opened is for the endpoint's host."""
+    from ap_coder.ai import di_http
+    from tests import fake_di
 
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    asked = []
+    with fake_di.FakeDi() as fake:
 
-def test_the_azure_client_refuses_any_other_host_before_sending():
-    """The real client, with a transport that records what would be sent: a request to another host never reaches
-    it (no network is used either way)."""
-    pytest.importorskip("azure.ai.documentintelligence")
-    from azure.ai.documentintelligence import DocumentIntelligenceClient
-    from azure.core.credentials import AzureKeyCredential
-    from azure.core.pipeline.transport import HttpTransport
+        def client(cfg):
+            def connect_to(host, port):
+                asked.append(host)
+                return fake.connect_to(host, port)
 
-    sent = []
+            return di_http.DiClient(cfg.endpoint, cfg.api_key, ca_file=str(fake_di.CA_FILE), connect_to=connect_to,
+                                    sleep=lambda s: None)  # fmt: skip
 
-    class Recorder(HttpTransport):
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            pass
-
-        def open(self):
-            pass
-
-        def close(self):
-            pass
-
-        def send(self, request, **kwargs):
-            sent.append(request.url)
-            raise ConnectionError("not sent in tests")
-
-    cfg = azure_check.AzureCheckSettings(enabled=True, endpoint=ENDPOINT, api_key=KEY)
-    client = azure_check.make_client(cfg)  # built offline; the hook is the host guard
-    assert client._config.custom_hook_policy._request_callback is not None
-    other = DocumentIntelligenceClient(endpoint="https://evil.example.com", credential=AzureKeyCredential("x"),
-                                       raw_request_hook=azure_check.only_host(HOST), transport=Recorder(),
-                                       retry_total=0)  # fmt: skip
-    with pytest.raises(azure_check.AzureUnavailable):
-        other.begin_analyze_document("prebuilt-invoice", body=b"%PDF", content_type="application/octet-stream")
-    assert sent == []
-    same = DocumentIntelligenceClient(endpoint=ENDPOINT.rstrip("/"), credential=AzureKeyCredential("x"),
-                                      raw_request_hook=azure_check.only_host(HOST), transport=Recorder(),
-                                      retry_total=0)  # fmt: skip
-    with pytest.raises(ConnectionError):
-        same.begin_analyze_document("prebuilt-invoice", body=b"%PDF", content_type="application/octet-stream")
-    assert len(sent) == 1 and sent[0].startswith(f"https://{HOST}/documentintelligence/")
+        monkeypatch.setattr(azure_check, "make_client", client)
+        outcome = azure_check.check_one(_settings(), store)
+    assert outcome.status == "done", outcome.message
+    assert set(asked) == {HOST} and fake.deleted
+    assert [m for m, *_ in fake.calls] == ["POST", "GET", "GET", "DELETE"]
+    assert store.azure_check(result.invoice_id)["result"]["azure"]["invoice_number"] == "NW-2026-0912"
 
 
 def test_ap_allow_internet_is_not_needed_nor_changed(store, monkeypatch):
@@ -578,7 +887,6 @@ def test_ap_allow_internet_is_not_needed_nor_changed(store, monkeypatch):
 
 
 def test_test_connection_reads_the_sample_and_shows_the_comparison(store, monkeypatch):
-    monkeypatch.setattr(azure_check, "packages_installed", lambda: True)
     client = _client(store)
     assert client.post("/settings/azure-check/test", headers=PAGE).json()["ok"] is False  # no endpoint yet
     azure_check.save_settings(store, enabled=False, endpoint=ENDPOINT, api_key=KEY)
@@ -599,10 +907,76 @@ def test_test_connection_reads_the_sample_and_shows_the_comparison(store, monkey
     snap = client.get("/jobs/azure-test").json()
     assert snap["state"] == "done" and snap["result"]["messages"][0]["text"].startswith("Azure agrees on")
     record = azure_check.last_test(store)
-    assert record["ok"] and record["host"] == HOST and fake.calls == ["prebuilt-invoice"]
+    assert record["ok"] and record["host"] == HOST and fake.calls == [""]
     page = client.get("/settings/azure-check").text
     assert "Connected" in page and "Azure agrees on" in page and KEY not in page
     assert ours is azure_check.connection_test
+
+
+def test_the_card_saves_which_invoices_and_the_pages_and_shows_the_model_fixed(store, monkeypatch):
+    client = _client(store)
+    monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")
+    page = client.get("/settings/azure-check").text
+    assert "Azure Document Intelligence" in page and "Only those AP Coder is unsure of" in page
+    assert "prebuilt-invoice, API 2024-11-30" in page and 'name="model"' not in page
+    answer = client.post("/settings/azure-check", headers=PAGE, data={
+        "enabled": "on", "endpoint": ENDPOINT, "api_key": KEY, "mode": "every", "invoice_pages": "3",
+        "spot_percent": "5", "daily_pages": "200"})  # fmt: skip
+    assert answer.json()["ok"]
+    cfg = azure_check.load_settings(store)
+    assert (cfg.mode, cfg.invoice_pages) == (azure_check.ALL, 3)
+    assert 'value="every" checked' in client.get("/settings/azure-check").text
+    refused = client.post("/settings/azure-check", headers=PAGE, data={"enabled": "on", "endpoint": ENDPOINT,
+                                                                       "invoice_pages": "0"})  # fmt: skip
+    assert refused.json()["ok"] is False and "pages sent of an invoice" in refused.json()["error"]
+
+
+def test_the_card_says_when_azure_is_not_reached(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    _process(store)
+    azure_check.check_one(_settings(), store, client=Down())
+    monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")
+    page = _client(store).get("/settings/azure-check").text
+    assert "not reached since" in page and "invoices are read on this computer" in page
+
+
+def test_the_doctor_says_off_ready_or_not_reached_without_asking_azure(store, monkeypatch):
+    from ap_coder.ops import doctor
+
+    (line,) = doctor.azure_checks(store, _settings())
+    assert (line.area, line.status) == ("Azure Document Intelligence", doctor.SKIP) and "off" in line.detail
+    _turn_on(store, monkeypatch)
+    (line,) = doctor.azure_checks(store, _settings())
+    assert line.status == doctor.PASS and HOST in line.detail and "0 of 200 pages today" in line.detail
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    _process(store)
+    azure_check.check_one(_settings(), store, client=Down())
+    (line,) = doctor.azure_checks(store, _settings())
+    assert line.status == doctor.WARN and "not reached since" in line.detail and KEY not in line.detail
+    azure_check.save_settings(store, enabled=True, endpoint="", api_key=KEY)
+    assert doctor.azure_checks(store, _settings())[0].status == doctor.FAIL
+
+
+def test_the_test_says_the_region_azure_names():
+    assert azure_check.region_note("canadacentral")["region_ok"] is True
+    assert azure_check.region_note("Canada Central")["region_ok"] is True
+    east = azure_check.region_note("eastus")
+    assert east["region_ok"] is False and "not Canada Central" in east["region_note"]
+    unnamed = azure_check.region_note("")
+    assert unnamed["region_ok"] is None and "confirm in the Azure portal" in unnamed["region_note"]
+
+
+def test_test_connection_through_the_real_client_records_the_region(store, monkeypatch):
+    from tests import fake_di
+
+    _turn_on(store, monkeypatch)
+    with fake_di.FakeDi(region="canadacentral") as fake:
+        client = di_http.DiClient(ENDPOINT, KEY, ca_file=str(fake_di.CA_FILE), connect_to=fake.connect_to,
+                                  sleep=lambda s: None)  # fmt: skip
+        record = azure_check.connection_test(store, _settings(), client=client)
+    assert record["ok"] and record["region"] == "canadacentral" and record["region_ok"] is True
+    assert record["summary"].startswith("Azure agrees on") and fake.deleted
 
 
 def test_the_card_can_be_included_anywhere_without_context(store):
@@ -617,12 +991,10 @@ def test_the_card_can_be_included_anywhere_without_context(store):
 
 
 def test_settings_reading_shows_the_azure_card_and_its_own_page_is_not_taken_for_a_tab(store, monkeypatch):
-    """Settings → Reading includes the card where the internet is allowed (the offline build uses no cloud service,
-    docs/PILOT.md); /settings/azure-check is the card's page, not "Settings has no such tab" from Settings'
-    /settings/{tab}."""
+    """Settings → Reading includes the card for the Admin, off as it is, in the offline build too (D-245: the owner's
+    decision; the developers' own cloud card stays where the internet is allowed, B-516); /settings/azure-check is
+    the card's page, not "Settings has no such tab" from Settings' /settings/{tab}."""
     client = _client(store)
-    assert 'id="azure-check"' not in client.get("/settings/reading").text
-    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
     reading = client.get("/settings/reading")
     assert reading.status_code == 200 and 'id="azure-check"' in reading.text
     assert "works fully offline without it" in reading.text

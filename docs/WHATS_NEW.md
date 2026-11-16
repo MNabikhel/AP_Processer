@@ -10,6 +10,19 @@ Your existing data is safe. On first start the database upgrades itself (schema 
 backup of AP Coder (the database and the invoice files) is made automatically once a day (the newest 14 are
 kept).
 
+## Azure Document Intelligence as an optional reader (D-245)
+
+- **Off by default, as before.** AP Coder reads every invoice on this computer and needs nothing from the internet.
+- **Switched on by an Admin** (Settings → Reading → Azure Document Intelligence) with your company's own resource's
+  endpoint and key, Azure now reads alongside AP Coder's own readers: where they agree, a field is surer (often
+  verified at once); where they differ, a person checks it, with both readings named; a field AP Coder missed is
+  filled in, but at most *likely*. Choose which invoices: only those AP Coder is unsure of (recommended), or every
+  invoice, to compare the two.
+- **Only that one address is contacted**, and only with an invoice's pages (its first four and its last, 200 pages a
+  day by default). Azure's copy of the reading is deleted as soon as it is read. No Azure package is needed.
+- **If Azure can't be reached**, AP Coder carries on with its own readers and says so on the card and in the reading
+  status; it tries again later.
+
 ## Sign-in on the laptop too, and the first sign-in with admin / admin (D-243)
 
 - **The laptop asks for a sign-in** (D-243): at its first start after this update, AP Coder opens on *Log in*. The

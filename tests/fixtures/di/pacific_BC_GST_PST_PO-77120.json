@@ -1,0 +1,562 @@
+{
+ "apiVersion": "2024-11-30",
+ "modelId": "prebuilt-invoice",
+ "stringIndexType": "unicodeCodePoint",
+ "content": "",
+ "pages": [
+  {
+   "pageNumber": 1,
+   "angle": 0,
+   "width": 8.5,
+   "height": 11,
+   "unit": "inch",
+   "words": [],
+   "lines": [],
+   "spans": []
+  }
+ ],
+ "documents": [
+  {
+   "docType": "invoice",
+   "boundingRegions": [
+    {
+     "pageNumber": 1,
+     "polygon": [
+      0,
+      0,
+      8.5,
+      0,
+      8.5,
+      11,
+      0,
+      11
+     ]
+    }
+   ],
+   "fields": {
+    "VendorName": {
+     "type": "string",
+     "content": "Pacific Office Supply Ltd.",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        0.6944,
+        0.4864,
+        3.0393,
+        0.4864,
+        3.0393,
+        0.7541,
+        0.6944,
+        0.7541
+       ]
+      }
+     ],
+     "confidence": 0.95,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 26
+      }
+     ],
+     "valueString": "Pacific Office Supply Ltd."
+    },
+    "VendorTaxId": {
+     "type": "string",
+     "content": "555666775 RT0001",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        1.2154,
+        1.0462,
+        2.3203,
+        1.0462,
+        2.3203,
+        1.2179,
+        1.2154,
+        1.2179
+       ]
+      }
+     ],
+     "confidence": 0.9,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 16
+      }
+     ],
+     "valueString": "555666775 RT0001"
+    },
+    "InvoiceId": {
+     "type": "string",
+     "content": "PO-77120",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        1.2642,
+        1.699,
+        1.8339,
+        1.699,
+        1.8339,
+        1.8707,
+        1.2642,
+        1.8707
+       ]
+      }
+     ],
+     "confidence": 0.95,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 8
+      }
+     ],
+     "valueString": "PO-77120"
+    },
+    "InvoiceDate": {
+     "type": "date",
+     "content": "2026-10-05",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        1.0279,
+        1.8795,
+        1.6672,
+        1.8795,
+        1.6672,
+        2.0513,
+        1.0279,
+        2.0513
+       ]
+      }
+     ],
+     "confidence": 0.96,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 10
+      }
+     ],
+     "valueDate": "2026-10-05"
+    },
+    "PaymentTerm": {
+     "type": "string",
+     "content": "Net 15",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        1.1181,
+        2.0601,
+        1.4863,
+        2.0601,
+        1.4863,
+        2.2318,
+        1.1181,
+        2.2318
+       ]
+      }
+     ],
+     "confidence": 0.9,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 6
+      }
+     ],
+     "valueString": "Net 15"
+    },
+    "SubTotal": {
+     "type": "currency",
+     "content": "$2,726.00",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        6.9444,
+        4.5458,
+        7.5622,
+        4.5458,
+        7.5622,
+        4.7371,
+        6.9444,
+        4.7371
+       ]
+      }
+     ],
+     "confidence": 0.95,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 9
+      }
+     ],
+     "valueCurrency": {
+      "amount": 2726.0,
+      "currencySymbol": "$",
+      "currencyCode": "CAD"
+     }
+    },
+    "InvoiceTotal": {
+     "type": "currency",
+     "content": "$3,053.12",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        6.9444,
+        5.2125,
+        7.5622,
+        5.2125,
+        7.5622,
+        5.4038,
+        6.9444,
+        5.4038
+       ]
+      }
+     ],
+     "confidence": 0.96,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 9
+      }
+     ],
+     "valueCurrency": {
+      "amount": 3053.12,
+      "currencySymbol": "$",
+      "currencyCode": "CAD"
+     }
+    },
+    "TaxDetails": {
+     "type": "array",
+     "valueArray": [
+      {
+       "type": "object",
+       "confidence": 0.9,
+       "content": "$136.30",
+       "valueObject": {
+        "Amount": {
+         "type": "currency",
+         "content": "$136.30",
+         "boundingRegions": [
+          {
+           "pageNumber": 1,
+           "polygon": [
+            6.9444,
+            4.7681,
+            7.4464,
+            4.7681,
+            7.4464,
+            4.9593,
+            6.9444,
+            4.9593
+           ]
+          }
+         ],
+         "confidence": 0.9,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 7
+          }
+         ],
+         "valueCurrency": {
+          "amount": 136.3,
+          "currencySymbol": "$",
+          "currencyCode": "CAD"
+         }
+        },
+        "Rate": {
+         "type": "string",
+         "valueString": "5%",
+         "content": "5%",
+         "confidence": 0.9
+        }
+       }
+      },
+      {
+       "type": "object",
+       "confidence": 0.9,
+       "content": "$190.82",
+       "valueObject": {
+        "Amount": {
+         "type": "currency",
+         "content": "$190.82",
+         "boundingRegions": [
+          {
+           "pageNumber": 1,
+           "polygon": [
+            6.9444,
+            4.9903,
+            7.4464,
+            4.9903,
+            7.4464,
+            5.1815,
+            6.9444,
+            5.1815
+           ]
+          }
+         ],
+         "confidence": 0.9,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 7
+          }
+         ],
+         "valueCurrency": {
+          "amount": 190.82,
+          "currencySymbol": "$",
+          "currencyCode": "CAD"
+         }
+        },
+        "Rate": {
+         "type": "string",
+         "valueString": "7%",
+         "content": "7%",
+         "confidence": 0.9
+        }
+       }
+      }
+     ]
+    },
+    "Items": {
+     "type": "array",
+     "valueArray": [
+      {
+       "type": "object",
+       "valueObject": {
+        "Description": {
+         "type": "string",
+         "content": "HP 26X toner cartridges (G, P)",
+         "boundingRegions": [
+          {
+           "pageNumber": 1,
+           "polygon": [
+            1.0417,
+            3.2083,
+            2.5546,
+            3.2083,
+            2.5546,
+            3.361,
+            1.0417,
+            3.361
+           ]
+          }
+         ],
+         "confidence": 0.93,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 30
+          }
+         ],
+         "valueString": "HP 26X toner cartridges (G, P)"
+        },
+        "Quantity": {
+         "type": "number",
+         "valueNumber": 10,
+         "content": "10",
+         "confidence": 0.92
+        },
+        "UnitPrice": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 89.0,
+          "currencyCode": "CAD"
+         },
+         "content": "89.00",
+         "confidence": 0.91
+        },
+        "Amount": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 890.0,
+          "currencyCode": "CAD"
+         },
+         "content": "890.00",
+         "confidence": 0.94
+        }
+       },
+       "content": "HP 26X toner cartridges (G, P) 10 89.00 890.00",
+       "boundingRegions": [
+        {
+         "pageNumber": 1,
+         "polygon": [
+          0.6,
+          3.1806,
+          7.9,
+          3.1806,
+          7.9,
+          3.3888,
+          0.6,
+          3.3888
+         ]
+        }
+       ],
+       "confidence": 0.9
+      },
+      {
+       "type": "object",
+       "valueObject": {
+        "Description": {
+         "type": "string",
+         "content": "Dell 27\" monitor P2725H (G, P)",
+         "boundingRegions": [
+          {
+           "pageNumber": 1,
+           "polygon": [
+            1.0417,
+            3.5417,
+            2.5878,
+            3.5417,
+            2.5878,
+            3.6943,
+            1.0417,
+            3.6943
+           ]
+          }
+         ],
+         "confidence": 0.93,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 30
+          }
+         ],
+         "valueString": "Dell 27\" monitor P2725H (G, P)"
+        },
+        "Quantity": {
+         "type": "number",
+         "valueNumber": 4,
+         "content": "4",
+         "confidence": 0.92
+        },
+        "UnitPrice": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 329.0,
+          "currencyCode": "CAD"
+         },
+         "content": "329.00",
+         "confidence": 0.91
+        },
+        "Amount": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 1316.0,
+          "currencyCode": "CAD"
+         },
+         "content": "1,316.00",
+         "confidence": 0.94
+        }
+       },
+       "content": "Dell 27\" monitor P2725H (G, P) 4 329.00 1,316.00",
+       "boundingRegions": [
+        {
+         "pageNumber": 1,
+         "polygon": [
+          0.6,
+          3.5139,
+          7.9,
+          3.5139,
+          7.9,
+          3.7221,
+          0.6,
+          3.7221
+         ]
+        }
+       ],
+       "confidence": 0.9
+      },
+      {
+       "type": "object",
+       "valueObject": {
+        "Description": {
+         "type": "string",
+         "content": "Copy paper, letter, case of 10 reams (G, P)",
+         "boundingRegions": [
+          {
+           "pageNumber": 1,
+           "polygon": [
+            1.0417,
+            3.875,
+            3.166,
+            3.875,
+            3.166,
+            4.0277,
+            1.0417,
+            4.0277
+           ]
+          }
+         ],
+         "confidence": 0.93,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 43
+          }
+         ],
+         "valueString": "Copy paper, letter, case of 10 reams (G, P)"
+        },
+        "Quantity": {
+         "type": "number",
+         "valueNumber": 10,
+         "content": "10",
+         "confidence": 0.92
+        },
+        "UnitPrice": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 52.0,
+          "currencyCode": "CAD"
+         },
+         "content": "52.00",
+         "confidence": 0.91
+        },
+        "Amount": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 520.0,
+          "currencyCode": "CAD"
+         },
+         "content": "520.00",
+         "confidence": 0.94
+        }
+       },
+       "content": "Copy paper, letter, case of 10 reams (G, P) 10 52.00 520.00",
+       "boundingRegions": [
+        {
+         "pageNumber": 1,
+         "polygon": [
+          0.6,
+          3.8472,
+          7.9,
+          3.8472,
+          7.9,
+          4.0554,
+          0.6,
+          4.0554
+         ]
+        }
+       ],
+       "confidence": 0.9
+      }
+     ]
+    }
+   },
+   "confidence": 1,
+   "spans": [
+    {
+     "offset": 0,
+     "length": 0
+    }
+   ]
+  }
+ ],
+ "contentFormat": "text"
+}

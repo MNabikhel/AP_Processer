@@ -54,7 +54,13 @@ from .types import (
 # How far each reader is trusted on its own (before its per-reading score). "vlm": the page reader.
 RELIABILITY = {"rules": 0.85, "template": 0.92, "di": 0.85, "ai": 0.8, "ocr": 0.8, "ocr2": 0.8, "vlm": 0.85}
 # Readers of the page itself, whose first choice the page reader's is held against.
-PAGE_READERS = ("rules", "ocr", "ocr2", "template", "di")
+PAGE_READERS = ("rules", "ocr", "ocr2", "template")
+# The readers on this computer whose first choice Azure Document Intelligence's is held against (D-245), and how a
+# person is told of each.
+LOCAL_READERS = {"rules": "the rule reader", "template": "the supplier's template", "ocr": "the second OCR reading",
+                 "ocr2": "the second OCR engine", "vlm": "the page reader"}  # fmt: skip
+AZURE = "di"  # Azure Document Intelligence (ai/azure_check.py): the optional cloud reader, never first (D-245)
+AZURE_NAME = "Azure Document Intelligence"
 VERIFIED_AT = 0.985
 SAME_MISREAD = 0.2  # chance that two independent wrong readings coincide
 # Checks whose failure has innocent explanations (exempt lines, shipping not taxed, line items the
@@ -133,9 +139,9 @@ class _Group:
         return 1.0 - p_wrong * SAME_MISREAD ** max(extra, 0.0)
 
     def best(self) -> Reading:
-        # The page reader's value is found back on the page; another reader's reading of the same value comes
-        # first, so the evidence pattern names how the page's own text was read.
-        return max(self.readings, key=lambda sr: (bool(sr[1].boxes), sr[0] != "vlm", sr[1].score))[1]
+        # The page reader's value is found back on the page, Azure's box is its own; another reader's reading of the
+        # same value comes first, so the evidence pattern names how the page's own text was read (and its box shows).
+        return max(self.readings, key=lambda sr: (bool(sr[1].boxes), sr[0] not in ("vlm", AZURE), sr[1].score))[1]
 
 
 def _groups(field: str, by_source: dict[str, list[Reading]]) -> list[_Group]:
@@ -453,6 +459,32 @@ def _page_reader_differs(
     return None
 
 
+def _azure_differs(field: str, by_source: dict[str, dict[str, list[Reading]]]) -> tuple[Reading, str, Reading] | None:
+    """(Azure's reading, the local reader, its reading) when Azure's first choice for ``field`` and a local reader's
+    first choice are different values (D-245)."""
+    azure = (by_source.get(AZURE) or {}).get(field) or []
+    theirs = _key(field, azure[0].value) if azure else None
+    if theirs is None:
+        return None
+    for source in LOCAL_READERS:
+        local = (by_source.get(source) or {}).get(field) or []
+        mine = _key(field, local[0].value) if local else None
+        if mine is not None and mine != theirs:
+            return azure[0], source, local[0]
+    return None
+
+
+def _local_first(groups: list[_Group]) -> None:
+    """A value only Azure read never comes first where a reader on this computer read another (D-245): the local
+    reading is chosen, Azure's stays as its rival (and the field goes to a person, ``_azure_differs``). A value only
+    Azure read fills a field nothing else read. In place."""
+    if len(groups) < 2 or {s for s, _ in groups[0].readings} != {AZURE}:
+        return
+    local = [i for i, g in enumerate(groups) if any(s in LOCAL_READERS for s, _ in g.readings)]
+    if local:
+        groups.insert(0, groups.pop(local[0]))
+
+
 def _template_sum_of_taxes(chosen: dict[str, _Group | None]) -> bool:
     """The total tax read by the template alone, and it is the sum of the taxes the other readers read: nothing of its
     own (a vendor that prints one tax and no total tax, the total tax approved at that tax's spot)."""
@@ -574,6 +606,7 @@ def _choose_readings(by_source: dict[str, dict[str, list[Reading]]], fields: tup
         per_source = {s: cands.get(f, []) for s, cands in by_source.items() if cands.get(f)}
         groups = _groups(f, per_source)
         _vouched_first(groups)
+        _local_first(groups)
         if f == "vendor_name":
             _whole_first_word(groups)
         if layout_source == "text":
@@ -697,6 +730,11 @@ def _calibrated(fz: _Fusion, f: str, g: _Group, raw: float, best: Reading, sourc
         # (patterns with it are not measured yet): it never makes the value less certain.
         without = evidence_key(f, [s for s in vouched if s != "vlm"], best.method, **alike)
         conf = max(conf, calibrate(measured, without, local))
+    if AZURE in vouched and len(vouched) > 1:
+        # Azure agreeing (D-245) likewise: no pattern with it is measured yet, and it never makes the value less
+        # certain than the readers on this computer alone.
+        rest = [s for s in vouched if s not in (AZURE, "vlm")] or [s for s in vouched if s != AZURE]
+        conf = max(conf, calibrate(measured, evidence_key(f, rest, best.method, **alike), local))
     if "template" in sources and len(sources) > 1:
         # Likewise the supplier's template agreeing: the pattern without it may be measured (the rule reader's name
         # with a rival name under it), the one with it not yet. Agreeing never makes the value less certain than the
@@ -812,6 +850,10 @@ def _capped(fz: _Fusion, f: str, g: _Group, conf: float, raw: float, vouched: li
     if any(PART_OF_TERMS in r.method for r in readings):
         conf = min(conf, SINGLE_READER_CAP)
         reasons.append("the terms ask for a deposit first: these days are only the balance's")
+    if {s for s, _ in g.readings} == {AZURE}:
+        # Read only in the cloud, by nothing on this computer: likely at best, whatever confirms it (D-245).
+        conf = min(conf, SINGLE_READER_CAP)
+        reasons.append(f"read only by {AZURE_NAME}")
     if all(UNMEASURED in r.method for r in readings):
         # Wording the benchmark never prints: its reading's family has a measured record, this wording not. Two OCR
         # reads of a scan see the same pixels: however many agree, only a check on other fields lifts it.
@@ -848,7 +890,12 @@ def _status(fz: _Fusion, f: str, g: _Group, conf: float, best: Reading, speck: b
     if readers_differ:
         vlm_reading, other, other_reading = readers_differ
         reasons.append(f"the page reader read {vlm_reading.value}, {other} read {other_reading.value}")
-    if f in fz.failed or f in fz.look or coding_differs or readers_differ or speck:
+    azure_differs = _azure_differs(f, fz.by_source)  # the cloud reader against this computer's (D-245)
+    if azure_differs:
+        theirs, local, mine = azure_differs
+        a, b = (f"{v:,.2f}" if isinstance(v, float) else v for v in (theirs.value, mine.value))
+        reasons.append(f"{AZURE_NAME} read {a}, {LOCAL_READERS[local]} read {b}")
+    if f in fz.failed or f in fz.look or coding_differs or readers_differ or azure_differs or speck:
         return CHECK
     if conf >= VERIFIED_AT and best.boxes:
         return VERIFIED
@@ -999,13 +1046,44 @@ def _totals_that_add_up(chosen: dict[str, Any], all_groups: dict[str, list[Any]]
             contest[f] = max(contest.get(f, 0.0), others[0].strength() / max(g.strength(), 1e-9) if others else 0.0)
 
 
+def _worked_out_beside_azure(results: dict[str, FieldResult], azure: FieldResult, parts: list[FieldResult]) -> None:
+    """The total tax worked out from the taxes read on this computer, never less sure than without Azure: the same
+    as Azure's, it keeps Azure as a source; another, the field goes to a person with both named."""
+    total = round(sum(float(p.value) for p in parts), 2)
+    sure = all(p.status == VERIFIED for p in parts)
+    status = VERIFIED if sure else (CHECK if any(p.status == CHECK for p in parts) else LIKELY)
+    reasons = ["worked out: " + " + ".join(LABELS[p.field] for p in parts)]
+    sources: dict[str, str] = {"computed": "sum of the taxes"}
+    theirs = azure.sources.get(AZURE, "")
+    try:
+        same = abs(float(azure.value) - total) <= 0.011
+    except (TypeError, ValueError):
+        same = False
+    if same:
+        sources[AZURE] = theirs
+        reasons.append(f"{AZURE_NAME} read the same")
+    else:
+        status = CHECK
+        sources[f"other:{azure.value}"] = AZURE
+        reasons.append(f"{AZURE_NAME} read {float(azure.value):,.2f}, the taxes add up to {total:,.2f}")
+    results["tax_total"] = FieldResult("tax_total", total, min(p.confidence for p in parts), status, [], sources,
+                                       reasons)  # fmt: skip
+
+
 def _derive_tax_total(results: dict[str, FieldResult]) -> None:
-    """When only the separate taxes are printed, the total tax is their sum (marked as worked out)."""
+    """When only the separate taxes are printed, the total tax is their sum (marked as worked out). One only Azure
+    read is worked out from the taxes the readers on this computer read just the same (D-245): Azure agreeing is one
+    more source of it; differing, a person checks it."""
     tt = results.get("tax_total")
-    if tt is None or tt.status != MISSING:
+    azure_only = tt is not None and {k for k in tt.sources if not k.startswith("other:")} == {AZURE}
+    if tt is None or (tt.status != MISSING and not azure_only):
         return
-    parts = [results[f] for f in TAX_FIELDS if f in results and results[f].status != MISSING]
+    parts = [results[f] for f in TAX_FIELDS if f in results and results[f].status != MISSING
+             and {k for k in results[f].sources if not k.startswith("other:")} != {AZURE}]  # fmt: skip
     if not parts:
+        return
+    if azure_only:
+        _worked_out_beside_azure(results, tt, parts)
         return
     conf = min(p.confidence for p in parts)
     status = (

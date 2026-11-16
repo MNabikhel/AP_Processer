@@ -215,6 +215,7 @@ LINE_SOURCES = {
     "words": "the words on the page",  # the PDF's text or OCR, the whole page (no table found)
     "listed": "the amounts listed above the subtotal",  # a receipt's items: no headings, adding up to the subtotal
     "vlm": "OvisOCR2",  # the page reader's transcription of the table
+    "di": "Azure Document Intelligence",  # the optional cloud reader's Items, when an Admin switched it on (D-245)
 }
 
 

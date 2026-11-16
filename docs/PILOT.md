@@ -91,8 +91,9 @@ folder of its own, so a demo never mixes with the pilot's invoices. What it does
     reader next to AP Coder's own readers and OvisOCR2), reviews every invoice (the AI reviewer) and suggests
     accounts. It never decides alone: its answers are checked against the other readers and your rules.
 - **No Azure needed.** The offline build reads and codes every invoice on the laptop, and the installer asks no
-  cloud questions. The optional Azure check is the one exception: it has its own switch (Settings → Reading),
-  is off by default and sends nothing unless IT switches it on; it does not need `AP_ALLOW_INTERNET`. Azure as
+  cloud questions. The optional Azure Document Intelligence reader (D-245) is the one exception: the company's own
+  resource, switched on by an Admin (Settings → Reading), off by default and sending nothing until then; it does
+  not need `AP_ALLOW_INTERNET` nor any package. Azure as
   the reader or the coder exists only for developers with the internet allowed (`AP_ALLOW_INTERNET=1`).
 
 ## Install: one button
@@ -193,9 +194,9 @@ goes online.
 >   builds it** (a build on a Mac also holds that Mac's; on Linux, Linux's), for Python 3.11, 3.12, 3.13 and 3.14,
 >   with the `ocr` (OCR for scans), `dev` (pytest, for `--installer --full-tests`) and `azure` extras, and the OCR
 >   and table-finder models. `--no-current` leaves the building computer's packages out.
-> - **Why `azure`:** the packages of the optional *Azure check* (*Settings → Reading → Azure check*, off by
->   default), so turning it on needs no download. It sends nothing unless AP turns it on with your organisation's
->   own Azure endpoint and key. For a pilot without Azure, `--extras ocr dev` leaves them out; nothing else changes.
+> - **Why `azure`:** the packages a developer's Azure build uses (`AP_ALLOW_INTERNET=1`). The optional Azure
+>   Document Intelligence reader (*Settings → Reading*, off by default, D-245) needs none: AP Coder asks it with
+>   its own HTTPS client. For a pilot, `--extras ocr dev` leaves them out; nothing else changes.
 > - **Where it downloads from** (HTTPS, port 443): `pypi.org` and `files.pythonhosted.org` (the packages) and
 >   `www.modelscope.cn` (the models), and two mirrors, asked only for a model modelscope fails to give:
 >   `huggingface.co` for the OCR models and `github.com` for the table finder (its author's own release; the file
@@ -505,10 +506,12 @@ The only outside connections are the ones someone chooses:
   terminal that runs APProcessor.bat, the installer also checks GitHub for updates, and the app may use a model
   server or Azure on the internet. `scripts/build_offline_bundle.py` sets it for itself, on IT's computer. Never
   set it on a computer that runs AP Coder.
-- **The Azure check**, its own opt-in switch in Settings → Reading (off by default, no `AP_ALLOW_INTERNET`
-  needed): once it is switched on with your organisation's Azure endpoint and key, the invoices AP Coder isn't
-  sure of, and a small share of the others (capped per day), are sent to that one Azure resource for a second
-  opinion. Azure as the reader or the coder is developer-only, on a computer
+- **Azure Document Intelligence** (D-245), an Admin's opt-in switch in Settings → Reading (off by default, no
+  `AP_ALLOW_INTERNET` needed): once it is switched on with your company's own resource (Canada Central), its
+  endpoint and key, the invoices AP Coder isn't sure of (or every invoice, to compare), at most 5 pages each and
+  200 pages a day by default, are sent to that one host and read beside AP Coder's own readers: a disagreement
+  goes to a person, agreeing makes a field surer. Nothing else goes online. Azure as the coder, or the developer
+  reader, is developer-only, on a computer
   with `AP_ALLOW_INTERNET=1`; the offline build ignores those Azure settings.
 - **The finance hub feed** (off by default, Settings → Finance hub): it writes tables to a shared folder you
   choose, or to OneLake only with `AP_ALLOW_INTERNET=1`. See [FINANCE_HUB.md](FINANCE_HUB.md).

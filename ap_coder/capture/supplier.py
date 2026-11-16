@@ -1666,6 +1666,8 @@ def should_auto_approve(
                             credit_note=capture.credit_note, pages_left_out=capture.pages_left_out)  # fmt: skip
     if gates:
         return False, "always a person: " + "; ".join(gates)
+    if any(li.source == "di" for li in capture.line_items):  # the page gave no lines: Azure's alone (D-245)
+        return False, "a line only Azure Document Intelligence read: a person checks it against the page"
     if not checks_ok:
         return False, "a check failed"
     failed = [c.get("code") or "check" for c in capture.checks if not c.get("ok", True)]

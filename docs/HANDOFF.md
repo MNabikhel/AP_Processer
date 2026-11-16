@@ -167,8 +167,8 @@ finder, D-205: asked only for a model the site fails to give; `build_offline_bun
 that may push tags and create releases. **Before the first push of the whole history, switch Actions off (or delete
 `release.yml`)**: the first push runs every workflow, and `release.yml` would spend 60 to 90 minutes checking an old
 release on Windows and create GitHub releases for its tags. Switch `ci.yml` on first; `release.yml` only once the
-company cuts its own releases. The default test tier skips 6 tests on a fresh copy, as expected: the Azure extra (2),
-pyarrow (2), the table-finder model (1) and one Windows-only test.
+company cuts its own releases. The default test tier skips 4 tests on a fresh copy, as expected: pyarrow (2), the
+table-finder model (1) and one Windows-only test.
 
 ---
 
@@ -424,7 +424,10 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   (`docs/SERVER.md` section 8, point 7). LM Studio is started again when it stops and not updated by itself
   (`docs/SERVER.md` section 8, point 8; on a Mac, section 14). LM Studio's docs don't list Windows Server; the release check runs its headless
   server there for each pilot release.
-- **Optional Azure Document Intelligence check:** off by default; contacts only its configured endpoint.
+- **Optional Azure Document Intelligence (D-245):** off by default; an Admin switches it on (Settings → Reading)
+  with the company's own resource's endpoint and key, and it then reads invoices beside AP Coder's own readers.
+  It contacts only that endpoint, over HTTPS on port 443, with no proxy: IT opens that one host in the egress
+  firewall. Test connection reads the made-up sample and names the region when Azure's answer does.
 
 ### 6.12 Excel/CSV and custom exports
 
@@ -479,6 +482,7 @@ CNC contact, IT's contact for the pilot's machine and the server, and who owns t
 | Coding policy; meals accounts; approval limit | AP lead | GL accounts & tax → Coding policy; Settings → Review |
 | The rule that says which invoices AP Coder owns in the pilot; today's touch time an invoice, timed | AP lead | `docs/PILOT_PLAN.md` |
 | E1's vouchers for the parallel week (F0411, and F0911 for the distribution; the columns are in `docs/JDE_E1.md`) | JDE team | `python -m ap_coder pilot-score` (the pilot's parallel week) |
+| If Azure Document Intelligence is wanted (optional, D-245): a resource of the company's own in Canada Central, tier S0 (F0 reads 2 pages and 4 MB only), its endpoint and key, the egress firewall rule for its one host (`<name>.cognitiveservices.azure.com`, 443, no proxy), the expected monthly pages and the company's price a 1,000 pages (list: about US$10) | IT, the AI team | Settings → Reading → Azure Document Intelligence (an Admin) |
 | LM Studio and the models (a chat model: Gemma 4 12B or Qwen 3.5 9B; OvisOCR2's GGUF and vision file) | IT, from LM Studio's model catalogue | `docs/LM_STUDIO.md`, `docs/PILOT.md` "What you need" |
 | The model register: each local model's publisher and licence (Gemma 4, Google, and Qwen 3.5, Alibaba's Qwen team, are published under Apache 2.0; OvisOCR2's from its model card; LM Studio has been free for work use since July 2025). They run offline: nothing is sent to their publishers | The AI team, before the security review (step 7) | `docs/LM_STUDIO.md` |
 
