@@ -1,4 +1,4 @@
-"""The Azure check's card (Settings → Reading): Azure AI Document Intelligence as an optional second opinion.
+"""The card of Azure Document Intelligence, the optional reader (Settings → Reading; D-245).
 
 The card is ``templates/partials/azure_check.html``; Settings → Reading includes it, and ``/settings/azure-check``
 shows it on its own. It draws itself: the template global ``azure_check_card(request)`` gives it what it shows
