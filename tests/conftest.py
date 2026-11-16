@@ -140,6 +140,7 @@ def _isolate(monkeypatch, folder: Path) -> None:
     monkeypatch.setenv("AP_USER_SETTINGS", str(folder / "user_settings.json"))  # not the real ~/.ap_coder
     monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)  # the offline default, even in an online CI job
     monkeypatch.delenv("AP_LAUNCH_LOCK_HELD", raising=False)
+    monkeypatch.setenv("AP_UPDATE_CHECK", "0")  # no launcher asks GitHub for a release (tests/launcher/test_releases)
 
 
 def _clear_reading_memory() -> None:

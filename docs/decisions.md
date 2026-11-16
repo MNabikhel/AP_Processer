@@ -5991,3 +5991,38 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     (`shared_here`) and opens the team's address once it serves, as a double-click while it serves does.
   - Rejected: starting `share` in-process (its server's output would not be read or logged, nor its address seen);
     the installer's own start stays as it was (it is not the morning's double-click).
+- **D-247** · **AP Coder from GitHub's ZIP asks, at each start, about a newer tested release, and updates only on a
+  yes** (`scripts/releases.py`, `scripts/launch.py` `offer_update` `handover`, `.github/workflows/builds.yml`; the
+  owner's decision; 16 Nov 2026). A named exception to the offline rule, as D-94's first setup is: only the
+  launcher, only GitHub, only AP Coder from GitHub's ZIP or a checkout, and the download only when asked for.
+  - **Tested releases only:** `builds.yml` runs when CI completes on a push to main, and only when it passed; it
+    releases that commit as `v<version>-build.<commit>` with its source ZIP (`git archive`, laid out as GitHub's own:
+    one folder, `ap_coder/BUILD` stamped), `SHA256SUMS`, and notes: the first-parent subjects since the last build
+    (the merged pull requests), then `Build <commit>, committed <UTC time>`, which orders two builds of one version
+    (every version is 0.3.0 for now). GITHUB_TOKEN with `contents: write` only. A commit older than the last build
+    released is left out. Made with `--latest=false`: the pilot releases (D-129) stay "Latest" on GitHub's page.
+  - **The check:** one GET of `api.github.com/repos/<REPO>/releases?per_page=20` (`REPO` a constant, never the git
+    remote), not `/releases/latest`: the pilot releases share the repository, so the newest build is the first with a
+    build tag, its ZIP and `SHA256SUMS`. Through this computer's proxy (urllib's), a User-Agent naming the program,
+    nothing else sent; 5 seconds at most in all, then "Couldn't check for a newer version of AP Coder; starting this
+    one." In phase 1, after D-231's question, before anything is set up. Never: the offline bundle (manifest,
+    wheelhouse or models: `plain_download`), `AP_ALLOW_INTERNET=0`, `AP_UPDATE_CHECK=0`, `--no-update`, `--no-start`
+    (the server's own set-ups; a laptop shared with `share` is asked, D-246), server mode, a demo, or the new folder
+    an update just started (`AP_UPDATE_FROM`). Newer: a higher version, or the same one committed later; a folder
+    whose build time can't be told is never offered one.
+  - **Asking:** the version, its day and up to 12 lines of notes, then "Update now? [Y/n]". `--yes` takes it; nobody
+    at the window (`AP_NO_PAUSE`, no terminal) is said and not taken. No: that release is not asked about again
+    (`update_skipped` in `~/.ap_coder/settings.json`; `--update` asks again), and this version starts.
+  - **Taking it:** the ZIP and `SHA256SUMS` from GitHub's hosts only (api.github.com, github.com,
+    objects/release-assets.githubusercontent.com), every redirect checked, over HTTPS; the SHA-256 must match; the ZIP
+    must be one folder named after it, with no name outside it (absolute, `..`, a drive, a backslash) and no link,
+    holding AP Coder of the release's version; unzipped beside this folder (never over it, never in the data folder),
+    then renamed into place. Its own `APProcessor` then runs in this window as a double-click would (`handover`: this
+    start's lock let go, `AP_UPDATE_FROM` so D-231's question is not asked twice), and takes over: stops nothing that
+    runs (nothing does yet), backs the database up, records itself, repoints the shortcut, cleans this folder up after
+    its self-check (what this window still holds open: on a later start). A failure is said, the download and a half
+    unzipped folder deleted, and this version starts. A folder an earlier yes unzipped, the same build, is started
+    again, not downloaded again.
+  - **Not done:** a signature of our own (the SHA-256 comes from the same release: it proves the download is whole,
+    and TLS that it is GitHub's); updating a checkout with git (it gets a folder beside it like a ZIP); a limit on how
+    often a build is released (each merge to main that passes CI is one, so the tester is asked after each).

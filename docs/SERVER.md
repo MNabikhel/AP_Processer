@@ -1821,6 +1821,12 @@ its own, the window stays open on why. A second double-click while it serves onl
 file of your own is needed. This holds while no service is installed (a service's server, stopped, is said and not
 started), and `APProcessor.bat --without-sign-in` still opens the data in laptop mode, on purpose.
 
+On a laptop that runs GitHub's ZIP (not the offline bundle), that double-click first asks GitHub whether a newer
+tested AP Coder is out, as any start from the ZIP does (D-247, [PILOT.md](PILOT.md#updating-ap-coder)): it says
+what is new and asks *Update now? [Y/n]*. It is asked only while AP Coder is not shared (a double-click while it
+serves only opens the browser), so nobody is signed in. Yes: the new version is downloaded and unzipped beside this
+folder, backs the database up, takes over, and runs `share` itself.
+
 What it does, and what it leaves to a person:
 
 | What sharing needs | What `share` does |

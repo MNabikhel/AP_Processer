@@ -333,7 +333,9 @@ Unzip the new version **anywhere** (a new folder, or over the old one: when Wind
 files in the destination*; AP Coder may still be open) and
 double-click its **`APProcessor.bat`** (Mac: `APProcessor.command`). It stops the old one, says what changed,
 sets up only what is new, keeps your data and settings, and cleans up the old version once its self-check
-passed. The details: [PILOT.md](PILOT.md#updating-ap-coder).
+passed. From GitHub's ZIP you rarely need to: each start asks GitHub for a newer tested version and, when there is
+one, says what is new and asks *Update now? [Y/n]* (never the offline bundle; `--no-update` or `AP_UPDATE_CHECK=0`
+switches it off). The details: [PILOT.md](PILOT.md#updating-ap-coder).
 
 ---
 

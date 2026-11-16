@@ -6,6 +6,9 @@ packages for) and runs this file with it. It then:
 1. sets up and starts nothing when this folder holds an older AP Coder than the current install (an old folder or
    ZIP started by mistake: it says to use the newer one's shortcut; the data is never opened by older code), and
    asks before taking over from an older current install in another folder ("Update it to ...? [Y/n]", D-231);
+   then, from GitHub's ZIP or a checkout, asks GitHub for a newer tested release and, said with what is new, takes it
+   only on a yes ("Update now? [Y/n]": unzipped beside this folder, whose own launcher then takes over;
+   ``offer_update``, ``scripts/releases.py``, D-247);
 2. reuses ``.venv`` (it creates it only the first time, and again only when it is broken, or made with a Python
    the offline bundle has no packages for while one it has is installed); from PyPI, only once the package site
    answers (through this computer's proxy), so a blocked network leaves no half-made .venv;
@@ -41,8 +44,9 @@ the internet. Its setup gets the packages and OCR models from one of two places:
 * the code alone (GitHub's ZIP or a git checkout: no manifest, no wheelhouse): like CloseDesk, the setup downloads
   them once (packages from PyPI, the OCR models and the table finder from www.modelscope.cn or, when it fails, their
   mirrors, huggingface.co and github.com; APProcessor.bat offers Python 3.12 with winget), for its own steps only
-  (:func:`plain_download`).
-  ``AP_ALLOW_INTERNET=0`` forbids that.
+  (:func:`plain_download`). It also asks GitHub's releases once a start for a newer tested AP Coder (one GET, 5 s at
+  most; the ZIP only when the person says yes; ``--no-update`` or ``AP_UPDATE_CHECK=0`` switch it off).
+  ``AP_ALLOW_INTERNET=0`` forbids both.
 
 ``AP_ALLOW_INTERNET=1`` (developers, the bundle builder) also allows PyPI next to a wheelhouse built for another
 computer, and ``install.py``'s git update.
@@ -58,8 +62,8 @@ says what to do; an error no step expected is said in one line, its traceback in
 
 ``--installer`` runs the installer's extra steps instead (``scripts/install.py``: data folder and Azure
 questions, self-test): ``APProcessor.bat --installer`` / ``./APProcessor.command --installer``. Other options:
-``--check`` (run the self-check again), ``--no-start``, ``--yes``. Anything else (e.g. ``--port 8502``) goes to the
-dashboard.
+``--check`` (run the self-check again), ``--no-start``, ``--yes``, ``--no-update``, ``--update`` (D-247). Anything else
+(e.g. ``--port 8502``) goes to the dashboard.
 
 Standard library only until the packages are installed: the first run starts with no packages at all.
 """
@@ -95,6 +99,7 @@ for _folder in (ROOT, SCRIPTS):  # ap_coder/ops/offline.py is standard-library o
 
 import check_deps  # noqa: E402  (standard library plus pip's packaging)
 import fetch_models  # noqa: E402  (standard library only)
+import releases  # noqa: E402  (standard library only)
 import running  # noqa: E402  (standard library only)
 import upgrade  # noqa: E402  (standard library only)
 
@@ -2471,6 +2476,8 @@ def update_wanted(args: argparse.Namespace, older: dict, ident: dict) -> bool:
     the installer's flags), nor for a demo, which takes nothing over (B-1510)."""
     if args.yes or os.environ.get("AP_NO_PAUSE") or demo_start() or not getattr(sys.stdin, "isatty", lambda: False)():
         return True
+    if paths.same_folder(os.environ.get(releases.UPDATE_FROM_ENV), older["folder"]):  # (asked there already: D-247)
+        return True
     exact = paths.describe(older) == paths.describe(ident)  # (the same version, rebuilt the same day)
     question = (f"AP Coder {paths.describe(older, exact)} is installed in {older['folder']}. Update it to "
                 f"{paths.describe(ident, exact)}? Your invoices and settings are kept (a backup is made first). "
@@ -2702,6 +2709,82 @@ def older_folder_setup(args: argparse.Namespace) -> None:
         say(said)
 
 
+UPDATE_CHECK_ENV = "AP_UPDATE_CHECK"  # 0 (or false / no / off): never ask GitHub for a newer AP Coder (D-247)
+
+
+def update_check_wanted(args: argparse.Namespace) -> bool:
+    """Whether this start asks GitHub for a newer tested AP Coder (D-247): only AP Coder from GitHub's ZIP or a
+    checkout (:func:`plain_download`: never the offline bundle, never with AP_ALLOW_INTERNET=0), only a start that
+    starts it (not --no-start: the server's own set-ups; a laptop shared with ``share`` starts share), never on the
+    company server, for a demo, or in the new folder an update just made; never with --no-update or
+    AP_UPDATE_CHECK=0."""
+    off = (os.environ.get(UPDATE_CHECK_ENV) or "").strip().lower() in ("0", "false", "no", "off")
+    set_up_only = args.no_start and not args.shared
+    return not (args.no_update or off or set_up_only or os.environ.get(releases.UPDATE_FROM_ENV) or server_mode()
+                or demo_start()) and plain_download()  # fmt: skip
+
+
+def offer_update(args: argparse.Namespace, argv: list[str]) -> int | None:
+    """A newer tested AP Coder on GitHub (``scripts/releases.py``, D-247): said, with what is new, and asked about
+    ("Update now? [Y/n]"; --yes takes it, nobody at the window leaves it). Yes: downloaded, checked, unzipped beside
+    this folder, and its own launcher started, which takes over (:func:`handover`). No: this version starts, and that
+    release is not asked about again (``--update`` asks again). GitHub not answering, or a release that is not right:
+    said, and this version starts. Returns the exit code once handed over, else None."""
+    if not update_check_wanted(args):
+        return None
+    try:
+        release = releases.newest()
+    except Exception as exc:  # noqa: BLE001 - any failure: said in one line, the details in the log
+        log(f"The check for a newer AP Coder failed: {exc!r}")
+        say("Couldn't check for a newer version of AP Coder; starting this one.")
+        return None
+    if release is None or not releases.is_newer(release, identity()):
+        return None
+    if paths.read_user_settings().get("update_skipped") == release.tag and not args.update:
+        say(f"AP Coder {release.shown()} is available (you said no to it). To update: start AP Coder with "
+            f"{'APProcessor.bat' if WINDOWS else './APProcessor.command'} --update.")  # fmt: skip
+        return None
+    say()
+    say(f"A newer AP Coder is available: {release.shown()}. What's new:")
+    for change in release.whats_new():
+        say(f"  {change}")
+    if not args.yes:
+        if os.environ.get("AP_NO_PAUSE") or not getattr(sys.stdin, "isatty", lambda: False)():
+            say("It was not installed: nobody is at this window to say yes. Starting this version.")
+            return None
+        if not yes_answered("Update now? Your invoices and settings are kept (a backup is made first). [Y/n] "):
+            paths.write_user_settings(update_skipped=release.tag)
+            say("Starting this version. You are not asked about this one again.")
+            return None
+    try:
+        folder = releases.take(release, ROOT, paths.private_dir(), say)
+    except releases.UpdateError as exc:
+        say()
+        line("fail", f"The update was not installed: {exc}.")
+        say("  Starting this version; the next start asks again.")
+        return None
+    say(f"AP Coder {release.shown()} is in {folder}: starting it. It takes over from this one.")
+    return handover(folder, argv)
+
+
+def handover(folder: Path, argv: list[str]) -> int:
+    """The new folder's own launcher, in this window, as a double-click on its APProcessor runs it: it backs the
+    database up, records itself, points the shortcut at itself and cleans this folder up once its self-check passed.
+    This start lets go of its lock first, and the new one is told this folder said yes already
+    (``releases.UPDATE_FROM_ENV``). 0 whatever it ended with: its own window said why, and paused."""
+    release_lock()
+    env = {name: value for name, value in os.environ.items() if name != LOCK_HELD_ENV}
+    env[releases.UPDATE_FROM_ENV] = str(ROOT)
+    try:
+        subprocess.call(releases.handover_command(folder, argv), cwd=folder, env=env)
+    except OSError as exc:
+        return failed(SetupError(f"The new AP Coder in {folder} could not be started ({exc}).",
+                                 f"Double-click APProcessor in {folder}."))  # fmt: skip
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 def yes_answered(question: str) -> bool:
     """``question`` asked in the window: Enter (or anything but no) is yes."""
     try:
@@ -2723,8 +2806,11 @@ def parse(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--yes", action="store_true", help="no questions (automated runs)")
     parser.add_argument("--check", action="store_true", help="run the self-check again")
     parser.add_argument("--no-start", action="store_true", help="set up and check, but don't start the dashboard")
+    parser.add_argument("--no-update", action="store_true", help="don't ask GitHub for a newer AP Coder this time")
+    parser.add_argument("--update", action="store_true", help="ask about the newest AP Coder, even one said no to")
     parser.add_argument("--venv", help=argparse.SUPPRESS)  # what the first phase did with .venv
     parser.add_argument("--venv-ok", action="store_true", help=argparse.SUPPRESS)  # the double-click's quick check
+    parser.set_defaults(shared=False)  # (set by _main: a laptop shared with share, which starts share)
     return parser.parse_known_args(argv)
 
 
@@ -2771,7 +2857,7 @@ def _main(argv: list[str] | None = None) -> int:
         code = team_server_instead(rest, set_up=True)
         shared = code == SHARED_LAPTOP
         if shared:
-            args.no_start = True
+            args.no_start = args.shared = True
         elif code is not None:
             return code
     if not os.environ.get(LOCK_HELD_ENV):  # (set: a parent start holds it, e.g. the first phase for the second)
@@ -2787,6 +2873,8 @@ def _main(argv: list[str] | None = None) -> int:
         os.environ[LOCK_HELD_ENV] = str(os.getpid())  # for what this start runs: never waits for itself
     if args.venv is None:  # the first phase: what is installed already decides, before anything is set up (D-231)
         code = installed_already(args, rest)
+        if code is None:
+            code = offer_update(args, argv)  # a newer tested AP Coder on GitHub, asked about (D-247)
         if code is not None:
             return code
     if not in_venv():
