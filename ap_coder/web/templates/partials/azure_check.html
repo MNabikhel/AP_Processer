@@ -38,7 +38,7 @@
     <label class="check"><input type="checkbox" name="enabled" value="on"{% if az.enabled %} checked{% endif %}>
       Use Azure Document Intelligence</label>
     <fieldset class="field" style="margin-top: 12px; border: 0; padding: 0">
-      <legend>Which invoices</legend>
+      <legend>Sent to Azure</legend>
       {% for value, label in az.modes.items() %}
       <label class="check"><input type="radio" name="mode" value="{{ value }}"{% if az.mode == value %} checked{% endif %}>
         {{ label }}{% if value == "unsure" %} (recommended){% endif %}</label>
