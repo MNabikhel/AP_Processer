@@ -1,0 +1,7 @@
+{# The Admin panel's tabs (pages/admin.py, D-249): those the person may open. #}
+<nav class="tabs" aria-label="Admin">
+  {% for path, label in admin_tabs %}
+  {% set here = request.url.path == path or (path != "/admin" and request.url.path.startswith(path ~ "/")) %}
+  <a href="{{ path }}" class="{{ 'on' if here else '' }}"{% if here %} aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>

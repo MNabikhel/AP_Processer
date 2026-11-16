@@ -1,17 +1,20 @@
 """The steps of a login before its session (D-146): a login half way, its password right and its code still to come;
 and the first sign-in (D-243), admin / admin typed on the computer running AP Coder, the first Admin's own password
 still to choose. Each is kept by its token's SHA-256 in the short-lived table for ``PENDING_SECONDS``, never a
-session (``web/pages/login.py``). The store's clock is ``users._clock`` (the tests move it by hand)."""
+session (``web/pages/login.py``). The store's clock is ``users._clock`` (the tests move it by hand). And what the
+Admin panel shows of the sessions and the sign-ins, and its Sign out everywhere (D-249)."""
 
 from __future__ import annotations
 
 import contextlib
 import hmac
+import json
 import os
 import secrets
 from typing import Any
 
 from . import users
+from .dialect import begin_write, json_get
 from .users import (
     _USER_COLUMNS,
     ADMIN,
@@ -164,3 +167,49 @@ class SignInMixin:
     def end_first_sign_in(self, token: str | None) -> None:
         with self._conn() as conn:
             conn.execute("DELETE FROM ephemeral WHERE kind = ? AND token = ?", (FIRST_KIND, token_hash(token or "")))
+
+    # --- What the Admin panel shows (D-249) --------------------------------------------------------------------------
+
+    def sign_out_everywhere(self, user_id: int, *, actor: str = "") -> int:
+        """An Admin ends every session of someone else's account (a computer left signed in, D-249): how many ended,
+        recorded as ``sessions_ended``. Their password and their authenticator app stay as they are."""
+        with self._conn() as conn:
+            begin_write(conn)
+            row = self._account(conn, user_id)
+            ended = conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],)).rowcount
+            self._end_pending(conn, row["id"])
+            self._log(conn, "sessions_ended", None, actor or None, {"username": row["username"], "count": ended})
+        return int(ended)
+
+    def live_sessions(self, user_id: int | None = None) -> list[dict[str, Any]]:
+        """The sessions within their time (D-249), the most recently used first: whose (``user_id``, ``username``,
+        ``name``), since and last used (epoch seconds), and the address and browser it came from. Never the token,
+        nor its hash. ``user_id``: one account's only."""
+        now = users._clock()
+        where, args = "s.created_at > ? AND s.last_seen >= ?", [now - self.session_absolute, now - self.session_idle]
+        if user_id is not None:
+            where += " AND s.user_id = ?"
+            args.append(int(user_id))
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT s.user_id, u.username, u.display_name, s.created_at, s.last_seen, s.ip, s.user_agent FROM "
+                f"sessions s JOIN users u ON u.id = s.user_id WHERE {where} ORDER BY s.last_seen DESC, u.username",
+                args,
+            ).fetchall()
+        return [{"user_id": int(r["user_id"]), "username": r["username"], "name": r["display_name"] or r["username"],
+                 "since": float(r["created_at"]), "last_seen": float(r["last_seen"]), "address": r["ip"],
+                 "browser": r["user_agent"]} for r in rows]  # fmt: skip
+
+    def sign_in_events(self, username: str, limit: int = 20) -> list[dict[str, Any]]:
+        """An account's latest logins, logouts, tries that didn't match and pauses (D-249), newest first, as
+        ``events`` gives them: read off the audit trail, which keeps them after a reset clears ``login_attempts``."""
+        actions = ("login", "login_failed", "login_locked", "logout", "password_changed", "password_reset",
+                   "authenticator_enrolled", "authenticator_reset", "sessions_ended")  # fmt: skip
+        with self._conn() as conn:
+            rows = [dict(r) for r in conn.execute(
+                f"SELECT * FROM events WHERE action IN ({', '.join('?' for _ in actions)}) AND "
+                f"{json_get('detail', '$.username')} = ? ORDER BY id DESC LIMIT ?",
+                (*actions, users.fold_username(username), int(limit)))]  # fmt: skip
+        for r in rows:
+            r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
+        return rows

@@ -52,7 +52,7 @@ GROUPS = {
     "Backups": ["backup_made", "backup_restored"],
     "Logins": ["login", "login_failed", "login_locked", "logout", "password_changed", "password_reset", "user_added",
                "role_changed", "user_cost_centers_set", "user_deactivated", "user_activated", "address_unlocked",
-               "downloaded", "authenticator_enrolled", "authenticator_reset"],
+               "downloaded", "authenticator_enrolled", "authenticator_reset", "sessions_ended"],
 }  # fmt: skip
 TIMELINE_SHOWN = 200  # the events a page of the timeline shows; the older ones are on the next (B-1597)
 TABLE_SHOWN = 1000

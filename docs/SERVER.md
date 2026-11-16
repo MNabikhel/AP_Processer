@@ -767,6 +767,11 @@ kept anywhere to look up later). They must change it when they first sign in, th
 (*Sign-in codes*, below). The same page resets a password (a new temporary one, shown once), resets an authenticator
 app, changes a role, and turns an account off or on again (an Admin can't turn off the last Admin).
 
+The *Admin* entry of the menu (Admins only, D-249) gathers it: *Users*; a page per person (click their username:
+where they are signed in, with which browser and from which address, their latest sign-ins and tries that didn't
+match, what they did, and *Sign out everywhere*); *Sign-in* (everyone signed in now, and the paused addresses and
+usernames); *Activity*; and links to the Azure, JD Edwards AIS and backup settings.
+
 | Role | Can |
 |---|---|
 | Read-only | Look at invoices, the review queue, reports, the exports list and Help. Change nothing. |

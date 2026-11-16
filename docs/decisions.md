@@ -6045,3 +6045,24 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     it). The card, the pages, the suggestions' reasons ("14 lines posted in JD Edwards", "this supplier's usual
     account: 14 of 15 past lines"), the command line and the guides now say past invoice coding. The code's names
     (`journal`, `journal_files`) stay.
+- **D-249** · **One Admin panel where people sign in, and a page per person** (`web/pages/admin.py`,
+  `templates/admin*.html`, `_admin_tabs.html`, `_paused.html`; `core/store/users.py` `live_sessions`,
+  `sign_in_events`, `sign_out_everywhere`; 16 Nov 2026). The owner asked for it: what an Admin looks after was on
+  Users (reached from the rail's foot), Activity and Settings' tabs.
+  - **One entry:** *Admin* in the menu, above Settings and Help, for whoever may open `/admin` (its rule in
+    `web/roles.py`), only where people sign in (`signs_in`: the server, `share`, a laptop's own sign-in, D-243). It
+    replaces the foot's *Users* link. Its tabs: Overview, Users (`/admin/users`, the address kept), Sign-in
+    (`/admin/sign-in`: every session within its time, whose, the browser and system in words, the address, since
+    and last used, and the pauses, lifted there too), Activity (`/activity`, as it is). The overview links to the
+    Azure Document Intelligence, JD Edwards AIS and backup settings, which stay on their Settings tabs.
+  - **A page per person** (`/admin/users/<id>`): name, username, role, status, added, last login; where they are
+    signed in now; their latest sign-ins, logouts and tries that didn't match (off the audit trail by username, so
+    a reset that clears `login_attempts` keeps them); what they did (the Activity log's own query by the name their
+    events are recorded under, 50 a page, newest first, each invoice linked); and the Users page's actions, which come
+    back to the page (`back=user`). New: *Sign out everywhere* (`sessions_ended` in the Activity log), never one's
+    own account (Your password's *Log out everywhere else* keeps this browser signed in). A session's token, or its
+    hash, is never shown.
+  - **On a laptop's own sign-in** only its Admin signs in: the panel has their own page, Sign-in and Activity; the
+    people (and, D-250, the roles) stay the server's, `/admin/users` answering 404 there as before.
+  - **Left as it was:** what a person did is found by their name, as on Activity: two accounts with one name share it
+    (the page says so).

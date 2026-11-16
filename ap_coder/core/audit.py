@@ -123,6 +123,7 @@ ACTIONS = {
     "address_unlocked": ("lock_open", "info", "Address unpaused"),
     "authenticator_enrolled": ("verified_user", "info", "Authenticator app set up"),  # (D-146)
     "authenticator_reset": ("phonelink_erase", "warn", "Authenticator reset"),
+    "sessions_ended": ("logout", "warn", "Signed out everywhere"),  # by an Admin (D-249)
 }
 
 
@@ -658,6 +659,7 @@ _ACCOUNT_WORDS = {  # server mode's accounts (D-97): who, in plain words
     "address_unlocked": "logins from {address} are no longer paused",
     "authenticator_enrolled": "{user} set up their authenticator app: a code from it at every login",
     "authenticator_reset": "{user} sets their authenticator app up again at the next login (logged out everywhere)",
+    "sessions_ended": "{user} was signed out on every computer and browser",
 }
 
 

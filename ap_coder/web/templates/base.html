@@ -53,6 +53,10 @@
         {% endif %}
       </nav>
       <nav class="nav nav-pinned" aria-label="Settings and help">
+        {% if admin_link %}{# where people sign in, for whoever may open the Admin panel (D-249) #}
+        <a href="/admin" class="nav-link{% if page == 'admin' %} on{% endif %}" title="Admin"{% if page == 'admin' %} aria-current="page"{% endif %}>
+          <span class="ms" aria-hidden="true">admin_panel_settings</span><span class="label">Admin</span></a>
+        {% endif %}
         {% for item in rail.pinned %}{{ nav_link(item) }}{% endfor %}
       </nav>
       <div class="rail-foot">
@@ -63,7 +67,7 @@
         <div class="apc-env" title="{{ data_folder }}">{{ ui.status("Offline · Data stays on this computer", "ok") }}</div>
         {% endif %}
         {% if account %}
-        {# Server mode (D-97): the person logged in, their role, their password, the users (Admin) and Log out. #}
+        {# Server mode (D-97): the person logged in, their role, their password and Log out (the users: Admin, D-249). #}
         {# (a Manager approves no invoice: only the role) #}
         {% set mine = account.role_label ~ ("" if account.role == "manager" else " · " ~ (approved_today | num) ~ " approved today") %}
         <div class="apc-me" title="{{ account.username }} · {{ mine }}">
@@ -72,7 +76,6 @@
         </div>
         <div class="apc-me-links">
           <a href="/account/password">Your password</a>
-          {% if account.role == "admin" %}<a href="/admin/users">Users</a>{% endif %}
           {# logs out at once: a POST (app.js sends it with the header every action of the page carries) #}
           <form method="post" action="/logout" class="apc-me-logout"><button type="submit">Log out</button></form>
         </div>

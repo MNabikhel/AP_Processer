@@ -212,6 +212,9 @@ RULES: dict[tuple[str, str], str] = {
         "POST /admin/users/{user_id:int}/activate", "POST /admin/users/addresses/unlock",
         "POST /admin/users/{user_id:int}/reset-authenticator",  # set up again at the next login (D-146)
         "POST /admin/users/usernames/unlock",
+        # The Admin panel (D-249): its overview, a person's page, signing someone out everywhere, the sign-in.
+        "GET /admin", "GET /admin/users/{user_id:int}", "POST /admin/users/{user_id:int}/sign-out",
+        "GET /admin/sign-in",
         "GET /help/report/setup",  # the server's versions, settings and names (D-109)
     ),
 }  # fmt: skip

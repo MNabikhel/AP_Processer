@@ -958,6 +958,8 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
         "admin_notice": admin_notice(request),  # the server's HTTPS certificate near its end, or past it (D-187)
         "account": account(request),
         "laptop_signed_in": identity.LAPTOP_ACCOUNT.get() is not None,  # its Log out and password (D-243)
+        # The menu's Admin entry: where people sign in, for whoever may open the panel (D-249).
+        "admin_link": signs_in(request) and identity.signed_in() is not None and can(request, "/admin", "GET"),
         "can": functools.partial(can, request),
     }
     base.update(context)

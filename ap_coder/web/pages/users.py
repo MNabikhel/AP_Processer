@@ -73,7 +73,9 @@ def _keep(request: Request, username: str, password: str) -> str:
     return key
 
 
-def _take(request: Request, key: str | None) -> dict[str, str] | None:
+def take_temporary(request: Request, key: str | None) -> dict[str, str] | None:
+    """The temporary password kept under ``key`` for the Admin asking, once (None: none, another's, or past its
+    time)."""
     found = identity.person()
     if not key or found is None:
         return None
@@ -94,35 +96,47 @@ def _take(request: Request, key: str | None) -> dict[str, str] | None:
     return {"username": kept[2], "password": kept[3]}
 
 
-def _server_only(request: Request) -> None:
+def server_only(request: Request) -> None:
     if not server_mode(request):
         raise HTTPException(404, "Users and logins are only for AP Coder on a company server (server mode).")
 
 
-def _user(request: Request, user_id: int) -> dict[str, Any]:
+def account(request: Request, user_id: int) -> dict[str, Any]:
     found = get_store(request).user(user_id)
     if found is None:
         raise HTTPException(404, "There is no such account.")
     return found
 
 
+def paused_context(store: Any) -> dict[str, Any]:
+    """The addresses and the usernames logins are paused for now, each with until when (on Users and on the Admin
+    panel's Sign-in, D-249)."""
+    return {"paused": [{**p, "until": _clock_text(p["until"])} for p in store.paused_addresses()],
+            "paused_names": [{**p, "until": _clock_text(p["until"])} for p in store.paused_usernames()]}  # fmt: skip
+
+
+def _back(user_id: int, back: str) -> str:
+    """Where an action on an account leads: the person's own page when it was sent from there (D-249), else Users."""
+    return f"{PATH}/{user_id}" if back == "user" else PATH
+
+
 @router.get(PATH, response_class=HTMLResponse)
 def users_page(request: Request, shown: str = "") -> HTMLResponse:
-    _server_only(request)
+    from ap_coder.web.pages import admin
+
+    server_only(request)
     me = identity.person()
-    return render(request, "admin_users.html", "", title="Users", users=get_store(request).list_users(),
-                  roles=[(r, ROLE_LABELS[r]) for r in ROLES], temporary=_take(request, shown),
-                  paused=[{**p, "until": _clock_text(p["until"])} for p in get_store(request).paused_addresses()],
-                  paused_names=[{**p, "until": _clock_text(p["until"])}
-                                for p in get_store(request).paused_usernames()],
-                  me=me.user_id if me else 0)  # fmt: skip
+    return render(request, "admin_users.html", "admin", title="Users", users=get_store(request).list_users(),
+                  roles=[(r, ROLE_LABELS[r]) for r in ROLES], temporary=take_temporary(request, shown),
+                  **paused_context(get_store(request)), me=me.user_id if me else 0,
+                  **admin.common(request))  # fmt: skip
 
 
 @router.post(f"{PATH}/add")
 def add_user(
     request: Request, username: str = Form(""), name: str = Form(""), role: str = Form("clerk")
 ) -> JSONResponse:
-    _server_only(request)
+    server_only(request)
     store = get_store(request)
     from ap_coder.core.store.users import fold_username, temporary_password
 
@@ -139,24 +153,24 @@ def add_user(
 
 
 @router.post(PATH + "/{user_id:int}/reset")
-def reset(request: Request, user_id: int) -> JSONResponse:
-    _server_only(request)
-    found = _user(request, user_id)
+def reset(request: Request, user_id: int, back: str = Form("")) -> JSONResponse:
+    server_only(request)
+    found = account(request, user_id)
     me = identity.person()
     if me is not None and me.user_id == found["id"]:  # it would log you out before the password is shown (D-101)
         return refuse(OWN_RESET)
     password = get_store(request).reset_password(user_id, actor=reviewer(), by_user=me.user_id if me else None)
     key = _keep(request, found["username"], password)
     said = f"Password of {found['username']} reset: they are logged out everywhere."
-    return done(request, f"{PATH}?shown={key}", flash_message(said, "ok"))
+    return done(request, f"{_back(user_id, back)}?shown={key}", flash_message(said, "ok"))
 
 
 @router.post(PATH + "/{user_id:int}/reset-authenticator")
-def reset_authenticator(request: Request, user_id: int) -> JSONResponse:
+def reset_authenticator(request: Request, user_id: int, back: str = Form("")) -> JSONResponse:
     """A person's authenticator app forgotten (a phone lost or replaced, D-146), and their password with it (a phone
     lost or stolen may go with it): a temporary one shown once; they set the app up again at their next login."""
-    _server_only(request)
-    found = _user(request, user_id)
+    server_only(request)
+    found = account(request, user_id)
     me = identity.person()
     if me is not None and me.user_id == found["id"]:  # it would log you out before the password is shown
         return refuse(OWN_AUTHENTICATOR)
@@ -164,26 +178,32 @@ def reset_authenticator(request: Request, user_id: int) -> JSONResponse:
     key = _keep(request, found["username"], password)
     said = (f"Authenticator and password of {found['username']} reset: they are logged out everywhere, log in with "
             "the temporary password below and set their authenticator app up again.")  # fmt: skip
-    return done(request, f"{PATH}?shown={key}", flash_message(said, "ok"))
+    return done(request, f"{_back(user_id, back)}?shown={key}", flash_message(said, "ok"))
 
 
 @router.post(PATH + "/addresses/unlock")
-def unlock_address(request: Request, address: str = Form("")) -> JSONResponse:
+def unlock_address(request: Request, address: str = Form(""), back: str = Form("")) -> JSONResponse:
     """Lift the pause of an address (30 tries that didn't match from it: a shared NAT, RDS or proxy address)."""
-    _server_only(request)
+    server_only(request)
     if not get_store(request).unlock_address(address, actor=reviewer()):
         return refuse(f"Logins from {address or 'that address'} are not paused.")
-    return done(request, PATH, f"Logins from {address} are no longer paused.")
+    return done(request, _after_unpause(back), f"Logins from {address} are no longer paused.")
 
 
 @router.post(PATH + "/usernames/unlock")
-def unlock_username(request: Request, username: str = Form(""), address: str = Form("")) -> JSONResponse:
+def unlock_username(request: Request, username: str = Form(""), address: str = Form(""),
+                    back: str = Form("")) -> JSONResponse:  # fmt: skip
     """Lift the pause of a username from an address (5 tries that didn't match: someone forgot their password)."""
-    _server_only(request)
+    server_only(request)
     where = "anywhere" if address == ANYWHERE else address
     if not get_store(request).unlock_username(username, address, actor=reviewer()):
         return refuse(f"Logins as {username or 'that username'} from {where or 'that address'} are not paused.")
-    return done(request, PATH, f"Logins as {username} from {where} are no longer paused.")
+    return done(request, _after_unpause(back), f"Logins as {username} from {where} are no longer paused.")
+
+
+def _after_unpause(back: str) -> str:
+    """Users, or the Admin panel's Sign-in when the pause was lifted there (D-249)."""
+    return "/admin/sign-in" if back == "sign-in" else PATH
 
 
 def _clock_text(epoch: float) -> str:
@@ -191,39 +211,40 @@ def _clock_text(epoch: float) -> str:
 
 
 @router.post(PATH + "/{user_id:int}/role")
-def change_role(request: Request, user_id: int, role: str = Form("")) -> JSONResponse:
-    _server_only(request)
-    found = _user(request, user_id)
+def change_role(request: Request, user_id: int, role: str = Form(""), back: str = Form("")) -> JSONResponse:
+    server_only(request)
+    found = account(request, user_id)
     try:
         get_store(request).set_role(user_id, role, actor=reviewer())
     except ValueError as exc:
         return refuse(str(exc))
-    return done(request, PATH, f"{found['username']} is now {ROLE_LABELS.get(role, role)}.")
+    return done(request, _back(user_id, back), f"{found['username']} is now {ROLE_LABELS.get(role, role)}.")
 
 
 @router.post(PATH + "/{user_id:int}/cost-centers")
-def change_cost_centers(request: Request, user_id: int, cost_centers: str = Form("")) -> JSONResponse:
+def change_cost_centers(request: Request, user_id: int, cost_centers: str = Form(""),
+                        back: str = Form("")) -> JSONResponse:  # fmt: skip
     """The cost centers a Manager answers for (D-138): shown when AP picks who to send an invoice to."""
-    _server_only(request)
-    found = _user(request, user_id)
+    server_only(request)
+    found = account(request, user_id)
     kept = get_store(request).set_user_cost_centers(user_id, cost_centers, actor=reviewer())
-    return done(request, PATH, f"{found['username']} answers for {kept or 'no cost center'}.")
+    return done(request, _back(user_id, back), f"{found['username']} answers for {kept or 'no cost center'}.")
 
 
 @router.post(PATH + "/{user_id:int}/deactivate")
-def deactivate(request: Request, user_id: int) -> JSONResponse:
-    _server_only(request)
-    found = _user(request, user_id)
+def deactivate(request: Request, user_id: int, back: str = Form("")) -> JSONResponse:
+    server_only(request)
+    found = account(request, user_id)
     try:
         get_store(request).deactivate_user(user_id, actor=reviewer())
     except ValueError as exc:
         return refuse(str(exc))
-    return done(request, PATH, f"{found['username']} can no longer log in (logged out everywhere).")
+    return done(request, _back(user_id, back), f"{found['username']} can no longer log in (logged out everywhere).")
 
 
 @router.post(PATH + "/{user_id:int}/activate")
-def activate(request: Request, user_id: int) -> JSONResponse:
-    _server_only(request)
-    found = _user(request, user_id)
+def activate(request: Request, user_id: int, back: str = Form("")) -> JSONResponse:
+    server_only(request)
+    found = account(request, user_id)
     get_store(request).activate_user(user_id, actor=reviewer())
-    return done(request, PATH, f"{found['username']} can log in again.")
+    return done(request, _back(user_id, back), f"{found['username']} can log in again.")
