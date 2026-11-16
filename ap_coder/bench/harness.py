@@ -279,7 +279,10 @@ def run(
     workers: int = 1,
     reader: str = "auto",
     regen: bool = False,
+    di_responses: str | Path | None = None,
 ) -> dict[str, Any]:
+    """``di_responses``: a folder of Azure Document Intelligence's recorded answers (``di_compare``): each case is also
+    read with its answer among the readers, compared in readers.json / readers.md; the report stays AP Coder's own."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     reader_name = resolve_reader(reader)
@@ -314,6 +317,14 @@ def run(
     with (out / "evidence.jsonl").open("w", encoding="utf-8") as fh:
         for row in scored["evidence"]:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    if di_responses:
+        from ap_coder.bench import di_compare
+
+        answers, warnings = di_compare.load_responses(di_responses, cases)
+        chosen = [(c, job) for c, job in zip(cases, jobs, strict=True) if c.id in answers]
+        read = _map(di_compare.read_with_di, [(job[0], job[2], str(answers[c.id])) for c, job in chosen], workers,
+                    "read (with Azure)")  # fmt: skip
+        di_compare.write(out, cases, outputs, {c.id: r for (c, _), r in zip(chosen, read, strict=True)}, warnings)
     return report
 
 

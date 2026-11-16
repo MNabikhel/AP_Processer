@@ -150,9 +150,9 @@ def main(argv: list[str] | None = None) -> int:
     for name, sizes in QUICK.items():
         took = sizes["took"]
         parsers[name].add_argument("--quick", action="store_true", help=f"a small run to check a change ({took})")
-    from ap_coder.bench import coding_journal, load, seed, volume  # each adds its own subcommand, or its options
+    from ap_coder.bench import coding_journal, di_compare, load, seed, volume  # each adds its subcommand or options
 
-    for part in (load, seed, volume, coding_journal):
+    for part in (load, seed, volume, coding_journal, di_compare):
         part.add_parser(sub)
     a = p.parse_args(argv)
     if a.cmd == "load":
@@ -290,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
         cases = prepare_cases(Path(a.out) / "cases", a.n, a.seed, a.scanned, a.workers, a.regen)
         print(f"{len(cases)} invoices in {Path(a.out) / 'cases'}")
         return 0
-    report = run(a.n, a.seed, a.scanned, a.out, a.workers, a.reader, a.regen)
+    report = run(a.n, a.seed, a.scanned, a.out, a.workers, a.reader, a.regen, a.di_responses)
     s = report["summary"]
     o, inv = s["overall"], s["invoices"]
 
