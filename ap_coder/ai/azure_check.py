@@ -1,22 +1,27 @@
-"""The Azure check: Azure AI Document Intelligence as an optional second opinion, off unless AP turns it on.
+"""Azure AI Document Intelligence as an optional reader, off unless an Admin turns it on (D-245).
 
 AP Coder reads every invoice on this computer and needs nothing from the internet. Turned on (Settings → Reading →
-Azure check), a background thread sends some invoices to Azure Document Intelligence (``prebuilt-invoice``) and
-compares the fields Azure reads with the values AP Coder's own readers settled on:
+Azure Document Intelligence) with the company's own resource, a background thread sends invoices to Azure Document
+Intelligence (``prebuilt-invoice``), reads them again with Azure's answer among the readers (capture's merge rules:
+local first, a disagreement to a person, agreeing surer, a value only Azure read at most likely) and compares the
+fields:
 
 * **low-confidence**: every invoice AP Coder isn't sure of (a header field read but not *verified*, a field an
   invoice needs to go touchless not found, or a check that failed);
 * **spot-check**: a share of the others, every field verified (5% by default), picked by the file's content
   (``spot_pick``: the same invoice is always picked or not, like the touchless audit sample), so readers that are
   right 99.9% of the time are still compared with an independent reader once in a while;
-* never more pages a day than the daily cap (200 by default), so the cost is bounded; the rest wait for tomorrow.
+* or **every invoice** (the mode ``ALL``), to compare the two readers;
+* at most the first and last pages of an invoice (5 by default) and never more pages a day than the daily cap (200 by
+  default), so the cost is bounded; the rest wait for tomorrow.
 
 The check never holds up *Import invoices*: invoices are put in line (``azure_checks``) and checked in the
-background, after OvisOCR2 has read them when it is running. Azure agreeing is recorded ("Azure agrees on 11 of 11
-fields"). A field Azure read differently is marked *Check* with the reason "Azure Document Intelligence read X", the
-invoice gets a review issue and can't be approved without a person; an invoice picked for a spot-check isn't
-approved without a person until Azure has agreed. Azure's reading is scored like the other readers' when AP approves
-(reader "di" on Learning → Readers), so its own accuracy is measured over time.
+background, after OvisOCR2 has read them when it is running. Azure's answer is kept (``cache_path``) and read with
+the invoice whenever it is read again (``kept_reading``). Azure agreeing is recorded ("Azure agrees on 11 of 11
+fields"). A field Azure read differently is marked *Check*, the invoice gets a review issue and can't be approved
+without a person; an invoice picked for a spot-check isn't approved without a person until Azure has agreed. Azure
+not reached, the invoice stays as AP Coder's own readers read it and the queue pauses (``paused``). Azure's reading is
+scored like the other readers' when AP approves (reader "di" on Learning → Readers), so its accuracy is measured.
 
 Network: only the endpoint configured is contacted, over HTTPS, with its key, by AP Coder's own plain-HTTPS client
 (``di_http``, API version 2024-11-30, D-245): every address, Azure's result address included, is checked against that

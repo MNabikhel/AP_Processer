@@ -5918,3 +5918,35 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     27 and made by `_SCHEMA` in a new one. Going back: the first start of this version makes the before-update backup
     once (`ap_coder-<date>-before-update-from-schema-27.db`); an older version then refuses the database
     (`DatabaseTooNew`), and `server-update --back` (or the steps of `docs/UPGRADING.md`) puts that backup back.
+- **D-245** · **Azure Document Intelligence is the one named cloud exception to the offline rule: one more reader,
+  never first** (`ai/di_http.py`, `ai/azure_check.py`, `capture/__init__.py` `_di_readings` `_di_lines`,
+  `capture/confidence.py` `_local_first` `_azure_differs`, `bench/di_compare.py`; `tests/offline/test_offline_guard.py`,
+  `tests/ai/test_di_http.py`, `tests/fake_di.py`; 16 Nov 2026).
+  - **The choice:** as D-104 is for JD Edwards' AIS, Azure Document Intelligence is a named exception: the company's
+    own resource in Canada Central, off by default, switched on by an Admin with its endpoint and key. When on, AP
+    Coder contacts only that one host (analyze, poll, delete, at API 2024-11-30), over HTTPS (TLS 1.2 or later),
+    with no proxy and no redirect, and only with an invoice's pages (at most 5 by default, under the daily cap of
+    200). `AP_ALLOW_INTERNET` is neither needed nor changed. Nothing else goes online.
+  - **Why:** the owner wants the two readers compared on the same invoices, and a fallback where the local models are
+    weak, while the laptop stays offline.
+  - **How it reads:** the Azure check (D-02) becomes a reader. Azure's answer is kept by the file's SHA-256 and read
+    with the invoice: local readers win a disagreement, which goes to a person; agreeing raises the confidence (never
+    below the local readers alone); a value only Azure read is at most likely, so never approved without a person.
+    Which invoices: those AP Coder is unsure of (and the spot-check share), or every invoice, to compare. Azure's
+    lines are marked agreed with the page's, and used only where the page gave none.
+  - **The client:** AP Coder's own, standard library only (`http.client`): the Azure SDK isn't needed. Every address,
+    Azure's result address included, is checked against the saved host before a socket opens. The result is deleted
+    once read (`DELETE .../analyzeResults/{resultId}`, as the 2024-11-30 REST reference documents it), so Azure keeps
+    nothing. A 429 waits for Retry-After (3 tries), a 5xx or no connection is tried again at 2 then 5 seconds, a
+    400/401/403/404 never; an analyze that reached Azure is never sent twice (it would be billed twice).
+  - **Down:** nothing waits on Azure. After 3 failures in a row the queue pauses 15 minutes (a refused key: until the
+    settings change); the Reading status, the card and the invoice's check say invoices are read on this computer.
+  - **The key:** in the data folder's .env only: never in the database, a log, the Activity detail, a backup or an
+    error, shown back only as its last four characters.
+  - **Not confirmed:** whether Azure's answer names its region (`x-ms-region` is read when present; the 2024-11-30
+    reference lists no such header): Test connection says so, and IT confirms Canada Central in the portal.
+  - **Left out of v1:** sign-in through Entra ID or a managed identity, a proxy, other models and query fields,
+    Azure's words as the layout, Azure's lines replacing the page's, the discount, amount due, addresses and bank
+    details, a monthly cost cap, the batch API, parallel calls, touchless approval on a value only Azure read, and
+    the developer `extract` command (still the SDK, behind `AP_ALLOW_INTERNET=1`). No recorded answers are committed
+    for the benchmark yet: `bench record-di` records them on a developer's computer.

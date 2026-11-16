@@ -8,7 +8,8 @@ this file is wrong.
 
 AP Coder is an **offline** build: nothing it runs connects to the internet unless a developer or the bundle builder
 sets `AP_ALLOW_INTERNET=1` (`ap_coder/ops/offline.py:internet_allowed`). The exceptions, by design and each off by
-default, are switched on by someone on purpose: the optional Azure check (its own switch in Settings → Reading), the
+default, are switched on by someone on purpose: the optional Azure Document Intelligence, the company's own resource
+(an Admin's switch in Settings → Reading, D-245), the
 finance hub feed (a shared folder; OneLake only with `AP_ALLOW_INTERNET=1`), the JD Edwards AIS connection (a named
 internal system, D-104) and server mode, which listens on the network over HTTPS
 ([section 10](#10-the-network-every-place-and-its-gate)).
@@ -639,8 +640,8 @@ messages, so it stays on the computer like the data. The dashboard's Activity pa
 | 8 | `ap_coder/ai/local_llm.py:check_server`, `build_local_client`, `probe`; `ap_coder/ai/page_reader.py:_post_json`, `_client` | LM Studio / Ollama at `AP_LLM_BASE_URL` / `AP_PAGE_READER_BASE_URL` (default `127.0.0.1:1234`), and their backups `AP_LLM_BACKUP_URL` / `AP_PAGE_READER_BACKUP_URL` (D-180) | this computer or the office network (private address, bare or `.local`/`.lan` name) only; an internet address only with `AP_ALLOW_INTERNET=1` (`refused_address`); no proxy for a local one |
 | 9 | `ap_coder/ai/extraction.py:DocumentExtractor` | Azure Document Intelligence as the reader | only with `AP_ALLOW_INTERNET=1` and an endpoint |
 | 10 | `ap_coder/ai/inference.py:build_openai_client` | Azure OpenAI for coding | `local_llm.resolve_provider`: only with `AP_ALLOW_INTERNET=1` and an endpoint |
-| 11 | `ap_coder/ops/doctor.py` (`--online`) | Azure | only with `AP_ALLOW_INTERNET=1` |
-| 12 | `ap_coder/ai/azure_check.py` | the one Azure Document Intelligence endpoint in the `.env` (`only_host` checks every request, redirects included) | **its own switch** in Settings → Reading (off by default), with its packages, endpoint and key; not `AP_ALLOW_INTERNET` (by design) |
+| 11 | `ap_coder/ops/doctor.py` (`--online`) | Azure OpenAI and the SDK's Document Intelligence; the switched-on Azure Document Intelligence's model description (`ap_coder/ops/doctor.py:azure_checks`, no invoice) | Azure OpenAI and the SDK only with `AP_ALLOW_INTERNET=1`; the model description only once an Admin switched Azure Document Intelligence on |
+| 12 | `ap_coder/ai/di_http.py:DiClient` (used by `ap_coder/ai/azure_check.py:check_one` and `connection_test`) | the one Azure Document Intelligence endpoint in the `.env`: analyze, poll, delete, at API 2024-11-30 (every address checked by `endpoint_host` before a socket opens; no redirect, no proxy) | **an Admin's switch** in Settings → Reading (off by default), with its endpoint and key; not `AP_ALLOW_INTERNET` (by design, D-245); no Azure package needed |
 | 13 | `ap_coder/web/security.py:host_allowed` | `socket.getfqdn()` (a DNS lookup of this computer's name) | only when listening on every network (`AP_DASHBOARD_ADDRESS=0.0.0.0`) and a request names a host |
 | 14 | the dashboard itself | listens on `127.0.0.1:8501` | `AP_DASHBOARD_ADDRESS` opens it to the office network (inbound; a warning is printed) |
 | 15 | RapidOCR's own model downloader | (would fetch models on first use) | never runs: the engine is given the model paths (`offline.ppocrv5_engine_params`) and used only when they are intact (`ppocrv5_ready`) |
