@@ -80,21 +80,23 @@ def _number(text: str, what: str) -> float:
 @router.post(HOME)
 def save_azure_check(
     request: Request, enabled: str = Form(""), endpoint: str = Form(""), api_key: str = Form(""),
-    forget_key: str = Form(""), model: str = Form(azure_check.DEFAULT_MODEL), spot_percent: str = Form("5"),
-    daily_pages: str = Form(str(azure_check.DEFAULT_CAP)), back: str = Form(HOME),
+    forget_key: str = Form(""), spot_percent: str = Form("5"), daily_pages: str = Form(str(azure_check.DEFAULT_CAP)),
+    mode: str = Form(azure_check.UNSURE), invoice_pages: str = Form(str(azure_check.DEFAULT_PAGES)),
+    back: str = Form(HOME),
 ) -> JSONResponse:  # fmt: skip
     store = get_store(request)
     try:
         changed = azure_check.save_settings(
             store, enabled=bool(enabled), endpoint=endpoint, api_key=api_key, forget_key=bool(forget_key),
-            model=model, spot_percent=_number(spot_percent, "spot-check share"),
+            spot_percent=_number(spot_percent, "spot-check share"),
             daily_pages=int(_number(daily_pages, "daily cap")), actor=reviewer(), settings=get_settings(request),
+            mode=mode, invoice_pages=int(_number(invoice_pages, "pages of an invoice")),
         )  # fmt: skip
     except ValueError as exc:
         return refuse(str(exc))
     cfg = azure_check.load_settings(store, get_settings(request))
     _, note = azure_check.status(cfg)
-    text = f"Azure check saved ({', '.join(changed)}). {note}" if changed else "Nothing changed."
+    text = f"{azure_check.NAME} saved ({', '.join(changed)}). {note}" if changed else "Nothing changed."
     tone = "ok" if not cfg.enabled or azure_check.usable(cfg) else "warn"
     return done(request, local_url(back, HOME), text, tone=tone)
 

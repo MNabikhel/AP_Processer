@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.config import Settings
-from .di_http import KEY, NOT_FOUND, REFUSED, TIMEOUT, UNREACHABLE, DiClient, DiError, endpoint_host
+from .di_http import API_VERSION, KEY, NOT_FOUND, REFUSED, TIMEOUT, UNREACHABLE, DiClient, DiError, endpoint_host
 from .extraction import TEXT_EXTENSIONS
 
 log = logging.getLogger(__name__)
@@ -911,6 +911,7 @@ def connection_test(store: Any, settings: Settings | None = None, *, client: Any
         if state != READY:
             raise AzureUnavailable(why)
         t0 = time.perf_counter()
+        client = client if client is not None else make_client(cfg)
         raw = read(cfg, sample, client)
         from ..capture import analyze
 
@@ -919,12 +920,26 @@ def connection_test(store: Any, settings: Settings | None = None, *, client: Any
         _reached(store)
         record = {"ok": True, "when": when, "summary": summary(rows), "rows": rows, "host": cfg.host,
                   "pages": len(raw.get("pages") or []), "seconds": round(time.perf_counter() - t0, 1),
-                  "sample": sample.name}  # fmt: skip
+                  "sample": sample.name, **region_note(str(getattr(client, "region", "") or ""))}  # fmt: skip
     except Exception as exc:  # noqa: BLE001 - shown on the card, in plain words
         problem = str(exc) if isinstance(exc, AzureUnavailable) else f"{type(exc).__name__}: {exc}"
         record = {"ok": False, "when": when, "error": scrub(problem, cfg), "host": cfg.host}
     store.set_setting(TEST_KEY, json.dumps(record, default=str))
     return record
+
+
+REGION = "Canada Central"
+
+
+def region_note(region: str) -> dict[str, Any]:
+    """What the test says of the resource's region: {region, region_ok, region_note}. Azure's answer names it only
+    sometimes (``x-ms-region``): not named, IT confirms it in the Azure portal."""
+    if not region:
+        return {"region": "", "region_ok": None, "region_note": f"Azure's answer didn't name its region: confirm in "
+                f"the Azure portal that the resource is in {REGION}."}  # fmt: skip
+    ok = "".join(region.split()).lower() == "".join(REGION.split()).lower()
+    note = f"Region: {region}." if ok else f"Region: {region}, not {REGION}: ask IT to confirm it is your company's."
+    return {"region": region, "region_ok": ok, "region_note": note}
 
 
 def last_test(store: Any) -> dict[str, Any] | None:
@@ -953,7 +968,8 @@ def overview(store: Any, settings: Settings | None = None, days: int = 30) -> di
     counts = store.azure_check_counts()
     return {
         "enabled": cfg.enabled, "endpoint": cfg.endpoint, "host": cfg.host, "key_hint": cfg.key_hint,
-        "model": cfg.model, "spot_percent": f"{cfg.spot_rate * 100:g}", "daily_pages": cfg.daily_pages,
+        "model": DEFAULT_MODEL, "api_version": API_VERSION, "spot_percent": f"{cfg.spot_rate * 100:g}",
+        "daily_pages": cfg.daily_pages, "mode": cfg.mode, "modes": MODES, "invoice_pages": cfg.invoice_pages,
         "state": state, "note": note, "ready": state == READY,
         "can_test": status(cfg)[0] == READY, "days": days, "checked": len(checks),
         "agreed": agreed, "agreed_rate": agreed / len(checks) if checks else None,

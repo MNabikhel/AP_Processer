@@ -436,12 +436,14 @@ def doctor_checks(args: argparse.Namespace, settings: Settings) -> tuple[list[Ch
                             "database. Put back a copy from the backups folder next to it."))  # fmt: skip
         source = "none (the database cannot be opened)"
     else:
-        from .doctor import store_checks
+        from .doctor import azure_checks, store_checks
 
         db = Path(getattr(args, "db", None) or default_db_path())
         server = is_server_here(private_dir())
         if db.exists() or server:  # a laptop not set up yet has no database: nothing to look at
-            checks.extend(store_checks(Store(db), server))
+            store = Store(db)
+            checks.extend(store_checks(store, server))
+            checks.extend(azure_checks(store, settings, online=args.online))
     return checks, source
 
 

@@ -742,6 +742,72 @@ def test_test_connection_reads_the_sample_and_shows_the_comparison(store, monkey
     assert ours is azure_check.connection_test
 
 
+def test_the_card_saves_which_invoices_and_the_pages_and_shows_the_model_fixed(store, monkeypatch):
+    client = _client(store)
+    monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")
+    page = client.get("/settings/azure-check").text
+    assert "Azure Document Intelligence" in page and "Only those AP Coder is unsure of" in page
+    assert "prebuilt-invoice, API 2024-11-30" in page and 'name="model"' not in page
+    answer = client.post("/settings/azure-check", headers=PAGE, data={
+        "enabled": "on", "endpoint": ENDPOINT, "api_key": KEY, "mode": "every", "invoice_pages": "3",
+        "spot_percent": "5", "daily_pages": "200"})  # fmt: skip
+    assert answer.json()["ok"]
+    cfg = azure_check.load_settings(store)
+    assert (cfg.mode, cfg.invoice_pages) == (azure_check.ALL, 3)
+    assert 'value="every" checked' in client.get("/settings/azure-check").text
+    refused = client.post("/settings/azure-check", headers=PAGE, data={"enabled": "on", "endpoint": ENDPOINT,
+                                                                       "invoice_pages": "0"})  # fmt: skip
+    assert refused.json()["ok"] is False and "pages sent of an invoice" in refused.json()["error"]
+
+
+def test_the_card_says_when_azure_is_not_reached(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    _process(store)
+    azure_check.check_one(_settings(), store, client=Down())
+    monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")
+    page = _client(store).get("/settings/azure-check").text
+    assert "not reached since" in page and "invoices are read on this computer" in page
+
+
+def test_the_doctor_says_off_ready_or_not_reached_without_asking_azure(store, monkeypatch):
+    from ap_coder.ops import doctor
+
+    (line,) = doctor.azure_checks(store, _settings())
+    assert (line.area, line.status) == ("Azure Document Intelligence", doctor.SKIP) and "off" in line.detail
+    _turn_on(store, monkeypatch)
+    (line,) = doctor.azure_checks(store, _settings())
+    assert line.status == doctor.PASS and HOST in line.detail and "0 of 200 pages today" in line.detail
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    _process(store)
+    azure_check.check_one(_settings(), store, client=Down())
+    (line,) = doctor.azure_checks(store, _settings())
+    assert line.status == doctor.WARN and "not reached since" in line.detail and KEY not in line.detail
+    azure_check.save_settings(store, enabled=True, endpoint="", api_key=KEY)
+    assert doctor.azure_checks(store, _settings())[0].status == doctor.FAIL
+
+
+def test_the_test_says_the_region_azure_names():
+    assert azure_check.region_note("canadacentral")["region_ok"] is True
+    assert azure_check.region_note("Canada Central")["region_ok"] is True
+    east = azure_check.region_note("eastus")
+    assert east["region_ok"] is False and "not Canada Central" in east["region_note"]
+    unnamed = azure_check.region_note("")
+    assert unnamed["region_ok"] is None and "confirm in the Azure portal" in unnamed["region_note"]
+
+
+def test_test_connection_through_the_real_client_records_the_region(store, monkeypatch):
+    from tests import fake_di
+
+    _turn_on(store, monkeypatch)
+    with fake_di.FakeDi(region="canadacentral") as fake:
+        client = di_http.DiClient(ENDPOINT, KEY, ca_file=str(fake_di.CA_FILE), connect_to=fake.connect_to,
+                                  sleep=lambda s: None)  # fmt: skip
+        record = azure_check.connection_test(store, _settings(), client=client)
+    assert record["ok"] and record["region"] == "canadacentral" and record["region_ok"] is True
+    assert record["summary"].startswith("Azure agrees on") and fake.deleted
+
+
 def test_the_card_can_be_included_anywhere_without_context(store):
     from ap_coder.web.core import templates
 
