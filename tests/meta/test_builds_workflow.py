@@ -46,7 +46,9 @@ def _run(cmd: list[str], cwd: Path, env: dict | None = None) -> str:
     return done.stdout
 
 
-@pytest.mark.skipif(not (shutil.which("bash") and shutil.which("git") and shutil.which("sha256sum")),
+# The workflow runs on GitHub's Linux runners only. On Windows "bash" may be WSL's launcher with no Linux installed
+# (Windows CI), so it is not tried there.
+@pytest.mark.skipif(os.name == "nt" or not (shutil.which("bash") and shutil.which("git") and shutil.which("sha256sum")),
                     reason="needs bash, git and sha256sum (Linux)")  # fmt: skip
 def test_what_it_releases_is_what_the_launcher_takes(tmp_path):
     repo = tmp_path / "repo"
