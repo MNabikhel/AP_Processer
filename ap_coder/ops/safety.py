@@ -430,7 +430,10 @@ class TeamServer:
         at = f", then sign in at {self.address}" if self.address else ""
         start = "Start the server again (python -m ap_coder service start, or the way it is started here)"
         if not self.service:  # a laptop shared with ``share`` (D-218)
-            start = "Start it again with python -m ap_coder share, typed in scripts\\terminal.bat"
+            start = (
+                "Start it again with a double-click on the AP Coder shortcut (it shares it, with sign-in), or "
+                "python -m ap_coder share, typed in scripts\\terminal.bat"
+            )
         return (f"AP Coder on this computer is set up to serve your team, with sign-in ({self.signs}), and its server "
                 "is stopped now: it was not started without sign-in.",
                 f"{start}{at}. To open this data in laptop mode again on purpose, with no sign-in for whoever uses "

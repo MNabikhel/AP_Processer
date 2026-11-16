@@ -12,7 +12,8 @@ packages for) and runs this file with it. It then:
 3. looks for an AP Coder already running: the same folder and version is only opened in the browser; an older
    version, or one from another folder, is stopped first (``scripts/running.py``): never two on one database. Before
    anything else, a data folder that serves a team with sign-in (server mode) is never started here in laptop mode:
-   its address is opened instead, or, its server stopped, the start says so (``team_server_instead``, D-211);
+   its address is opened instead, or, its server stopped, the start says so (``team_server_instead``, D-211), but
+   for a laptop shared with ``share``: set up, then shared (step 9);
 4. says "Updated AP Coder from X to Y" when this folder's version changed, and removes the files an older
    version unzipped here left behind (the bundle's manifest lists its own);
 5. installs only the packages that are missing or too old (``scripts/check_deps.py``), from the offline
@@ -27,7 +28,9 @@ packages for) and runs this file with it. It then:
    every update; once it passed, the older installs' ``.venv``, models and folders are cleaned up;
 9. sets a data folder an earlier AP Coder made up the department's way, once (the short menu, JD Edwards keying;
    the demo invoices removed from a folder that holds no others; asked first when it holds invoices of its own,
-   D-232), then starts the server (``python -m ap_coder serve``) and opens it in the browser once it is up.
+   D-232), then starts the server (``python -m ap_coder serve``) and opens it in the browser once it is up. On a
+   laptop shared with ``share`` (its server stopped, no service installed) it runs ``python -m ap_coder share``
+   instead, in the same window: share's own checks, then the server with sign-in, opened the same way (D-246).
 
 Offline: this is an enterprise build. AP Coder itself (the dashboard and everything it runs) never connects to
 the internet. Its setup gets the packages and OCR models from one of two places:
@@ -2021,7 +2024,7 @@ def open_running(port: int) -> int:
     return 0
 
 
-SHARED_LAPTOP = -1  # team_server_instead's "set up, but start nothing: it is started with share" (B-2353)
+SHARED_LAPTOP = -1  # team_server_instead's "set up, then start share instead of serve" (B-2353, D-246)
 
 
 def team_server_instead(rest: list[str], set_up: bool = False) -> int | None:
@@ -2032,8 +2035,8 @@ def team_server_instead(rest: list[str], set_up: bool = False) -> int | None:
     unless the start asks for laptop mode again by name (``--without-sign-in``, which ``serve`` is given and warns
     of). Returns the exit code, or None when this start goes on (a laptop's own data; the server's own start).
     ``set_up``: on a laptop shared with ``share`` (stopped, no service installed) it returns ``SHARED_LAPTOP``: this
-    folder is set up all the same (an update unzipped there: scripts\\terminal.bat, where ``share`` is typed, needs
-    it), and the start then says to start it with ``share`` (:func:`started_with_share`)."""
+    folder is set up all the same (an update unzipped there), and the start then runs ``share`` instead of ``serve``
+    (:func:`start_share`, D-246): with sign-in, as before."""
     from ap_coder.ops.safety import WITHOUT_SIGN_IN, team_server
 
     team = team_server(paths.private_dir(), paths.default_db_path())
@@ -2056,8 +2059,8 @@ def team_server_instead(rest: list[str], set_up: bool = False) -> int | None:
 
 
 def started_with_share() -> int:
-    """How a double-click on a laptop shared with ``share`` ends, once this folder is set up: started with ``share``,
-    never here without sign-in (B-2353). The window stays open on it."""
+    """How a double-click on a laptop shared with ``share`` ends when ``share`` must not start either (its database
+    can't be read: it would begin a new one): never here without sign-in (B-2353). The window stays open on it."""
     from ap_coder.ops.safety import team_server
 
     why, to_do = team_server(paths.private_dir(), paths.default_db_path()).refusal()
@@ -2066,6 +2069,92 @@ def started_with_share() -> int:
     say(f"  What to do: {to_do}.")
     keep_open()
     return 0
+
+
+def share_command() -> list[str]:
+    """``python -m ap_coder share``, unbuffered: its lines, and its questions (the first Admin's), show as they come."""
+    return [sys.executable, "-u", "-m", "ap_coder", "share"]
+
+
+def start_share() -> int:
+    """How a double-click on a laptop shared with ``share`` ends, once this folder is set up (D-246): ``share`` runs
+    in this window, with its own checks (it says what is missing, or serves with sign-in until the window is closed).
+    Its output is shown as it comes and logged, as the dashboard's is, and the browser opens once it answers (its
+    "AP Coder is running at" line) at the team's address (:func:`shared_here`), else at that line's. Returns share's
+    exit code."""
+    import codecs
+
+    from ap_coder.ops.safety import team_server
+
+    if team_server(paths.private_dir(), paths.default_db_path()).unreadable:
+        return started_with_share()
+    say()
+    say("AP Coder on this laptop is shared with your team, with sign-in: starting it with python -m ap_coder share. "
+        "Keep this window open while colleagues use it; closing it stops it.")  # fmt: skip
+    try:
+        proc = subprocess.Popen(share_command(), cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                env=child_env())  # fmt: skip
+    except OSError as exc:
+        return failed(SetupError(f"AP Coder could not start ({exc}).", "Start AP Coder again; if it happens again, "
+                                 f"run  python -m ap_coder share  {IN_TERMINAL}."))  # fmt: skip
+    ready: list[str] = []
+    up = threading.Event()
+
+    def show_output() -> None:  # (as it comes, not by line: a question ends with no line end)
+        assert proc.stdout is not None
+        decode, pending = codecs.getincrementaldecoder("utf-8")("replace"), ""
+        while chunk := proc.stdout.read1(4096):
+            text = decode.decode(chunk).replace("\r\n", "\n")
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            *lines, pending = (pending + text).split("\n")
+            for each in lines:
+                log(each.rstrip("\r"))
+                if READY in each and not up.is_set():
+                    ready.append(each.split(READY, 1)[1].strip())
+                    up.set()
+        if pending:
+            log(pending)
+
+    shown = threading.Thread(target=show_output, daemon=True)
+    shown.start()
+    opened = False
+    while True:
+        try:
+            while proc.poll() is None:
+                if opened:
+                    proc.wait()
+                elif up.wait(0.5):
+                    open_browser(shared_here() or ready[0])
+                    opened = True
+            break
+        except KeyboardInterrupt:  # Ctrl+C reached share too: it ends once its server finished what is under way
+            continue
+    shown.join(timeout=5)
+    if proc.returncode:
+        say()
+        line("fail", f"AP Coder was not shared (code {proc.returncode}): the lines above say why.")
+        say("  What to do: do what they say, then double-click AP Coder again (docs/SERVER.md section 16 has every "
+            f"step). The lines are also in {log_path()}.")  # fmt: skip
+    return proc.returncode
+
+
+def shared_here() -> str:
+    """The team's address of this laptop's ``share`` once it serves, "" until then (or with no server.json): what
+    colleagues open (``https://AP-LAPTOP:8501``, server.json's first allowed host or this computer's name), so the
+    owner's browser, once it trusts the certificate (which names the laptop, not 127.0.0.1), no longer warns."""
+    from ap_coder.ops import service
+    from ap_coder.ops.safety import team_server
+
+    data = paths.private_dir()
+    try:
+        found = service.dashboard_answer(data, service.settings(data), timeout=1.0)
+    except service.SettingsError:
+        return ""
+    if not found or not found[1].get("server_mode"):
+        return ""
+    team = team_server(data, paths.default_db_path())  # (answering: Windows' service list is not asked)
+    return team.address if team is not None else ""
 
 
 # --- One start at a time ----------------------------------------------------------------------------------------
@@ -2138,9 +2227,11 @@ def release_lock() -> None:
         handle.close()  # closing the file releases the lock (msvcrt and flock alike)
 
 
-def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: float = 2.0) -> int | None:
+def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: float = 2.0,
+                   shared: bool = False) -> int | None:  # fmt: skip
     """Another start holds the lock (a first setup, or the running dashboard): wait for its dashboard and open
-    it. None when that start ended without one: this start then holds the lock and carries on."""
+    it. None when that start ended without one: this start then holds the lock and carries on. ``shared``: a laptop
+    shared with ``share``, which the other start runs once it is set up (D-246): opened once it serves."""
     port = running_dashboard(argv, load_state())
     if port:
         return open_running(port)
@@ -2162,6 +2253,12 @@ def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: floa
         port = running_dashboard(argv, load_state())
         if port:
             return open_running(port)
+        address = shared_here() if shared else ""
+        if address:
+            say(f"AP Coder is shared from this computer already: opening {address} in your browser.")
+            say("Nothing new was started. This window can be closed; the AP Coder window already open runs it.")
+            open_browser(address)
+            return 0
         theirs = other_users_dashboard(argv, load_state())
         if theirs:
             return failed(someone_elses(theirs))
@@ -2667,7 +2764,7 @@ def _main(argv: list[str] | None = None) -> int:
                                  f"({ROOT}) that it deletes later.", "Close this window, right-click the ZIP, choose "
                                  "Extract All (e.g. to C:\\APCoder), then double-click APProcessor.bat in the "
                                  "extracted folder."))  # fmt: skip
-    shared = False  # a laptop shared with share: set up, started with share (B-2353)
+    shared = False  # a laptop shared with share: set up, then share started (B-2353, D-246)
     if not args.no_start and not args.installer:  # (the installer: asked as it starts one)
         # Before anything is set up, or stopped to make way (D-211). In both phases: the first, in a new folder,
         # has no packages yet to read the accounts with.
@@ -2684,7 +2781,7 @@ def _main(argv: list[str] | None = None) -> int:
                 line("fail", "AP Coder is open (or being set up) in another window: close AP Coder first, then run "
                              f"{INSTALLER} again. Nothing was installed.")  # fmt: skip
                 return 1
-            code = wait_for_other(argv)
+            code = wait_for_other(argv, shared=shared)
             if code is not None:
                 return code
         os.environ[LOCK_HELD_ENV] = str(os.getpid())  # for what this start runs: never waits for itself
@@ -2700,7 +2797,7 @@ def _main(argv: list[str] | None = None) -> int:
         forwarded = [a for a in argv if a != "--installer" and not a.startswith("--venv")]
         return install.main(forwarded, venv=args.venv)
     code = run(args, rest)
-    return started_with_share() if shared and code == 0 else code
+    return start_share() if shared and code == 0 else code
 
 
 if __name__ == "__main__":

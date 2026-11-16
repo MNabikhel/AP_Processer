@@ -118,7 +118,8 @@ def test_after_share_the_refusal_names_share_where_no_service_is_installed(lapto
                          ask=answers("Pat Lee", "pat"), password=lambda username, name: GOOD) is not None  # fmt: skip
     _why, to_do = safety.team_server(data, db).refusal()
     assert ("service start" in to_do) is installed
-    assert ("Start it again with python -m ap_coder share, typed in scripts\\terminal.bat" in to_do) is not installed
+    assert ("Start it again with a double-click on the AP Coder shortcut" in to_do) is not installed
+    assert ("python -m ap_coder share, typed in scripts\\terminal.bat" in to_do) is not installed
     assert "--without-sign-in" in to_do
 
 
@@ -230,6 +231,16 @@ def test_the_firewall_rule_is_said_with_its_command_never_made(laptop):
     assert 'netsh advfirewall firewall add rule name="AP Coder" dir=in action=allow protocol=TCP localport=8501' in note
     assert share.firewall_note(8501, run=netsh(0), windows=True) == ""  # the rule is there
     assert all(cmd[:4] == ["netsh", "advfirewall", "firewall", "show"] for cmd in ran) and len(ran) == 2
+
+
+def test_the_firewall_note_says_a_cancelled_python_question_may_have_left_a_rule_blocking_it(laptop):
+    """B-2560: the note said that with the "AP Coder" rule "it does not matter what is answered" to Windows' question
+    about Python. Cancelled by a person without administrator rights, Windows may save inbound rules blocking Python,
+    and a blocking rule wins over an allowing one: whoever adds the rule deletes those too."""
+    note = share.firewall_note(8501, run=lambda cmd, **kwargs: types.SimpleNamespace(returncode=1), windows=True)
+    assert "does not matter" not in note
+    assert "a rule blocking Python" in note and "Block" in note and "Inbound Rules" in note
+    assert "Windows Defender Firewall → Advanced settings" in note
 
 
 def test_share_serves_in_its_window_and_tells_colleagues_the_address(laptop, monkeypatch, capsys):

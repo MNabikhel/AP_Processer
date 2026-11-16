@@ -463,26 +463,129 @@ def test_a_double_click_never_opens_a_stopped_team_servers_data_without_sign_in(
     assert "server.json" in capsys.readouterr().out
 
 
-def test_on_a_laptop_shared_with_share_a_double_click_sets_up_and_says_to_start_it_with_share(
-    double_click, capsys, monkeypatch
-):
-    """B-2353: an update unzipped on a laptop shared with ``share`` was refused before anything was set up, and
-    scripts\\terminal.bat, where ``share`` is typed, needs the set-up first: the tester was stuck. It sets up, starts
-    nothing, and says to start it with ``share``."""
+def _shared_laptop(d, monkeypatch):
+    """``d``'s data folder as ``share`` leaves it (its Admin, its server.json; no service installed, stopped)."""
     from ap_coder.core.store import Store
+    from ap_coder.ops import service
+
+    monkeypatch.setattr(service, "installed", lambda s: False)
+    Store(d.db).add_user("jsmith", "correct horse battery staple 42", role="admin")
+    service.write_config(d.data, port=8501, certfile="tls/apcoder.pem", keyfile="tls/apcoder.key.pem")
+
+
+def _share_stand_in(launch, monkeypatch, said: str, code: int = 0) -> list[list[str]]:
+    """``share`` replaced by a Python that prints ``said`` (the last part with no line end, as a question is) and
+    ends with ``code``: the commands started."""
+    started: list[list[str]] = []
+    real_popen = subprocess.Popen
+    script = f"import sys\nsys.stdout.write({said!r})\nsys.exit({code})"
+
+    def popen(cmd, **kwargs):
+        if "ap_coder" not in cmd:  # (what else asks for a process, e.g. this checkout's build)
+            return real_popen(cmd, **kwargs)
+        started.append(list(cmd))
+        return real_popen([sys.executable, "-c", script], **kwargs)
+
+    monkeypatch.setattr(launch.subprocess, "Popen", popen)
+    return started
+
+
+def test_on_a_laptop_shared_with_share_a_double_click_sets_up_then_starts_share(double_click, capsys, monkeypatch):
+    """B-2353, then D-246: an update unzipped on a laptop shared with ``share`` was refused before anything was set
+    up. The double-click sets this folder up (it starts nothing itself), then runs ``share`` in its own window: its
+    lines shown and logged, the browser opened once it answers: at the team's address colleagues open (the one the
+    certificate names), else at the address its "AP Coder is running at" line gives."""
+    d = double_click
+    _shared_laptop(d, monkeypatch)
+    set_up: list[bool] = []
+    monkeypatch.setattr(d.launch, "run", lambda args, rest: set_up.append(args.no_start) or 0)
+    started = _share_stand_in(d.launch, monkeypatch, "The firewall: Windows has no rule named “AP Coder” yet.\r\n"
+                              "AP Coder is running at https://127.0.0.1:8501\nYour name: ")  # fmt: skip
+    assert d.launch.main([]) == 0 and set_up == [True]
+    assert started == [[sys.executable, "-u", "-m", "ap_coder", "share"]]
+    assert d.opened == ["https://127.0.0.1:8501"]  # (no team's address worked out here: the line's)
+    out = capsys.readouterr().out
+    assert "starting it with python -m ap_coder share" in out and "it was not started without sign-in" not in out
+    assert "The firewall: Windows has no rule named “AP Coder” yet." in out and out.rstrip().endswith("Your name:")
+    logged = d.launch.log_path().read_text(encoding="utf-8")
+    assert "The firewall: Windows has no rule named “AP Coder” yet.\n" in logged and "Your name: " in logged
+    assert "AP Coder is running at https://127.0.0.1:8501\n" in logged
+    monkeypatch.setattr(d.launch, "shared_here", lambda: "https://ap-laptop:8501")
+    assert d.launch.main([]) == 0 and d.opened == ["https://127.0.0.1:8501", "https://ap-laptop:8501"]
+
+
+def test_the_shared_laptops_address_is_the_one_colleagues_open(double_click, monkeypatch):
+    """What the double-click opens once ``share`` serves: the team's address, by this computer's name, as ``share``
+    prints it for colleagues and a later double-click opens it; nothing while no server-mode AP Coder answers."""
+    from ap_coder.ops import safety, service
+    from tests.ops.test_safety import team_server_stand_in
+
+    d = double_click
+    _shared_laptop(d, monkeypatch)
+    httpd, port = team_server_stand_in(d.data, server_mode=False)
+    try:
+        service.write_config(d.data, port=port)
+        assert d.launch.shared_here() == ""  # (a laptop-mode AP Coder: not the team's)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    httpd, port = team_server_stand_in(d.data)
+    try:
+        service.write_config(d.data, port=port)
+        found = d.launch.shared_here()
+        assert found == f"https://{socket.gethostname()}:{port}" == safety.team_server(d.data, d.db).address
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert d.launch.shared_here() == ""  # stopped
+
+
+def test_when_share_refuses_the_double_clicks_window_stays_open_on_why(double_click, capsys, monkeypatch):
+    d = double_click
+    _shared_laptop(d, monkeypatch)
+    _share_stand_in(d.launch, monkeypatch, "The certificate: this computer has no openssl.\nAP Coder was not "
+                    "started. Do the step above, then run this again.\n", code=1)  # fmt: skip
+    assert d.launch.main([]) == 1 and d.opened == []  # (APProcessor.bat and .command pause on a code that is not 0)
+    out = capsys.readouterr().out
+    assert "this computer has no openssl" in out and "AP Coder was not shared (code 1)" in out
+    assert "double-click AP Coder again" in out
+
+
+def test_a_shared_laptop_whose_database_cant_be_read_is_set_up_and_starts_nothing(double_click, capsys, monkeypatch):
+    """Its database gone beside the sign-in codes' key: ``share`` would begin a new one with a new Admin, so the
+    double-click says what to do, as before, and starts nothing."""
     from ap_coder.ops import service
 
     d = double_click
     monkeypatch.setattr(service, "installed", lambda s: False)
-    set_up: list[bool] = []
-    monkeypatch.setattr(d.launch, "run", lambda args, rest: set_up.append(args.no_start) or 0)
-    Store(d.db).add_user("jsmith", "correct horse battery staple 42", role="admin")
-    service.write_config(d.data, port=8501, certfile="tls/apcoder.pem", keyfile="tls/apcoder.key.pem")
-    assert d.launch.main([]) == 0 and set_up == [True] and d.opened == []
+    (d.data / "authenticator.key").write_bytes(b"k" * 32)
+    started = _share_stand_in(d.launch, monkeypatch, "")
+    assert d.launch.main([]) == 0 and d.went_on == [[]] and d.opened == [] and started == []
     out = capsys.readouterr().out
-    assert "AP Coder is set up" in out and "it was not started without sign-in" in out
-    assert "Start it again with python -m ap_coder share, typed in scripts\\terminal.bat" in out
-    assert "service start" not in out
+    assert "AP Coder is set up" in out and "can't read this computer's database" in out
+
+
+def test_a_second_double_click_while_the_first_starts_share_opens_it(double_click, monkeypatch, capsys):
+    """The first window holds the lock while it sets up and starts ``share`` (HTTPS, which the wait for a laptop's
+    dashboard never sees): the second waits, then opens it once it answers."""
+    d = double_click
+    _shared_laptop(d, monkeypatch)
+    asked: list[bool] = []
+    real_wait_for_other = d.launch.wait_for_other
+    monkeypatch.setattr(d.launch, "wait_for_other", lambda argv, shared=False: asked.append(shared) or 0)
+    other = _other_start_holds_the_lock(d.launch)
+    try:
+        assert d.launch.main([]) == 0 and asked == [True] and d.went_on == []
+        answers = iter(["", "https://ap-laptop:8501"])
+        monkeypatch.setattr(d.launch, "shared_here", lambda: next(answers))
+        for name in ("running_dashboard", "other_users_dashboard", "open_elsewhere"):
+            monkeypatch.setattr(d.launch, name, lambda argv, state: None)
+        monkeypatch.setattr(d.launch, "stop_older", lambda argv: None)
+        assert real_wait_for_other([], every=0, shared=True) == 0
+    finally:
+        other.close()
+    assert d.opened == ["https://ap-laptop:8501"]
+    assert "opening https://ap-laptop:8501" in capsys.readouterr().out
 
 
 def test_laptop_mode_again_on_a_team_servers_data_is_asked_for_by_name(double_click, monkeypatch, capsys):
@@ -630,7 +733,7 @@ def test_a_second_start_beside_a_made_up_company_waits_for_the_first_ones_dashbo
 def test_main_waits_instead_of_setting_up_twice(lock, monkeypatch):
     launch = lock
     other = _other_start_holds_the_lock(launch)
-    monkeypatch.setattr(launch, "wait_for_other", lambda argv: 0)
+    monkeypatch.setattr(launch, "wait_for_other", lambda argv, shared=False: 0)
     monkeypatch.setattr(launch, "bootstrap", lambda argv: pytest.fail("a second .venv setup started"))
     monkeypatch.setattr(launch, "run", lambda args, rest: pytest.fail("a second setup started"))
     assert launch.main([]) == 0
