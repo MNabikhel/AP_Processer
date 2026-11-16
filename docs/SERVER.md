@@ -1920,6 +1920,11 @@ name with no way past it (section 3, *825 days*) until the new one is trusted to
    netsh advfirewall firewall add rule name="AP Coder" dir=in action=allow protocol=TCP localport=8501 profile=domain remoteip=10.0.0.0/16
    ```
 
+   Windows may also ask, the first time AP Coder serves, whether to let Python through its firewall; that question
+   needs administrator rights too. If it was cancelled, Windows may have saved rules blocking Python, and a blocking
+   rule wins over the one above. So whoever adds the rule also opens *Windows Defender Firewall* → *Advanced
+   settings* → *Inbound Rules* and deletes any rule named *Python* (or *python.exe*) whose action is *Block*.
+
 6. **The first Admin** (step 7), with the name the owner used in laptop mode, then the others:
 
    ```bat
@@ -1963,7 +1968,7 @@ awake (`powercfg /requests`) until `share --stop`; `share` again, the data kept.
 
 **Not tried on Windows 11 for this guide** (do each once on the laptop before colleagues rely on it):
 that `netsh` shows the firewall rule without administrator rights, that closing `share`'s window leaves no
-`python.exe` of AP Coder in Task Manager, and what Windows' own firewall question does when it is cancelled;
+`python.exe` of AP Coder in Task Manager, and that a cancelled firewall question leaves rules blocking Python which step 5 then deletes;
 `service install` and `service status` there, and the task coming back after a Windows Update restart with nobody
 logged on; the hand-started window; the firewall rule's profile on the office Wi-Fi and the dock, and that the port
 is closed on a home network; that colleagues' PCs find the laptop by its name; the lid, sleep and the dock.

@@ -233,6 +233,16 @@ def test_the_firewall_rule_is_said_with_its_command_never_made(laptop):
     assert all(cmd[:4] == ["netsh", "advfirewall", "firewall", "show"] for cmd in ran) and len(ran) == 2
 
 
+def test_the_firewall_note_says_a_cancelled_python_question_may_have_left_a_rule_blocking_it(laptop):
+    """B-2560: the note said that with the "AP Coder" rule "it does not matter what is answered" to Windows' question
+    about Python. Cancelled by a person without administrator rights, Windows may save inbound rules blocking Python,
+    and a blocking rule wins over an allowing one: whoever adds the rule deletes those too."""
+    note = share.firewall_note(8501, run=lambda cmd, **kwargs: types.SimpleNamespace(returncode=1), windows=True)
+    assert "does not matter" not in note
+    assert "a rule blocking Python" in note and "Block" in note and "Inbound Rules" in note
+    assert "Windows Defender Firewall → Advanced settings" in note
+
+
 def test_share_serves_in_its_window_and_tells_colleagues_the_address(laptop, monkeypatch, capsys):
     data, db = laptop
     Store(db).add_user("pat", GOOD, role="admin")

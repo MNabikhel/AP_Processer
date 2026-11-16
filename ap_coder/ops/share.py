@@ -203,7 +203,9 @@ def firewall_note(port: int, run: Callable[..., Any] = service.run_command, wind
         f'  netsh advfirewall firewall add rule name="{RULE}" dir=in action=allow protocol=TCP '
         f"localport={port} profile=domain,private\n"
         "If Windows asks whether to let Python through its firewall when AP Coder starts, that question needs "
-        "the same rights; with the rule above it does not matter what is answered."
+        "the same rights. If it was cancelled, Windows may have saved a rule blocking Python, and a blocking rule "
+        "wins over the one above: whoever adds the rule also deletes any inbound rule named Python (or python.exe) "
+        "set to Block, in Windows Defender Firewall → Advanced settings → Inbound Rules."
     )
 
 
