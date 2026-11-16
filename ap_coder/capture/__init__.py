@@ -109,7 +109,8 @@ COARSE_DPI = 140
 
 __all__ = ["LABELS", "analyze", "build_layout", "read_fields", "locate", "CaptureResult", "CannotRead"]
 
-# Document Intelligence prebuilt-invoice field -> capture field
+# Azure Document Intelligence's ``prebuilt-invoice`` fields (API 2024-11-30) -> capture's (D-245). VendorTaxId goes
+# where its pattern says (``_di_tax_id``); CustomerTaxId, the customer's, never. The currency is the totals' code.
 DI_FIELDS = {
     "VendorName": "vendor_name",
     "InvoiceId": "invoice_number",
@@ -122,37 +123,131 @@ DI_FIELDS = {
     "InvoiceTotal": "grand_total",
     "PaymentTerm": "payment_terms",
 }
+# TaxDetails' rate -> the tax it is: only a rate that names one tax (13 % is HST, 9.975 % QST); any other is left to
+# TotalTax.
+DI_TAX_RATES = {0.05: "gst_amount", 0.13: "hst_amount", 0.14: "hst_amount", 0.15: "hst_amount",
+                0.09975: "qst_amount", 0.06: "pst_amount", 0.07: "pst_amount"}  # fmt: skip
+_RATE = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _di_value(fld: dict[str, Any]) -> Any:
+    if "valueCurrency" in fld:
+        return (fld["valueCurrency"] or {}).get("amount")
+    return next((fld[k] for k in ("valueString", "valueDate", "valueNumber") if k in fld), fld.get("content"))
+
+
+def _di_boxes(fld: dict[str, Any], pages: dict[int, dict[str, Any]]) -> list[Box]:
+    """Where Azure read it: each region's polygon (inches on a PDF, pixels on a picture) as a page-relative box."""
+    boxes = []
+    for region in fld.get("boundingRegions") or []:
+        page = pages.get(int(region.get("pageNumber") or 1))
+        poly = region.get("polygon") or []
+        if page and len(poly) >= 8 and page.get("width") and page.get("height"):
+            xs, ys = poly[0::2], poly[1::2]
+            w, h = float(page["width"]), float(page["height"])
+            boxes.append(Box(int(region.get("pageNumber") or 1), min(xs) / w, min(ys) / h, max(xs) / w, max(ys) / h))
+    return boxes
+
+
+def _di_reading(field: str, fld: dict[str, Any], pages: dict[int, dict[str, Any]], value: Any = None) -> Reading:
+    value = _di_value(fld) if value is None else value
+    return Reading(field, value, str(fld.get("content") or value), _di_boxes(fld, pages),
+                   float(fld.get("confidence") or 0.5), "di")  # fmt: skip
+
+
+def _di_tax_id(value: Any) -> str:
+    """Where Azure's VendorTaxId goes: the GST/HST number or the QST number, by its pattern; "" for neither."""
+    from .normalize import gst_valid, qst_valid
+
+    if gst_valid(str(value)):
+        return "gst_hst_registration_number"
+    return "qst_registration_number" if qst_valid(str(value)) else ""
+
+
+def _di_rate(text: Any) -> float | None:
+    """A TaxDetails rate ("13%", "9,975 %", "5") as a fraction, or None."""
+    match = _RATE.search(str(text or ""))
+    return round(float(match.group().replace(",", ".")) / 100, 5) if match else None
+
+
+def _di_taxes(fields: dict[str, Any], pages: dict[int, dict[str, Any]]) -> dict[str, list[Reading]]:
+    """Each tax of TaxDetails by its rate (``DI_TAX_RATES``); two amounts at one rate say neither."""
+    found: dict[str, list[Reading]] = {}
+    for item in (fields.get("TaxDetails") or {}).get("valueArray") or []:
+        detail = item.get("valueObject") or {}
+        amount, rate = detail.get("Amount") or {}, detail.get("Rate") or {}
+        name = DI_TAX_RATES.get(_di_rate(_di_value(rate)) or -1.0)
+        if name and _di_value(amount) not in (None, ""):
+            found.setdefault(name, []).append(_di_reading(name, amount, pages))
+    return {name: readings for name, readings in found.items() if len(readings) == 1}
+
+
+def _di_pages(raw: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    return {int(p.get("pageNumber") or i + 1): p for i, p in enumerate(raw.get("pages") or [])}
 
 
 def _di_readings(raw: dict[str, Any]) -> dict[str, list[Reading]]:
+    """Azure's reading of the header, one reading a field (``DI_FIELDS``, the taxes by rate, the currency)."""
     docs = raw.get("documents") or []
     if not docs:
         return {}
-    pages = {int(p.get("pageNumber") or i + 1): p for i, p in enumerate(raw.get("pages") or [])}
+    pages = _di_pages(raw)
+    fields = docs[0].get("fields") or {}
     out: dict[str, list[Reading]] = {}
     for di_name, field in DI_FIELDS.items():
-        fld = (docs[0].get("fields") or {}).get(di_name)
-        if not fld:
-            continue
-        if "valueCurrency" in fld:
-            value: Any = (fld["valueCurrency"] or {}).get("amount")
-        else:
-            value = next((fld[k] for k in ("valueString", "valueDate", "valueNumber") if k in fld), fld.get("content"))
+        fld = fields.get(di_name)
+        value = _di_value(fld) if fld else None
         if value in (None, ""):
             continue
-        boxes = []
-        for region in fld.get("boundingRegions") or []:
-            page = pages.get(int(region.get("pageNumber") or 1))
-            poly = region.get("polygon") or []
-            if page and len(poly) >= 8 and page.get("width") and page.get("height"):
-                xs, ys = poly[0::2], poly[1::2]
-                w, h = float(page["width"]), float(page["height"])
-                boxes.append(
-                    Box(int(region.get("pageNumber") or 1), min(xs) / w, min(ys) / h, max(xs) / w, max(ys) / h)
-                )
-        out[field] = [Reading(field, value, str(fld.get("content") or value), boxes,
-                              float(fld.get("confidence") or 0.5), "di")]  # fmt: skip
+        if di_name == "VendorTaxId":
+            field = _di_tax_id(value)
+            if not field:
+                continue
+        out[field] = [_di_reading(field, fld, pages, value)]
+    out.update(_di_taxes(fields, pages))
+    total = fields.get("InvoiceTotal") or fields.get("SubTotal") or {}
+    code = str((total.get("valueCurrency") or {}).get("currencyCode") or "").strip().upper()
+    if re.fullmatch(r"[A-Z]{3}", code):
+        out["currency"] = [Reading("currency", code, code, [], float(total.get("confidence") or 0.5), "di")]
     return out
+
+
+def _di_lines(raw: dict[str, Any]) -> list[LineReading]:
+    """Azure's line items (Items), each boxed where Azure read its row; a row without an amount is left out."""
+    docs = (raw or {}).get("documents") or []
+    if not docs:
+        return []
+    pages = _di_pages(raw)
+    lines = []
+    for item in ((docs[0].get("fields") or {}).get("Items") or {}).get("valueArray") or []:
+        row = item.get("valueObject") or {}
+
+        def number(name: str, row: dict[str, Any] = row) -> float | None:
+            value = _di_value(row[name]) if row.get(name) else None
+            return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+        amount, tax = number("Amount"), number("Tax")
+        if amount is None:
+            continue
+        description = str(_di_value(row["Description"]) or "") if row.get("Description") else ""
+        lines.append(LineReading(description, number("Quantity"), number("UnitPrice"), amount,
+                                 _di_boxes(item, pages), float(item.get("confidence") or 0.5), "di",
+                                 taxes_read=None if tax is None else {"TAX": tax}))  # fmt: skip
+    return lines
+
+
+def _with_di_lines(items: list[LineReading], di_items: list[LineReading]) -> list[LineReading]:
+    """The page's line items, each marked read the same by Azure when Azure's rows agree with them; Azure's rows only
+    where the page gave none (D-245: they never replace the page's own)."""
+    from .line_items import agree, mark_agreed
+
+    if not di_items:
+        return items
+    if not items:
+        return di_items
+    if agree(items, di_items):
+        mark_agreed(items, "di")
+    return items
 
 
 def _ai_readings(layout: DocLayout, ai_values: dict[str, Any]) -> dict[str, list[Reading]]:
@@ -564,6 +659,8 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
             mark_agreed(vlm_items, agreeing[0].source)
         items = _choose_lines(layout, fields, items, vlm_items)
         agreement = agreement_check(readings, vlm_items, agreeing[0].source if agreeing else None)
+    if di_raw:
+        items = _with_di_lines(items, _di_lines(di_raw))
     if items is not words:
         fields, checks = fused(items)  # the lines-add-up check on the lines kept
     if agreement is not None:
