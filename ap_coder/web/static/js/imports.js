@@ -5,7 +5,8 @@
    A page opened on what was just done takes the focus there (B-2446): the file shown, a load's result, or the
    message the address carries, moved into the part of the page it is about.
    A column picker (templates/_sheet.html) keeps its import's button closed, and names the needed fields still without
-   a column, as its choices change: the server refuses the same (files.pick_refusal). */
+   a column, as its choices change: the server refuses the same (files.pick_refusal); and counts its optional columns
+   folded that have one. */
 
 function kb(size) {
   return `${Math.max(1, Math.round(size / 1024)).toLocaleString()} KB`;
@@ -114,6 +115,12 @@ document.querySelectorAll("[data-imp-picker]").forEach((picker) => {
     form.querySelectorAll("[data-imp-go]").forEach((go) => {
       go.disabled = Boolean(missing.length);
     });
+    // The optional columns folded: how many have one.
+    const picked = picker.querySelector("[data-imp-picked]");
+    if (picked) {
+      const folded = [...picker.querySelectorAll(":scope .imp-optional select")];
+      picked.textContent = String(folded.filter((select) => select.value).length);
+    }
   };
   picker.addEventListener("change", update);
   update();

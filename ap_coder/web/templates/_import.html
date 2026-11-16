@@ -27,8 +27,9 @@
 {# A cell as it is shown: a date read with its time of day, midnight, as the date alone. #}
 {% macro cell_text(cell) %}{% if cell is string and cell | length == 19 and cell.endswith(" 00:00:00") %}{{ cell[:10] }}{% else %}{{ cell }}{% endif %}{% endmacro %}
 
-{# The columns of ``spec``: the needed ones and the optional ones as chips, then each with the other names read and
-   what it is for or gives, under "What each column is". #}
+{# The columns of ``spec``: the needed ones as chips; the optional ones folded under "More columns it can use", each
+   with what it gives (a person acts on the needed ones only); then each needed one with the other names read and why
+   it is needed, under "Why each is needed". #}
 {% macro columns(spec) %}
 <div class="imp-cols" id="cols-{{ spec.key }}">
   <p class="imp-cols-line"><span class="imp-cols-what">Needs</span>
@@ -37,16 +38,24 @@
   </p>
   {% set optional = spec.optional | rejectattr("field", "in", spec.one_of) | list %}
   {% if optional %}
-  <p class="imp-cols-line"><span class="imp-cols-what">Optional</span>
-    {% for c in optional %}<span class="imp-chip" title="{{ c.label }}">{{ column_name(spec, c) }}</span>{% endfor %}
-  </p>
+  <details class="imp-more imp-optional">
+    <summary>More columns it can use (optional): {{ optional | length }}</summary>
+    <p class="muted imp-note">A file without them is loaded all the same; each one there adds what it gives.</p>
+    <ul class="imp-col-list">
+      {% for c in optional %}
+      <li><span class="imp-chip" title="{{ c.label }}">{{ column_name(spec, c) }}</span>
+        <span><b>{{ c.label }}</b>{% if c.about %}: {{ c.about }}{% endif %}
+          {% if c.others %}<small class="imp-also">Also read: {{ c.others | join(", ") }}</small>{% endif %}</span></li>
+      {% endfor %}
+    </ul>
+  </details>
   {% endif %}
   <details class="imp-more">
-    <summary>What each column is, and the other names read</summary>
+    <summary>Why each is needed, and the other names read</summary>
     <ul class="imp-col-list">
-      {% for c in spec.columns %}
-      <li><span class="imp-chip {{ 'need' if c.required or c.field in spec.one_of else '' }}">{{ column_name(spec, c) }}</span>
-        <span><b>{{ c.label }}</b>{% if c.required %} <span class="imp-tag">needed</span>{% elif c.field in spec.one_of %} <span class="imp-tag">one of these is needed</span>{% endif %}{% if c.about %}: {{ c.about }}{% endif %}{% if not c.required and c.about %} <span class="muted">(optional)</span>{% endif %}
+      {% for c in spec.columns if c.required or c.field in spec.one_of %}
+      <li><span class="imp-chip need">{{ column_name(spec, c) }}</span>
+        <span><b>{{ c.label }}</b>{% if c.field in spec.one_of %} <span class="imp-tag">one of these is needed</span>{% endif %}{% if c.about %}: {{ c.about }}{% endif %}
           {% if c.others %}<small class="imp-also">Also read: {{ c.others | join(", ") }}</small>{% endif %}</span></li>
       {% endfor %}
     </ul>
@@ -88,6 +97,14 @@
 </form>
 {% endmacro %}
 
+{# One column of a file's header check (``preview``): found as which of the file's headers, missing, or (optional)
+   not in it, an optional one with what it gives. ``rows``: all the check's rows. #}
+{% macro check_row(look, rows, item) %}{% set c = item.column %}
+    {% set state = "ok" if item.header else ("miss" if c.required or (c.field in look.spec.one_of and look.check.none_of) else "opt") %}
+    <li class="{{ state }}"><span class="ms" aria-hidden="true">{{ {"ok": "check_circle", "miss": "cancel", "opt": "remove"}[state] }}</span>
+      <span><b>{{ c.label }}</b>{% if item.header %} <span class="muted">as</span> “{{ header_name(item.header, look.check.headers) }}”{% set same = rows | selectattr("header", "equalto", item.header) | list %}{% if same | length > 1 %}{% for other in same %}{% if other.column.field == c.field %} <span class="muted">(the {{ nth(loop.index) }} of {{ same | length }} by that name)</span>{% endif %}{% endfor %}{% endif %}{% if c.field in look.check.guessed %} <span class="imp-tag">guessed: check it</span>{% endif %}{% if look.pick and c in look.check.twice %} <span class="imp-tag">named twice: pick which</span>{% endif %}{% elif state == "miss" %} <span class="imp-tag bad">missing: “{{ c.header }}”</span>{% else %} <span class="muted">not in this file (optional)</span>{% endif %}{% if not c.required and c.field not in look.spec.one_of and c.about %}<small class="imp-also">{{ c.about[:1] | upper }}{{ c.about[1:] }}</small>{% endif %}</span></li>
+{% endmacro %}
+
 {# An uploaded file as the import sees it, nothing kept yet: its name and rows, which report it is, each column found
    as which header or missing, its other columns and its first rows. The caller draws the Load and Cancel buttons.
    ``look.pick``: its columns are picked on the page (files.spec_sheet): what was not found by its name is to pick
@@ -113,14 +130,26 @@
   {% endif %}
   {{ caller() }}
   {% if look.check %}
+  {# What a person acts on stays in sight: the needed columns, and an optional one guessed or named twice; the other
+     optional ones are folded, with how many of them the file has. #}
+  {% set rows = look.check.rows() %}
+  {% set ns = namespace(shown=[], more=[], found=0) %}
+  {% for item in rows %}{% set c = item.column %}
+    {% if c.required or c.field in look.spec.one_of or c.field in look.check.guessed or (look.pick and c in look.check.twice) %}{% set ns.shown = ns.shown + [item] %}
+    {% else %}{% set ns.more = ns.more + [item] %}{% if item.header %}{% set ns.found = ns.found + 1 %}{% endif %}{% endif %}
+  {% endfor %}
   <{{ sub_h() }} class="imp-sub">Columns</{{ sub_h() }}>
   <ul class="imp-check" aria-label="The columns of {{ look.title or look.spec.title }} in this file">
-    {% for item in look.check.rows() %}{% set c = item.column %}
-    {% set state = "ok" if item.header else ("miss" if c.required or (c.field in look.spec.one_of and look.check.none_of) else "opt") %}
-    <li class="{{ state }}"><span class="ms" aria-hidden="true">{{ {"ok": "check_circle", "miss": "cancel", "opt": "remove"}[state] }}</span>
-      <span><b>{{ c.label }}</b>{% if item.header %} <span class="muted">as</span> “{{ header_name(item.header, look.check.headers) }}”{% set same = look.check.rows() | selectattr("header", "equalto", item.header) | list %}{% if same | length > 1 %}{% for other in same %}{% if other.column.field == c.field %} <span class="muted">(the {{ nth(loop.index) }} of {{ same | length }} by that name)</span>{% endif %}{% endfor %}{% endif %}{% if c.field in look.check.guessed %} <span class="imp-tag">guessed: check it</span>{% endif %}{% if look.pick and c in look.check.twice %} <span class="imp-tag">named twice: pick which</span>{% endif %}{% elif state == "miss" %} <span class="imp-tag bad">missing: “{{ c.header }}”</span>{% else %} <span class="muted">not in this file (optional)</span>{% endif %}</span></li>
-    {% endfor %}
+    {% for item in ns.shown %}{{ check_row(look, rows, item) }}{% endfor %}
   </ul>
+  {% if ns.more %}
+  <details class="imp-more imp-optional">
+    <summary>More columns it can use (optional): {{ ns.found }} of {{ ns.more | length }} in this file</summary>
+    <ul class="imp-check" aria-label="The optional columns of {{ look.title or look.spec.title }} in this file">
+      {% for item in ns.more %}{{ check_row(look, rows, item) }}{% endfor %}
+    </ul>
+  </details>
+  {% endif %}
   {% if look.check.unused %}
   <p class="muted imp-unused">{{ look.check.unused | length | plural("other column") }} of the file {{ "is" if look.check.unused | length == 1 else "are" }} {{ "not matched by name" if look.pick else "not used" }}:
     {% for h in look.check.unused[:12] %}{{ header_name(h, look.check.headers) }}{% if not loop.last %}, {% endif %}{% endfor %}{% if look.check.unused | length > 12 %} and {{ look.check.unused | length - 12 }} more{% endif %}.</p>

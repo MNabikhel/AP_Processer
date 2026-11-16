@@ -61,6 +61,10 @@
 .imp-tag {font-size: 11.5px; font-weight: 600; color: var(--lg-accent);}
 .imp-tag.bad {color: var(--lg-danger);}
 .imp-note {font-size: 12.5px; margin: 8px 0 0;}
+/* The optional columns, folded under the needed ones (D-248): in the report's columns, a file's check and the picker */
+.imp-optional {align-self: stretch; min-width: 0;}
+.imp-optional > .imp-check, .imp-optional > .imp-map {margin-top: 8px;}
+.imp-check .imp-also, .imp-map .imp-also {font-weight: 400;}
 
 /* The file box */
 .imp-upload {display: flex; flex-direction: column; gap: 10px; align-self: stretch;}
@@ -114,6 +118,7 @@
    column, the line naming what is still to pick */
 .imp-pane {gap: 12px; min-width: 0; align-items: stretch;}
 .imp-pane > * {min-width: 0;}
+.imp-picker {display: flex; flex-direction: column; gap: 10px; align-self: stretch; min-width: 0;}
 .imp-map {display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr)); gap: 10px 14px;
   align-items: end; align-self: stretch;}
 .imp-map .field {display: block; min-width: 0;}  /* the name and "needed" on one line, the choice under them */

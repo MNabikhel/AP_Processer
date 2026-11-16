@@ -18,22 +18,36 @@
 {% endif %}
 {% endmacro %}
 
-{# One "which column" choice per field (inside the caller's form), and the upload's token (``token``: its name). #}
+{# One "which column" choice per field (inside the caller's form), and the upload's token (``token``: its name). The
+   needed fields (and an optional one guessed, to check) in sight; the other optional ones folded under "More columns
+   it can use", saying how many have a column (imports.js counts again as they change). A choice folded is sent all
+   the same. #}
 {% macro columns(s, token="file") %}
 <input type="hidden" name="{{ token }}" value="{{ s.token }}">
 <input type="hidden" name="sheet" value="{{ s.sheet }}">
 <h5 class="imp-sub">Which column is which</h5>
-<div class="imp-map" data-imp-picker data-need='{{ s.need | tojson }}' data-one-of='{{ s.one_of | tojson }}'>
-  {% for f in s.fields %}
+<div class="imp-picker" data-imp-picker data-need='{{ s.need | tojson }}' data-one-of='{{ s.one_of | tojson }}'>
+  <div class="imp-map">{% for f in s.fields if f.shown %}{{ choice(s, f) }}{% endfor %}</div>
+  {% set more = s.fields | rejectattr("shown") | list %}
+  {% if more %}
+  <details class="imp-more imp-optional">
+    <summary>More columns it can use (optional): <span data-imp-picked>{{ more | selectattr("value") | list | length }}</span> of {{ more | length }} with a column</summary>
+    <div class="imp-map">{% for f in more %}{{ choice(s, f) }}{% endfor %}</div>
+  </details>
+  {% endif %}
+</div>
+{{ wait(s) }}
+{% endmacro %}
+
+{# One field's "which column" choice; an optional one says what it gives. #}
+{% macro choice(s, f) %}
   <label class="field">{{ f.label }}{% if f.need %} <span class="imp-tag">needed</span>{% elif f.one_of %} <span class="imp-tag" title="Needed: {{ s.one_of.label }}">one of {{ s.one_of.fields | length }} needed</span>{% endif %}
+    {% if not f.shown and f.about %}<small class="imp-also">{{ f.about[:1] | upper }}{{ f.about[1:] }}</small>{% endif %}
     <select name="col_{{ f.key }}">
       <option value="">(none)</option>
       {% for c, shown in s.options %}<option value="{{ c }}"{% if c == f.value %} selected{% endif %}>{{ shown }}</option>{% endfor %}
     </select>
   </label>
-  {% endfor %}
-</div>
-{{ wait(s) }}
 {% endmacro %}
 
 {# The line naming the needed fields still without a column (hidden once each has one). #}
