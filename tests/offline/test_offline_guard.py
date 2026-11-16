@@ -101,9 +101,9 @@ TOUCHPOINTS = {
     "ap_coder/ai/page_reader.py": "OvisOCR2 in LM Studio: same gate as local_llm",
     "ap_coder/ai/inference.py": "Azure OpenAI only with AP_ALLOW_INTERNET=1 (local_llm.resolve_provider); else LM "
     "Studio",
-    "ap_coder/ai/extraction.py": "Azure Document Intelligence client: AP_ALLOW_INTERNET=1, or the Azure check's client",
-    "ap_coder/ai/azure_check.py": "Azure Document Intelligence: only switched on in Settings, only its endpoint host "
-    "(only_host)",
+    "ap_coder/ai/extraction.py": "Azure Document Intelligence's SDK client: AP_ALLOW_INTERNET=1 only (developers)",
+    "ap_coder/ai/di_http.py": "Azure Document Intelligence (D-245): only once an Admin switched it on in Settings, "
+    "only the saved endpoint's host (every address checked before a socket opens; no proxy, no redirect followed)",
     "ap_coder/erp/jde_ais.py": "the JD Edwards AIS Server: only once an Admin switched a step on in Settings, only the "
     "AIS address saved (no proxy, no redirect followed), which must be on the company network (private addresses) "
     "unless AP_ALLOW_INTERNET=1 (D-104)",
@@ -313,12 +313,11 @@ def _azure_store(tmp_path):
 
 def test_the_azure_check_sends_nothing_until_it_is_switched_on(offline_guard, tmp_path, monkeypatch):
     """Endpoint and key saved but the check off: "Test connection" and the background check send nothing. Switched
-    on, only the endpoint's host is contacted (here the guard stops it)."""
-    from ap_coder.ai import azure_check
+    on, only the endpoint's host is contacted (here the guard stops it). No Azure package is needed (D-245)."""
+    from ap_coder.ai import azure_check, di_http
 
     _bait(monkeypatch)
-    installed = azure_check.packages_installed()
-    monkeypatch.setattr(azure_check, "packages_installed", lambda: True)
+    monkeypatch.setattr(di_http, "SERVER_PAUSES", (0.0, 0.0))
     store = _azure_store(tmp_path)
     endpoint, host = "https://ap-proof.cognitiveservices.azure.com/", "ap-proof.cognitiveservices.azure.com"
     azure_check.save_settings(store, enabled=False, endpoint=endpoint, api_key="k" * 32)
@@ -328,8 +327,6 @@ def test_the_azure_check_sends_nothing_until_it_is_switched_on(offline_guard, tm
     assert not azure_check.overview(store, Settings())["can_test"]
     assert offline_guard.attempts == []
 
-    if not installed:
-        pytest.skip("the Azure packages (optional) aren't installed: switched on, it would say so and send nothing")
     for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         monkeypatch.delenv(name, raising=False)
     azure_check.save_settings(store, enabled=True, endpoint=endpoint, api_key="k" * 32)

@@ -1,6 +1,6 @@
 """The Azure check (ap_coder/ai/azure_check.py): Azure AI Document Intelligence as an optional second opinion, off by
-default. Azure is never called: every test that "reads with Azure" hands in a fake client, and the host guard is
-tested on the real client with a transport that sends nothing."""
+default. Azure is never called: every test that "reads with Azure" hands in a fake client, or the real client
+(``di_http``) asking the stand-in on 127.0.0.1 (tests/fake_di.py)."""
 
 import json
 import logging
@@ -49,7 +49,6 @@ def store(tmp_path, env):
 
 
 def _turn_on(store, monkeypatch, rate=5.0, cap=200):
-    monkeypatch.setattr(azure_check, "packages_installed", lambda: True)  # whether or not the extra is installed
     azure_check.save_settings(store, enabled=True, endpoint=ENDPOINT, api_key=KEY, spot_percent=rate,
                               daily_pages=cap, actor="Mia")  # fmt: skip
 
@@ -63,24 +62,19 @@ def _process(store, path=None, **kw):
 
 
 class FakeClient:
-    """Stands in for DocumentIntelligenceClient: answers with ``raw``, remembers each call."""
+    """Stands in for ``di_http.DiClient``: answers with ``raw``, remembers the pages asked for each call."""
 
     def __init__(self, raw):
         self.raw, self.calls = raw, []
 
-    def begin_analyze_document(self, model_id, body=None, content_type=None, **kwargs):
-        self.calls.append(model_id)
-        raw = self.raw
-
-        class Poller:
-            def result(self):
-                return type("Result", (), {"as_dict": lambda self: raw})()
-
-        return Poller()
+    def analyze(self, data, pages=""):
+        assert data
+        self.calls.append(pages)
+        return self.raw
 
 
 class NeverCalled:
-    def begin_analyze_document(self, *args, **kwargs):
+    def analyze(self, *args, **kwargs):
         raise AssertionError("Azure must not be called")
 
 
@@ -110,7 +104,6 @@ def _raw_from(capture, **changes):
 
 
 def test_off_by_default_nothing_is_queued_or_sent(store, monkeypatch):
-    monkeypatch.setattr(azure_check, "packages_installed", lambda: True)
     monkeypatch.setenv(azure_check.ENDPOINT_ENV, ENDPOINT)  # configured, but not turned on
     monkeypatch.setenv(azure_check.KEY_ENV, KEY)
     cfg = azure_check.load_settings(store)
@@ -126,22 +119,27 @@ def test_off_by_default_nothing_is_queued_or_sent(store, monkeypatch):
     assert store.azure_check_counts()["waiting"] == 0
 
 
-def test_missing_package_is_said_plainly_and_nothing_happens(store, monkeypatch):
+def test_no_azure_package_is_needed(store, monkeypatch):
+    """The check asks Azure with AP Coder's own plain-HTTPS client (D-245): the optional ``azure`` extra isn't
+    needed, and its absence stops nothing."""
+    import builtins
+
+    real = builtins.__import__
+
+    def no_azure(name, *args, **kwargs):
+        if name.startswith("azure"):
+            raise ImportError(name)
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_azure)
     _turn_on(store, monkeypatch)
-    monkeypatch.setattr(azure_check, "packages_installed", lambda: False)
-    state, why = azure_check.status(azure_check.load_settings(store))
-    assert state == azure_check.NO_PACKAGE and "aren't installed" in why and "offline" in why
-    result = _process(store)
-    assert store.azure_check(result.invoice_id) is None  # nothing queued
-    assert azure_check.check_one(_settings(), store, client=NeverCalled()) is None
-    record = azure_check.connection_test(store, _settings(), client=NeverCalled())
-    assert record["ok"] is False and "aren't installed" in record["error"]
-    with pytest.raises(azure_check.AzureUnavailable, match="aren't installed"):
-        azure_check.make_client(azure_check.load_settings(store))
+    cfg = azure_check.load_settings(store)
+    assert azure_check.status(cfg)[0] == azure_check.READY
+    client = azure_check.make_client(cfg)
+    assert client.host == HOST and type(client).__module__ == "ap_coder.ai.di_http"
 
 
 def test_no_endpoint_or_key_or_http_endpoint_sends_nothing(store, monkeypatch):
-    monkeypatch.setattr(azure_check, "packages_installed", lambda: True)
     azure_check.save_settings(store, enabled=True, endpoint="", api_key="")
     assert azure_check.status(azure_check.load_settings(store))[0] == azure_check.NO_ENDPOINT
     azure_check.save_settings(store, enabled=True, endpoint=ENDPOINT, api_key="")
@@ -227,7 +225,7 @@ def test_agreement_is_recorded(store, monkeypatch):
     result = _process(store)
     client = FakeClient(_raw_from(result.capture))
     outcome = azure_check.check_one(_settings(), store, client=client)
-    assert outcome.status == "done" and outcome.differ == [] and client.calls == ["prebuilt-invoice"]
+    assert outcome.status == "done" and outcome.differ == [] and client.calls == [""]
     check = store.azure_check(result.invoice_id)
     assert check["compared"] >= 5 and check["agreed"] == check["compared"]
     assert check["result"]["summary"] == f"Azure agrees on {check['compared']} of {check['compared']} fields"
@@ -373,9 +371,9 @@ def test_a_check_under_way_when_ap_restores_is_dropped_and_none_starts_meanwhile
     monkeypatch.setattr(Store, "_check_backup_file", staticmethod(probe))
 
     class Client(FakeClient):
-        def begin_analyze_document(self, *args, **kwargs):
+        def analyze(self, *args, **kwargs):
             store.restore_from(backup)
-            return super().begin_analyze_document(*args, **kwargs)
+            return super().analyze(*args, **kwargs)
 
     outcome = azure_check.check_one(_settings(), store, client=Client(raw))
     assert seen == {"restoring": True, "started": None}
@@ -476,7 +474,6 @@ def _client(store):
 
 
 def test_the_key_never_appears_in_the_page_logs_or_activity(store, monkeypatch, caplog, env):
-    monkeypatch.setattr(azure_check, "packages_installed", lambda: True)
     caplog.set_level(logging.DEBUG)
     client = _client(store)
     monkeypatch.setenv("AP_DEVELOPER_TOOLS", "1")  # IT sets it up with the developer tools on (B-516)
@@ -497,7 +494,7 @@ def test_the_key_never_appears_in_the_page_logs_or_activity(store, monkeypatch, 
     result = _process(store)
 
     class Leaky:
-        def begin_analyze_document(self, *args, **kwargs):
+        def analyze(self, *args, **kwargs):
             raise RuntimeError(f"401: bad key {KEY}")
 
     outcome = azure_check.check_one(_settings(), store, client=Leaky())
@@ -511,57 +508,32 @@ def test_the_key_never_appears_in_the_page_logs_or_activity(store, monkeypatch, 
     assert azure_check.load_settings(store).api_key == ""
 
 
-def test_only_the_configured_host_is_contacted():
-    check = azure_check.only_host(HOST)
-    check(type("R", (), {"http_request": type("H", (), {"url": f"https://{HOST}/documentintelligence/x"})()})())
-    for url in ("https://evil.example.com/x", f"http://{HOST}/x", f"https://{HOST}.evil.com/x"):
-        with pytest.raises(azure_check.AzureUnavailable, match="only contacts"):
-            check(type("R", (), {"http_request": type("H", (), {"url": url})()})())
-    assert azure_check.endpoint_host("https://user:pw@evil.com@x/") == ""
+def test_the_check_reads_through_the_real_client_and_contacts_only_its_host(store, monkeypatch):
+    """The real client (``di_http``) against the stand-in for Azure on 127.0.0.1: the invoice is read (and the
+    reading deleted from Azure), and every socket opened is for the endpoint's host."""
+    from ap_coder.ai import di_http
+    from tests import fake_di
 
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    asked = []
+    with fake_di.FakeDi() as fake:
 
-def test_the_azure_client_refuses_any_other_host_before_sending():
-    """The real client, with a transport that records what would be sent: a request to another host never reaches
-    it (no network is used either way)."""
-    pytest.importorskip("azure.ai.documentintelligence")
-    from azure.ai.documentintelligence import DocumentIntelligenceClient
-    from azure.core.credentials import AzureKeyCredential
-    from azure.core.pipeline.transport import HttpTransport
+        def client(cfg):
+            def connect_to(host, port):
+                asked.append(host)
+                return fake.connect_to(host, port)
 
-    sent = []
+            return di_http.DiClient(cfg.endpoint, cfg.api_key, ca_file=str(fake_di.CA_FILE), connect_to=connect_to,
+                                    sleep=lambda s: None)  # fmt: skip
 
-    class Recorder(HttpTransport):
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            pass
-
-        def open(self):
-            pass
-
-        def close(self):
-            pass
-
-        def send(self, request, **kwargs):
-            sent.append(request.url)
-            raise ConnectionError("not sent in tests")
-
-    cfg = azure_check.AzureCheckSettings(enabled=True, endpoint=ENDPOINT, api_key=KEY)
-    client = azure_check.make_client(cfg)  # built offline; the hook is the host guard
-    assert client._config.custom_hook_policy._request_callback is not None
-    other = DocumentIntelligenceClient(endpoint="https://evil.example.com", credential=AzureKeyCredential("x"),
-                                       raw_request_hook=azure_check.only_host(HOST), transport=Recorder(),
-                                       retry_total=0)  # fmt: skip
-    with pytest.raises(azure_check.AzureUnavailable):
-        other.begin_analyze_document("prebuilt-invoice", body=b"%PDF", content_type="application/octet-stream")
-    assert sent == []
-    same = DocumentIntelligenceClient(endpoint=ENDPOINT.rstrip("/"), credential=AzureKeyCredential("x"),
-                                      raw_request_hook=azure_check.only_host(HOST), transport=Recorder(),
-                                      retry_total=0)  # fmt: skip
-    with pytest.raises(ConnectionError):
-        same.begin_analyze_document("prebuilt-invoice", body=b"%PDF", content_type="application/octet-stream")
-    assert len(sent) == 1 and sent[0].startswith(f"https://{HOST}/documentintelligence/")
+        monkeypatch.setattr(azure_check, "make_client", client)
+        outcome = azure_check.check_one(_settings(), store)
+    assert outcome.status == "done", outcome.message
+    assert set(asked) == {HOST} and fake.deleted
+    assert [m for m, *_ in fake.calls] == ["POST", "GET", "GET", "DELETE"]
+    assert store.azure_check(result.invoice_id)["result"]["azure"]["invoice_number"] == "NW-2026-0912"
 
 
 def test_ap_allow_internet_is_not_needed_nor_changed(store, monkeypatch):
@@ -578,7 +550,6 @@ def test_ap_allow_internet_is_not_needed_nor_changed(store, monkeypatch):
 
 
 def test_test_connection_reads_the_sample_and_shows_the_comparison(store, monkeypatch):
-    monkeypatch.setattr(azure_check, "packages_installed", lambda: True)
     client = _client(store)
     assert client.post("/settings/azure-check/test", headers=PAGE).json()["ok"] is False  # no endpoint yet
     azure_check.save_settings(store, enabled=False, endpoint=ENDPOINT, api_key=KEY)
@@ -599,7 +570,7 @@ def test_test_connection_reads_the_sample_and_shows_the_comparison(store, monkey
     snap = client.get("/jobs/azure-test").json()
     assert snap["state"] == "done" and snap["result"]["messages"][0]["text"].startswith("Azure agrees on")
     record = azure_check.last_test(store)
-    assert record["ok"] and record["host"] == HOST and fake.calls == ["prebuilt-invoice"]
+    assert record["ok"] and record["host"] == HOST and fake.calls == [""]
     page = client.get("/settings/azure-check").text
     assert "Connected" in page and "Azure agrees on" in page and KEY not in page
     assert ours is azure_check.connection_test

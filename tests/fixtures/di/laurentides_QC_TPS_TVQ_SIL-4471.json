@@ -1,0 +1,589 @@
+{
+ "apiVersion": "2024-11-30",
+ "modelId": "prebuilt-invoice",
+ "stringIndexType": "unicodeCodePoint",
+ "content": "",
+ "pages": [
+  {
+   "pageNumber": 1,
+   "angle": 0,
+   "width": 8.5,
+   "height": 11,
+   "unit": "inch",
+   "words": [],
+   "lines": [],
+   "spans": []
+  }
+ ],
+ "documents": [
+  {
+   "docType": "invoice",
+   "boundingRegions": [
+    {
+     "pageNumber": 1,
+     "polygon": [
+      0,
+      0,
+      8.5,
+      0,
+      8.5,
+      11,
+      0,
+      11
+     ]
+    }
+   ],
+   "fields": {
+    "VendorName": {
+     "type": "string",
+     "content": "Services Informatiques Laurentides Inc.",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        0.6944,
+        0.4864,
+        4.3794,
+        0.4864,
+        4.3794,
+        0.7541,
+        0.6944,
+        0.7541
+       ]
+      }
+     ],
+     "confidence": 0.93,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 39
+      }
+     ],
+     "valueString": "Services Informatiques Laurentides Inc."
+    },
+    "VendorTaxId": {
+     "type": "string",
+     "content": "1234567890 TQ0001",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        3.2304,
+        1.0462,
+        4.4118,
+        1.0462,
+        4.4118,
+        1.2179,
+        3.2304,
+        1.2179
+       ]
+      }
+     ],
+     "confidence": 0.85,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 17
+      }
+     ],
+     "valueString": "1234567890 TQ0001"
+    },
+    "InvoiceId": {
+     "type": "string",
+     "content": "SIL-4471",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        1.3962,
+        1.699,
+        1.9034,
+        1.699,
+        1.9034,
+        1.8707,
+        1.3962,
+        1.8707
+       ]
+      }
+     ],
+     "confidence": 0.96,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 8
+      }
+     ],
+     "valueString": "SIL-4471"
+    },
+    "InvoiceDate": {
+     "type": "date",
+     "content": "2026-10-01",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        1.0627,
+        1.8795,
+        1.7019,
+        1.8795,
+        1.7019,
+        2.0513,
+        1.0627,
+        2.0513
+       ]
+      }
+     ],
+     "confidence": 0.95,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 10
+      }
+     ],
+     "valueDate": "2026-10-01"
+    },
+    "DueDate": {
+     "type": "date",
+     "content": "2026-10-31",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        1.3546,
+        2.0601,
+        1.9938,
+        2.0601,
+        1.9938,
+        2.2318,
+        1.3546,
+        2.2318
+       ]
+      }
+     ],
+     "confidence": 0.94,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 10
+      }
+     ],
+     "valueDate": "2026-10-31"
+    },
+    "PaymentTerm": {
+     "type": "string",
+     "content": "Payable dans les 30 jours",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        0.6944,
+        5.5472,
+        1.9667,
+        5.5472,
+        1.9667,
+        5.6999,
+        0.6944,
+        5.6999
+       ]
+      }
+     ],
+     "confidence": 0.8,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 25
+      }
+     ],
+     "valueString": "Payable dans les 30 jours"
+    },
+    "SubTotal": {
+     "type": "currency",
+     "content": "2 400,00 $",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        6.9444,
+        4.3514,
+        7.6008,
+        4.3514,
+        7.6008,
+        4.5426,
+        6.9444,
+        4.5426
+       ]
+      }
+     ],
+     "confidence": 0.94,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 10
+      }
+     ],
+     "valueCurrency": {
+      "amount": 2400.0,
+      "currencySymbol": "$",
+      "currencyCode": "CAD"
+     }
+    },
+    "InvoiceTotal": {
+     "type": "currency",
+     "content": "2 759,40 $",
+     "boundingRegions": [
+      {
+       "pageNumber": 1,
+       "polygon": [
+        6.9444,
+        5.0181,
+        7.6008,
+        5.0181,
+        7.6008,
+        5.2093,
+        6.9444,
+        5.2093
+       ]
+      }
+     ],
+     "confidence": 0.95,
+     "spans": [
+      {
+       "offset": 0,
+       "length": 10
+      }
+     ],
+     "valueCurrency": {
+      "amount": 2759.4,
+      "currencySymbol": "$",
+      "currencyCode": "CAD"
+     }
+    },
+    "TaxDetails": {
+     "type": "array",
+     "valueArray": [
+      {
+       "type": "object",
+       "confidence": 0.9,
+       "content": "120,00 $",
+       "valueObject": {
+        "Amount": {
+         "type": "currency",
+         "content": "120,00 $",
+         "boundingRegions": [
+          {
+           "pageNumber": 1,
+           "polygon": [
+            6.9444,
+            4.5736,
+            7.485,
+            4.5736,
+            7.485,
+            4.7649,
+            6.9444,
+            4.7649
+           ]
+          }
+         ],
+         "confidence": 0.9,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 8
+          }
+         ],
+         "valueCurrency": {
+          "amount": 120.0,
+          "currencySymbol": "$",
+          "currencyCode": "CAD"
+         }
+        },
+        "Rate": {
+         "type": "string",
+         "valueString": "5 %",
+         "content": "5 %",
+         "confidence": 0.9
+        }
+       }
+      },
+      {
+       "type": "object",
+       "confidence": 0.9,
+       "content": "239,40 $",
+       "valueObject": {
+        "Amount": {
+         "type": "currency",
+         "content": "239,40 $",
+         "boundingRegions": [
+          {
+           "pageNumber": 1,
+           "polygon": [
+            6.9444,
+            4.7958,
+            7.485,
+            4.7958,
+            7.485,
+            4.9871,
+            6.9444,
+            4.9871
+           ]
+          }
+         ],
+         "confidence": 0.9,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 8
+          }
+         ],
+         "valueCurrency": {
+          "amount": 239.4,
+          "currencySymbol": "$",
+          "currencyCode": "CAD"
+         }
+        },
+        "Rate": {
+         "type": "string",
+         "valueString": "9,975 %",
+         "content": "9,975 %",
+         "confidence": 0.9
+        }
+       }
+      }
+     ]
+    },
+    "Items": {
+     "type": "array",
+     "valueArray": [
+      {
+       "type": "object",
+       "valueObject": {
+        "Description": {
+         "type": "string",
+         "content": "Entretien ménager des bureaux - octobre 2026",
+         "boundingRegions": [
+          {
+           "pageNumber": 1,
+           "polygon": [
+            1.0417,
+            3.2083,
+            3.3453,
+            3.2083,
+            3.3453,
+            3.361,
+            1.0417,
+            3.361
+           ]
+          }
+         ],
+         "confidence": 0.93,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 44
+          }
+         ],
+         "valueString": "Entretien ménager des bureaux - octobre 2026"
+        },
+        "Quantity": {
+         "type": "number",
+         "valueNumber": 1,
+         "content": "1",
+         "confidence": 0.92
+        },
+        "UnitPrice": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 1200.0,
+          "currencyCode": "CAD"
+         },
+         "content": "1 200,00",
+         "confidence": 0.91
+        },
+        "Amount": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 1200.0,
+          "currencyCode": "CAD"
+         },
+         "content": "1 200,00",
+         "confidence": 0.94
+        }
+       },
+       "content": "Entretien ménager des bureaux - octobre 2026 1 1 200,00 1 200,00",
+       "boundingRegions": [
+        {
+         "pageNumber": 1,
+         "polygon": [
+          0.6,
+          3.1806,
+          7.9,
+          3.1806,
+          7.9,
+          3.3888,
+          0.6,
+          3.3888
+         ]
+        }
+       ],
+       "confidence": 0.9
+      },
+      {
+       "type": "object",
+       "valueObject": {
+        "Description": {
+         "type": "string",
+         "content": "Fournitures de bureau - papier et cartouches de toner",
+         "boundingRegions": [
+          {
+           "pageNumber": 1,
+           "polygon": [
+            1.0417,
+            3.5417,
+            3.6788,
+            3.5417,
+            3.6788,
+            3.6943,
+            1.0417,
+            3.6943
+           ]
+          }
+         ],
+         "confidence": 0.93,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 53
+          }
+         ],
+         "valueString": "Fournitures de bureau - papier et cartouches de toner"
+        },
+        "Quantity": {
+         "type": "number",
+         "valueNumber": 1,
+         "content": "1",
+         "confidence": 0.92
+        },
+        "UnitPrice": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 340.0,
+          "currencyCode": "CAD"
+         },
+         "content": "340,00",
+         "confidence": 0.91
+        },
+        "Amount": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 340.0,
+          "currencyCode": "CAD"
+         },
+         "content": "340,00",
+         "confidence": 0.94
+        }
+       },
+       "content": "Fournitures de bureau - papier et cartouches de toner 1 340,00 340,00",
+       "boundingRegions": [
+        {
+         "pageNumber": 1,
+         "polygon": [
+          0.6,
+          3.5139,
+          7.9,
+          3.5139,
+          7.9,
+          3.7221,
+          0.6,
+          3.7221
+         ]
+        }
+       ],
+       "confidence": 0.9
+      },
+      {
+       "type": "object",
+       "valueObject": {
+        "Description": {
+         "type": "string",
+         "content": "Réparation du système CVC (chauffage/climatisation)",
+         "boundingRegions": [
+          {
+           "pageNumber": 1,
+           "polygon": [
+            1.0417,
+            3.875,
+            3.6846,
+            3.875,
+            3.6846,
+            4.0277,
+            1.0417,
+            4.0277
+           ]
+          }
+         ],
+         "confidence": 0.93,
+         "spans": [
+          {
+           "offset": 0,
+           "length": 51
+          }
+         ],
+         "valueString": "Réparation du système CVC (chauffage/climatisation)"
+        },
+        "Quantity": {
+         "type": "number",
+         "valueNumber": 1,
+         "content": "1",
+         "confidence": 0.92
+        },
+        "UnitPrice": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 860.0,
+          "currencyCode": "CAD"
+         },
+         "content": "860,00",
+         "confidence": 0.91
+        },
+        "Amount": {
+         "type": "currency",
+         "valueCurrency": {
+          "amount": 860.0,
+          "currencyCode": "CAD"
+         },
+         "content": "860,00",
+         "confidence": 0.94
+        }
+       },
+       "content": "Réparation du système CVC (chauffage/climatisation) 1 860,00 860,00",
+       "boundingRegions": [
+        {
+         "pageNumber": 1,
+         "polygon": [
+          0.6,
+          3.8472,
+          7.9,
+          3.8472,
+          7.9,
+          4.0554,
+          0.6,
+          4.0554
+         ]
+        }
+       ],
+       "confidence": 0.9
+      }
+     ]
+    }
+   },
+   "confidence": 1,
+   "spans": [
+    {
+     "offset": 0,
+     "length": 0
+    }
+   ]
+  }
+ ],
+ "contentFormat": "text"
+}

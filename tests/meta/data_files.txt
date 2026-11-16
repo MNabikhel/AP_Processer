@@ -40,6 +40,10 @@ samples/northwind_ON_HST_NW-2026-0912.pdf
 samples/pacific_BC_GST_PST_PO-77120.pdf
 samples/prairie_SK_GST_PST_PNS-104882.pdf
 samples/redriver_MB_GST_RST_RRO-55821.pdf
+tests/fixtures/di/cascade_US_SalesTax_INV-30981.json
+tests/fixtures/di/laurentides_QC_TPS_TVQ_SIL-4471.json
+tests/fixtures/di/northwind_ON_HST_NW-2026-0912.json
+tests/fixtures/di/pacific_BC_GST_PST_PO-77120.json
 tests/fixtures/page_reader/s212-0000.pdf
 tests/fixtures/page_reader/s212-0000.truth.json
 tests/test_times.json

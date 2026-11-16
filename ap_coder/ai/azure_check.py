@@ -18,11 +18,12 @@ invoice gets a review issue and can't be approved without a person; an invoice p
 approved without a person until Azure has agreed. Azure's reading is scored like the other readers' when AP approves
 (reader "di" on Learning → Readers), so its own accuracy is measured over time.
 
-Network: only the endpoint configured is contacted, over HTTPS, with its key. Every request the Azure client makes,
-redirects and polling included, is checked against that one host (``only_host``) and refused otherwise.
-``AP_ALLOW_INTERNET`` is neither needed nor changed. Turned off, without Azure's packages (the optional ``azure``
-extra), or without an endpoint or key, nothing is queued or sent, and Settings says why. The key is kept in the .env
-(``AZURE_DOCUMENT_INTELLIGENCE_KEY``, like the rest of the Azure settings), never shown back in full, never logged.
+Network: only the endpoint configured is contacted, over HTTPS, with its key, by AP Coder's own plain-HTTPS client
+(``di_http``, API version 2024-11-30, D-245): every address, Azure's result address included, is checked against that
+one host before a socket opens; no redirect is followed and no proxy is used. ``AP_ALLOW_INTERNET`` is neither needed
+nor changed. Turned off, or without an endpoint or key, nothing is queued or sent, and Settings says why. The key is
+kept in the .env (``AZURE_DOCUMENT_INTELLIGENCE_KEY``, like the rest of the Azure settings), never shown back in full,
+never logged.
 """
 
 from __future__ import annotations
@@ -30,8 +31,6 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import hashlib
-import importlib
-import importlib.util
 import json
 import logging
 import os
@@ -42,9 +41,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from ..core.config import Settings
+from .di_http import DiClient, DiError, endpoint_host
 from .extraction import TEXT_EXTENSIONS
 
 log = logging.getLogger(__name__)
@@ -66,7 +65,6 @@ TEST_KEY = "azure_check_test"  # the last "Test connection", as JSON
 ENDPOINT_ENV, KEY_ENV = "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT", "AZURE_DOCUMENT_INTELLIGENCE_KEY"
 DEFAULT_MODEL, DEFAULT_RATE, DEFAULT_CAP = "prebuilt-invoice", 0.05, 200
 MAX_CAP = 100_000
-PACKAGES = ("azure.ai.documentintelligence", "azure.core")
 _MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~-]{1,63}$")
 
 # The background thread: how long it waits before looking again.
@@ -99,27 +97,10 @@ class AzureCheckSettings:
         return f"saved, ending …{self.api_key[-4:]}" if len(self.api_key) >= 16 else "saved"
 
 
-# The hosts of Azure Document Intelligence (a resource's own name, or a region's): the check contacts nothing else,
-# so invoices can't be sent to any https:// address typed in (B-978).
-AZURE_HOSTS = (".cognitiveservices.azure.com", ".api.cognitive.microsoft.com")
+# The endpoint: one of Azure Document Intelligence's hosts (``di_http.AZURE_HOSTS``, ``endpoint_host``): the check
+# contacts nothing else, so invoices can't be sent to any https:// address typed in (B-978).
 NOT_AZURE = ("The endpoint must be an Azure Document Intelligence https:// address, e.g. "
              "https://<name>.cognitiveservices.azure.com/ (Keys and Endpoint in the Azure portal).")  # fmt: skip
-
-
-def endpoint_host(url: str) -> str:
-    """The host of an Azure Document Intelligence HTTPS endpoint (``AZURE_HOSTS``), lower case ("" for anything else:
-    http, no host, user:password@, another host)."""
-    try:
-        parts = urlsplit(str(url or "").strip())
-    except ValueError:
-        return ""
-    if parts.scheme.lower() != "https" or not parts.hostname or "@" in parts.netloc:
-        return ""
-    host = parts.hostname.lower().rstrip(".")
-    label = host.split(".", 1)[0]
-    if not host.endswith(AZURE_HOSTS) or not label or any(host == h[1:] for h in AZURE_HOSTS):
-        return ""
-    return host
 
 
 def _env_value(name: str) -> str:
@@ -208,16 +189,7 @@ def save_settings(store: Any, *, enabled: bool, endpoint: str, api_key: str = ""
     return changed
 
 
-def packages_installed() -> bool:
-    """Azure's Document Intelligence packages (the optional ``azure`` extra) are installed, found without importing
-    them."""
-    try:
-        return all(importlib.util.find_spec(name) is not None for name in PACKAGES)
-    except (ImportError, ValueError):
-        return False
-
-
-OFF, NO_PACKAGE, NO_ENDPOINT, NO_KEY, READY = "off", "no package", "no endpoint", "no key", "ready"
+OFF, NO_ENDPOINT, NO_KEY, READY = "off", "no endpoint", "no key", "ready"
 
 
 def status(cfg: AzureCheckSettings) -> tuple[str, str]:
@@ -225,9 +197,6 @@ def status(cfg: AzureCheckSettings) -> tuple[str, str]:
     connection" included: this computer contacts Azure only once AP has switched the check on."""
     if not cfg.enabled:
         return OFF, "Off — AP Coder works fully offline without it. Switch it on (and save) to test the connection."
-    if not packages_installed():
-        return NO_PACKAGE, (f"{NAME}'s packages aren't installed on this computer (the optional 'azure' extra): "
-                            "nothing is sent. AP Coder works fully offline without them.")  # fmt: skip
     if not cfg.endpoint:
         return NO_ENDPOINT, "No endpoint yet: add the Document Intelligence endpoint from the Azure portal."
     if not cfg.host:
@@ -492,44 +461,24 @@ def queue(store: Any, invoice_id: int | None, plan: Plan) -> bool:
 
 
 class AzureUnavailable(RuntimeError):
-    """The Azure check can't run (off, packages missing, no endpoint or key) or a request was refused."""
+    """The Azure check can't run (off, no endpoint or key) or a request was refused."""
 
 
-def only_host(host: str) -> Callable[[Any], None]:
-    """A request hook for the Azure client: every request it sends (the analysis, the polling, a redirect) must go
-    to ``host`` over HTTPS, or it is refused before it leaves this computer."""
-
-    def check(request: Any) -> None:
-        http = getattr(request, "http_request", request)
-        url = str(getattr(http, "url", "") or "")
-        if endpoint_host(url) != host:
-            raise AzureUnavailable(f"refused: the Azure check only contacts {host} (not {urlsplit(url).hostname})")
-
-    return check
-
-
-def make_client(cfg: AzureCheckSettings) -> Any:
-    """The Document Intelligence client for the endpoint configured, its key, and nothing else."""
+def make_client(cfg: AzureCheckSettings) -> DiClient:
+    """The Document Intelligence client (``di_http.DiClient``) for the endpoint configured, its key, nothing else."""
     state, why = status(cfg)
     if state != READY:
         raise AzureUnavailable(why)
-    module = importlib.import_module("azure.ai.documentintelligence")
-    credentials = importlib.import_module("azure.core.credentials")
-    return module.DocumentIntelligenceClient(
-        endpoint=cfg.endpoint.rstrip("/"), credential=credentials.AzureKeyCredential(cfg.api_key),
-        raw_request_hook=only_host(cfg.host), retry_total=2, logging_enable=False,
-    )  # fmt: skip
+    return DiClient(cfg.endpoint, cfg.api_key)
 
 
-def read(cfg: AzureCheckSettings, path: str | Path, client: Any = None) -> dict[str, Any]:
-    """Azure's reading of the file (``AnalyzeResult.as_dict()``), with the Document Intelligence code AP Coder
-    already has (``extraction.DocumentExtractor``)."""
-    from ..core.config import DocumentIntelligenceSettings
-    from .extraction import DocumentExtractor
-
-    di = DocumentIntelligenceSettings(endpoint=cfg.endpoint, api_key=cfg.api_key, model_id=cfg.model)
-    extractor = DocumentExtractor(di, client=client if client is not None else make_client(cfg))
-    return extractor.extract(Path(path)).raw or {}
+def read(cfg: AzureCheckSettings, path: str | Path, client: Any = None, pages: str = "") -> dict[str, Any]:
+    """Azure's reading of the file (its ``analyzeResult``), ``pages`` of it ("1-4,9"; all when empty)."""
+    client = client if client is not None else make_client(cfg)
+    try:
+        return client.analyze(Path(path).read_bytes(), pages=pages) or {}
+    except DiError as exc:
+        raise AzureUnavailable(str(exc)) from None
 
 
 def scrub(text: str, cfg: AzureCheckSettings) -> str:
@@ -791,7 +740,7 @@ def overview(store: Any, settings: Settings | None = None, days: int = 30) -> di
     return {
         "enabled": cfg.enabled, "endpoint": cfg.endpoint, "host": cfg.host, "key_hint": cfg.key_hint,
         "model": cfg.model, "spot_percent": f"{cfg.spot_rate * 100:g}", "daily_pages": cfg.daily_pages,
-        "state": state, "note": note, "ready": state == READY, "packages": packages_installed(),
+        "state": state, "note": note, "ready": state == READY,
         "can_test": status(cfg)[0] == READY, "days": days, "checked": len(checks),
         "agreed": agreed, "agreed_rate": agreed / len(checks) if checks else None,
         "fields_compared": sum(int(c["compared"] or 0) for c in checks),
