@@ -893,7 +893,8 @@ def _status(fz: _Fusion, f: str, g: _Group, conf: float, best: Reading, speck: b
     azure_differs = _azure_differs(f, fz.by_source)  # the cloud reader against this computer's (D-245)
     if azure_differs:
         theirs, local, mine = azure_differs
-        reasons.append(f"{AZURE_NAME} read {theirs.value}, {LOCAL_READERS[local]} read {mine.value}")
+        a, b = (f"{v:,.2f}" if isinstance(v, float) else v for v in (theirs.value, mine.value))
+        reasons.append(f"{AZURE_NAME} read {a}, {LOCAL_READERS[local]} read {b}")
     if f in fz.failed or f in fz.look or coding_differs or readers_differ or azure_differs or speck:
         return CHECK
     if conf >= VERIFIED_AT and best.boxes:

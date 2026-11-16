@@ -48,8 +48,12 @@ from .extraction import TEXT_EXTENSIONS
 
 log = logging.getLogger(__name__)
 
-LOW, SPOT = "low-confidence", "spot-check"
-REASONS = {LOW: "Low confidence", SPOT: "Spot-check"}
+LOW, SPOT, EVERY = "low-confidence", "spot-check", "every-invoice"
+REASONS = {LOW: "Low confidence", SPOT: "Spot-check", EVERY: "Every invoice"}
+# Which invoices go to Azure (Settings): those AP Coder is unsure of (and the spot-check share), or every one, to
+# compare the two readers (D-245).
+UNSURE, ALL = "unsure", "every"
+MODES = {UNSURE: "Only those AP Coder is unsure of", ALL: "Every invoice, to compare the two readers"}
 ISSUE_CODE = "AZURE_DI_DISAGREES"
 NOT_COMPARED_CODE = "AZURE_DI_NOT_COMPARED"  # Azure read none of the fields AP Coder read: nothing was checked
 CODES = (ISSUE_CODE, NOT_COMPARED_CODE)
@@ -61,10 +65,11 @@ NAME = "Azure Document Intelligence"
 ENABLED_KEY, MODEL_KEY, RATE_KEY, CAP_KEY = (
     "azure_check_enabled", "azure_check_model", "azure_check_spot_rate", "azure_check_daily_pages",
 )  # fmt: skip
+MODE_KEY, PAGES_KEY = "azure_check_mode", "azure_check_invoice_pages"
 TEST_KEY = "azure_check_test"  # the last "Test connection", as JSON
 ENDPOINT_ENV, KEY_ENV = "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT", "AZURE_DOCUMENT_INTELLIGENCE_KEY"
-DEFAULT_MODEL, DEFAULT_RATE, DEFAULT_CAP = "prebuilt-invoice", 0.05, 200
-MAX_CAP = 100_000
+DEFAULT_MODEL, DEFAULT_RATE, DEFAULT_CAP, DEFAULT_PAGES = "prebuilt-invoice", 0.05, 200, 5
+MAX_CAP, MAX_PAGES = 100_000, 2000
 _MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~-]{1,63}$")
 
 # The background thread: how long it waits before looking again.
@@ -84,6 +89,8 @@ class AzureCheckSettings:
     model: str = DEFAULT_MODEL
     spot_rate: float = DEFAULT_RATE  # 0..1
     daily_pages: int = DEFAULT_CAP
+    mode: str = UNSURE  # which invoices: UNSURE or ALL (``MODES``)
+    invoice_pages: int = DEFAULT_PAGES  # at most this many pages of an invoice are sent (its first and its last)
 
     @property
     def host(self) -> str:
@@ -123,6 +130,7 @@ def load_settings(store: Any, settings: Settings | None = None) -> AzureCheckSet
     rate = min(1.0, max(0.0, number(RATE_KEY, DEFAULT_RATE)))
     cap = int(min(MAX_CAP, max(0, number(CAP_KEY, DEFAULT_CAP))))
     model = (store.get_setting(MODEL_KEY, "") or DEFAULT_MODEL).strip()
+    mode = store.get_setting(MODE_KEY, "") or UNSURE
     return AzureCheckSettings(
         enabled=store.get_setting(ENABLED_KEY, "off") == "on",
         endpoint=_env_value(ENDPOINT_ENV) or (di.endpoint if di else "") or "",
@@ -130,6 +138,8 @@ def load_settings(store: Any, settings: Settings | None = None) -> AzureCheckSet
         model=model if _MODEL_ID.match(model) else DEFAULT_MODEL,
         spot_rate=rate,
         daily_pages=cap,
+        mode=mode if mode in MODES else UNSURE,
+        invoice_pages=int(min(MAX_PAGES, max(1, number(PAGES_KEY, DEFAULT_PAGES)))),
     )
 
 
@@ -143,10 +153,15 @@ def env_path() -> Path:
 def save_settings(store: Any, *, enabled: bool, endpoint: str, api_key: str = "", forget_key: bool = False,
                   model: str = DEFAULT_MODEL, spot_percent: float = DEFAULT_RATE * 100,
                   daily_pages: int = DEFAULT_CAP, actor: str | None = None,
-                  settings: Settings | None = None) -> list[str]:  # fmt: skip
+                  settings: Settings | None = None, mode: str = UNSURE,
+                  invoice_pages: int = DEFAULT_PAGES) -> list[str]:  # fmt: skip
     """Save the Azure check's settings; the names of those that changed (never their values). An empty ``api_key``
     keeps the one saved (``forget_key`` removes it). Raises ValueError, in plain words, for a value that can't be
     used: an endpoint that isn't https://, a model name that isn't one, a share outside 0-100%, a negative cap."""
+    if mode not in MODES:
+        raise ValueError("Choose which invoices go to Azure: those AP Coder is unsure of, or every invoice.")
+    if not 1 <= int(invoice_pages) <= MAX_PAGES:
+        raise ValueError(f"The pages sent of an invoice are a number from 1 to {MAX_PAGES:,}.")
     from ..core.envfile import clean_url, one_line, write_env
 
     endpoint = clean_url(endpoint or "")
@@ -166,8 +181,10 @@ def save_settings(store: Any, *, enabled: bool, endpoint: str, api_key: str = ""
     before = load_settings(store, settings)
     changed: list[str] = []
     stored = {ENABLED_KEY: "on" if enabled else "off", MODEL_KEY: model,
-              RATE_KEY: f"{float(spot_percent) / 100:g}", CAP_KEY: str(int(daily_pages))}  # fmt: skip
-    names = {ENABLED_KEY: "enabled", MODEL_KEY: "model", RATE_KEY: "spot-check share", CAP_KEY: "daily cap"}
+              RATE_KEY: f"{float(spot_percent) / 100:g}", CAP_KEY: str(int(daily_pages)), MODE_KEY: mode,
+              PAGES_KEY: str(int(invoice_pages))}  # fmt: skip
+    names = {ENABLED_KEY: "enabled", MODEL_KEY: "model", RATE_KEY: "spot-check share", CAP_KEY: "daily cap",
+             MODE_KEY: "which invoices", PAGES_KEY: "pages of an invoice"}  # fmt: skip
     for key, value in stored.items():
         if store.get_setting(key, "") != value:
             store.set_setting(key, value)
@@ -255,21 +272,37 @@ def spot_pick(path: str | Path, rate: float) -> bool:
 
 
 def decide(store: Any, cfg: AzureCheckSettings, capture: Any, path: str | Path) -> str:
-    """Why this invoice goes to the Azure check ("low-confidence", "spot-check"), or "" (it doesn't). A spot-check
-    is not picked once today's pages reach the cap (it would hold the invoice back from touchless processing until
-    tomorrow); a low-confidence invoice waits for its turn."""
+    """Why this invoice goes to the Azure check ("low-confidence", "spot-check", "every-invoice"), or "" (it doesn't).
+    In "every invoice" mode one AP Coder is sure of goes too, held like a spot-check. A spot-check is not picked
+    once today's pages reach the cap (it would hold the invoice back from touchless processing until tomorrow); a
+    low-confidence invoice waits for its turn."""
     if not usable(cfg) or Path(path).suffix.lower() in TEXT_EXTENSIONS:
         return ""
     if low_confidence(capture):
         return LOW
-    if not spot_pick(path, cfg.spot_rate):
+    if cfg.mode != ALL and not spot_pick(path, cfg.spot_rate):
         return ""
-    pages = getattr(_capture(capture), "page_count", 0) or 1
+    pages = sent_pages(getattr(_capture(capture), "page_count", 0) or 1, cfg)
     try:
         used = store.azure_pages_on()
     except Exception:  # noqa: BLE001 - not counted: no spot-check
         return ""
-    return SPOT if used + pages <= cfg.daily_pages else ""
+    return "" if used + pages > cfg.daily_pages else EVERY if cfg.mode == ALL else SPOT
+
+
+def sent_pages(count: int, cfg: AzureCheckSettings) -> int:
+    """How many of an invoice's ``count`` pages go to Azure (``pages_to_send``)."""
+    return max(1, min(count, cfg.invoice_pages))
+
+
+def pages_to_send(count: int, most: int) -> str:
+    """Which pages Azure reads, as its ``pages`` parameter ("" for all): an invoice longer than ``most`` pages is
+    read at its first pages and its last (where the totals are), as AP Coder's own readers read a long file."""
+    if most <= 0 or count <= most:
+        return ""
+    if most == 1:
+        return "1"
+    return f"1-{most - 1},{count}" if most > 2 else f"1,{count}"
 
 
 # --- Comparing --------------------------------------------------------------------------------------------------
@@ -354,11 +387,14 @@ def apply(capture: Any, rows: list[dict[str, Any]]) -> list[str]:
             fr.sources[READER] = row["azure"]
             continue
         differ.append(row["field"])
+        fr.status = CHECK
+        fr.confidence = min(fr.confidence, 0.5)
+        # Read with Azure among the readers (D-245): its reading is a rival already, and the reason said.
+        if any(k.startswith("other:") and READER in str(v).split(", ") for k, v in fr.sources.items()):
+            continue
         key = f"other:{row['azure']}"
         readers = [r.strip() for r in str(fr.sources.get(key) or "").split(",") if r.strip()]
         fr.sources[key] = ", ".join(sorted({*readers, READER}))
-        fr.status = CHECK
-        fr.confidence = min(fr.confidence, 0.5)
         reason = f"{NAME} read {_shown(row['azure'])}"
         if reason not in fr.reasons:
             fr.reasons.append(reason)
@@ -489,6 +525,51 @@ def scrub(text: str, cfg: AzureCheckSettings) -> str:
     return text[:500]
 
 
+# --- Azure's reading kept, and read with the invoice --------------------------------------------------------------
+
+
+def cache_path(digest: str) -> Path:
+    """Where Azure's reading of a file is kept (the data folder's ``.cache/di``, by the file's SHA-256, the model and
+    the API version): an invoice read again uses it, and Azure is never asked twice for one file. Like every cache,
+    never in a backup."""
+    from ..core.paths import private_dir
+    from .di_http import API_VERSION, MODEL
+
+    return private_dir() / ".cache" / "di" / f"{digest}.{MODEL}.{API_VERSION}.json"
+
+
+def keep_reading(digest: str, raw: dict[str, Any]) -> None:
+    """Keep Azure's reading of the file ``digest``. Never raises: without it the invoice is read without Azure."""
+    path = cache_path(digest)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f"{path.name}.{os.getpid()}-{threading.get_ident()}.tmp")
+        temporary.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(path)
+    except OSError as exc:
+        log.warning("Azure's reading not kept (%s)", type(exc).__name__)
+
+
+def kept_reading(store: Any, path: str | Path, digest: str | None = None) -> dict[str, Any] | None:
+    """Azure's reading kept for this file, while the check is switched on (off, nothing of it is used: AP Coder reads
+    as it does without it). None when there is none."""
+    if store is None:
+        return None
+    try:
+        if store.get_setting(ENABLED_KEY, "off") != "on":
+            return None
+        from ..core.paths import file_sha256
+
+        digest = digest or file_sha256(path)
+        raw = json.loads(cache_path(digest).read_text(encoding="utf-8")) if digest else None
+    except (OSError, ValueError):
+        return None
+    except Exception as exc:  # noqa: BLE001 - an extra reader: never stops the invoice
+        log.warning("Azure's kept reading not used (%s)", type(exc).__name__)
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
 # --- The queue, in the background -------------------------------------------------------------------------------
 
 
@@ -499,6 +580,7 @@ class CheckOutcome:
     message: str = ""
     differ: list[str] = dataclasses.field(default_factory=list)
     approved: bool = False
+    read_again: str = ""  # how the invoice was read again with Azure's reading: "now", "page reader", "" (not)
 
 
 def _page_reader_running(settings: Settings | None, store: Any) -> bool:
@@ -525,7 +607,7 @@ def check_one(settings: Settings | None, store: Any, *, client: Any = None) -> C
         return None
     iid = int(row["invoice_id"])
     try:
-        return _check(cfg, store, row, client)
+        return _check(cfg, store, row, client, settings)
     except Exception as exc:  # noqa: BLE001 - one invoice must never stop the queue
         message = scrub(f"{type(exc).__name__}: {exc}", cfg)
         log.warning("Azure check: invoice %s failed (%s)", iid, message)
@@ -533,7 +615,8 @@ def check_one(settings: Settings | None, store: Any, *, client: Any = None) -> C
         return CheckOutcome(iid, "failed", message)
 
 
-def _check(cfg: AzureCheckSettings, store: Any, row: dict[str, Any], client: Any) -> CheckOutcome:
+def _check(cfg: AzureCheckSettings, store: Any, row: dict[str, Any], client: Any,
+           settings: Settings | None = None) -> CheckOutcome:  # fmt: skip
     iid, reason = int(row["invoice_id"]), str(row["reason"])
     inv = store.get_invoice(iid)
     identity = store.row_identity(iid)  # Azure's reading is folded into this invoice only (a restore may come between)
@@ -546,10 +629,11 @@ def _check(cfg: AzureCheckSettings, store: Any, row: dict[str, Any], client: Any
     if capture is None:
         return _skip(store, iid, "AP Coder has no reading of it to compare with")
     if reason == LOW and not low_confidence(capture):  # every field verified since (OvisOCR2 read it)
-        if not spot_pick(path, cfg.spot_rate):
+        if cfg.mode != ALL and not spot_pick(path, cfg.spot_rate):
             return _skip(store, iid, "every field was verified once OvisOCR2 had read it; not picked for a spot-check")
-        reason = SPOT
-    pages = capture.page_count or 1
+        reason = EVERY if cfg.mode == ALL else SPOT
+    count = capture.page_count or 1
+    pages = sent_pages(count, cfg)
     if pages > cfg.daily_pages:
         return _skip(store, iid, f"{pages} pages: more than the daily cap of {cfg.daily_pages}")
     if store.azure_pages_on() + pages > cfg.daily_pages:
@@ -557,7 +641,10 @@ def _check(cfg: AzureCheckSettings, store: Any, row: dict[str, Any], client: Any
         store.finish_azure_check(iid, "waiting", error=message)
         return CheckOutcome(iid, "postponed", message)
 
-    raw = read(cfg, path, client)
+    raw = read(cfg, path, client, pages=pages_to_send(count, cfg.invoice_pages))
+    digest = inv.get("file_sha256") or ""
+    if digest:
+        keep_reading(digest, raw)  # read again later (the page reader, a person's Read again), Azure isn't asked
     if store.restoring() or store.row_identity(iid) != identity:
         # A backup was restored while Azure read it: nothing is written, the queue stays as the backup has it.
         return CheckOutcome(iid, "skipped", "not applied: a backup was restored while Azure read it")
@@ -572,10 +659,61 @@ def _check(cfg: AzureCheckSettings, store: Any, row: dict[str, Any], client: Any
                              reason=reason)  # fmt: skip
     outcome = CheckOutcome(iid, "done", result["summary"])
     outcome.differ, outcome.approved = _fold_in(store, inv, capture, rows, reason, now, expect=identity)
+    if not outcome.approved and digest and rows:
+        outcome.read_again = _read_again(settings, store, iid, identity)
     store.log_event("azure_checked", iid, actor="AP Coder", detail={
         "reason": reason, "compared": len(rows), "agreed": agreed, "differ": outcome.differ, "pages": billed,
     })  # fmt: skip
     return outcome
+
+
+def _read_again(settings: Settings | None, store: Any, iid: int, identity: Any) -> str:
+    """The invoice read again with Azure's reading as one more reader (D-245), while it waits untouched in the review
+    queue: where it agrees, the fields are surer; a field the readers on this computer missed is filled in; where it
+    differs, a person checks. Read by the page reader already: it goes back in the page reader's line (its pages are
+    kept, so nothing is read twice). Otherwise it is read again now. Not while another check holds it (the AI
+    reviewer decides then, on the proposal it has). Never raises."""
+    from ..core.store import REVIEW
+    from .verifier import held
+
+    inv = store.get_invoice(iid) or {}
+    worked_on = inv.get("final_output") or inv.get("reviewer") or inv.get("edits")
+    if inv.get("status") != REVIEW or worked_on or not settings or held((inv.get("meta") or {}).get("capture") or {}):
+        return ""
+    try:
+        if (inv.get("meta") or {}).get("page_reader"):
+            return "page reader" if store.queue_page_read(iid, "azure-check") else ""
+        return "now" if _process_again(settings, store, iid, identity) else ""
+    except Exception as exc:  # noqa: BLE001 - the comparison is folded in already: the reading again is an extra
+        log.warning("invoice %s: not read again with Azure's reading (%s)", iid, type(exc).__name__)
+        return ""
+
+
+def _process_again(settings: Settings, store: Any, iid: int, identity: Any) -> bool:
+    """Process the invoice again (its kept Azure reading among the readers) into its proposal, approved as touchless
+    processing would have (as ``page_worker.chat_again`` does). Whether the proposal was replaced."""
+    from ..capture.workflow import AUTONOMOUS_REVIEWER, has_draft
+    from .page_worker import chat_trust, reference_data
+    from .pipeline import InvoicePipeline
+    from .pipeline import _meta as pipeline_meta
+
+    inv = store.get_invoice(iid) or {}
+    result = InvoicePipeline(settings, reference_data(store), store=store).process(
+        Path(inv.get("source_path") or ""), save=False, invoice_id=iid)  # fmt: skip
+    if result.error or result.output is None or result.report is None:
+        return False
+    if store.restoring() or store.row_identity(iid) != identity:
+        return False
+    capture = result.capture.to_dict() if result.capture is not None else None
+    updated = store.replace_proposal(iid, result.output, result.report.to_dict(), capture, pipeline_meta(result),
+                                     expect=identity)  # fmt: skip
+    untrusted = chat_trust(store, result.header_model) if updated and result.autonomy.get("auto") else ""
+    if updated and result.autonomy.get("auto") and not untrusted and not has_draft(store, iid):
+        try:
+            store.approve_invoice(iid, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
+        except (KeyError, ValueError) as exc:  # approved or rejected meanwhile
+            log.info("invoice %s: not approved after Azure's reading (%s)", iid, exc)
+    return updated
 
 
 def _skip(store: Any, iid: int, why: str) -> CheckOutcome:

@@ -126,26 +126,29 @@ _CUSTOMER_LABEL = re.compile(
 
 def read_invoice(path: str | Path, store: Any = None, layout: DocLayout | None = None,
                  page_text: list[str] | None = None, ai_values: dict[str, Any] | None = None,
-                 today: dt.date | None = None) -> tuple[CaptureResult, str, dict[str, Any] | None]:  # fmt: skip
+                 today: dt.date | None = None,
+                 di_raw: dict[str, Any] | None = None) -> tuple[CaptureResult, str, dict[str, Any] | None]:  # fmt: skip
     """(capture, supplier key, supplier profile): a first read, then again with the supplier's template
     and vendor-master record once the first read says who the supplier is. ``layout``: the page, already
     read (a scan is OCR'd once). ``page_text``: the page reader's transcription of each page, when it has
     read them (one more independent reader). ``ai_values``: the chat model's own reading of the header from the page
-    images (another one). What AP approved on this computer calibrates the confidence. ``today``: the day it is
-    processed (today; the learning benchmark gives the day its invoice arrives)."""
+    images (another one). ``di_raw``: Azure Document Intelligence's reading, when an Admin switched it on and it
+    has read the invoice (one more, never first: D-245). What AP approved on this computer calibrates the
+    confidence. ``today``: the day it is processed (today; the learning benchmark gives the day its invoice
+    arrives)."""
     path = Path(path)
     today = today or dt.date.today()
     layout = layout or build_layout(path)
     local = local_evidence(store)
     capture = analyze(path, layout=layout, today=today, page_text=page_text, local_evidence=local,
-                      ai_values=ai_values or None)  # fmt: skip
+                      ai_values=ai_values or None, di_raw=di_raw or None)  # fmt: skip
     first = _values(capture)
     key, profile = supplier_for(store, first)
     template = (profile or {}).get("template") or None
     vendor = vendor_record(store, first.get("vendor_name"), first.get("gst_hst_registration_number"))
     if template or vendor:
         capture = analyze(path, layout=layout, template=template, vendor=vendor, today=today, page_text=page_text,
-                          local_evidence=local, ai_values=ai_values or None)  # fmt: skip
+                          local_evidence=local, ai_values=ai_values or None, di_raw=di_raw or None)  # fmt: skip
     if template:  # a verified value its template read: as sure as this supplier's record of it (D-89)
         apply_supplier_record(capture.fields, supplier_record(store, key))
     apply_vendor_alias(store, capture)  # a vendor name read as AP corrected it before (D-119)

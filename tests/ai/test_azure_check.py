@@ -17,6 +17,7 @@ from ap_coder.capture.workflow import AUTONOMOUS_REVIEWER, audit_pick, reader_ou
 from ap_coder.core.config import Settings
 from ap_coder.core.store import APPROVED, REVIEW, Store, load_sample_setup
 from ap_coder.web.app import create_app
+from tests import fake_di
 from tests.conftest import SAMPLES
 from tests.webclient import PAGE
 
@@ -48,9 +49,9 @@ def store(tmp_path, env):
     return store
 
 
-def _turn_on(store, monkeypatch, rate=5.0, cap=200):
+def _turn_on(store, monkeypatch, rate=5.0, cap=200, mode="unsure", invoice_pages=5):
     azure_check.save_settings(store, enabled=True, endpoint=ENDPOINT, api_key=KEY, spot_percent=rate,
-                              daily_pages=cap, actor="Mia")  # fmt: skip
+                              daily_pages=cap, actor="Mia", mode=mode, invoice_pages=invoice_pages)  # fmt: skip
 
 
 def _process(store, path=None, **kw):
@@ -216,6 +217,95 @@ def test_the_daily_cap_bounds_the_pages_sent(store, monkeypatch, tmp_path):
     assert len(client.calls) == 1
 
 
+def test_every_invoice_mode_sends_the_ones_ap_coder_is_sure_of_too(store, monkeypatch, tmp_path):
+    _turn_on(store, monkeypatch, rate=0, mode=azure_check.ALL)
+    cfg = azure_check.load_settings(store)
+    assert cfg.mode == azure_check.ALL and cfg.invoice_pages == 5
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)
+    capture = CaptureResult(fields={}, page_count=1)
+    assert azure_check.decide(store, cfg, capture, SAMPLES / f"{STEM}.pdf") == azure_check.EVERY
+    result = _process(store)
+    check = store.azure_check(result.invoice_id)
+    assert check["reason"] == azure_check.EVERY and azure_check.REASONS[check["reason"]] == "Every invoice"
+    with pytest.raises(ValueError, match="which invoices"):
+        azure_check.save_settings(store, enabled=True, endpoint=ENDPOINT, mode="some")
+    _turn_on(store, monkeypatch, rate=0)  # back to "only those AP Coder is unsure of": a sure one isn't sent
+    assert azure_check.decide(store, azure_check.load_settings(store), capture, SAMPLES / f"{STEM}.pdf") == ""
+
+
+def test_a_long_invoice_sends_its_first_pages_and_its_last():
+    assert azure_check.pages_to_send(3, 5) == "" and azure_check.pages_to_send(5, 5) == ""
+    assert azure_check.pages_to_send(12, 5) == "1-4,12"
+    assert azure_check.pages_to_send(12, 2) == "1,12" and azure_check.pages_to_send(12, 1) == "1"
+    cfg = azure_check.AzureCheckSettings(invoice_pages=5)
+    assert azure_check.sent_pages(12, cfg) == 5 and azure_check.sent_pages(2, cfg) == 2
+
+
+def test_a_long_invoice_is_counted_by_the_pages_sent(store, monkeypatch):
+    _turn_on(store, monkeypatch, invoice_pages=1)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)  # two pages
+    client = FakeClient(_raw_from(result.capture))
+    assert azure_check.check_one(_settings(), store, client=client).status == "done"
+    assert client.calls == ["1"] and store.azure_pages_on() == 1
+
+
+# --- Azure's reading as one more reader (D-245) -------------------------------------------------------------------
+
+
+def test_azures_reading_is_kept_and_the_invoice_read_again_with_it(store, monkeypatch):
+    """Azure agreeing makes the fields the rule reader alone read (likely) verified; the reading is kept, so the
+    invoice read again later (the page reader, a person's Read again) has it without asking Azure again."""
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    assert result.capture.fields["invoice_number"].status == "likely"  # one reader: never verified alone
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(fake_di.recorded(STEM)))
+    assert outcome.status == "done" and outcome.read_again == "now"
+    inv = store.get_invoice(result.invoice_id)
+    assert azure_check.cache_path(inv["file_sha256"]).is_file()
+    fr = CaptureResult.from_dict(store.get_capture(result.invoice_id)).fields["invoice_number"]
+    assert fr.sources == {"rules": "NW-2026-0912", "di": "NW-2026-0912"} and fr.status == "verified"
+    again = InvoicePipeline(_settings(), store.reference_data(), store=store).process(
+        SAMPLES / f"{STEM}.pdf", save=False, invoice_id=result.invoice_id
+    )
+    assert again.capture.fields["invoice_number"].status == "verified"
+
+
+def test_switched_off_its_kept_reading_is_not_used(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    azure_check.check_one(_settings(), store, client=FakeClient(fake_di.recorded(STEM)))
+    azure_check.save_settings(store, enabled=False, endpoint=ENDPOINT)
+    again = InvoicePipeline(_settings(), store.reference_data(), store=store).process(
+        SAMPLES / f"{STEM}.pdf", save=False, invoice_id=result.invoice_id
+    )
+    # The comparison stored then is still folded in (``prepare``); Azure's reading no longer lifts any field.
+    assert again.capture.fields["invoice_number"].status == "likely"
+    assert not azure_check.kept_reading(store, SAMPLES / f"{STEM}.pdf")
+
+
+def test_an_invoice_the_page_reader_read_goes_back_in_its_line(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    store.update_after_check(result.invoice_id, None, None, (), {"page_reader": {"model": "ovisocr2", "pages": 2}})
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(fake_di.recorded(STEM)))
+    assert outcome.read_again == "page reader"
+    assert store.next_page_read()["invoice_id"] == result.invoice_id
+
+
+def test_an_invoice_a_person_worked_on_is_not_read_again(store, monkeypatch):
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store)
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET reviewer = 'Mia' WHERE id = ?", (result.invoice_id,))
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(fake_di.recorded(STEM)))
+    assert outcome.status == "done" and outcome.read_again == ""
+
+
 # --- Comparing --------------------------------------------------------------------------------------------------
 
 
@@ -248,7 +338,8 @@ def test_a_disagreement_marks_the_field_check_and_blocks_touchless(store, monkey
     assert sorted(outcome.differ) == ["grand_total", "invoice_number"]
     capture = CaptureResult.from_dict(store.get_capture(result.invoice_id))
     fr = capture.fields["grand_total"]
-    assert fr.status == CHECK and f"Azure Document Intelligence read {float(total) + 100:,.2f}" in fr.reasons
+    said = f"Azure Document Intelligence read {float(total) + 100:,.2f}"
+    assert fr.status == CHECK and any(r.startswith(said) for r in fr.reasons)
     assert "di" in fr.sources[f"other:{float(total) + 100}"]
     issues = store.get_invoice(result.invoice_id)["validation"]["issues"]
     issue = next(i for i in issues if i["code"] == azure_check.ISSUE_CODE)

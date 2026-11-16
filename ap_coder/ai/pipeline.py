@@ -864,8 +864,10 @@ class InvoicePipeline:
             else None  # fmt: skip
         if model_values:  # its trust decides whether anything is approved without a person (D-180)
             result.header_model = getattr(self.coder, "_local_model", "")
+        # Azure Document Intelligence's reading, kept once it read the invoice, while an Admin has it on (D-245).
+        di_raw = None if text_file else azure_check.kept_reading(self.store, path, result.sha256)
         local = captured["local"] = read_invoice(path, self.store, layout=layout, page_text=page_text,
-                                                 ai_values=model_values, today=received)  # fmt: skip
+                                                 ai_values=model_values, today=received, di_raw=di_raw)  # fmt: skip
         vendor = local[0].fields.get("vendor_name")
         if vendor is not None and vendor.value:
             # The vendor is known now: its lessons, past the cap too, and its examples for the chat model, even when
