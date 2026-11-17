@@ -1416,6 +1416,26 @@ def database_too_new(data: Path, version: str, early: bool = False) -> SetupErro
     )
 
 
+def backup_before_update() -> SetupError | None:
+    """The takeover an update from GitHub hands over to (``releases.UPDATE_FROM_ENV``, D-247): the database and the
+    data folder's files backed up (D-143: ``server_update.safety_copy``, which opens no Store on it) before this
+    version opens them, whether or not it changes the database, as the question promised. Never on another start. A
+    backup that can't be made stops this start, the database untouched: the error, else None."""
+    database = paths.env_path("AP_DB_PATH") or paths.default_db_path()
+    if not os.environ.get(releases.UPDATE_FROM_ENV) or not database.is_file():
+        return None
+    from ap_coder.ops import server_update
+
+    try:
+        made = server_update.safety_copy(database, f"before-update-{identity()['version']}")
+    except (OSError, sqlite3.Error) as exc:
+        return SetupError(f"The database could not be backed up before the update ({exc}), so this AP Coder did not "
+                          "open it: nothing was changed.", "Free some space on the disk, then start AP Coder again; "
+                          "the older AP Coder still works in the meantime (say no to the update).")  # fmt: skip
+    say(f"Backed up the database and its files before the update: {made}.")
+    return None
+
+
 def code_schema() -> int:
     """The database version this folder's code knows (``SCHEMA_VERSION``), read from its source."""
     text = (ROOT / "ap_coder" / "core" / "store" / "_base.py").read_text(encoding="utf-8")
@@ -1506,6 +1526,15 @@ def ensure_models(first: bool, state: dict) -> None:
             "offline bundle's models folder. Scans are read with the other OCR engine.")  # fmt: skip
         state["models_failed"] = attempt
         return
+    older = older_models() if online and not finder else None
+    if older is not None:  # an update: a new .venv, whose models the AP Coder it updates has already
+        say("Copying the OCR models from the older AP Coder (once).")
+        result = fetch_models.setup(online=False, table_finder=False, first=first, say=say, log=log, older=older)
+        if result.ok:
+            state.pop("models_failed", None)
+            state.pop("models_tries", None)
+            say(f"OCR models ready: {models_said(result, 'the older AP Coder')}.")
+            return
     again = online and state.get("models_failed") == attempt
     if online:
         if not again:
@@ -1540,13 +1569,30 @@ def ensure_models(first: bool, state: dict) -> None:
     say(f"Couldn't download {what}{where} ({why}). AP Coder will try again {when}; {meanwhile} meanwhile.")
 
 
-def models_said(result: Any) -> str:
+def older_models() -> Path | None:
+    """The RapidOCR models folder of the AP Coder this one updates (the folder an update was taken from, else an
+    install on record), when it holds every OCR model file, each checked as a download is (``fetch_models.intact``):
+    copied from there rather than downloaded again (each update is a new folder with a new .venv, D-247). Else None."""
+    from ap_coder.ops import offline
+
+    for folder in [os.environ.get(releases.UPDATE_FROM_ENV) or "", *(e["folder"] for e in paths.installs())]:
+        if not folder or paths.same_folder(folder, ROOT):
+            continue
+        venv = Path(folder) / ".venv"
+        for models in [*venv.glob("Lib/site-packages/rapidocr/models"),
+                       *venv.glob("lib/python*/site-packages/rapidocr/models")]:  # fmt: skip
+            if all(fetch_models.intact(models / m.name, m) for m in offline.ocr_files()):
+                return models
+    return None
+
+
+def models_said(result: Any, copied_from: str = "the offline bundle") -> str:
     """ "2 downloaded and the table finder's, 1 came with the OCR package": where each model file came from."""
     from ap_coder.ops import offline
 
     finder = offline.TABLE_FINDER_NAME
     parts = []
-    for how, files in (("downloaded", result.downloaded), ("copied from the offline bundle", result.copied)):
+    for how, files in (("downloaded", result.downloaded), (f"copied from {copied_from}", result.copied)):
         ocr = len([f for f in files if f != finder])
         if ocr and finder in files:
             parts.append(f"{ocr} {how}, and the table finder's")
@@ -2578,7 +2624,7 @@ def settle_and_check(
         save_state(state)
         return failed(SetupError(str(exc), exc.hint))
     notes = settle_settings(data, ident["version"])
-    too_new = database_too_new(data, ident["version"])
+    too_new = database_too_new(data, ident["version"]) or backup_before_update()
     if too_new:
         save_state(state)
         return failed(too_new)
@@ -2728,10 +2774,14 @@ def offer_update(args: argparse.Namespace, argv: list[str]) -> int | None:
     """A newer tested AP Coder on GitHub (``scripts/releases.py``, D-247): said, with what is new, and asked about
     ("Update now? [Y/n]"; --yes takes it, nobody at the window leaves it). Yes: downloaded, checked, unzipped beside
     this folder, and its own launcher started, which takes over (:func:`handover`). No: this version starts, and that
-    release is not asked about again (``--update`` asks again). GitHub not answering, or a release that is not right:
+    release is not asked about again (``--update`` asks again), nor GitHub asked again that day (``update_asked``: a
+    build is released at each merge). GitHub not answering, or a release that is not right:
     said, and this version starts. Returns the exit code once handed over, else None."""
     if not update_check_wanted(args):
         return None
+    today = time.strftime("%Y-%m-%d")
+    if paths.read_user_settings().get("update_asked") == today and not args.update:
+        return None  # said no today: a build is released at each merge, so it is asked about once a day at most
     try:
         release = releases.newest()
     except Exception as exc:  # noqa: BLE001 - any failure: said in one line, the details in the log
@@ -2741,8 +2791,10 @@ def offer_update(args: argparse.Namespace, argv: list[str]) -> int | None:
     if release is None or not releases.is_newer(release, identity()):
         return None
     if paths.read_user_settings().get("update_skipped") == release.tag and not args.update:
-        say(f"AP Coder {release.shown()} is available (you said no to it). To update: start AP Coder with "
-            f"{'APProcessor.bat' if WINDOWS else './APProcessor.command'} --update.")  # fmt: skip
+        again = (r"open scripts\terminal.bat in AP Coder's folder and type APProcessor.bat --update" if WINDOWS else
+                 "in Terminal, in AP Coder's folder, type ./APProcessor.command --update")  # fmt: skip
+        say(f"AP Coder {release.shown()} is available (you said no to it). To be asked again now: {again} (a newer "
+            "one is asked about by itself).")  # fmt: skip
         return None
     say()
     say(f"A newer AP Coder is available: {release.shown()}. What's new:")
@@ -2753,8 +2805,9 @@ def offer_update(args: argparse.Namespace, argv: list[str]) -> int | None:
             say("It was not installed: nobody is at this window to say yes. Starting this version.")
             return None
         if not yes_answered("Update now? Your invoices and settings are kept (a backup is made first). [Y/n] "):
-            paths.write_user_settings(update_skipped=release.tag)
-            say("Starting this version. You are not asked about this one again.")
+            paths.write_user_settings(update_skipped=release.tag, update_asked=today)
+            say("Starting this version. You are not asked about this one again, nor about a newer one before "
+                "tomorrow.")  # fmt: skip
             return None
     try:
         folder = releases.take(release, ROOT, paths.private_dir(), say)

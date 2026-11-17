@@ -55,10 +55,18 @@ jobs:
           (cd dist && sha256sum "$name.zip" > SHA256SUMS && cat SHA256SUMS)
           {
             if [ -n "$last" ]; then
-              git log --first-parent --format='%s' "$last..$SHA"
+              git log --first-parent --format='%H' "$last..$SHA"
             else
-              git log --first-parent --format='%s' -n 10 "$SHA"
-            fi | sed -E 's/^Merge pull request #([0-9]+)[^:]*: */#\1 /; s/^/- /'
+              git log --first-parent --format='%H' -n 10 "$SHA"
+            fi | while read -r commit; do
+              subject=$(git show -s --format=%s "$commit")
+              # GitHub's own merge subject names the branch; the pull request's title is the body's first line
+              if [[ $subject =~ ^(Merge\ pull\ request\ #[0-9]+)\ from\ [^[:space:]:]+$ ]]; then
+                title=$(git show -s --format=%b "$commit" | awk 'NF && !done { print; done = 1 }')
+                if [ -n "$title" ]; then subject="${BASH_REMATCH[1]}: $title"; fi
+              fi
+              printf '%s\n' "$subject"
+            done | sed -E 's/^Merge pull request #([0-9]+)[^:]*: */#\1 /; s/^/- /'
             echo
             echo "Build $short, committed $(TZ=UTC git show -s --date=format-local:'%Y-%m-%dT%H:%M:%SZ' --format=%cd "$SHA")"
           } > notes.md

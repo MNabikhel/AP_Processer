@@ -248,9 +248,10 @@ def fetch(target: Path, source: Path | None = None, *, online: bool | None = Non
 
 
 def setup(*, online: bool, table_finder: bool, first: bool, say: Callable[[str], None],
-          log: Callable[[str], None] | None = None) -> Result:  # fmt: skip
+          log: Callable[[str], None] | None = None, older: Path | None = None) -> Result:  # fmt: skip
     """The launcher's step (scripts/launch.py, ensure_models): the OCR models into RapidOCR's folder, copied from
-    the offline bundle's models/ folder, or downloaded when ``online``; with ``table_finder``, the table finder's
+    the offline bundle's models/ folder (else from ``older``, an older install's RapidOCR models folder), or
+    downloaded when ``online``; with ``table_finder``, the table finder's
     model too (online only, into the data folder's models/ folder). A first setup tries each download 3 times, waiting
     up to 30 s for an answer; a later start (trying again after a failed one) once, 10 s. A site not reached at all is
     asked for nothing more in this run (on a network that drops it silently, the first setup took 10 minutes)."""
@@ -259,7 +260,7 @@ def setup(*, online: bool, table_finder: bool, first: bool, say: Callable[[str],
     result = Result()
     target = offline.model_dir()
     if target is not None:
-        source = BUNDLE_MODELS if BUNDLE_MODELS.is_dir() else None
+        source = BUNDLE_MODELS if BUNDLE_MODELS.is_dir() else older
         result.add(fetch(target, source, online=online, say=say, log=log, waits=waits, timeout=timeout,
                          skip_hosts=skip))  # fmt: skip
     if table_finder and online and offline.table_finder_path() is None:
