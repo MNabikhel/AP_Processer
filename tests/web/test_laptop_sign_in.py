@@ -245,6 +245,52 @@ def test_a_pause_or_a_lost_key_on_the_laptop_names_the_console_not_an_admin_to_a
     assert "users reset-2fa admin" in refused["error"]
 
 
+@pytest.mark.parametrize("windows", [True, False])
+def test_the_console_named_is_this_computers_and_the_admin_its_own(store, owner, monkeypatch, windows):
+    """B-2570: a Mac's owner was told to double-click scripts\\terminal.bat, which only Windows has, and the laptop's
+    pages named ``users reset-2fa admin`` whatever its Admin's username (one added at the console)."""
+    from ap_coder.web.pages import login
+
+    monkeypatch.setattr(login, "WINDOWS", windows)
+    enrol(store, store.add_user("pat", CHOSEN, role="admin", must_change=False))
+    client = browser(laptop(store))
+    command = "python -m ap_coder users reset-2fa pat"
+    page = client.get("/login").text
+    answer = client.post("/login", data={"username": "pat", "password": CHOSEN, "next": "/review"}, headers=PAGE)
+    code = client.get(answer.json()["redirect"]).text
+    for _ in range(5):
+        paused = client.post("/login/code", data={"code": "000000", "next": "/review"}, headers=PAGE).json()["error"]
+    expired = login._refusal(store, users.TEMPORARY_EXPIRED, "pat", server=False)  # (the only Admin's)
+    assert "users reset pat" in expired
+    assert ("terminal.bat" in expired) is windows and (".venv/bin/python" in expired) is not windows
+    for said in (page, code, paused):
+        assert command in said and "reset-2fa admin" not in said, said
+        assert ("terminal.bat" in said) is windows and (".venv/bin/python" in said) is not windows, said
+
+
+def test_opened_at_its_own_address_the_first_sign_in_is_told_that_address():
+    """B-2570: a laptop listening on its own network address only (``AP_DASHBOARD_ADDRESS``), opened by a name it
+    allows (``AP_ALLOWED_HOSTS``), was told to open http://127.0.0.1, where nothing answers: it is told the address
+    the browser reached. The server's console stays 127.0.0.1."""
+    import types
+
+    from starlette.requests import Request
+
+    from ap_coder.web.pages.login import _here_only, first_sign_in_here
+
+    app = types.SimpleNamespace(state=types.SimpleNamespace(proxy=None, server_mode=False))
+    scope = {"type": "http", "method": "POST", "path": "/login", "app": app, "query_string": b"", "scheme": "http",
+             "headers": [(b"host", b"pat-laptop:8501")], "client": ("192.168.1.20", 50000),
+             "server": ("192.168.1.20", 8501)}  # fmt: skip
+    assert not first_sign_in_here(Request(scope))
+    said = _here_only(Request(scope))
+    assert "http://192.168.1.20:8501" in said and "127.0.0.1" not in said
+    scope["headers"] = [(b"host", b"192.168.1.20:8501")]
+    assert first_sign_in_here(Request(scope))  # (the address said opens the first sign-in)
+    app.state.server_mode = True
+    assert "http://127.0.0.1:8501" in _here_only(Request(scope))
+
+
 def test_the_own_address_is_compared_as_an_address_on_a_dual_stack_socket():
     """Listening on both stacks, the server's own address comes as ``::ffff:192.168.1.20`` while the browser names
     ``192.168.1.20``: the same address."""

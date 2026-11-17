@@ -264,7 +264,7 @@ def running(data: Path, s: service.ServerSettings, say: Say) -> int | None:
         )
         return 0
     say(
-        "AP Coder is open on this computer now, without sign-in (your own window). Close it first (its window, or "
+        "AP Coder is open on this computer now, not shared (your own window). Close it first (its window, or "
         "Stop AP Coder), then run this again: two AP Coders never use the same data at once."
     )
     return 1
