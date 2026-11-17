@@ -7,15 +7,18 @@ looked at."""
 from __future__ import annotations
 
 import csv
+import datetime as dt
 import html
 import io
 from urllib.parse import quote
 
 import pytest
+from openpyxl import load_workbook
 
 from ap_coder.core.store import by_hand, loaded
 from ap_coder.web import roles
 from ap_coder.web.app import create_app
+from ap_coder.web.files import XLSX
 from tests.webclient import PAGE, follow, web_settings
 
 HERE = "/jde-files/loaded"
@@ -25,6 +28,25 @@ def _csv(client, address: str) -> list[list[str]]:
     answer = client.get(address)
     assert answer.status_code == 200 and answer.headers["content-type"].startswith("text/csv"), address
     return list(csv.reader(io.StringIO(answer.content.decode("utf-8-sig"))))
+
+
+def _xlsx(client, address: str) -> list[list]:
+    answer = client.get(address)
+    assert answer.status_code == 200 and answer.headers["content-type"].startswith(XLSX), address
+    return [list(row) for row in load_workbook(io.BytesIO(answer.content)).active.iter_rows(values_only=True)]
+
+
+def same_rows(sheet: list[list], lines: list[list[str]]) -> None:
+    """The workbook's rows are the CSV's: text as it is, an empty cell blank, a number or a date the CSV's text."""
+    assert len(sheet) == len(lines)
+    for cells, line in zip(sheet, lines, strict=True):
+        for cell, text in zip(cells, line, strict=True):
+            if cell is None or isinstance(cell, str):
+                assert (cell or "") == text, (cells, line)
+            elif isinstance(cell, dt.datetime):
+                assert text.startswith(cell.date().isoformat()), (cells, line)
+            else:
+                assert cell == pytest.approx(float(text)), (cells, line)
 
 
 def _count(page: str) -> str:
@@ -194,9 +216,29 @@ def test_last_years_coding_and_the_vouchers_are_looked_at_not_changed(chart_comp
 def test_on_the_server_a_clerk_and_above_see_the_lists_and_only_an_admin_changes_a_row(store):
     app = create_app(web_settings(), store, start_reader=False, server=True)
     for what in loaded.WHATS:
-        for path in (f"{HERE}/{what}", f"{HERE}/{what}.csv"):
+        for path in (f"{HERE}/{what}", f"{HERE}/{what}.csv", f"{HERE}/{what}.xlsx"):
             assert all(roles.can(app, role, "GET", path) for role in ("clerk", "approver", "admin")), path
             assert not roles.can(app, "readonly", "GET", path) and not roles.can(app, "manager", "GET", path), path
         assert roles.can(app, "admin", "POST", f"{HERE}/{what}/edit")
         others = ("readonly", "clerk", "approver", "manager")
         assert not any(roles.can(app, role, "POST", f"{HERE}/{what}/edit") for role in others)
+
+
+def test_each_list_downloads_as_a_workbook_whose_codes_keep_their_leading_zeros(chart_company_client, chart_company):
+    """B-2650: the CSV, opened in Excel, made a business unit 0021061010 the number 21061010 and a supplier number
+    0410010 the number 410010. Each list's main download is a workbook to read: the CSV's rows, each code a text
+    cell, leading zeros and all, each amount a number; the CSV stays, a link beside it, for another program."""
+    client, store = chart_company_client, chart_company.store
+    for what in loaded.WHATS:
+        page = client.get(f"{HERE}/{what}").text
+        assert f'href="{HERE}/{what}.xlsx"' in page and f'href="{HERE}/{what}.csv"' in page, what
+        sheet, lines = _xlsx(client, f"{HERE}/{what}.xlsx"), _csv(client, f"{HERE}/{what}.csv")
+        same_rows(sheet, lines)
+        kinds = {loaded.CODE: (str, dt.datetime), loaded.AMOUNT: (int, float)}  # (an invoice date: a date)
+        typed = [(kinds[column.kind], [cells[n] for cells in sheet[1:] if cells[n] is not None])
+                 for n, column in enumerate(store.loaded_columns(what)) if column.kind in kinds]  # fmt: skip
+        assert any(values for _, values in typed), what
+        assert all(isinstance(v, kind) for kind, values in typed for v in values), what
+    unit = next(r.bu for r in store.chart_accounts() if r.bu.startswith("0"))
+    sheet = _xlsx(client, f"{HERE}/chart.xlsx?bu={unit}")
+    assert [cells[0] for cells in sheet[1:]] == [unit] * sum(1 for r in store.chart_accounts() if r.bu == unit)

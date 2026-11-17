@@ -30,6 +30,7 @@ import threading
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, fields
+from typing import Any
 
 from ..coding.money import times
 from ..coding.po import billed_on, po_label, positive_lines
@@ -467,17 +468,25 @@ def said_cad(accruals: list[Accrual]) -> bool:
     return any(a.cad_assumed for a in accruals) and any((a.currency or "CAD") != "CAD" for a in accruals)
 
 
+HEADER = ["Source", "Vendor", "Reference", "Description", "GL account", "Cost center", "Amount", "Currency", "Note"]
+CODES = ("Reference", "GL account", "Cost center")  # text in the workbook: leading zeros kept (B-2650)
+
+
+def table(accruals: list[Accrual]) -> list[list[Any]]:
+    """The schedule's rows under ``HEADER``, the amount a number: the CSV's and the workbook's."""
+    said = said_cad(accruals)
+    return [[a.source, a.vendor, a.reference, a.description, a.gl_code, a.cost_center, a.amount, a.currency,
+             f"{a.note}; {CAD_ASSUMED}" if a.cad_assumed and said else a.note] for a in accruals]  # fmt: skip
+
+
 def to_csv(accruals: list[Accrual], period_end: dt.date) -> bytes:
     out = io.StringIO()
     w = csv.writer(out)
     w.writerow([f"Accruals at {period_end.isoformat()}"])
-    w.writerow(["Source", "Vendor", "Reference", "Description", "GL account", "Cost center", "Amount", "Currency",
-                "Note"])  # fmt: skip
-    said = said_cad(accruals)
-    for a in accruals:
-        note = f"{a.note}; {CAD_ASSUMED}" if a.cad_assumed and said else a.note
-        w.writerow(csv_row([a.source, a.vendor, a.reference, a.description, a.gl_code, a.cost_center,
-                            f"{a.amount:.2f}", a.currency, note]))  # fmt: skip
+    w.writerow(HEADER)
+    for row in table(accruals):
+        row[6] = f"{row[6]:.2f}"
+        w.writerow(csv_row(row))
     return ("\ufeff" + out.getvalue()).encode("utf-8")
 
 

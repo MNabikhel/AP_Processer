@@ -344,21 +344,33 @@ def _copy_key(inv: dict[str, Any]) -> tuple[str, float]:
     return norm_invoice_number(inv.get("invoice_number")), round(inv.get("grand_total") or 0, 2)
 
 
+HEADER = ["Result", "Invoice #", "Date", "Statement amount", "Our amount", "Difference", "AP Coder #",
+          "AP Coder status", "Note"]  # fmt: skip
+AMOUNTS = ("Statement amount", "Our amount", "Difference")
+CODES = ("Invoice #",)  # text in the workbook: leading zeros kept (B-2650)
+
+
+def table(rec: Reconciliation) -> list[list[Any]]:
+    """The reconciliation's rows under ``HEADER``, amounts as numbers (None: none), then what the page warns of, a row
+    each: the CSV's and the workbook's."""
+    rows = [[LABELS[li.status], li.number, li.date, li.statement_amount, li.ap_amount, li.difference, li.invoice_id,
+             li.ap_status, li.note] for li in rec.lines]  # fmt: skip
+    if rec.exported_note:  # an open-items statement: the invoices exported are left out, and the file says so
+        rows.append([rec.exported_note] + [None] * 8)
+    if rec.period_unknown or rec.dates_unread:  # as the page warns: what is Not on statement is not all there
+        rows.append([PERIOD_UNKNOWN if rec.period_unknown else DATES_UNREAD] + [None] * 8)
+    return rows
+
+
 def to_csv(rec: Reconciliation) -> bytes:
     out = io.StringIO()
     writer = csv.writer(out)
-    writer.writerow(["Result", "Invoice #", "Date", "Statement amount", "Our amount", "Difference",
-                     "AP Coder #", "AP Coder status", "Note"])  # fmt: skip
-    for li in rec.lines:
-        writer.writerow(csv_row([
-            LABELS[li.status], li.number, li.date,
-            "" if li.statement_amount is None else f"{li.statement_amount:.2f}",
-            "" if li.ap_amount is None else f"{li.ap_amount:.2f}",
-            "" if li.difference is None else f"{li.difference:.2f}",
-            li.invoice_id or "", li.ap_status, li.note,
-        ]))  # fmt: skip
-    if rec.exported_note:  # an open-items statement: the invoices exported are left out, and the file says so
-        writer.writerow([rec.exported_note] + [""] * 8)
-    if rec.period_unknown or rec.dates_unread:  # as the page warns: what is Not on statement is not all there
-        writer.writerow([PERIOD_UNKNOWN if rec.period_unknown else DATES_UNREAD] + [""] * 8)
+    writer.writerow(HEADER)
+    lines = len(rec.lines)
+    for n, row in enumerate(table(rec)):
+        if n < lines:
+            row[3:6] = ["" if v is None else f"{v:.2f}" for v in row[3:6]]
+            writer.writerow(csv_row(["" if v is None else v for v in row]))
+        else:
+            writer.writerow(["" if v is None else v for v in row])
     return ("\ufeff" + out.getvalue()).encode("utf-8")

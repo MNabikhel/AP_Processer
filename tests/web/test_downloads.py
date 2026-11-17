@@ -24,7 +24,8 @@ from tests.webclient import PAGE, add_clean, client_for, enrol, sign_in, web_set
 
 GOOD = "correct horse battery"
 ADDRESSES = ["/search/export.csv", "/search/export.xlsx", "/activity/events.csv", "/exports/duplicates.csv",
-             "/month-end/accruals.csv?end=2026-10-31"]  # fmt: skip
+             "/month-end/accruals.csv?end=2026-10-31", "/month-end/accruals.xlsx?end=2026-10-31",
+             "/jde-files/loaded/suppliers.xlsx"]  # fmt: skip
 
 
 @pytest.fixture
@@ -92,7 +93,8 @@ def test_on_the_server_the_page_asks_the_background_process_makes_it_and_the_fil
         assert named[0] == named[1] and made.headers["content-disposition"].startswith("attachment;"), address
         assert made.headers["cache-control"] == "no-store"
         if address.endswith(".xlsx"):
-            assert _cells(made.content) == _cells(here.content) and len(_cells(made.content)) == 2
+            assert _cells(made.content) == _cells(here.content) and len(_cells(made.content)) >= 2, address
+            assert len(_cells(made.content)) == 2 or not address.startswith("/search"), address
         elif address.startswith("/activity"):  # (newest first: the laptop's has the events since on top)
             header, _, rows = made.content.partition(b"\r\n")
             assert here.content.startswith(header) and here.content.endswith(rows) and rows.count(b"\r\n") > 3

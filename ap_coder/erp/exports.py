@@ -29,7 +29,7 @@ import csv
 import datetime as dt
 import io
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from itertools import chain, islice
 from typing import Any
 
@@ -322,9 +322,10 @@ _SHEET_PARTS = {
 }
 
 
-def sheet_workbook(out: Any, title: str, columns: list[tuple[str, str]], rows: Iterable[dict[str, Any]]) -> None:
+def sheet_workbook(out: Any, title: str, columns: list[tuple[str, str]], rows: Iterable[dict[str, Any]],
+                   money: Collection[str] = MONEY_HEADERS) -> None:  # fmt: skip
     """The workbook of one sheet ``_sheet`` makes of ``rows`` (the same cells, formats, widths, frozen header and
-    filter), written to ``out`` (a binary file) a row at a time, without an openpyxl cell for each value."""
+    filter; ``money``: the labels of two decimals), written to ``out`` a row at a time, without openpyxl's cells."""
     import zipfile
     from math import isinf, isnan
     from xml.sax.saxutils import escape
@@ -373,7 +374,7 @@ def sheet_workbook(out: Any, title: str, columns: list[tuple[str, str]], rows: I
         return f'<c r="{ref}"{s} t="inlineStr">{text(value)}</c>'
 
     letters = [get_column_letter(i) for i in range(1, len(columns) + 1)]
-    kinds = [(label in MONEY_HEADERS, DATE_HEADERS.get(label, "")) for _, label in columns]
+    kinds = [(label in money, DATE_HEADERS.get(label, "")) for _, label in columns]
     dated = {key for key, label in columns if label in DATE_HEADERS}
     rows = iter(rows)
     first = list(islice(rows, 500))
@@ -447,6 +448,17 @@ def sheet_workbook(out: Any, title: str, columns: list[tuple[str, str]], rows: I
         z.writestr("xl/theme/theme1.xml", theme_xml)
         for name, part_xml in _SHEET_PARTS.items():
             z.writestr(name, part_xml)
+
+
+def table_workbook(out: Any, title: str, header: list[str], rows: Iterable[list[Any]], codes: Collection[str] = (),
+                   money: Collection[str] = ()) -> None:  # fmt: skip
+    """Rows a person reads, as an Excel workbook of one sheet called ``title``, written to ``out`` a row at a time
+    (``sheet_workbook``): the columns named in ``codes`` are text cells, so a supplier number, business unit, account
+    or invoice number keeps its leading zeros (the same file as CSV, opened in Excel, loses them: B-2650); those in
+    ``money`` are numbers with two decimals."""
+    text = {n for n, label in enumerate(header) if label in codes}
+    cells = ({str(n): str(v) if n in text and v is not None else v for n, v in enumerate(row)} for row in rows)
+    sheet_workbook(out, title, [(str(n), label) for n, label in enumerate(header)], cells, money)
 
 
 def csv_amount(value: Any) -> Any:
