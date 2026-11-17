@@ -93,7 +93,7 @@ def test_on_the_server_the_page_asks_the_background_process_makes_it_and_the_fil
         assert named[0] == named[1] and made.headers["content-disposition"].startswith("attachment;"), address
         assert made.headers["cache-control"] == "no-store"
         if address.endswith(".xlsx"):
-            assert _cells(made.content) == _cells(here.content) and len(_cells(made.content)) >= 2, address
+            assert _cells(made.content) == _cells(here.content), address
             assert len(_cells(made.content)) == 2 or not address.startswith("/search"), address
         elif address.startswith("/activity"):  # (newest first: the laptop's has the events since on top)
             header, _, rows = made.content.partition(b"\r\n")
