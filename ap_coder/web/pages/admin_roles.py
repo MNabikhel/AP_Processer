@@ -13,6 +13,7 @@ from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ap_coder.core.permissions import PERMISSIONS
+from ap_coder.core.store.roles import MAX_ROLE_NAME
 from ap_coder.web import identity
 from ap_coder.web.core import done, get_store, page_router, refuse, render, reviewer
 from ap_coder.web.pages import admin, users
@@ -41,7 +42,8 @@ def new_role(request: Request, copy: str = "") -> HTMLResponse:
     """A new role's form, its boxes ticked as the role ``copy`` has them (a starting point), else none."""
     users.server_only(request)
     start = get_store(request).role_info(copy) if copy else None
-    role = {"key": "", "name": f"{start['name']} (copy)" if start else "", "built_in": False, "people": 0,
+    copied = f"{start['name'][: MAX_ROLE_NAME - len(' (copy)')].rstrip()} (copy)" if start else ""  # fits a name
+    role = {"key": "", "name": copied, "built_in": False, "people": 0,
             "permissions": start["permissions"] if start else []}  # fmt: skip
     return render(request, "admin_role.html", "admin", title="New role", **admin.common(request), role=role,
                   permissions=PERMISSIONS, copied=start["name"] if start else "")  # fmt: skip

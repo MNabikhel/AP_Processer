@@ -204,3 +204,18 @@ def test_a_role_that_sees_no_invoices_lands_on_a_page_it_may_open(store):
         refused = person.get("/review", headers=HTML)
         assert refused.status_code == 403 and 'href="/review"' not in refused.text and 'href="/"' in refused.text
     assert boss.get("/", headers=HTML).headers["location"] == "/review"
+
+
+def test_a_copy_of_a_role_with_a_long_name_is_named_in_full(store):
+    """B-2580: "(copy)" put after a long name went past the 40 characters a name keeps: saved as it was offered, the
+    copy of "Accounts payable team lead for Ontario" was named "Accounts payable team lead for Ontario (", and the
+    copy of a 40-character name was refused as a role there already is."""
+    account(store, "boss", "admin", "Pat Boss")
+    boss = client_of(app_for(store), "10.0.0.7")
+    log_in(boss, "boss")
+    for name in ("Accounts payable team lead for Ontario", "Accounts payable team leads for Ontario A"[:40]):
+        key = _made(boss, name, ["view"])
+        offered = re.search(r'name="name" value="([^"]*)"', boss.get(f"/admin/roles/new?copy={key}").text).group(1)
+        assert len(offered) <= 40 and offered.endswith(" (copy)"), offered
+        copy = _made(boss, offered, ["view"])
+        assert store.role_info(copy)["name"] == offered
