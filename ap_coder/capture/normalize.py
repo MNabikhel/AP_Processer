@@ -198,6 +198,12 @@ _PAYMENT_NOTE = re.compile(r"ACCEPT|PAYMENTS?\s+(?:IN|EN)\b|PAIEMENTS?\s+EN\b|RE
 # A code printed on an amount: "CAD 1,050.00", "$1,050.00 USD", "TOTALCAD1,050.00".
 _CODE_ON_AMOUNT = re.compile(_CODE + r"\s*\$?\s*\d|\d[.,]\d{2}\s*\$?\s*" + _CODE)
 _EXCHANGE = re.compile(r"EXCHANGE|\bRATE\b|\bTAUX\b|CONVERSION|[EÉ]QUIVALEN|=")
+# A total given in another currency for reference only: "Total in USD: 98.21 (for reference only)", "à titre indicatif"
+# (B-2708). Its code is not the invoice's.
+_FOR_REFERENCE = re.compile(
+    r"FOR\s+(?:REFERENCE|INFORMATION)|(?:REFERENCE|INFORMATION)\s+ONLY|[AÀ]\s+TITRE\s+(?:INDICATIF|D['’]INFORMATION)|"
+    r"POUR\s+INFORMATION"
+)
 # The label of the invoice's total, printed with its code ("Total USD", "Amount Due (CAD)", "Montant dû CAD"): the
 # code is on the total's amount, though the layout may read the label and the amount in two columns.
 _TOTAL_LABEL = re.compile(
@@ -244,7 +250,7 @@ def currency_evidence(text: str) -> tuple[str, float] | None:
     }
     if len(stated) == 1:
         return stated.pop(), 0.8
-    lines = [ln for ln in s.splitlines() if not _EXCHANGE.search(ln)]
+    lines = [ln for ln in s.splitlines() if not _EXCHANGE.search(ln) and not _FOR_REFERENCE.search(ln)]
     on_total = {m.group(1) for ln in lines if _TOTAL_LABEL.search(ln) and not _PAYMENT_NOTE.search(ln)
                 for m in re.finditer(_CODE, ln)}  # fmt: skip
     if len(on_total) == 1:
@@ -257,7 +263,9 @@ def currency_evidence(text: str) -> tuple[str, float] | None:
     rest = "\n".join(ln for ln in s.splitlines() if not _PAYMENT_NOTE.search(ln))
     codes = _codes_in_order(rest)
     if codes:
-        return codes[0], 0.8 if len(codes) == 1 else 0.5
+        # Printed only on a total given for reference: a guess, not as sure.
+        own = codes[0] in _codes_in_order("\n".join(ln for ln in rest.splitlines() if not _FOR_REFERENCE.search(ln)))
+        return codes[0], 0.8 if len(codes) == 1 and own else 0.5
     codes = _codes_in_order(s)
     if codes:
         return codes[0], 0.5

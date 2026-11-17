@@ -693,3 +693,30 @@ def test_a_customer_block_level_with_a_right_aligned_supplier_is_not_the_supplie
         doc.save(path)
         got = _read(path)["vendor_name"]
         assert not (got.value == "Acme Industries Inc." and got.status in (VERIFIED, "likely")), (vy, cy, got)
+
+
+def test_a_bare_payment_or_deposit_line_under_a_printed_total_holds_the_total_for_a_person_to_check(tmp_path):
+    """B-2706: "Payment received", "Paiement reçu", "Acompte" or "Deposit" with its amount under the total (no "Less")
+    left the total verified at the gross amount, more than what is owed. Held for a person to check, as "Less
+    payment received" is."""
+    for i, label in enumerate(["Payment received", "Paiement reçu", "Acompte", "Deposit", "Payments received"]):
+        f = _totals(tmp_path, [("Subtotal", "550.00"), ("HST 13%", "71.50"), ("Total", "621.50"), (label, "(100.00)"),
+                               ("Balance Due", "521.50")], name=f"bare{i}.pdf")  # fmt: skip
+        assert f["grand_total"].value == 621.5, label
+        assert f["grand_total"].status == "check", label
+
+
+def test_a_deposit_or_credit_line_with_its_reference_number_holds_the_total_for_a_person_to_check(tmp_path):
+    """B-2707: "Less credit memo #55", "Deposit no 1234", "Acompte n° 12", "Moins note de crédit 2026-55": the number
+    after the label made the line a registration number's ("No.", "#", a PST number's shape), so what was taken off
+    was never read and the total stayed verified. A real GST/HST number's line is still no amount."""
+    labels = ["Less credit memo #55", "Deposit no 1234", "Acompte n° 12", "Moins note de crédit 2026-55",
+              "Deposit received #4471"]  # fmt: skip
+    for i, label in enumerate(labels):
+        f = _totals(tmp_path, [("Subtotal", "550.00"), ("HST 13%", "71.50"), ("Total", "621.50"), (label, "(100.00)"),
+                               ("Balance Due", "521.50")], name=f"ref{i}.pdf")  # fmt: skip
+        assert f["grand_total"].value == 621.5, label
+        assert f["grand_total"].status == "check", label
+    f = _totals(tmp_path, [*_PLAIN, ("GST/HST Reg. No.: 123456782 RT0001", "")], name="reg.pdf")
+    assert (f["grand_total"].value, f["grand_total"].status) == (621.5, VERIFIED)
+    assert f["gst_hst_registration_number"].value == "123456782RT0001"

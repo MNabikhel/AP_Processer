@@ -79,6 +79,8 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         # The same in French: "Dépôt reçu", "Moins acompte", "Acompte versé", "Moins paiement reçu" (B-2703).
         (r"(?:moins\s*:?\s*)?(?:depots?|acomptes?)\s*(?:recus?|verses?|appliques?|payes?)|moins\s*:?\s*(?:depots?|acomptes?)|"
          r"moins\s*:?\s*(?:paiements?|versements?)\s*(?:recus?|appliques?)", 0.9),
+        # The same without "Less": "Payment received", "Paiement reçu", "Acompte", "Deposit" (B-2706).
+        (r"payments?\s*received|paiements?\s*recus?|acomptes?|deposits?", 0.85),
         # A credit memo taken off this invoice: "Credit applied", "Less credit memo CM-55", "Crédit appliqué", "Moins note
         # de crédit NC-55" (B-2704).
         (r"(?:less\s*:?\s*)?credits?\s*(?:memo\s*|note\s*)?applied|less\s*:?\s*credit\s*(?:memo|note)?|"

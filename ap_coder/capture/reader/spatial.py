@@ -240,6 +240,13 @@ _BRACKETED_REG = re.compile(r"\s*[(（\[]\s*\d{9,10}\s*(?:RT|TQ)\s*\d{4}\s*[)）
 
 def _registration_line(line: Line, hit: _LabelHit) -> bool:
     after = line.text[hit.end :]
+    if hit.field == "other_charges":
+        from .entry import _PREPAYMENT
+
+        if _PREPAYMENT.match(plain(hit.label_text)):
+            # "Less credit memo #55", "Deposit no 1234": the deposit's or credit's own number, not a registration's;
+            # only a GST/HST or QST number's line is (B-2707).
+            return bool(find_gst_numbers(after) or find_qst_numbers(after))
     return bool(
         _REG_WORDS.search(plain(after[:12]))
         or find_gst_numbers(after)
