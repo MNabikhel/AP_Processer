@@ -188,11 +188,13 @@ def test_a_line_with_a_third_decimal_posts_half_up(reference):
 def test_a_total_two_cents_off_is_a_difference_in_the_tax_check_and_a_finding(reference):
     """Subtotal + tax = total within a cent (one sum the vendor may round once), in the Tax check and in the findings
     alike (B-1865): the Tax check said 0.02 off while TOTAL_MISMATCH allowed it. The tax lines against the tax total
-    the same."""
+    the same. A cent off that the posting can't balance with is POSTING_UNBALANCED's, and the row's too (B-2720)."""
     lines, taxes = [(100, ["HST"])], [("HST", 0.13, 100, 13.00)]
     for off, flagged in ((0.01, False), (0.02, True), (-0.02, True)):
         coding = _coding(lines, taxes, total=round(113 + off, 2))
-        assert _row(math_check(coding), "Subtotal + tax = total")["ok"] is not flagged
+        assert not _row(math_check(coding), "Subtotal + tax = total")["ok"]
+        assert _row(math_check(_coding(lines, taxes, subtotal=round(100 - off, 2), total=113)),
+                    "Subtotal + tax = total")["ok"] is not flagged  # (the posting balances: 100.00 + 13.00)
         assert ("TOTAL_MISMATCH" in _codes(validate_coding(coding, reference).issues)) is flagged
         tax_total = _coding(lines, taxes, tax_total=round(13 + off, 2), total=113)
         assert ("TAX_LINES_TOTAL_MISMATCH" in _codes(check_taxes(tax_total, reference.tax))) is flagged
@@ -282,7 +284,11 @@ def test_the_tax_check_and_the_findings_agree_on_every_sum(reference):
             money.add_up(li.amount for li in coding.line_items), coding.subtotal, money.EXACT
         )
         assert _row(m, "Lines = subtotal")["ok"] is ("SUBTOTAL_MISMATCH" not in codes and exact), coding
-        total_ok = not codes & {"TOTAL_MISMATCH", "TAX_LINES_TOTAL_MISMATCH"}
+        total_ok = not codes & {"TOTAL_MISMATCH", "TAX_LINES_TOTAL_MISMATCH"} and (
+            "POSTING_UNBALANCED" not in codes  # a cent off is the row's when the posting can't balance (B-2720)
+            or (money.within(money.half_up(coding.subtotal + coding.tax_total), coding.grand_total, money.EXACT)
+                and money.within(money.add_up(t.tax_amount for t in coding.tax_lines), coding.tax_total, money.EXACT))
+        )  # fmt: skip
         assert _row(m, "Subtotal + tax = total")["ok"] is total_ok, coding
         findings = check_taxes(coding, reference.tax)
         for row in (r for r in m["rows"] if r["kind"] == "tax"):
@@ -408,6 +414,25 @@ def test_the_tax_checks_total_adds_the_tax_total_as_total_mismatch_does(referenc
     assert not row["ok"] and row["diff"] == "0.02" and "77.98" in row["hint"], row  # the total less the tax lines'
     codes = _codes(validate_coding(line_off, reference).issues)
     assert "TOTAL_MISMATCH" not in codes and "TAX_LINES_TOTAL_MISMATCH" in codes
+
+
+def test_a_total_a_cent_off_is_the_tax_checks_difference_when_the_posting_cannot_balance(reference):
+    """B-2720: a total read a cent off (927.55 for 813.65 + 113.91) is within TOTAL_MISMATCH's cent, but the posting
+    can't balance: a hard POSTING_UNBALANCED ("correct a line amount or a tax line") beside a Tax check all ✓, as the
+    lines row was before B-1910. The total row asks for every cent then, and says the difference; a tax total a cent
+    from its tax lines the same. A cent the posting balances with (the subtotal rounded otherwise) stays right."""
+    lines, taxes = [(810.92, ["HST"]), (2.73, ["HST"])], [("HST", 0.14, 813.65, 113.91)]
+    for coding in (_coding(lines, taxes, province="NS", total=927.55),
+                   _coding(lines, taxes, province="NS", tax_total=113.92, total=927.57)):  # fmt: skip
+        codes = _codes(validate_coding(coding, reference).issues)
+        assert "POSTING_UNBALANCED" in codes and not codes & {"TOTAL_MISMATCH", "TAX_LINES_TOTAL_MISMATCH"}, codes
+        m = math_check(coding, reference.tax)
+        row = _row(m, "Subtotal + tax = total")
+        assert not m["ok"] and not row["ok"] and row["diff"] in ("-0.01", "0.01"), row
+        assert _row(m, "Lines = subtotal")["ok"]
+    balanced = _coding(lines, taxes, province="NS", subtotal=813.64, total=927.56)  # the lines and tax post 927.56
+    assert "POSTING_UNBALANCED" not in _codes(validate_coding(balanced, reference).issues)
+    assert _row(math_check(balanced, reference.tax), "Subtotal + tax = total")["ok"]
 
 
 @pytest.mark.parametrize("amount", [1e22, 9.99e26, -1e27, 1e40, 1.7e308])
