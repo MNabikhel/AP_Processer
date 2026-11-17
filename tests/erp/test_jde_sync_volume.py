@@ -11,6 +11,7 @@ at that size (slow: a few minutes).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import shutil
 import sqlite3
@@ -59,7 +60,9 @@ def _bills(rows: Any) -> set[tuple[str, str, float]]:
 
 
 def _register(path: Path) -> set[tuple[str, str, float]]:
-    with sqlite3.connect(path) as conn:
+    # Closed here (N-254): "with sqlite3.connect()" only commits, leaving the connection for the garbage collector to
+    # close later, on whichever thread it runs on, while the sync and the Prober work on the same database.
+    with contextlib.closing(sqlite3.connect(path)) as conn:
         return {(r[0], r[1], r[2]) for r in conn.execute("SELECT vendor_key, number_key, total FROM erp_invoices")}
 
 
