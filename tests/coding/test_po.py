@@ -376,6 +376,27 @@ def _in_currency(store, number, currency):
                                    "status": po["status"], "currency": currency} for li in po["lines"]])  # fmt: skip
 
 
+def test_the_po_list_adds_up_only_the_invoices_in_the_pos_currency(store, tmp_path):
+    """B-2761: the Purchase orders list added a CAD invoice's subtotal to a USD PO's Invoiced and took it off its
+    Remaining, and its tiles added USD and CAD POs together. A PO's amounts are in its currency: an invoice in another
+    is left out, and said; the tiles keep each currency apart."""
+    from tests.webclient import client_for
+
+    _in_currency(store, "PO-88213", "USD")
+    store.add_invoice(tmp_path / "a.pdf", {**_laptops(1, "NW-1"), "currency": "USD"}, {})
+    store.add_invoice(tmp_path / "b.pdf", _laptops(2, "NW-2"), {})  # in CAD
+    po = next(p for p in store.purchase_orders() if p["po_number"] == "PO-88213")
+    assert (po["invoices"], po["billed"], po["other_currency"]) == (2, 1450.0, 1)
+    assert po["remaining"] == pytest.approx(PO_TOTAL - 1450.0)
+    page = client_for(store).get("/purchase-orders").text
+    row = page.split("<b>PO-88213</b></a>")[1].split("</tr>")[0]
+    assert "15,945.00 USD" in row and "1,450.00 USD" in row and "14,495.00 USD" in row
+    assert "1 invoice in another currency, left out" in row
+    assert "plus 14,495.00 USD" in page and "plus 1,450.00 USD" in page  # the tiles: not added to the CAD POs
+    others = next(p for p in store.purchase_orders() if p["po_number"] == "PO-90377")
+    assert others["other_currency"] == 0
+
+
 def test_amounts_are_compared_with_a_po_only_in_its_own_currency(store, reference):
     """B-2760: an invoice in CAD on a USD PO had its CAD prices compared with the PO's USD ones; amounts are compared
     only in one currency, and the match says why not. Quantities are compared whatever the currency."""

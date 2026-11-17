@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlencode
 
@@ -71,6 +72,18 @@ def status_pill(p: dict[str, Any]) -> tuple[str, str, str]:
     if p["billed"]:
         return ("Partly billed", "info", "hourglass_bottom")
     return ("Open", "violet", "shopping_cart")
+
+
+def by_currency(pos: list[dict[str, Any]], amount: Callable[[dict[str, Any]], float], hint: str) -> tuple[str, str]:
+    """(a tile's figure, its hint) of ``amount`` of each PO, added up in each PO's currency (none: CAD), never across
+    them (B-2761): CAD's as before; another currency's said after the hint."""
+    sums: dict[str, float] = {}
+    for p in pos:
+        sums[p["currency"] or "CAD"] = sums.get(p["currency"] or "CAD", 0.0) + amount(p)
+    main = "CAD" if "CAD" in sums or not sums else sorted(sums)[0]
+    others = " · ".join(f"{ui.money(t)} {c}" for c, t in sorted(sums.items()) if c != main)
+    figure = ui.money(sums.get(main, 0.0)) + ("" if main == "CAD" else f" {main}")
+    return figure, hint + (f" · plus {others}" if others else "")
 
 
 def qty(value: float | None) -> str:
@@ -183,11 +196,10 @@ def purchase_orders_page(
     over = [p for p in pos if over_billed(p)]
     tiles = [
         ("Open POs", len(open_pos), f"{len(pos)} in total"),
-        ("Still to be invoiced", ui.money(sum(max(p["remaining"], 0) for p in open_pos)), "on open POs"),
+        ("Still to be invoiced", *by_currency(open_pos, lambda p: max(p["remaining"], 0), "on open POs")),
         (
             "Invoiced against POs",
-            ui.money(sum(p["billed"] for p in pos)),
-            ui.plural(sum(p["invoices"] for p in pos), "invoice"),
+            *by_currency(pos, lambda p: p["billed"], ui.plural(sum(p["invoices"] for p in pos), "invoice")),
         ),
         ("Over-billed", len(over), "invoices exceed the PO total" if over else "none"),
     ]

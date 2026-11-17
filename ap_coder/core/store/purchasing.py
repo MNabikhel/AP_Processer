@@ -420,7 +420,9 @@ class PurchasingMixin:
                 yield n, json.loads(doc) if facts is None else {"invoice_date": facts[0], "line_items": facts[1]}
 
     def purchase_orders(self) -> list[dict[str, Any]]:
-        """Every PO with its total and how much has been invoiced against it (invoices in review included)."""
+        """Every PO with its total and how much has been invoiced against it (invoices in review included), in its
+        currency: an invoice in another (a PO with none taken as CAD) is counted in ``invoices`` and
+        ``other_currency``, never added to ``billed`` (B-2761)."""
         with self._conn() as conn:
             rows = [
                 dict(r)
@@ -432,23 +434,29 @@ class PurchasingMixin:
                 )
             ]
             billed: dict[str, dict[str, Any]] = {}
+            ordered = {r["po_key"]: r["currency"] or "CAD" for r in rows}  # each PO's currency (none: CAD)
             self._summary_fresh(conn)  # each invoice's subtotal billed, from the invoices' summary (D-110)
             for r in conn.execute(
-                "SELECT id, po_key, status, po_billed, broken FROM invoice_summary WHERE po_key != '' AND status IN "
+                "SELECT id, po_key, status, po_billed, broken, currency FROM invoice_summary WHERE po_key != '' AND "
+                "status IN "
                 + _ACTIVE_IN
                 + " AND po_key IN (SELECT po_key FROM purchase_orders) ORDER BY id",  # a PO we have
                 ACTIVE_STATUSES,
             ):
+                entry = billed.setdefault(r["po_key"], {"billed": 0.0, "invoices": 0, "in_review": 0,
+                                                        "other_currency": 0})  # fmt: skip
+                entry["invoices"] += 1
+                entry["in_review"] += r["status"] == REVIEW
+                if ((r["currency"] or "").strip().upper() or "CAD") != ordered[r["po_key"]]:
+                    entry["other_currency"] += 1  # in another currency: never added to this one (B-2761)
+                    continue
                 amount = r["po_billed"]
                 if r["broken"] & BIT["po"]:  # what the summary could not read: read again, failing as it did before
                     (inv,) = conn.execute("SELECT ai_output, final_output FROM invoices WHERE id = ?", (r["id"],))
                     amount = float(json.loads(inv["final_output"] or inv["ai_output"] or "{}").get("subtotal") or 0)
-                entry = billed.setdefault(r["po_key"], {"billed": 0.0, "invoices": 0, "in_review": 0})
                 entry["billed"] += amount
-                entry["invoices"] += 1
-                entry["in_review"] += r["status"] == REVIEW
         for r in rows:
-            r.update(billed.get(r["po_key"], {"billed": 0.0, "invoices": 0, "in_review": 0}))
+            r.update(billed.get(r["po_key"], {"billed": 0.0, "invoices": 0, "in_review": 0, "other_currency": 0}))
             r["remaining"] = r["total"] - r["billed"]
         return rows
 
