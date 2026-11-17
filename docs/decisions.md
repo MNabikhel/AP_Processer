@@ -6222,3 +6222,29 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `PO_CURRENCY_DIFFERS`, a warning: its prices, amount-only lines, PO total and left to expense are not compared
     or worked out (no exchange rate is guessed); lines are still paired and quantities ordered and received still
     compared. A warning, not a note: a price no one compared goes to a person.
+- **D-257** · **The second approval checks the invoice again** (`web/pages/review.py` `_not_approvable_now`, the
+  route `/review/<id>/final-approve`; `coding/bulk.py` `_recheck`; the owner's choice; 17 Nov 2026; B-2631).
+  - **What:** before the second approval, the coding the first approver approved is checked again as the first
+    approval and bulk approval check it (`finalise_coding` with the invoice's kept extraction, B-2611): what changed
+    since is caught (the supplier put on hold, the invoice found in the ERP's register or JD Edwards' voucher list, a
+    duplicate approved, the open period closed, an account closed).
+  - **Refused when:** an error "Approve anyway" never covers (`is_hard`: `HARD_CODES` and every `JDE_` finding), or
+    an error the first approver did not approve over (not in their approval's `open_issues`): nobody gave a reason
+    for it. The refusal says each in plain words and to send the invoice back (fixed there, approved anyway with a
+    reason there, or rejected); the second approver has no "Approve anyway" of their own.
+  - **Not refused:** warnings, and errors the first approver approved anyway with their reason (their reason
+    stands). There is no bulk second approval to change.
+- **D-258** · **A voided voucher and its void cancel out in the past invoice coding** (`core/store/journal.py`
+  `without_voids`, read by `journal_lines_for` and `journal_remarks`; the owner's choice; 17 Nov 2026; B-2632; with
+  D-251).
+  - **Why:** report R09321 prints no document number, so a voucher voided (often a miscoded one) and its void were
+    two lines to the wrong account, and the void, the newer, counted the more under D-251.
+  - **The match:** of one supplier's coding lines, the oldest first (G/L date, then the voucher, then its place in
+    it), a negative line cancels the latest positive line before it not cancelled yet with the same whole account
+    string (business unit.object.subsidiary), the same amount to the cent and, when the negative line has a remark,
+    the same remark. Within one file or across the files loaded (a voucher two files hold is still read once).
+    Neither counts: not toward the supplier's accounts, its vouchers, its remarks, nor the journal as a whole a
+    supplier it does not have is offered from (D-226).
+  - **Kept:** a negative line that reverses no earlier line (a true credit: another amount, account or remark, or
+    nothing before it) counts as it did. The file's own counts (Settings, the suppliers' list) are of what was loaded,
+    voids included.

@@ -2,7 +2,7 @@
 themselves of the chart of accounts, the business units, the suppliers, the past invoice coding and the vouchers already
 in JD Edwards, each a table with a search, its cheap column filters, a count and pages, all of them SQLite's
 (``Store.loaded_page``: a register of 600,000 bills is never read whole), and a download of what the search and the
-filters keep as CSV (``Store.loaded_batches``, sent as it is read).
+filters keep as an Excel workbook to read (codes as text) or a CSV (``Store.loaded_batches``, sent as it is read).
 
 Whoever opens the JD Edwards files page sees them (in server mode a Clerk and above, web/roles.py). An Admin changes
 a row of the first three by hand (``Store.edit_chart_account``, ``edit_business_unit``, ``edit_supplier``): the
@@ -16,7 +16,7 @@ import csv
 import datetime as dt
 import io
 from collections.abc import Iterable, Iterator
-from typing import Any
+from typing import Any, BinaryIO
 from urllib.parse import urlencode
 
 from fastapi import HTTPException, Request
@@ -27,6 +27,7 @@ from ap_coder.core import ui
 from ap_coder.core.chart import code_of, join_account
 from ap_coder.core.safe import csv_row
 from ap_coder.core.store import Store, by_hand, loaded
+from ap_coder.erp.exports import table_workbook
 from ap_coder.web.core import (
     can,
     done,
@@ -39,7 +40,8 @@ from ap_coder.web.core import (
     render,
     reviewer,
 )
-from ap_coder.web.files import attachment
+from ap_coder.web.files import XLSX, attachment, download
+from ap_coder.web.pages import downloads
 
 router = page_router()  # each plain handler: one connection a request
 
@@ -71,6 +73,7 @@ KEPT_MORE = {
                       "Edwards' own: change them there.",
 }  # fmt: skip
 CSV_CHUNK = 1000  # the CSV's rows sent at a time
+EXCEL_MOST = 1_048_575  # rows an Excel sheet holds under its header
 POSTABLE = "Can be posted to"
 CHANGED = "Changed by hand"
 
@@ -102,18 +105,16 @@ def _cell(kind: str, value: Any) -> Any:
     return "" if value is None else value
 
 
-def csv_lines(what: str, columns: Iterable[loaded.Column], batches: Iterable[list[dict[str, Any]]]) -> Iterator[bytes]:
-    """The rows as a CSV for Excel (UTF-8 with BOM; text a spreadsheet would run as a formula is defused), sent a
-    few rows at a time as they are read. The chart says in words whether each account may be posted to; a list a
-    person may change names the fields changed by hand."""
-    columns = list(columns)
-    out = io.StringIO()
-    writer = csv.writer(out)
-    out.write("﻿")
-    more = ([POSTABLE] if what == loaded.CHART else []) + ([CHANGED] if what in EDITABLE else [])
-    writer.writerow([column.label for column in columns] + more)
+def _header(what: str, columns: list[loaded.Column]) -> list[str]:
+    """The downloads' header: the chart says in words whether each account may be posted to; a list a person may
+    change names the fields changed by hand."""
+    return ([column.label for column in columns] + ([POSTABLE] if what == loaded.CHART else [])
+            + ([CHANGED] if what in EDITABLE else []))  # fmt: skip
+
+
+def _rows(what: str, columns: list[loaded.Column], batches: Iterable[list[dict[str, Any]]]) -> Iterator[list[Any]]:
+    """The rows under ``_header``, as they are read."""
     labels = {column.key: column.label for column in columns}
-    n = 0
     for batch in batches:
         for row in batch:
             cells = [_cell(column.kind, row[column.key]) for column in columns]
@@ -121,12 +122,23 @@ def csv_lines(what: str, columns: Iterable[loaded.Column], batches: Iterable[lis
                 cells.append(("yes" if row["postable"] else "no") if row["object"] else "")
             if what in EDITABLE:
                 cells.append(", ".join(labels.get(field, field) for field in row[loaded.BY_HAND]))
-            writer.writerow(csv_row(cells))
-            n += 1
-            if n % CSV_CHUNK == 0:
-                yield out.getvalue().encode("utf-8")
-                out.seek(0)
-                out.truncate()
+            yield cells
+
+
+def csv_lines(what: str, columns: Iterable[loaded.Column], batches: Iterable[list[dict[str, Any]]]) -> Iterator[bytes]:
+    """The rows as a CSV (UTF-8 with BOM; text a spreadsheet would run as a formula is defused), sent a few rows at a
+    time as they are read: for another program (Excel drops a code's leading zeros: the workbook is for reading)."""
+    columns = list(columns)
+    out = io.StringIO()
+    writer = csv.writer(out)
+    out.write("\ufeff")
+    writer.writerow(_header(what, columns))
+    for n, cells in enumerate(_rows(what, columns, batches), start=1):
+        writer.writerow(csv_row(cells))
+        if n % CSV_CHUNK == 0:
+            yield out.getvalue().encode("utf-8")
+            out.seek(0)
+            out.truncate()
     yield out.getvalue().encode("utf-8")
 
 
@@ -140,6 +152,38 @@ def loaded_csv(request: Request, what: str) -> Response:
     headers = {"Content-Disposition": attachment(name), "Cache-Control": "no-store"}
     return StreamingResponse(csv_lines(what, columns, store.loaded_batches(what, q, filters)),
                              media_type="text/csv; charset=utf-8", headers=headers)  # fmt: skip
+
+
+@router.get(HERE + "/{what}.xlsx")
+async def loaded_xlsx(request: Request, what: str) -> Response:
+    """Every row the page's search and filters keep, as an Excel workbook to read: codes are text, leading zeros and
+    all (B-2633). On the company server made by its background process (``downloads``, D-169)."""
+    return await downloads.answer(request, f"{HERE}/{_known(what)}.xlsx", _xlsx_now)
+
+
+def _xlsx_now(request: Request) -> Response:
+    params, name = xlsx_params(request)
+    return download(downloads.written(write_xlsx, get_store(request), params), name, XLSX)
+
+
+def xlsx_params(request: Request) -> tuple[dict[str, Any], str]:
+    """What the workbook is of (the list, the search and the filters) and its name; more rows than a sheet holds is
+    refused (the page offers the CSV)."""
+    what = _known(request.path_params["what"])
+    q, filters = _asked(request)
+    if get_store(request).loaded_page(what, q, filters, size=1)["count"] > EXCEL_MOST:
+        raise HTTPException(status_code=400, detail="Too many rows for Excel: download the CSV, or search for fewer.")
+    return {"what": what, "q": q, "filters": filters}, f"ap_coder_{LISTS[what][1]}_{dt.date.today()}.xlsx"
+
+
+def write_xlsx(store: Any, params: dict[str, Any], out: BinaryIO, step: Any) -> None:
+    what = params["what"]
+    step(0, 0, "Writing the rows…")
+    columns = list(store.loaded_columns(what))
+    rows = _rows(what, columns, store.loaded_batches(what, params["q"], params["filters"]))
+    table_workbook(out, LISTS[what][0], _header(what, columns), rows,
+                   [c.label for c in columns if c.kind == loaded.CODE],
+                   [c.label for c in columns if c.kind == loaded.AMOUNT])  # fmt: skip
 
 
 def _row_title(what: str, row: dict[str, Any]) -> str:
@@ -210,6 +254,8 @@ def loaded_list(request: Request, what: str) -> HTMLResponse:
         what=what, name=name, card=card, hint=hint, about=about, q=q, url=url, page_no=page_no,
         lists=[(listed, said[0]) for listed, said in LISTS.items()],
         csv_url=url(page="").replace(f"{HERE}/{what}", f"{HERE}/{what}.csv", 1),
+        xlsx_url=url(page="").replace(f"{HERE}/{what}", f"{HERE}/{what}.xlsx", 1),
+        excel_most=EXCEL_MOST,
         filtered=bool(q.strip() or filters),
         only_by_hand=bool(filters.get(loaded.BY_HAND)),
         shown=(first + 1, first + len(found["rows"])),

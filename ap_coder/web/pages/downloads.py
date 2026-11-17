@@ -43,7 +43,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from ap_coder.core import ui
-from ap_coder.core.store import reports
+from ap_coder.core.store import loaded, reports
 from ap_coder.web import identity
 from ap_coder.web.core import data_dir, get_store, page_router, refuse, server_mode
 from ap_coder.web.files import XLSX, attachment
@@ -72,6 +72,11 @@ KINDS = {
     "/activity/events.csv": Kind("activity", "csv_params", "write_csv", "text/csv; charset=utf-8", ".csv"),
     "/exports/duplicates.csv": Kind("exports", "duplicates_params", "write_duplicates", "text/csv", ".csv"),
     "/month-end/accruals.csv": Kind("month_end", "accruals_params", "write_accruals", "text/csv", ".csv"),
+    "/month-end/accruals.xlsx": Kind("month_end", "accruals_params", "write_accruals_xlsx", XLSX, ".xlsx"),
+    **{
+        f"/jde-files/loaded/{what}.xlsx": Kind("jde_loaded", "xlsx_params", "write_xlsx", XLSX, ".xlsx")
+        for what in loaded.WHATS
+    },
     "/activity/controls-report": Kind(
         "activity", "controls_params", "write_controls", "text/html; charset=utf-8", ".html"
     ),

@@ -325,6 +325,66 @@ def test_second_approval_on_an_invoice_someone_else_just_handled(client, store, 
     assert store.get_invoice(invoice_id)["second_reviewer"] == "Lee"
 
 
+def _waiting_for_kim(store, monkeypatch, number):
+    """An invoice Sam approved first, over the limit: Kim gives the second approval."""
+    monkeypatch.setenv("AP_REVIEWER", "Kim")
+    store.set_setting("approval_limit", "100")
+    invoice_id = add_clean(store, invoice_number=number)
+    store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], "Sam")
+    assert store.get_invoice(invoice_id)["status"] == PENDING
+    return invoice_id
+
+
+def _final_approval(client, store, invoice_id):
+    return follow(client, post(client, f"/review/{invoice_id}/final-approve",
+                               {"approval": store.latest_approval_id(invoice_id)}))  # fmt: skip
+
+
+def test_the_second_approval_is_refused_once_the_supplier_is_put_on_hold_after_the_first(client, store, monkeypatch):
+    """B-2631: the second approval did not check the invoice again: a supplier put on hold after the first approval
+    was paid all the same."""
+    from ap_coder.coding.vendors import ON_HOLD
+
+    invoice_id = _waiting_for_kim(store, monkeypatch, "HOLD-1")
+    v = next(v for v in store.vendor_summaries() if v["vendor_name"] == store.get_invoice(invoice_id)["vendor_name"])
+    store.save_vendor(v["vendor_key"], v["vendor_name"], ON_HOLD, notes="bank details changed")
+    page = _final_approval(client, store, invoice_id)
+    assert "Not done: checked again now, this invoice has to be fixed first" in page
+    assert "This vendor is on hold in the vendor list: bank details changed" in page and "Send it back" in page
+    assert store.get_invoice(invoice_id)["status"] == PENDING
+
+
+def test_the_second_approval_is_refused_once_the_invoice_is_found_in_jd_edwards(client, store, monkeypatch):
+    """B-2631: the same invoice entered in the ERP (its register) after the first approval: paid twice."""
+    invoice_id = _waiting_for_kim(store, monkeypatch, "ERP-1")
+    inv = store.get_invoice(invoice_id)
+    store.import_erp_register([{"vendor_name": inv["vendor_name"], "invoice_number": "ERP-1",
+                                "total": inv["grand_total"], "invoice_date": "2026-03-01"}])  # fmt: skip
+    page = _final_approval(client, store, invoice_id)
+    assert "Not done: checked again now" in page and "already in the ERP" in page
+    assert store.get_invoice(invoice_id)["status"] == PENDING
+
+
+def test_a_clean_invoice_still_gets_its_second_approval(client, store, monkeypatch):
+    invoice_id = _waiting_for_kim(store, monkeypatch, "CLEAN-1")
+    assert "approved. It is ready to export." in _final_approval(client, store, invoice_id)
+    assert store.get_invoice(invoice_id)["status"] == APPROVED
+
+
+def test_an_error_the_first_approver_approved_anyway_does_not_stop_the_second_approval(client, store, monkeypatch):
+    """D-257: the first approver's reason stands for an error they saw (not one "Approve anyway" never covers)."""
+    monkeypatch.setenv("AP_REVIEWER", "Kim")
+    store.set_setting("approval_limit", "100")
+    invoice_id = add_clean(store, invoice_number="ERP-2")
+    inv = store.get_invoice(invoice_id)
+    store.import_erp_register([{"vendor_name": inv["vendor_name"], "invoice_number": "ERP-2",
+                                "total": inv["grand_total"], "invoice_date": "2026-03-01"}])  # fmt: skip
+    over = [{"code": "DUPLICATE_IN_ERP", "severity": "error", "line": None, "override_reason": "a second delivery"}]
+    store.approve_invoice(invoice_id, inv["ai_output"], "Sam", open_issues=over)
+    assert "approved. It is ready to export." in _final_approval(client, store, invoice_id)
+    assert store.get_invoice(invoice_id)["status"] == APPROVED
+
+
 # --- Process invoices: uploads and saved emails ----------------------------------------------------------------------
 
 

@@ -5,6 +5,7 @@ read it, every voucher and line in tables of their own, a file at a time. The jo
 from __future__ import annotations
 
 import csv
+import datetime as dt
 import hashlib
 import io
 import time
@@ -242,6 +243,44 @@ def test_a_suppliers_lines_are_its_coding_by_date_with_what_the_voucher_says(sto
     assert store.journal_lines_for(str(affiliate)) == []
     assert all(line["affiliate"] for line in store.journal_lines_for(str(affiliate), include_affiliates=True))
     assert store.journal_lines_for("999999999") == []
+
+
+def _void(voucher, days=6):
+    """The voucher voided in JD Edwards: each of its lines again, negative, a few days later (the report prints no
+    document number to tie the two)."""
+    lines = tuple(replace(line, amount=-line.amount) for line in voucher.lines)
+    items = tuple(replace(i, gross=-i.gross, taxable=-i.taxable, tax=-i.tax) for i in voucher.pay_items)
+    return replace(voucher, gl_date=voucher.gl_date + dt.timedelta(days=days), lines=lines, pay_items=items)
+
+
+@pytest.mark.parametrize("files", [1, 2])
+def test_a_voided_voucher_and_its_void_count_for_nothing_in_one_file_or_across_two(store, truth, files):
+    """D-258: a miscoded voucher voided counted as two lines to the wrong account. Its negative lines cancel the
+    lines they reverse (the same account string, amount and remark), in the same file or one loaded after; the made-up
+    company's credits, which reverse nothing, stay as they were."""
+    busiest = max({v.supplier for v in truth.vouchers}, key=lambda n: sum(v.supplier == n for v in truth.vouchers))
+    before = store.journal_lines_for(str(busiest))  # (empty: nothing loaded yet)
+    voided = next(v for v in truth.vouchers if v.supplier == busiest and not v.oddity and len(v.lines) > 1)
+    void = _void(voided)
+    if files == 1:
+        _load(store, replace(truth, vouchers=sorted([*truth.vouchers, void], key=lambda v: v.gl_date)))
+    else:
+        _load(store, truth)
+        before = store.journal_lines_for(str(busiest))
+        _load(store, replace(truth, vouchers=[void]), name="voids.csv")
+    lines = store.journal_lines_for(str(busiest))
+    kept = [v for v in truth.vouchers if v.supplier == busiest and v.oddity != "unbalanced" and v is not voided]
+    assert [(line["gl_date"], line["account"], line["amount"]) for line in lines] == [
+        (v.gl_date.isoformat(), line.account, float(line.amount)) for v in kept for line in v.lines
+    ]
+    assert files == 1 or len(before) == len(lines) + len(voided.lines)
+    credits = [v for v in truth.vouchers if v.oddity == "negative"]
+    assert credits and all(
+        any(line["amount"] == float(c.lines[0].amount) for line in store.journal_lines_for(str(c.supplier)))
+        for c in credits
+    )
+    # The journal as a whole (what a supplier it does not have is offered from) counts them as the supplier's do.
+    assert sum(r["lines"] for r in store.journal_remarks() if r["supplier_key"] == str(busiest)) == len(lines)
 
 
 def test_the_suppliers_and_the_vouchers_of_a_period(store, truth):

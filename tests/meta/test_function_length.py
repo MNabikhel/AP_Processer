@@ -27,7 +27,7 @@ LONG_FUNCTIONS = {
     "ap_coder/bench/coding.py::render_markdown": 132,
     "ap_coder/coding/vendors.py::vendor_findings": 132,
     "ap_coder/erp/insights.py::compute": 127,
-    "ap_coder/erp/exports.py::sheet_workbook": 125,
+    "ap_coder/erp/exports.py::sheet_workbook": 126,
     "ap_coder/bench/day.py::markdown": 124,
 }
 

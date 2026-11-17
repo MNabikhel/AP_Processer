@@ -59,7 +59,10 @@
 <section class="card">
   <div class="card-head">
     <h4>Accruals schedule</h4>
-    <a class="btn" href="/month-end/accruals.csv?end={{ end }}" download data-download-job><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
+    <div class="row">
+      <a class="btn" href="/month-end/accruals.xlsx?end={{ end }}" download data-download-job><span class="ms" aria-hidden="true">table_view</span>Download (Excel)</a>
+      <a class="btn sm ghost" href="/month-end/accruals.csv?end={{ end }}" download data-download-job title="For another program; Excel drops the leading zeros of codes in a CSV">CSV</a>
+    </div>
   </div>
   {% for g in groups %}
   {{ ui.subhead(g.title, g.rows | length | plural("line"), first=loop.first) }}

@@ -26,6 +26,7 @@ from ap_coder.coding.bulk import needs_a_person, queue_checks, sort_for_bulk
 from ap_coder.coding.review import uses_cost_centers
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label, stored_supply
 from ap_coder.coding.terms import DUE_SOON_DAYS, LONG_OVERDUE_DAYS, overdue_since, payment
+from ap_coder.coding.validation import Issue
 from ap_coder.core import audit, ui
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.reference_data import ReferenceData
@@ -73,7 +74,7 @@ from ap_coder.web.core import (
     server_mode,
 )
 from ap_coder.web.identity import shown_path
-from ap_coder.web.invoice_findings import confidence_pct
+from ap_coder.web.invoice_findings import confidence_pct, hard_reasons, is_hard
 from ap_coder.web.invoice_reading import document_kind
 
 router = page_router()  # each plain handler: one connection a request
@@ -935,14 +936,39 @@ def review_unpark(request: Request, invoice_id: int) -> JSONResponse:
     return done(request, "/review?tab=parked", back)
 
 
+def _not_approvable_now(store: Store, settings: Any, inv: dict[str, Any]) -> list[str]:
+    """What keeps an invoice waiting for its second approval from being approved now, one short line each (none: it
+    may be): its approved coding checked again as the first approval and bulk approval check it (D-257), for what
+    changed since (the supplier put on hold, the invoice found in the ERP, a duplicate approved, the period closed).
+    An error the first approver approved anyway, with their reason, stays approved over unless "Approve anyway" never
+    covers it (``is_hard``); warnings never keep it."""
+    reference = reference_or_none(store)
+    found = bulk._recheck(store, reference, settings, inv) if reference is not None else None
+    first = next(iter(store.events(inv["id"], ["approved"], limit=1)), None)
+    over = {(i.get("code"), i.get("line")) for i in ((first or {}).get("detail") or {}).get("open_issues") or []
+            if i.get("severity") == "error"}  # fmt: skip
+    errors = [Issue(**i) for i in found or [] if i["severity"] == "error"]
+    return hard_reasons([i for i in errors if is_hard(i) or (i.code, i.line_number) not in over])
+
+
 @router.post("/review/{invoice_id}/final-approve")
 def review_final_approve(request: Request, invoice_id: int, approval: str | None = Form(None)) -> JSONResponse:
     """``approval``: the first approval the page showed (B-654); a page that posts none is refused as one shown an
-    older approval (D-109)."""
+    older approval (D-109). Refused, said in plain words, while the invoice checked again now has an error the first
+    approval did not approve over (``_not_approvable_now``): it is sent back to be fixed."""
     from ap_coder.core.store import ApprovedAgain
 
     store = get_store(request)
     inv = store.get_invoice(invoice_id) or {}
+    blocked = _not_approvable_now(store, get_settings(request), inv) if inv.get("status") == PENDING else []
+    if blocked:
+        said = (
+            f"Not done: checked again now, this invoice has to be fixed first: {'; '.join(blocked)}. Send it back "
+            "to the review queue to fix it there, or reject it."
+        )
+        if server_mode(request):
+            return refuse(said, 409)
+        return done(request, "/review?tab=second", said, tone="warn")
     try:
         store.final_approve(invoice_id, reviewer(), login=login(), shown=approval)
     except PermissionError as exc:  # the first approver (or their login): nobody changed anything meanwhile

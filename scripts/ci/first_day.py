@@ -384,14 +384,19 @@ def section_3(client: Client, exports: Path) -> None:
     for what in ("chart", "units", "suppliers", "journal", "vouchers"):
         rows = page(client, f"/jde-files/loaded/{what}")
         check('type="search"' in rows, f"the rows of {what} have no search box")
-        csv_link = re.search(r'href="([^"]+)"[^>]*download>.*?Download (?:all|the) [\d,]+ \w+.*? as CSV', rows, re.S)
-        check(csv_link, f"the rows of {what} have no Download as CSV")
+        excel = re.search(r'href="([^"]+\.xlsx[^"]*)"[^>]*download[^>]*>.*?Download (?:all|the) [\d,]+ \w+.*?\(Excel\)',
+                          rows, re.S)  # fmt: skip
+        check(excel, f"the rows of {what} have no Download (Excel)")
+        csv_link = re.search(r'href="([^"]+\.csv[^"]*)"[^>]*download', rows)
+        check(csv_link, f"the rows of {what} have no CSV beside the workbook")
         changes = ">Change</a>" in rows
         check(changes == (what in ("chart", "units", "suppliers")), f"the rows of {what}: Change {changes}")
         if what == "chart":
             status, body, _ = client.request("GET", html.unescape(csv_link.group(1)))
             check(status == 200 and b"0021061010" in body, f"the chart's CSV lost the codes' leading zeros: {status}")
-    seen("each one's rows: a search, Download as CSV (leading zeros kept); Change on the chart, units and suppliers")
+            status, body, _ = client.request("GET", html.unescape(excel.group(1)))
+            check(status == 200 and body[:2] == b"PK", f"the chart's workbook did not download: {status}")
+    seen("each one's rows: a search, Excel and CSV downloads (leading zeros kept); Change on chart, units, suppliers")
 
 
 def section_3_settings(client: Client, truth: Any) -> None:
