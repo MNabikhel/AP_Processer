@@ -30,12 +30,12 @@ guides, the bug log (BUGS.md), decisions (decisions.md) and the owner's to-do li
   Windows CI `windows-first-day`).
 - With a JD Edwards chart of accounts loaded (D-209 to D-214; the one-laptop guide: `docs/PROTOTYPE.md`): a line's
   account string `business unit.object.subsidiary` is joined and split only in `core/chart.py` (`AccountPairs`: which
-  pairs exist and can be posted to); the chart's tables `core/store/chart.py`, its reader `core/chart_file.py`; last
-  year's journal `erp/journal.py` + `core/store/journal.py`, the suggestions from it `ai/supplier_prior.py`; the
-  30-character remark `coding/remark.py`; each line's taxes `coding/taxmath.py` (`invoice_taxes`); the keying sheet
-  `erp/jde_keying.py`; the review row with one Account box `web/account_lines.py`; the uploads
-  `web/pages/jde_files.py`; scoring against last year `ops/journal_score.py`, `ops/proposed_score.py`; a made-up
-  company for tests `bench/jde_company.py`, `jde_exports.py`, `jde_invoices.py` (fixture `chart_company`).
+  pairs exist and can be posted to); the chart's tables `core/store/chart.py`, its reader `core/chart_file.py`; the past
+  invoice coding (journal) `erp/journal.py` + `core/store/journal.py`, the suggestions from it `ai/supplier_prior.py`;
+  the 30-character remark `coding/remark.py`; each line's taxes `coding/taxmath.py` (`invoice_taxes`); the keying sheet
+  `erp/jde_keying.py`; the review row with one Account box `web/account_lines.py`; the uploads `web/pages/jde_files.py`;
+  scoring against past coding `ops/journal_score.py`, `ops/proposed_score.py`; a made-up company for tests
+  `bench/jde_company.py`, `jde_exports.py`, `jde_invoices.py` (fixture `chart_company`).
 - What is loaded of JD Edwards' files, row by row, and what a person changed by hand in it (D-221):
   `core/store/loaded.py`, `core/store/by_hand.py`, `web/pages/jde_loaded.py`. The vendor information list, the second
   supplier export (D-219): its reader `coding/vendor_info.py`, kept by supplier number in `vendor_info`

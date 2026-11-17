@@ -2,7 +2,7 @@
    Plain JavaScript; invoice.js fetches the list (GET /review/accounts.json, once, kept by the browser) and registers
    ``search`` as the picker's sections for the boxes marked data-picker-sections="account".
 
-   Nothing typed: Suggested for this line (the line's candidates) · This supplier's accounts last year · On the
+   Nothing typed: Suggested for this line (the line's candidates) · This supplier's past accounts · On the
    line's business unit (the box's own, else the supplier's most used, else the home one).
    Typed: every word must be in the account string (with or without its dots), the account's name, or its business
    unit's name or number. In this order: the whole string; with an account in the box and a business unit typed, the
@@ -59,7 +59,7 @@ export function search(state, line, typed) {
     const fresh = (rows) => rows.filter(([e]) => !seen.has(e.value) && seen.add(e.value));
     const sections = [
       { label: "Suggested for this line", items: fresh(candidates).map(([e, why]) => shown(e, why)) },
-      { label: "This supplier's accounts last year", items: fresh(supplier).slice(0, GROUP_MOST).map(([e, n]) => shown(e, `${n} ${n === 1 ? "line" : "lines"}`)) },
+      { label: "This supplier's past accounts", items: fresh(supplier).slice(0, GROUP_MOST).map(([e, n]) => shown(e, `${n} ${n === 1 ? "line" : "lines"}`)) },
     ];
     // the line's business unit: the box's own account first (it is the row highlighted), then the unit's others
     const own = state.byValue.get(line.was || "");

@@ -649,8 +649,8 @@ def test_a_name_several_supplier_numbers_share_is_never_given_the_first(tmp_path
             {"supplier_number": "2020", "vouchers": 40}]  # fmt: skip
     monkeypatch.setattr(type(store), "journal_suppliers", lambda self: used)
     assert _said(store, "VENDOR_NOT_IN_MASTER", vendor_name="Lakeside Catering")[0].endswith(
-        ": 2003 LAKESIDE CATERING INC (3 vouchers in last year's journal); 2004 LAKESIDE CATERING LTD (14 vouchers in "
-        "last year's journal, the most)"
+        ": 2003 LAKESIDE CATERING INC (3 vouchers posted in JD Edwards); 2004 LAKESIDE CATERING LTD "
+        "(14 vouchers posted in JD Edwards, the most)"
     )
     # the review screen's list offers each with its number, and the pick is found by it however the rest is typed
     assert [v["display_name"] for v in store.vendor_choices()] == [

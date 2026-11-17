@@ -36,9 +36,9 @@
 {# --- Teach from past coding --------------------------------------------------------------------------- #}
 <details class="card an-expander" id="history"{% if upload or upload_gone or teach or journal %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">history_edu</span>Teach from past coding{% if history_count %} ({{ history_count | plural("past line") }} taught){% endif %}{% if journals %} · {{ journals | length | plural("JD Edwards journal") }} loaded{% endif %}</summary>
-  <p class="muted">Export last year's posted AP invoice lines from the ERP (vendor, line description, GL account, cost
-    center) and import them here: the AI then sees how each vendor was coded before, from the first invoice. Past lines
-    never count in the accuracy figures.</p>
+  <p class="muted">Export the posted AP invoice lines from the ERP (vendor, line description, GL account, cost
+    center), of any period, and import them here: the AI then sees how each vendor was coded before, from the first
+    invoice. Past lines never count in the accuracy figures.</p>
   {% if journal %}
   {# JD Edwards' Transaction Journal (R09321): what loading it would keep, then "Load this journal" #}
   <p><b>{{ journal.name }}</b> · JD Edwards' Transaction Journal (report R09321){% if journal.size %} · {{ journal.size }}{% endif %}. {{ "It is loaded already." if journal.already else "Nothing is loaded yet." }}</p>

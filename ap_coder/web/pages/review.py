@@ -226,10 +226,10 @@ def first_to_fix(parts: tuple[str, str, int, int, bool, str], issues: list[dict[
                  counted: str) -> str:  # fmt: skip
     """The queue's one sentence for an invoice that needs attention: the first thing to fix, in words (B-2219). That
     it may not be an invoice (``SAID_FIRST``); else the first error's own sentence; else why the first line without
-    an account was left for a person ("Line 4: this supplier's 9 lines last year went to 3 accounts ..."); else its
-    Pay from account's trouble; else the first finding a person looks at; else its lines coded from other vendors'
-    approvals; else ``counted`` (``attention``'s own words: confidence under the threshold). What else there is to
-    fix is counted after it: "(and 2 more)"."""
+    an account was left for a person ("Line 4: this supplier's 9 lines posted in JD Edwards went to 3 accounts
+    ..."); else its Pay from account's trouble; else the first finding a person looks at; else its lines coded from
+    other vendors' approvals; else ``counted`` (``attention``'s own words: confidence under the threshold). What else
+    there is to fix is counted after it: "(and 2 more)"."""
     to_pick, bank, errors, warned, _, others = parts
     first = next((_said(i) for i in issues if i.get("code") in SAID_FIRST), "")
     if first:

@@ -251,7 +251,7 @@ bundle with the internet cut off, on Windows and on a Mac that has only Python 3
    approved (Settings → JD Edwards E1 → *Supplier address numbers*, or the vendor master's ERP ID; *Add new
    vendor…* takes it too), and the export needs a *Default BU* or every account mapped, tax accounts included.
 
-## How well would it have coded last year?
+## How well would it have coded past invoices?
 
 Two commands answer it before anyone relies on AP Coder. Both run on this laptop only, change nothing in AP Coder
 (not its learning, not the journal loaded) and write their report into `pilot_score` in the data folder. Run them
@@ -271,7 +271,7 @@ screen and kept in the report's `.json` (`gate`):
 A line with no keyed line of its own to compare with (only with real invoices, below) is counted in *Lines* and
 *Coded alone*, left out of the other figures, and the report says how many and why.
 
-**1. From last year's journal alone (no invoices needed, a few seconds):**
+**1. From the past invoice coding alone (the Transaction Journal; no invoices needed, a few seconds):**
 
 ```
 python -m ap_coder pilot-score --journal R09321.csv --hold-out 2
@@ -330,7 +330,7 @@ recover with the journal's tax line. `proposed_score_misses.csv` shows both side
 an invoice with no voucher, or with two that fit, is listed and not scored.
 
 For a fair test, use invoices keyed **after** the last voucher of the journal AP Coder has loaded (for example this
-January's, with last year's journal loaded): otherwise it has already seen how they were keyed, and the report says
+January's, with a journal up to December loaded): otherwise it has already seen how they were keyed, and the report says
 so.
 
 ## Touchless processing: off for the pilot (D-144)

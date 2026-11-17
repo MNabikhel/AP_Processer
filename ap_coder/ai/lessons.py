@@ -41,9 +41,10 @@ KIND, UNIT, CHANGED, ONE_OFF = "kind", "unit", "changed", "one_off"
 OWN_HISTORY = ("vendor", "usual", "supplier")
 NEARLY = 0.5  # ...when it counts its lines: with at least this share of the supplier's (its lines' usual account)
 # What may have changed, by where the account AP Coder chose came from.
-_CHANGED = {"supplier": "Last year's account no longer applies", "vendor": "It changed: these go there from now on",
-            "usual": "It changed: these go there from now on", "rule": "The rule does not fit this line",
-            "others": "The words on the line mislead here", "words": "The words on the line mislead here"}  # fmt: skip
+_CHANGED = {"supplier": "The account it was posted to before no longer applies",
+            "vendor": "It changed: these go there from now on", "usual": "It changed: these go there from now on",
+            "rule": "The rule does not fit this line", "others": "The words on the line mislead here",
+            "words": "The words on the line mislead here"}  # fmt: skip
 INVOICE, CREDIT_NOTE = "invoice", "credit note"
 MAX_PROMPT_LINES = 8
 

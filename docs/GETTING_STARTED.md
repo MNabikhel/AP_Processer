@@ -173,7 +173,7 @@ Things to try:
 one account string (`business unit.object.subsidiary`) uses it, before loading your own exports: in
 `scripts\terminal.bat`, `set AP_PRIVATE_DIR=C:\APCoderDemo` (a new, empty folder), then `python -m ap_coder demo
 --company` and `python -m ap_coder serve`. It loads an invented company's chart of accounts, business units,
-supplier list, last year's Transaction Journal and voucher list as JD Edwards exports them (the files are kept in
+supplier list, a year's Transaction Journal and voucher list as JD Edwards exports them (the files are kept in
 the folder's `demo_company`, with the seven invoices it puts in the review queue), and sets JD Edwards up for
 vouchers typed by hand. It only loads into a new database; delete the folder when you are done.
 
@@ -227,7 +227,7 @@ AP Coder learns your coding from what you posted before, so the first invoices f
 
 - **Vendor master:** on **Vendors**, import the ERP's vendor list. Exports then carry vendor IDs, and
   an invoice from a vendor that is not in the list is flagged.
-- **Past coding:** on **Learning & accuracy**, *Teach from past coding* with last year's posted AP
+- **Past coding:** on **Learning & accuracy**, *Teach from past coding* with the posted AP
   lines (vendor, description, GL, cost center) so the AI starts with your history.
 - **Purchase orders:** import your open POs (one row per PO line, from the ERP; the *Template*
   button shows the columns). Include the quantity received to get three-way matching, and the

@@ -469,7 +469,7 @@ CNC contact, IT's contact for the pilot's machine and the server, and who owns t
 | Vendor master (AN8, name, tax IDs, terms, hold) | E1 supplier export | Vendors → import (6.3) |
 | Open POs with receipts (if PO-matched) | E1 / Procurement | Purchase orders → import (6.6) |
 | Invoices already in E1 (the last 12 to 18 months) | E1 voucher export | Exports → Invoices already in the ERP (6.6) |
-| Last year's posted AP lines (vendor, description, GL, cost center) | JDE team / AP | Learning & accuracy → Teach from past coding |
+| Posted AP lines of past invoices, any period (vendor, description, GL, cost center) | JDE team / AP | Learning & accuracy → Teach from past coding |
 | Exchange rates (for invoices in other currencies; the approval limit uses them) | Treasury / AP lead | Settings → Review |
 | A second backup folder (a network share) | IT | Settings → Data & backups → *Also copy each backup to* |
 | Bank accounts that pay AP | Treasury | GL accounts & tax → Bank accounts (6.7) |

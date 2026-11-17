@@ -704,7 +704,7 @@ def _picks(data: dict[str, Any], lines: list[tuple[int, str, float]], valid_gl: 
 # --- The chat model chooses among the accounts offered for each line (D-212) ----------------------------------------
 
 NONE_OF_THESE = "none of these"
-OFFERED_OWN = 8  # of the supplier's own accounts (its coding last year, this vendor's approved lines), the likeliest
+OFFERED_OWN = 8  # of the supplier's own accounts (its past coding, this vendor's approved lines), the likeliest
 OFFERED_OTHERS = 8  # of the others (the words of the accounts' names across the chart, other vendors' lines)
 OFFERED_WHY_CHARS = 110  # of what is said of an account
 CLOSED_SYSTEM = (

@@ -156,5 +156,5 @@ def test_with_jd_edwards_the_steps_lead_to_its_files_and_the_journal_loaded_is_p
     steps = {label: (state, detail) for state, label, detail in process.setup_steps(chart_company.store, Settings())}
     learned = sum(f["learned_lines"] for f in chart_company.store.journal_files())
     assert chart_company.store.history_count() == 0 and learned > 0
-    assert steps[process.HISTORY_STEP] == ("ok", f"{learned:,} coding lines from last year's journal")
+    assert steps[process.HISTORY_STEP] == ("ok", f"{learned:,} coding lines from past invoices in JD Edwards")
     assert steps["GL accounts"][1].endswith("from the chart of accounts")

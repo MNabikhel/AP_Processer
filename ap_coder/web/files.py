@@ -571,8 +571,9 @@ def spec_sheet(token: str, upload: Upload, df: pd.DataFrame, sheets: list[str], 
     """What a page shows of an uploaded sheet to import as ``spec`` (``_sheet.html``'s ``columns``, ``_import.html``'s
     ``preview``): ``sheet_context`` with a choice for each of the spec's columns, filled from the file's headers by
     the spec's reader (``ImportSpec.find``: their order never matters) until the person picks (``params``'
-    ``col_<field>``), the needed ones marked, but a needed one whose name the file has twice: the person picks which
-    (``look.twice``, B-2469); ``missing``: the needed fields still without a column; ``look``: the
+    ``col_<field>``), the needed ones marked (``shown``: in sight, as an optional one guessed; the other optional
+    ones are folded, each with what it gives: ``about``, D-248), but a needed one whose name the file has twice: the
+    person picks which (``look.twice``, B-2469); ``missing``: the needed fields still without a column; ``look``: the
     file's header check (each column found as which header, or missing; its other columns) and its first rows, and
     why it is not imported when it is one of JD Edwards' reports (``jde_refusal``: a sheet chosen on the page)."""
     columns = [str(c) for c in df.columns]
@@ -582,7 +583,9 @@ def spec_sheet(token: str, upload: Upload, df: pd.DataFrame, sheets: list[str], 
     chosen = picked_columns(params or {}, fields, columns, {f: c for f, c in found.found.items() if f not in twice})
     context = sheet_context(token, upload, df, sheets, sheet, fields, chosen)
     needed = {c.field for c in spec.required}
-    context["fields"] = [{**f, "label": fields[f["key"]], "need": f["key"] in needed, "one_of": f["key"] in spec.one_of}
+    context["fields"] = [{**f, "label": fields[f["key"]], "need": f["key"] in needed, "one_of": f["key"] in spec.one_of,
+                          "about": spec.column(f["key"]).about,
+                          "shown": f["key"] in needed or f["key"] in spec.one_of or f["key"] in found.guessed}
                          for f in context["fields"]]  # fmt: skip
     rows = [columns, *df.head(import_specs.PREVIEW_ROWS).values.tolist()]
     return {**context, "spec": spec, "missing": unpicked(spec, chosen),

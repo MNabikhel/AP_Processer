@@ -8,7 +8,7 @@ one place, in the order they depend on each other.
    payment holds, and the vendor information list (``coding/vendor_info``, ``Store.import_vendor_info``, D-219),
    which gives the tax IDs, currencies, terms and addresses. Each goes to the supplier of its number, and neither
    removes what only the other gives;
-4. last year's coding, the Transaction Journal (``ops/journal_cmd``: ``look``, then ``load``; ``forget``);
+4. the past invoice coding, the Transaction Journal (``ops/journal_cmd``: ``look``, then ``load``; ``forget``);
 5. the vouchers already in JD Edwards (the voucher list, as on Exports: ``erp/registers``,
    ``Store.import_erp_vouchers``).
 
@@ -71,15 +71,15 @@ SAID_TTL = 3600
 INFO_KIND = "jde-vendor-info"  # the vendor information list as read at its upload, kept for its summary and its load
 LOOK_KIND = "jde-files-look"  # a chart or business unit file's first rows and count as read at its upload
 VOUCHERS_KIND = "jde-files-vouchers"  # the voucher list as read at its upload, for its summary and its load
-ORDER = ("Load them in this order: the chart of accounts and the business units first, because the suppliers, last "
-         "year's coding and the vouchers are checked against them; then the suppliers; then last year's coding; "
-         "then the invoices already in JD Edwards, its voucher list.")  # fmt: skip
+ORDER = ("Load them in this order: the chart of accounts and the business units first, because the suppliers, the "
+         "past invoice coding and the vouchers are checked against them; then the suppliers; then the past invoice "
+         "coding; then the invoices already in JD Edwards, its voucher list.")  # fmt: skip
 # Each card: its title, and the reports loaded on it (``import_specs.SPECS``), in the order the page names them.
 CARDS = {
     "chart": ("Chart of accounts", ("chart",)),
     "units": ("Business units", ("units",)),
     "suppliers": ("Suppliers", ("supplier_master", "vendor_info")),
-    "journal": ("Last year's coding", ("journal",)),
+    "journal": ("Past invoice coding", ("journal",)),
     "vouchers": ("Invoices already in JD Edwards", ("vouchers",)),
 }
 NOT_XLSX = "Upload the export as JD Edwards saves it, an Excel workbook (.xlsx)."
@@ -813,7 +813,7 @@ def _suppliers_load(request: Request, token: str) -> JSONResponse:
     return _said(request, "suppliers", said)
 
 
-# --- 4: last year's coding (the Transaction Journal) ----------------------------------------------------------------
+# --- 4: the past invoice coding (the Transaction Journal) -----------------------------------------------------------
 
 
 @router.post(HERE + "/journal/upload")

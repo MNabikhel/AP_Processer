@@ -124,8 +124,8 @@ def _faults(measures: list[dict]) -> list[str]:
 LONG_NOTE = """() => {
   const slot = document.querySelector('[data-grid="lines"] [data-row] td.c-slot');
   slot.innerHTML = '<div class="acct-note fix"><p><b>To fix:</b> <span data-acct-why>' +
-    "This supplier's 3 lines last year went to 3 accounts: 33% / 33% / 33%: pick the account. The chat model was " +
-    "asked and gave no answer, so nothing here is its pick; the three accounts are offered below." +
+    "This supplier's 3 lines posted in JD Edwards went to 3 accounts: 33% / 33% / 33%: pick the account. " +
+    "The chat model was asked and gave no answer, so nothing here is its pick; the three accounts are offered below." +
     '</span></p></div>';
 }"""
 

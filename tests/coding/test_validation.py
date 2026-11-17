@@ -21,7 +21,7 @@ def test_an_invoice_whose_every_account_is_a_guess_is_not_approved_in_one_click(
     found = [i for i in validate_coding(InvoiceCoding.model_validate(gt), reference).issues
              if i.code == "ACCOUNTS_ALL_GUESSED"]  # fmt: skip
     assert [(i.severity, i.message) for i in found] == [("error", (
-        f"{count} accounts are still guesses: look at them. Nothing AP approved, keyed last year or set as a rule "
+        f"{count} accounts are still guesses: look at them. Nothing AP approved, posted in JD Edwards or set as a rule "
         "backs any of them; change the wrong ones, or tick “Approve anyway” and say why to keep them"))]  # fmt: skip
     # One a person, a rule, the vendor's approvals or last year's journal decided: no longer every account.
     for source in ("person", "rule", "vendor", "supplier"):

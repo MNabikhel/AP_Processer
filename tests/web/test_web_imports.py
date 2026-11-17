@@ -92,10 +92,11 @@ def _import(client, key: str, token: str, html: str):
 
 def _check(html: str, key: str) -> str:
     """The header check of the file shown (``_import.html``'s preview), named by its spec's title or, on Exports,
-    the page's own name of the list (B-2473)."""
+    the page's own name of the list (B-2473): its needed columns, then its optional ones (folded: D-248)."""
     title = re.escape(str(escape(SPECS[key].title)))
-    head = re.search(rf'aria-label="The columns of ({title}|Invoices already in [^"]+) in this file"', html)
-    return html[head.end() :].split("</ul>", 1)[0]
+    named = rf'aria-label="The (optional )?columns of ({title}|Invoices already in [^"]+) in this file"'
+    lists = re.finditer(named, html)
+    return "".join(html[head.end() :].split("</ul>", 1)[0] for head in lists)
 
 
 @pytest.mark.parametrize("key", list(PAGES))
@@ -132,6 +133,46 @@ def test_an_uploaded_file_shows_each_column_found_or_missing_and_is_refused_with
     assert refused.status_code == 400 and refused.json()["error"] == (f"Pick the column for: {needed.label}. Nothing "
                                                                       "was loaded.")  # fmt: skip
     assert PAGES[key][6](store) == before
+
+
+FOLD = re.compile(
+    r'<details class="imp-more imp-optional">\s*<summary>More columns it can use \(optional\): (.*?)'
+    r"</summary>(.*?)</details>",
+    re.S,
+)
+
+
+@pytest.mark.parametrize("key", list(PAGES))
+def test_the_needed_columns_are_in_sight_and_the_optional_ones_folded_with_what_each_gives(client, key):
+    """D-248: the pilot tester asked why so many optional columns were listed. The page shows the needed ones; the
+    optional ones are under a closed "More columns it can use (optional): N", each with what it gives; a file shown
+    has its needed ones in sight and says how many of the optional ones it has; the column picker folds them too."""
+    spec, page = SPECS[key], client.get(PAGES[key][4]).text
+    optional = [c for c in spec.optional if c.field not in spec.one_of]
+    cols = page.split(f'id="cols-{key}"', 1)[1].split("</div>", 1)[0]
+    sight, fold = cols.split("<details", 1)[0], FOLD.search(cols)
+    assert all(f'title="{escape(c.label)}">' in sight for c in spec.required), key
+    assert not any(f'title="{escape(c.label)}">' in sight for c in optional), key
+    assert fold.group(1) == str(len(optional)) and "<details open" not in cols, key
+    assert all(f"<b>{escape(c.label)}</b>" in fold.group(2) for c in optional), key
+    assert all(str(escape(c.about)) in fold.group(2) for c in optional if c.about), key
+
+    rows = PAGES[key][5]
+    html, _token = _upload(client, key, rows)
+    title = re.escape(str(escape(spec.title)))
+    head = re.search(rf'aria-label="The columns of ({title}|Invoices already in [^"]+) in this file"', html)
+    in_sight = html[head.end() :].split("</ul>", 1)[0]
+    shown, found = FOLD.search(html[head.end() :]), import_specs.check(spec, rows[0])
+    more = [c for c in optional if c.field not in found.guessed]  # (one guessed is in sight: check it)
+    there = [c for c in more if c.field in found.found]
+    assert all(f"<b>{escape(c.label)}</b>" in in_sight for c in spec.required), key
+    assert not any(f"<b>{escape(c.label)}</b>" in in_sight for c in more), key
+    assert shown.group(1) == f"{len(there)} of {len(more)} in this file", key
+    picker = html.split("data-imp-picker", 1)[1].split("data-imp-wait", 1)[0]
+    in_sight, folded = picker.split("<details", 1)[0], FOLD.search(picker)
+    assert all(f'name="col_{c.field}"' in in_sight for c in spec.required), key
+    assert all(f'name="col_{c.field}"' in folded.group(2) for c in more), key
+    assert folded.group(1) == f"<span data-imp-picked>{len(there)}</span> of {len(more)} with a column", key
 
 
 @pytest.mark.parametrize("key", list(PAGES))
@@ -288,7 +329,7 @@ def _picked_in_a_browser(chromium, store, tmp_path, start: str, box: str, file: 
             wait = page.locator("[data-imp-wait]")
             assert go.is_disabled() and wait.is_visible(), width
             assert f"Pick the column for: {label}." in wait.inner_text(), width
-            assert "missing:" in page.locator(".imp-check").inner_text()
+            assert "missing:" in page.locator(".imp-check").first.inner_text()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), width
             page.select_option(f'select[name="col_{field}"]', column)
             assert go.is_enabled() and not wait.is_visible(), width
@@ -309,6 +350,43 @@ def test_in_a_browser_gl_accounts_are_shown_their_code_picked_and_imported(chrom
                                   "Number")  # fmt: skip
     assert errors == []
     assert sorted(a["code"] for a in store.list_accounts("gl_accounts")) == ["6010", "6400"]
+
+
+def test_in_a_browser_an_optional_column_folded_is_opened_by_keyboard_picked_and_imported(chromium, store, tmp_path):
+    """D-248: the optional columns are folded, closed; the fold opens from the keyboard, a column picked in it is
+    counted and imported."""
+    from ap_coder.web.app import create_app
+    from tests.browser import browser_on
+    from tests.webclient import web_settings
+
+    (tmp_path / "vendors.xlsx").write_bytes(_xlsx([["Vendor Name", "Vendor ID", "Pay code"], ["Acme Ltd", "V1",
+                                                                                            "Net 30"]]))  # fmt: skip
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
+        page = browser.new_page(viewport={"width": 390, "height": 800})
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(base + "/vendors#import")
+        if page.locator("details#import:not([open])").count():
+            page.locator("#import > summary").click()
+        folded = page.locator("#cols-vendor_master details.imp-optional")
+        assert not folded.evaluate("e => e.open") and not folded.locator(".imp-col-list").is_visible()
+        page.locator("#import input[type=file]").set_input_files(str(tmp_path / "vendors.xlsx"))
+        page.locator("#import .imp-upload button[type=submit]").click()
+        page.wait_for_selector("[data-imp-picker]")
+        fold = page.locator("[data-imp-picker] details.imp-optional")
+        terms = page.locator('select[name="col_terms"]')
+        assert page.locator('select[name="col_vendor_name"]').is_visible() and not terms.is_visible()
+        assert "1 of 9 with a column" in fold.locator("summary").inner_text()
+        fold.locator("summary").focus()
+        page.keyboard.press("Enter")
+        assert terms.is_visible()
+        terms.select_option("Pay code")
+        assert "2 of 9 with a column" in fold.locator("summary").inner_text()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.locator("button[data-imp-go]").click()
+        page.wait_for_selector("[data-imp-picker]", state="detached")
+    assert errors == []
+    assert [(v["display_name"], v["terms"]) for v in store.master_vendors()] == [("Acme Ltd", "Net 30")]
 
 
 def test_in_a_browser_the_erp_register_is_shown_its_total_picked_and_imported(chromium, store, tmp_path):
@@ -353,7 +431,7 @@ def test_a_jd_edwards_report_is_refused_on_every_column_picker_naming_its_card(c
     from ap_coder.bench import jde_exports as made
 
     files = {made.CHART_FILE: "1. Chart of accounts", made.UNITS_FILE: "2. Business units",
-             made.VENDOR_INFO_FILE: "3. Suppliers", made.JOURNAL_FILE: "4. Last year's coding",
+             made.VENDOR_INFO_FILE: "3. Suppliers", made.JOURNAL_FILE: "4. Past invoice coding",
              made.SUPPLIERS_FILE: "3. Suppliers", made.HEADERS_FILE: SPECS["vouchers"].card,
              "voucher_split_pay_items.xlsx": SPECS["vouchers"].card}  # fmt: skip
     before = sorted(a["code"] for a in store.list_accounts("gl_accounts"))

@@ -33,7 +33,7 @@ pages that list them, D-157), ``folder`` (what the pick-up read of the invoices 
 of the company server, and the downloads its background process makes, D-169), ``bulk_jobs`` (bulk approvals as
 jobs, D-185), ``transaction`` (several calls kept in one transaction by a caller, D-189), ``chart`` (the chart of
 accounts and the business units as JD Edwards exports them, and the GL accounts and cost centers worked out from
-them, D-209), ``journal`` (last year's coding as JD Edwards' Transaction Journal has it: its vouchers and lines, kept
+them, D-209), ``journal`` (past invoice coding as JD Edwards' Transaction Journal has it: its vouchers and lines, kept
 apart from the feedback memory), ``prior`` (what the supplier prior reads of the journal's names, the vendor list and
 a vendor's approved lines, counted, D-212), ``rules`` (the fixed coding rules, the history of their changes and the
 lines each coded, D-217), ``joined`` (the files a person joined into one voucher, D-216), ``loaded`` (what is loaded

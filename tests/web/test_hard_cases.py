@@ -159,7 +159,7 @@ def test_c_a_60_line_invoice(chart_company, drop, hard):
         (line.description, float(line.amount)) for line in invoice.lines]  # fmt: skip
     assert len(got.lines) == 60 and got.output["grand_total"] == float(invoice.total)
     assert got.accounts == [part.account for part in invoice.parts]
-    assert set(got.reasons) == {"8 of this supplier's 8 lines last year"}
+    assert set(got.reasons) == {"8 of this supplier's 8 lines posted in JD Edwards"}
     assert got.queue == "" and not [c for c, s in got.severity.items() if s != "info"]
 
 
@@ -312,7 +312,7 @@ def test_l_two_suppliers_of_one_name(chart_company, drop, hard):
     got = drop(hard["odd_line"][1])
     printed = jde_invoices.printed_name(supplier.name)
     said = (f"2 suppliers in the vendor list read “{printed}”: pick one from the list, each has its own supplier "
-            f"number: {supplier.number} {supplier.name} (4 vouchers in last year's journal, the most); 991177 "
+            f"number: {supplier.number} {supplier.name} (4 vouchers posted in JD Edwards, the most); 991177 "
             f"{supplier.name}")  # fmt: skip
     assert (got.severity["VENDOR_NOT_IN_MASTER"], got.found["VENDOR_NOT_IN_MASTER"]) == ("error", said)
     assert got.queue.startswith(_sentence(said))
@@ -435,7 +435,7 @@ def test_q_a_lunch_on_a_couriers_invoice_is_not_coded_as_courier(chart_company, 
     got = drop(hard["odd_line"][1])
     assert got.accounts == [account, ""]
     reason = f"This supplier's lines usually go to {account}, but this line reads like a meal: check it."
-    assert got.reasons == ["8 of this supplier's 8 lines last year", reason]
+    assert got.reasons == ["8 of this supplier's 8 lines posted in JD Edwards", reason]
     offered = [(c["account"], c["name"]) for c in got.lines[1]["candidates"]]
     assert offered[0][0] == account and offered[1][1] == "Working Lunches"
     assert "Meals - Travel" in [name for _, name in offered[:4]]

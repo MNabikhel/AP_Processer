@@ -372,10 +372,10 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
         else:
             steps.append(("todo", JDE_STEP, problems[0] if problems else
                           "company, document type, accounts and tax areas: Settings → JD Edwards E1"))  # fmt: skip
-    # the past lines taught on Learning, and last year's journal loaded on JD Edwards files: both are past coding
+    # the past lines taught on Learning, and the journal loaded on JD Edwards files: both are past coding
     taught, learned = store.history_count(), sum(f["learned_lines"] for f in store.journal_files())
     said = [ui.plural(taught, "past line") + " taught"] if taught else []
-    said += [ui.plural(learned, "coding line") + " from last year's journal"] if learned else []
+    said += [ui.plural(learned, "coding line") + " from past invoices in JD Edwards"] if learned else []
     steps.append(("ok", HISTORY_STEP, ", ".join(said)) if said else ("todo", HISTORY_STEP, HISTORY_WHY))
     return steps
 
@@ -461,7 +461,7 @@ STEP_LINKS = {
     HISTORY_STEP: "/learning?teach=1#history",
     "Process your first invoices": "/process",
 }
-# With JD Edwards in use (its settings step shown) the chart, the supplier master and last year's journal are loaded
+# With JD Edwards in use (its settings step shown) the chart, the supplier master and the journal are loaded
 # on JD Edwards files: the chart gives the GL accounts and the cost centers.
 JDE_LINKS = {"GL accounts": "/jde-files#chart", VENDOR_STEP: "/jde-files#suppliers", HISTORY_STEP: "/jde-files#journal"}
 
@@ -515,9 +515,9 @@ def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
                             "or download the worksheet for your JDE team and import their answers."}  # fmt: skip
         if state[HISTORY_STEP][0] != "ok":
             return {"title": "Teach AP Coder your past coding", "icon": "history_edu",
-                    "href": links[HISTORY_STEP], "button": "Load last year's journal",
-                    "text": f"{HISTORY_WHY}: load last year's Transaction Journal from JD Edwards (report R09321), "
-                            "so the first invoices are coded already."}  # fmt: skip
+                    "href": links[HISTORY_STEP], "button": "Load past invoice coding",
+                    "text": f"{HISTORY_WHY}: load the Transaction Journal from JD Edwards (report R09321), the "
+                            "invoices posted in a year or more, so the first invoices are coded already."}  # fmt: skip
     if state["Process your first invoices"][0] != "ok":
         return {"title": "Import your first invoices", "icon": "upload_file", "button": "Import invoices",
                 "href": STEP_LINKS["Process your first invoices"],

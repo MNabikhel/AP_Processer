@@ -1,6 +1,7 @@
 """The supplier prior (D-212): which account strings a supplier's lines went to, counted, and how alike a new line is
-to each. It is what AP Coder knows of a supplier before anyone approved an invoice of it here: last year's Transaction
-Journal (``core/store/journal.py``), to which the vendor's own approved lines in AP Coder are added as they come.
+to each. It is what AP Coder knows of a supplier before anyone approved an invoice of it here: the Transaction
+Journal of past invoices (``core/store/journal.py``), to which the vendor's own approved lines in AP Coder are added
+as they come.
 
 ``prior_for(store, vendor)`` finds the supplier and counts, for each account string (business unit +
 object.subsidiary): the lines, the vouchers, the share, the latest G/L date and the commonest shapes of the
@@ -8,7 +9,7 @@ department's remark (``remark_shape``: months, quarters, years and long numbers 
 share of its vouchers that have one coding line and the business units each object.subsidiary was used on.
 
 How the supplier is found. By its JD Edwards number when the vendor list gives the vendor one (its ERP ID): that
-number alone, and a number the journal does not have is a supplier not in last year's journal, never looked up by
+number alone, and a number the journal does not have is a supplier not in the journal, never looked up by
 name. Else by the name as the journal prints it, cut at 26 characters (``NAME_CUT``), both names read without case,
 accents or punctuation and "&" as "and":
 
@@ -54,7 +55,7 @@ from ..core.schema import decided
 from ..core.store.journal import supplier_key
 from .line_match import PREFIX, Index, keys, similarity, word_match
 
-JOURNAL_WEIGHT = 1.0  # a coding line of last year's journal (or of imported past coding, or approved in bulk)
+JOURNAL_WEIGHT = 1.0  # a coding line of the journal (or of imported past coding, or approved in bulk)
 APPROVAL_WEIGHT = 3.0  # a line a person approved in AP Coder as it was proposed
 CORRECTION_WEIGHT = 5.0  # a line a person coded or changed in AP Coder: a correction outweighs history
 WEIGHTS = {ACCEPTED: APPROVAL_WEIGHT, CORRECTED: CORRECTION_WEIGHT, CODED: CORRECTION_WEIGHT}
@@ -190,12 +191,12 @@ class Prior:
         return " / ".join(f"{100 * u.share:.0f}%" for u in self.accounts[:most])
 
     def total_said(self) -> str:
-        """How many lines it is counted from: "24 lines last year", "27 lines (24 last year, 3 approved here)", "1
-        line last year"."""
+        """How many lines it is counted from: "24 lines posted in JD Edwards", "27 lines (24 posted in JD Edwards, 3
+        approved here)", "1 line posted in JD Edwards" (the journal's, of whatever period it covers: D-248)."""
         if self.approved and self.journal_lines:
-            return f"{self.lines} lines ({self.journal_lines} last year, {self.approved} approved here)"
+            return f"{self.lines} lines ({self.journal_lines} posted in JD Edwards, {self.approved} approved here)"
         lines = "1 line" if self.lines == 1 else f"{self.lines} lines"
-        return f"{lines} {'approved here' if self.approved else 'last year'}"
+        return f"{lines} {'approved here' if self.approved else 'posted in JD Edwards'}"
 
 
 EMPTY = Prior()
@@ -321,7 +322,7 @@ def suppliers_by_name(names: _Names, name: str) -> tuple[list[tuple[str, str]], 
     found = [(number, printed) for text, number, printed in names.cut if plain.startswith(text)]
     numbers = sorted({supplier_key(number) for number, _ in found})
     if len(numbers) > 1:
-        return [], False, (f"{len(numbers)} suppliers of last year's journal print the start of this name "
+        return [], False, (f"{len(numbers)} suppliers of the past invoice coding print the start of this name "
                            f"({', '.join(numbers[:4])}): give the vendor its supplier number")  # fmt: skip
     return found[:1], False, ""
 
@@ -342,7 +343,7 @@ def _journal_lines(store: Any, names: _Names, name: str, number: str) -> tuple[l
     lines = sorted((line for found in read.values() for line in found),
                    key=lambda line: (line["gl_date"], line["voucher_id"], line["n"]))  # fmt: skip
     if len(used) > 1:
-        note = f"{len(used)} supplier numbers of last year's journal go by this name ({', '.join(used[:4])})"
+        note = f"{len(used)} supplier numbers of the past invoice coding go by this name ({', '.join(used[:4])})"
     found_by = "" if not lines else "number" if number and read.get(supplier_key(number)) else "name"
     return lines, found_by, note
 
@@ -702,7 +703,7 @@ BOOK_LEAST = 0.3  # ...of this score at least (by the name alone: a fifth of the
 
 @dataclass(frozen=True)
 class Book:
-    """Last year's journal as a whole, for a supplier it does not have: each different shape of remark AP wrote and
+    """The journal as a whole, for a supplier it does not have: each different shape of remark AP wrote and
     the GL code it went to (``index``, by words: a word that went to several codes counts for less), with its lines
     and its suppliers; the words of the suppliers' names, each with the share of each GL code in each of those
     suppliers' lines; and the business units of each GL code."""
@@ -824,9 +825,9 @@ def from_book(book: Book, line_text: str, vendor_name: str, reference: Reference
         if i >= 0:
             lines, others = book.lines[i], book.suppliers[i]
             reasons.append(f"AP wrote “{book.examples[i]}” for {lines} line{'s' * (lines != 1)} of {others} other "
-                           f"supplier{'s' * (others != 1)} last year")  # fmt: skip
+                           f"supplier{'s' * (others != 1)} in JD Edwards")  # fmt: skip
         if share:
-            reasons.append(f"{have} of the {of} suppliers named “{word}” had lines on it last year")
+            reasons.append(f"{have} of the {of} suppliers named “{word}” had lines on it in JD Edwards")
         name = similarity(line, name_words(reference, "", code)) if line else 0.0
         score = W_REMARK * sim + W_NAME * name + W_VENDOR * share
         if score >= BOOK_LEAST:

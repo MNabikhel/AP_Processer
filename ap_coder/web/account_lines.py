@@ -94,11 +94,11 @@ def bar_words(lines: Any, reference: ReferenceData | None) -> str:
     return pick_words(codes_to_pick(lines, True, once=True)) if in_use(reference) else ""
 
 
-SUPPLIER_MOST = 8  # of a supplier's accounts last year, offered first in an Account box's list
+SUPPLIER_MOST = 8  # of a supplier's past accounts, offered first in an Account box's list
 
 
 def supplier_accounts(store: Any, reference: ReferenceData, vendor_name: str) -> list[list[Any]]:
-    """The accounts this supplier's lines went to last year and since, the most used first, each [the account
+    """The accounts this supplier's lines went to before (the journal) and since, the most used first, each [the account
     string, its lines, its name, its business unit's name]: only those the chart still offers, ``SUPPLIER_MOST`` at
     most. From the supplier's prior (``supplier_prior.prior_for``, kept in this process): asked once a page or a
     check, never per key typed."""
@@ -147,7 +147,7 @@ def why_words(decided_by: dict[str, Any] | None) -> str:
     by = decided_by or {}
     source, lines, of = by.get("source"), by.get("lines"), by.get("of")
     if source == "supplier":
-        counted = f": {lines} of {of} {'line' if of == 1 else 'lines'} last year" if lines and of else ""
+        counted = f": {lines} of {of} past {'line' if of == 1 else 'lines'}" if lines and of else ""
         return f"this supplier's usual account{counted}"
     if source == "vendor":
         return f"approved this way {lines} {'time' if lines == 1 else 'times'}" if lines else "approved this way before"

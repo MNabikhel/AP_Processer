@@ -10,6 +10,14 @@ Your existing data is safe. On first start the database upgrades itself (schema 
 backup of AP Coder (the database and the invoice files) is made automatically once a day (the newest 14 are
 kept).
 
+## Imports show the columns they need; "Past invoice coding" (D-248)
+
+- **The columns a file needs, first.** Each import panel shows the columns a file must have; the optional ones are
+  folded under *More columns it can use (optional)*, each with what it gives. A file you check keeps its needed
+  columns in sight and says how many of the optional ones it has; the column picker folds them too.
+- **"Last year's coding" is now "Past invoice coding".** The Transaction Journal was never limited to a year: load
+  any period, the more history the better the suggestions. The suggestions now say "lines posted in JD Edwards".
+
 ## Azure Document Intelligence as an optional reader (D-245)
 
 - **Off by default, as before.** AP Coder reads every invoice on this computer and needs nothing from the internet.

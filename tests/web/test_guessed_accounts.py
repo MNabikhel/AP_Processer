@@ -9,8 +9,8 @@ from ap_coder.core import audit
 from ap_coder.core.store import APPROVED, REVIEW
 from tests.review_page import ANYWAY, ANYWAY_REASON, ReviewPage
 
-GUESSES = ("{n} accounts are still guesses: look at them. Nothing AP approved, keyed last year or set as a rule backs "
-           "any of them; change the wrong ones, or tick “Approve anyway” and say why to keep them")  # fmt: skip
+GUESSES = ("{n} accounts are still guesses: look at them. Nothing AP approved, posted in JD Edwards or set as a rule "
+           "backs any of them; change the wrong ones, or tick “Approve anyway” and say why to keep them")  # fmt: skip
 
 
 def _guessed(chart_company, name: str) -> int:

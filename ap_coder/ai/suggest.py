@@ -717,8 +717,8 @@ def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory
 # --- Whole account strings: every source, each a pair that may be posted to (D-212) --------------------------------
 
 # Where a candidate's evidence comes from, the strongest first: this vendor's own approved lines, the supplier's
-# coding (last year's journal and its approvals), then other vendors' lines and the vendor master's default, then
-# the words of the accounts' names.
+# coding (the journal of past invoices and its approvals), then other vendors' lines and the vendor master's
+# default, then the words of the accounts' names.
 TIER = {"vendor": 3, "supplier": 2, "others": 1, "usual": 1, "master": 1, "words": 0}
 # A line of a supplier whose lines all go to one account, this alike to the NAME of another account offered (and not
 # alike to anything known of the supplier's own), reads like the other account: left for a person (B-2228).
@@ -814,7 +814,7 @@ def candidates(description: str, vendor_name: str, feedback: list[dict[str, Any]
     to: never a reserved subsidiary, a business unit that is closed or marked DO NOT USE, or an account that takes
     no postings. The first says whether it may code the line with no one picking (``Candidate.auto``): this vendor's
     own approved lines as before, or the supplier's one account (``Prior.sure``) when no approved line of the vendor
-    like this one went elsewhere; never a guess of the business unit. A supplier last year's journal does not have
+    like this one went elsewhere; never a guess of the business unit. A supplier the journal does not have
     is offered, with a chart imported, the accounts the journal as a whole has for the line's words and the vendor's
     name (``supplier_prior.from_book``, D-226), as other vendors' lines: never coded by them. A line left for a
     person has the supplier's accounts on the business unit it (or else the invoice's ship-to and attention lines,
@@ -1123,7 +1123,7 @@ def why_left(prior: Prior | None, ranked: list[Candidate], reference: ReferenceD
     if top is not None and top.source == "vendor" and not top.guess:  # this vendor's own lines like it
         said = f"Not sure enough to code it (maybe {top.account}: {'; '.join(top.reasons[:3])})"
     elif not prior:
-        said = "A new supplier: not in last year's journal" + (f" ({prior.note})" if prior.note else "")
+        said = "A new supplier: not in the past invoice coding" + (f" ({prior.note})" if prior.note else "")
     else:
         use = prior.accounts[0]
         went = f"{use.lines} of this supplier's {prior.total_said()} went to {use.account}"

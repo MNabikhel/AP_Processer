@@ -3,7 +3,7 @@ short words ("Courier charges", "KT May.cellphone", "coffee supplies 3-1-204": o
 
 ``suggest_remark(line, invoice, prior, account, reference)`` gives (the remark, why in plain words):
 
-a. the supplier's commonest remark *shape* for that account (``supplier_prior.remark_shape``: last year's journal
+a. the supplier's commonest remark *shape* for that account (``supplier_prior.remark_shape``: the journal
    and the remarks approved here, a person's typed one counting most), in its latest wording, with what changes from
    one voucher to the next put back from this invoice (``with_period``): the month, the quarter and the year of its
    period (``period_of``: the month its lines name, else the invoice date), and its invoice number after "INV". The

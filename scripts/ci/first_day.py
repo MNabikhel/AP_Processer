@@ -27,7 +27,7 @@ in their order:
 The commands are typed where the guide says: on Windows in ``scripts\\terminal.bat`` (its input piped), elsewhere
 with AP Coder's Python. Each step prints a line or two of what it saw; a step that does not show what the guide says
 ends the run (exit 1) saying what was seen, and AP Coder's window (its log) is printed. Connects only to this
-computer: no AI model answers (as with LM Studio not started: the rule reader and last year's coding do the work),
+computer: no AI model answers (as with LM Studio not started: the rule reader and the past invoice coding do the work),
 and the setup may download nothing (``AP_ALLOW_INTERNET=0``).
 """
 
@@ -360,7 +360,7 @@ def section_3(client: Client, exports: Path) -> None:
     step("3. Setup -> JD Edwards files: the five exports, each shown first, then loaded")
     first = page(client, "/jde-files")
     top = card(first, "checklist") if 'id="checklist"' in first else plain(first)
-    says(first, "What is loaded", "Chart of accounts", "Business units", "Suppliers", "Last year's coding",
+    says(first, "What is loaded", "Chart of accounts", "Business units", "Suppliers", "Past invoice coding",
          "Invoices already in JD Edwards", "How to get it", "Download a blank template", "Check the file")  # fmt: skip
     check(top.count("Not yet") >= 5, f"the top of the page does not tick off what is loaded: {top[:600]}")
 
@@ -502,7 +502,7 @@ def section_5(client: Client, work: Path, today: Path, approved: Any, bank: str)
     reasons = [v for f in screen.fields if f.owner == "inv" and f.name == "line_reason" for v in f.values if v]
     keyed_as = approved.lines[0].parts[0].account
     check(accounts == [keyed_as], f"its Account box holds {accounts}, not {keyed_as}")
-    says(shown, "this supplier's usual account:", "lines last year")
+    says(shown, "this supplier's usual account:", "past lines")
     remark = re.search(r'data-remark-box value="([^"]*)"', shown)
     check(remark and remark.group(1), "its Remark box suggests nothing")
     check(bank in shown, f"its header does not show the bank account {bank}")
