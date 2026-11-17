@@ -60,6 +60,7 @@ from ap_coder.web.core import (
     can,
     get_settings,
     get_store,
+    jde_words,
     login,
     one_connection,
     reading_status_or_none,
@@ -176,7 +177,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         grid={**invoice_grid.grid(reference, draft, inv.get("ai_output") or {},
                           invoice_grid.vendor_accounts(store, draft.header.get("vendor_name") or ""), analysis),
               "tax_marks": analysis.live.get("tax_marks") or {}},
-        labels=invoice_form.JDE_LABELS if analysis.live.get("jde") else invoice_form.FIELD_LABELS,
+        labels=invoice_form.JDE_LABELS if jde_words(store) else invoice_form.FIELD_LABELS,
         provinces=invoice_grid.province_options(),
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else
         "None: a credit is not paid" if float(start.get("grand_total") or 0) < 0 else "YYYY-MM-DD",

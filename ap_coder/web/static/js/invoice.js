@@ -20,7 +20,7 @@
    Everything from the server is either HTML it escaped (the sections, the rows) or set as text here.
 */
 
-import { ACTION_MS, HEADERS, fetchWithin, follow, noAnswer, poll, post, toast } from "./app.js";
+import { ACTION_MS, HEADERS, fetchWithin, follow, noAnswer, poll, post, toast, ourWords } from "./app.js";
 import { openFor, register } from "./ctxmenu.js";
 import { InvoiceViewer } from "./invoice_viewer.js";
 import { joined as joinedAccount, prepare as prepareAccounts, search as searchAccounts } from "./account_search.js";
@@ -703,7 +703,7 @@ try {
 }
 
 registerGroups("gl", (select) => {
-  const groups = [{ label: "Used for this vendor", values: vendorAccounts }];
+  const groups = [{ label: ourWords("Used for this vendor"), values: vendorAccounts }];
   // the line's suggestions (the Suggested GL accounts card): a line's own, or the line being split
   const number = rowOf(select)?.querySelector('[name="line_number"]')?.value || (select.closest("[data-split]") ? splitLine?.value : "");
   if (number) {
@@ -1015,15 +1015,15 @@ function showVendorMatch() {
     if (found.added) vendorLine("person_add", "warn", `Added here, not in JD Edwards yet${id}`);
     else if (!vendors.enforced) vendorLine("history", "ok", "Approved before"); // no vendor master: a past vendor
     // in the list, but its number is no AN8 (JD Edwards not set up for it): plain, the error under it says why (B-827)
-    else if (an8 !== undefined && !valid) vendorLine("info", "", `In the vendor list${id}`);
-    else vendorLine("verified", "ok", `In the vendor list${id}`);
+    else if (an8 !== undefined && !valid) vendorLine("info", "", ourWords(`In the vendor list${id}`));
+    else vendorLine("verified", "ok", ourWords(`In the vendor list${id}`));
     return;
   }
   if (!knows) {
     // never "Not in the vendor list", nor whose GST/HST number it is, from the seed alone: the list is asked for (again)
-    if (loadVendors()) vendorLine("hourglass_top", "", "Checking the vendor list…");
+    if (loadVendors()) vendorLine("hourglass_top", "", ourWords("Checking the vendor list…"));
     else if (vendors.enforced) {
-      vendorLine("cloud_off", "warn", "Couldn't load the vendor list: the check on approval still compares the vendor with it.");
+      vendorLine("cloud_off", "warn", ourWords("Couldn't load the vendor list: the check on approval still compares the vendor with it."));
     } else {
       vendorMatch.replaceChildren();
       vendorMatch.className = "inv-vendor-match small";
@@ -1047,7 +1047,7 @@ function showVendorMatch() {
     vendorMatch.className = "inv-vendor-match small";
     return;
   }
-  vendorLine("gpp_maybe", "warn", typed ? "Not in the vendor list: pick one, or add it as a new vendor." : "Pick the vendor from the list.");
+  vendorLine("gpp_maybe", "warn", ourWords(typed ? "Not in the vendor list: pick one, or add it as a new vendor." : "Pick the vendor from the list."));
 }
 
 function setVendor(name) {
@@ -1151,7 +1151,7 @@ function vendorChanged(waited = false) {
   if (!changed.length) return;
   showVendorMatch();
   for (const name of changed) viewer?.setEdited(name, input(name).value.trim(), false);
-  offerUndo({ text: `${changed.length === 1 ? "Tax number" : "Tax numbers"} filled from the vendor list.`, tone: "info", icon: "menu_book" }, snap);
+  offerUndo({ text: ourWords(`${changed.length === 1 ? "Tax number" : "Tax numbers"} filled from the vendor list.`), tone: "info", icon: "menu_book" }, snap);
 }
 
 
@@ -1269,7 +1269,7 @@ if (vendorInput && vendorAdd) {
     if (!vendorList.whole) return null; // whether it is new is known once the list is here
     if (!vendors.enforced || !key || vendors.list.some((v) => (v.key ?? vendorKey(v.name)) === key)) return null;
     return {
-      label: "Not in the vendor list: add as a new vendor…",
+      label: ourWords("Not in the vendor list: add as a new vendor…"),
       run: () => {
         showVendorMatch();
         vendorAdd.open = true; // its "toggle" fills the name typed and focuses it
@@ -1678,7 +1678,7 @@ document.addEventListener("apc:ask-why", (event) => {
     "dialog",
     { class: "inv-why card", "aria-labelledby": "why-title" },
     el("h3", { id: "why-title", text: "One question before saving" }),
-    el("p", { class: "muted", text: "You keep making the same correction for this vendor. In a sentence: why is your value the right one? AP Coder keeps your reason and the AI reads it with this vendor's next invoices, so it gets it right without you." }),
+    el("p", { class: "muted", text: ourWords("You keep making the same correction for this vendor. In a sentence: why is your value the right one? AP Coder keeps your reason and the AI reads it with this vendor's next invoices, so it gets it right without you.") }),
     ...items,
     el("div", { class: "row inv-why-actions" }, skip, save),
   );

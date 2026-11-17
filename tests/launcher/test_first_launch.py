@@ -453,7 +453,7 @@ def test_the_welcome_page_leads_through_name_gl_accounts_and_first_invoices_one_
 
     load_sample_setup(fresh)
     card = _next_step(client.get("/review").text)
-    assert "Import your first invoices" in card and 'class="btn primary" href="/process"' in card
+    assert "Add your first invoices" in card and 'class="btn primary" href="/process"' in card
 
 
 def test_import_invoices_shows_the_next_step_until_it_is_its_own(fresh, monkeypatch):

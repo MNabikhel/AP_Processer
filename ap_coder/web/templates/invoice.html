@@ -146,19 +146,19 @@
         {% set s = sure.get("vendor_name") %}{% set flags = live.flags or {} %}{% set edit = not live.read_only %}
         <div class="field wide inv-vendor{% if 'vendor_name' in flags %} is-flagged{% endif %}{% if 'vendor_name' in (live.flag_errors or []) %} is-error{% endif %}" data-field="vendor_name">
           <label for="vendor-name"><span class="lbl">{{ labels["vendor_name"] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"{% if "vendor_name" in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
-            <span class="rvw-hint" title="Pick the vendor from the vendor list: start typing its name. A vendor that is not in it can be added as a new vendor."><span class="ms" aria-hidden="true">info</span></span>{{ menu_hint(labels["vendor_name"]) }}</span></label>
+            <span class="rvw-hint" title="{{ 'Pick the vendor from the vendor list: start typing its name. A vendor that is not in it can be added as a new vendor.' | words }}"><span class="ms" aria-hidden="true">info</span></span>{{ menu_hint(labels["vendor_name"]) }}</span></label>
           {# The vendor list to pick from: the picker (static/js/picker.js), with the vendors invoice.js fetches from the
              address in #vendor-seed (D-56, D-160). #}
-          <input id="vendor-name" type="text" name="vendor_name" value="{{ draft.header["vendor_name"] }}" form="inv" data-picker="free" data-picker-noun="vendor" autocomplete="off"
-                 placeholder="Start typing to pick from the vendor list" aria-describedby="vendor-match" title="{{ draft.header["vendor_name"] }}">
+          <input id="vendor-name" type="text" name="vendor_name" value="{{ draft.header["vendor_name"] }}" form="inv" data-picker="free" data-picker-noun="{{ 'vendor' | words }}" autocomplete="off"
+                 placeholder="{{ 'Start typing to pick from the vendor list' | words }}" aria-describedby="vendor-match" title="{{ draft.header["vendor_name"] }}">
           <div class="inv-vendor-match small" id="vendor-match" data-vendor-match aria-live="polite"{% if live.an8 is not none %} data-an8="{{ live.an8 }}"{% endif %}></div>
           <span class="inv-flag small" data-flag{% if "vendor_name" not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("vendor_name", "") }}</span></span>
           {% if edit %}
           <details class="pop inv-vendor-add" data-vendor-add>
-            <summary class="btn sm ghost"><span class="ms" aria-hidden="true">person_add</span>Add new {{ "supplier" if live.jde else "vendor" }}…</summary>
+            <summary class="btn sm ghost"><span class="ms" aria-hidden="true">person_add</span>{{ "Add new vendor…" | words }}</summary>
             <div class="pop-body stack">
-              <p class="small muted">A vendor not in the vendor list. AP Coder never approves its invoices on its own: each one is checked by a person, who approves it with “Approve anyway”, until the vendor is set up in JD Edwards and the vendor list is imported again.</p>
-              <label class="field">Vendor name<input type="text" data-new="name" autocomplete="off"></label>
+              <p class="small muted">{{ "A vendor not in the vendor list. AP Coder never approves its invoices on its own: each one is checked by a person, who approves it with “Approve anyway”, until the vendor is set up in JD Edwards and the vendor list is imported again." | words }}</p>
+              <label class="field">{{ "Vendor name" | words }}<input type="text" data-new="name" autocomplete="off"></label>
               <div class="row">
                 <label class="field grow">GST/HST #<input type="text" data-new="gst" placeholder="123456789RT0001"></label>
                 <label class="field grow">QST #<input type="text" data-new="qst" placeholder="1234567890TQ0001"></label>
@@ -169,11 +169,11 @@
               </div>
               {% if live.jde and is_admin %}
               <label class="field">JD Edwards address number (AN8)<input type="text" data-new="an8" inputmode="numeric" maxlength="8" placeholder="e.g. 40123" autocomplete="off">
-                <small class="muted">JD Edwards needs it before this vendor's invoices can be approved. You can also add it later in Settings → JD Edwards E1 → Supplier address numbers.</small></label>
+                <small class="muted">JD Edwards needs it before this supplier's invoices can be approved. You can also add it later in Settings → JD Edwards E1 → Supplier address numbers.</small></label>
               {% elif live.jde %}
-              <p class="small muted">JD Edwards needs this vendor's address number (AN8) before its invoices can be approved: someone who may change settings adds it in Settings → JD Edwards E1 → Supplier address numbers.</p>
+              <p class="small muted">JD Edwards needs this supplier's address number (AN8) before its invoices can be approved: someone who may change settings adds it in Settings → JD Edwards E1 → Supplier address numbers.</p>
               {% endif %}
-              <button class="btn primary sm" type="button" data-new-go><span class="ms" aria-hidden="true">person_add</span>Add to the vendor list</button>
+              <button class="btn primary sm" type="button" data-new-go><span class="ms" aria-hidden="true">person_add</span>{{ "Add to the vendor list" | words }}</button>
             </div>
           </details>
           {% endif %}

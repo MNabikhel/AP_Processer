@@ -34,6 +34,13 @@
 
 export const HEADERS = { "X-AP-Coder": "1" };
 
+/** A text in the pages' words: "vendor" said "supplier" with JD Edwards' words (body[data-supplier]: core.our_words,
+    D-252), as it is otherwise. */
+export function ourWords(text) {
+  if (!document.body?.hasAttribute("data-supplier")) return text;
+  return text.replace(/\b([Vv])endor(s?)\b/g, (_, v, s) => `${v === "V" ? "S" : "s"}upplier${s}`);
+}
+
 export function escapeHtml(text) {
   return String(text ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }

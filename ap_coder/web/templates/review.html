@@ -49,7 +49,7 @@
       </div>
       <input type="hidden" name="show" value="{{ show }}">
       <label class="search"><span class="ms" aria-hidden="true">search</span>
-        <input type="search" name="q" value="{{ q }}" placeholder="Search vendor or invoice #" aria-label="Search vendor or invoice #"></label>
+        <input type="search" name="q" value="{{ q }}" placeholder="{{ 'Search vendor or invoice #' | words }}" aria-label="{{ 'Search vendor or invoice #' | words }}"></label>
       <select name="sort" aria-label="Sort" data-autosubmit>
         {% for key, name in sorts.items() %}<option value="{{ key }}"{% if key == sort %} selected{% endif %}>{{ name }}</option>{% endfor %}
       </select>
@@ -71,7 +71,7 @@
           <p>These invoices are approved <b>exactly as coded</b>, and each one teaches AP Coder. Every invoice is
             re-checked first; any that is no longer clean is left for you.</p>
           <div class="table-wrap"><table class="apc-table">
-            <thead><tr><th>Vendor</th><th>Invoice</th><th class="r">Total</th></tr></thead>
+            <thead><tr><th>{{ "Vendor" | words }}</th><th>Invoice</th><th class="r">Total</th></tr></thead>
             <tbody>{% for i in candidates %}<tr><td>{{ i.vendor_name }}</td><td>{{ i.invoice_number }}</td><td class="r">{{ i.grand_total | money }}</td></tr>{% endfor %}</tbody>
           </table></div>
           <form method="post" action="/review/bulk-approve" data-busy="Approving…">
@@ -87,7 +87,7 @@
     {% if not rows %}
     <div class="pad">{{ ui.empty_note("No invoices match", " Try another search or filter.", "search_off") }}</div>
     {% else %}
-    <div class="rq-row rq-cols" aria-hidden="true"><span>Vendor</span><span class="c-num">Invoice #</span>
+    <div class="rq-row rq-cols" aria-hidden="true"><span>{{ "Vendor" | words }}</span><span class="c-num">Invoice #</span>
       <span class="c-date">Date</span><span class="c-prov">Prov.</span><span class="c-tax">Tax</span>
       <span class="c-status">Status</span><span class="c-conf">Confidence</span><span class="c-amt">Amount</span><span></span></div>
     <ul class="rq-list">
@@ -95,7 +95,7 @@
       <li><a class="rq-row {{ 'attn' if r.flagged else 'ready' }}" href="/review/{{ r.id }}{{ row_query }}" aria-label="Review invoice from {{ r.name }}">
         <div class="c-vendor"><span class="rq-av" aria-hidden="true">{{ r.name | initials }}</span>
           <div class="who"><div class="name" title="{{ r.name }}{% if r.name_check %} (not sure: check it){% endif %} · {{ r.file }}">{% if r.name_check %}<span class="rq-unsure">{{ r.name }}{% if r.name != "No vendor name" %}?{% endif %}</span>{% else %}{{ r.name }}{% endif %}</div>
-            {% if r.name_check %}<div class="due warn rq-check">Vendor name: check it</div>{% endif %}
+            {% if r.name_check %}<div class="due warn rq-check">{{ "Vendor name: check it" | words }}</div>{% endif %}
             {% if r.due %}<div class="due {{ r.due_tone }}">{{ r.due }}</div>{% endif %}
             {% if r.open %}<div class="due info" data-open title="Someone else is working on it now">{{ r.open }}</div>{% endif %}
             {% if r.kind and r.kind.key != "text" %}<div class="kind" title="{{ r.kind.title }}"><span class="ms" aria-hidden="true">{{ r.kind.icon }}</span>{{ r.kind.label }}</div>{% endif %}</div></div>
@@ -130,7 +130,7 @@
     {{ ui.empty_note("No approved invoices yet", " Approved invoices are listed here.", "task_alt") }}
     {% else %}
     <div class="table-wrap"><table class="apc-table">
-      <thead><tr><th>Vendor</th><th>Invoice #</th><th>Date</th><th class="r">Total</th><th>Approved by</th><th>When</th></tr></thead>
+      <thead><tr><th>{{ "Vendor" | words }}</th><th>Invoice #</th><th>Date</th><th class="r">Total</th><th>Approved by</th><th>When</th></tr></thead>
       <tbody>
         {% for i in approved %}
         <tr><td><a class="rq-who" href="/review/{{ i.id }}"><span class="rq-av" aria-hidden="true">{{ (i.vendor_name or "") | initials }}</span><b>{{ i.vendor_name }}</b></a></td>

@@ -93,6 +93,46 @@ def test_the_breadcrumb_is_the_menu_group_and_with_jd_edwards_a_vendor_is_a_supp
     assert crumbs("/process") == ["AP Coder"]
 
 
+def test_with_jd_edwards_words_the_pages_say_supplier_and_vendor_without_them(demo_store):
+    """D3, finished (D-252): with JD Edwards shown (and in Simple screens) the menu said Suppliers, but the queue's
+    column and search box, the Suppliers page's own labels, the review screen's vendor box, the setup checklist and
+    Help still said vendor. One helper says the word (``core.our_words``); without JD Edwards, "vendor" as before."""
+    from ap_coder.web import core
+
+    store = demo_store
+    client = TestClient(create_app(_settings(), store, start_reader=False), base_url="http://localhost")
+    invoice = store.list_invoices()[0]["id"]
+
+    def pages() -> str:
+        return "".join(client.get(path).text for path in ("/review", "/vendors", f"/review/{invoice}", "/process"))
+
+    said = [
+        "Search {} or invoice #",
+        "<span>{}</span>",
+        "Load {}s from CSV or Excel",
+        "Search {}s",
+        "Start typing to pick from the {} list",
+        "Add to the {} list",
+        "Add new {}…",
+        "{} master<span",  # the setup checklist's step (its key in step_links stays "Vendor master")
+    ]
+    before = pages()
+    for words in said:
+        assert words.format("vendor") in before or words.format("Vendor") in before, words
+    assert "data-supplier" not in before
+    store.set_setting(core.SHOW_JDE, "1")
+    after = pages()
+    for words in said:
+        assert words.format("supplier") in after or words.format("Supplier") in after, words
+        assert words.format("vendor") not in after and words.format("Vendor") not in after, words
+    assert "data-supplier" in after  # the review screen's own lines say it too (app.js ourWords)
+    assert 'href="/vendors' in after and 'class="vendor-link"' in after  # addresses and the code's names kept
+    plain = client.get("/help").text
+    assert "supplier" in plain and not re.search(r"\b[Vv]endors?\b", re.sub(r"<[^>]+>", " ", plain)), re.findall(
+        r".{40}\b[Vv]endors?\b.{40}", re.sub(r"<[^>]+>", " ", plain)
+    )[:5]
+
+
 @pytest.fixture
 def browser(chromium, demo_store):
     with browser_on(chromium, create_app(_settings(), demo_store, start_reader=False)) as opened:
@@ -543,3 +583,15 @@ def test_settings_review_on_a_laptop_says_how_colleagues_sign_in_and_names_only_
                  "by cost center"):  # fmt: skip
         assert gone not in page, gone
     assert "share this laptop with them" in page and "Sites in other provinces, by business unit" in page
+
+
+def test_in_a_browser_the_review_screen_says_in_the_supplier_list_with_jd_edwards(chromium, chart_company):
+    """D3 (D-252): with JD Edwards the line under the review screen's Supplier box said "In the vendor list · AN8"."""
+    app = create_app(_settings(), chart_company.store, start_reader=False)
+    with browser_on(chromium, app) as (browser, base):
+        page = browser.new_page(viewport={"width": 1366, "height": 800})
+        page.goto(f"{base}/review/{chart_company.invoices['four_lines'][1]}")
+        match = page.locator("#vendor-match")
+        match.filter(has_text="In the supplier list").wait_for()
+        assert "vendor" not in match.inner_text()
+        page.close()

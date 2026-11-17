@@ -47,6 +47,7 @@ from ap_coder.web.core import (
     flash_message,
     get_store,
     one_connection,
+    our_words,
     page_router,
     posted_form,
     reference_or_none,
@@ -242,7 +243,7 @@ def vendors_page(
         top_spend = sorted(((t, c) for c, t in (top.get("spend") or {}).items() if t), reverse=True)
         others = ", ".join(c for _, c in top_spend[1:])
         tiles = [
-            ("Vendors", len(vendors), f"{sum(v['invoices'] for v in vendors)} invoices"),
+            (our_words(store)("Vendors"), len(vendors), f"{sum(v['invoices'] for v in vendors)} invoices"),
             ("New this month", len(new), "first invoice in 30 days"),
             ("On hold", len(on_hold), "invoices from them can't be approved without an override"),
             (

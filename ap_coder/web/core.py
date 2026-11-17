@@ -834,12 +834,45 @@ def nav_counts(store: Store) -> dict[str, int]:
     return {"review": store.status_counts(settled=True).get(REVIEW, 0), "exports": store.ready_to_export_count()}
 
 
+def jde_words(store: Store) -> bool:
+    """Whether the pages speak JD Edwards' words (D-252): with JD Edwards shown, and in Simple screens, the menu of
+    coding invoices to JD Edwards. A page's name is then its JD Edwards one (``page_meta``) and a vendor is a
+    supplier (``our_words``)."""
+    return jde_shown(store) or simple_screens(store)
+
+
+_VENDOR = re.compile(r"\b([Vv])endor(s?)\b")
+
+
+def our_words(store: Store) -> Callable[[str], str]:
+    """What puts a text in the pages' words: "vendor" said "supplier" (and "Vendors" "Suppliers") with JD Edwards'
+    words (``jde_words``), the text as it is otherwise. For words a person reads, never an address or a name in the
+    code; templates have it as the ``words`` filter."""
+    if not jde_words(store):
+        return lambda text: text
+    return lambda text: _VENDOR.sub(lambda m: ("S" if m.group(1) == "V" else "s") + "upplier" + m.group(2), text)
+
+
+@jinja2.pass_context
+def _words(context: Any, text: Any) -> Any:
+    """The ``words`` filter: ``text`` in the page's words (``our_words``, given to every page by ``render``)."""
+    say = context.get("our_words")
+    if say is None:
+        return text
+    if isinstance(text, Markup):
+        return Markup(say(str(text)))  # noqa: S704 - letters swapped in text already escaped
+    return say(str(text))
+
+
+templates.env.filters["words"] = _words
+
+
 def page_meta(store: Store, key: str) -> Any:
     """Page ``key`` of ``pages.PAGES`` under its name in the menu: JD Edwards' words (``pages.JDE_TITLES``) with
     JD Edwards shown, and in Simple screens, the menu of coding invoices to JD Edwards; None for a page not in the
     menu."""
     found = BY_KEY.get(key)
-    if found is not None and key in JDE_TITLES and (jde_shown(store) or simple_screens(store)):
+    if found is not None and key in JDE_TITLES and jde_words(store):
         return dataclasses.replace(found, title=JDE_TITLES[key])
     return found
 
@@ -979,6 +1012,7 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
         # The menu's Admin entry: where people sign in, for whoever may open the panel (D-249).
         "admin_link": signs_in(request) and identity.signed_in() is not None and can(request, "/admin", "GET"),
         "can": functools.partial(can, request),
+        "our_words": our_words(store),  # "supplier" for vendor with JD Edwards' words: the ``words`` filter (D-252)
     }
     base.update(context)
     response = templates.TemplateResponse(request, template, base, status_code=status_code)

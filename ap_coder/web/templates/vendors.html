@@ -14,7 +14,7 @@
   supplier list loaded there updates them.</span></p>{% endmacro %}
 {% block content %}
 <details class="card expander" id="import"{% if master or master_error or setup %} open{% endif %}>
-  <summary><span class="ms" aria-hidden="true">upload</span>Load vendors from CSV or Excel{% if has_master %} (loaded){% endif %}</summary>
+  <summary><span class="ms" aria-hidden="true">upload</span>{{ "Load vendors from CSV or Excel" | words }}{% if has_master %} (loaded){% endif %}</summary>
   <p class="muted">Import the ERP's vendor list (CSV or Excel). Exports then carry each vendor's ERP ID, invoices from a
     vendor that is not in the list are flagged, the vendor's payment terms set the due date when the invoice shows none,
     and its default GL account is offered for uncoded lines. Import again any time: vendors are matched by name.</p>
@@ -45,7 +45,7 @@
       synced; a code taken off stops holding every supplier at this import. The words are also the ones a business
       unit of the chart is left out for (the star, before or after a name, is for suppliers only).</p>
     <div class="row">
-      <button class="btn primary" type="submit"{{ go(master) }}><span class="ms" aria-hidden="true">upload</span>Load vendors</button>
+      <button class="btn primary" type="submit"{{ go(master) }}><span class="ms" aria-hidden="true">upload</span>{{ "Load vendors" | words }}</button>
       <a class="btn" href="/vendors"><span class="ms" aria-hidden="true">close</span>Choose another file</a>
     </div>
   </form>
@@ -59,7 +59,7 @@
 </details>
 
 {% if not vendors %}
-<section class="card">{% if master_count %}{{ ui.empty_state((master_count | plural("vendor")) ~ " in the vendor master", ("" if from_jde else "Loaded from the ERP. ") ~ "Each vendor appears here, with its invoices and spend, once its first invoice is processed.") }}{% if from_jde %}{{ from_jde_note() }}{% endif %}{% else %}{{ ui.empty_state("No vendors yet", "Vendors appear here once invoices have been processed, or load the vendor master above.") }}{% endif %}</section>
+<section class="card">{% if master_count %}{{ ui.empty_state(((master_count | plural("vendor")) ~ " in the vendor master") | words, (("" if from_jde else "Loaded from the ERP. ") ~ "Each vendor appears here, with its invoices and spend, once its first invoice is processed.") | words) }}{% if from_jde %}{{ from_jde_note() }}{% endif %}{% else %}{{ ui.empty_state("No vendors yet" | words, "Vendors appear here once invoices have been processed, or load the vendor master above." | words) }}{% endif %}</section>
 {% else %}
 {{ tile_row(tiles) }}
 
@@ -72,17 +72,17 @@
     </div>
     <input type="hidden" name="view" value="{{ view }}">
     <label class="search"><span class="ms" aria-hidden="true">search</span>
-      <input type="search" name="q" value="{{ q }}" placeholder="Search vendors" aria-label="Search vendors"></label>
+      <input type="search" name="q" value="{{ q }}" placeholder="{{ 'Search vendors' | words }}" aria-label="{{ 'Search vendors' | words }}"></label>
     <select name="sort" aria-label="Sort" data-autosubmit>
       {% for key, name in sorts.items() %}<option value="{{ key }}"{% if key == sort %} selected{% endif %}>{{ name }}</option>{% endfor %}
     </select>
   </form>
   {% if not shown %}
-  <div class="pad">{{ ui.empty_note("No vendors match", " Try another search or filter.", "search_off") }}</div>
+  <div class="pad">{{ ui.empty_note("No vendors match" | words, " Try another search or filter.", "search_off") }}</div>
   {% else %}
   <div class="table-wrap">
     <table class="apc-table">
-      <thead><tr><th>Vendor</th><th class="r">Approved / all</th><th class="r">Spend</th><th>Last invoice</th><th class="r">AI accuracy</th><th></th></tr></thead>
+      <thead><tr><th>{{ "Vendor" | words }}</th><th class="r">Approved / all</th><th class="r">Spend</th><th>Last invoice</th><th class="r">AI accuracy</th><th></th></tr></thead>
       <tbody>
         {% for v in shown %}
         <tr{% if loop.index > 1 and loop.index == rows - step + 1 %} id="more-vendors"{% endif %}>
@@ -99,7 +99,7 @@
     </table>
   </div>
   {%- if shown_total > shown | length %}
-  <p class="row pad"><span class="muted">{{ shown | length | num }} of {{ shown_total | num }} vendors shown; search finds any of them.</span>
+  <p class="row pad"><span class="muted">{{ shown | length | num }} of {{ shown_total | num }} {{ "vendors" | words }} shown; search finds any of them.</span>
     <a class="btn sm" href="/vendors?{{ more_query }}#more-vendors">Show more</a></p>
   {%- endif %}
   {% endif %}
@@ -204,10 +204,10 @@
     {% if locked %}<p class="muted small">{{ held_numbers }}</p>{% endif %}
     <label class="field full">Notes
       <textarea name="notes" rows="3" placeholder="e.g. bank details changed 2026-09, verified by phone">{{ v.notes }}</textarea></label>
-    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save vendor</button>
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>{{ "Save vendor" | words }}</button>
   </form>
 
-  <h5 id="ask">Ask the vendor</h5>
+  <h5 id="ask">{{ "Ask the vendor" | words }}</h5>
   {% if not detail.asks %}
   <p class="muted">None of this vendor's invoices in the review queue is missing anything the vendor can fix.</p>
   {% else %}
@@ -244,7 +244,7 @@
     {{ late_total | money }} in total: chase the vendor, and consider accruing them at <a href="/month-end">month-end</a>.</p>{% endif %}
   <div class="table-wrap">
     <table class="apc-table">
-      <thead><tr><th>Vendor</th><th>Bills</th><th>Last invoice</th><th>Next expected</th><th class="r">Usual amount</th><th></th></tr></thead>
+      <thead><tr><th>{{ "Vendor" | words }}</th><th>Bills</th><th>Last invoice</th><th>Next expected</th><th class="r">Usual amount</th><th></th></tr></thead>
       <tbody>
         {% for r in recurring %}
         <tr>
@@ -261,13 +261,13 @@
 
 {% if workload %}
 <section class="card" id="workload">
-  <h4>Vendors that make work</h4>
+  <h4>{{ "Vendors that make work" | words }}</h4>
   <p class="muted">How often a vendor's invoice arrived with something only the vendor can fix, and how often AP corrected
     the coding (rejected invoices, and what AP corrected that AP Coder had misread, are left out). Ask the worst ones for better invoices: open a vendor in the list above, and its <i>Ask the vendor</i>
     section drafts the email. A fixed coding rule can settle what AP keeps correcting.</p>
   <div class="table-wrap">
     <table class="apc-table">
-      <thead><tr><th>Vendor</th><th class="r">Invoices</th><th class="r">With a problem</th><th>Usual problems</th><th class="r">Coding corrected</th></tr></thead>
+      <thead><tr><th>{{ "Vendor" | words }}</th><th class="r">Invoices</th><th class="r">With a problem</th><th>Usual problems</th><th class="r">Coding corrected</th></tr></thead>
       <tbody>
         {% for w in workload %}
         <tr>

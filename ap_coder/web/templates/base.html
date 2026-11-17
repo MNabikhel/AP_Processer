@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="{{ static_url('/static/picker.css') }}">
   {% block head %}{% endblock %}
 </head>
-<body data-page="{{ page }}"{% if server_mode %} data-server{% endif %}>
+<body data-page="{{ page }}"{% if server_mode %} data-server{% endif %}{% if our_words is defined and our_words("vendor") != "vendor" %} data-supplier{% endif %}>
   <a class="skip" href="#main">Skip to the page</a>
   <div class="shell">
     {# A window under 901 px (a laptop zoomed in to 200%, a phone): this bar in place of the menu, whose Menu button

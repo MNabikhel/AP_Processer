@@ -348,7 +348,7 @@ def classify_email(
         why = next((f'{what} ("{_find(p, words)}")' for what, p in _NOT_AP_EMAIL.items() if _find(p, words)), "")
         if not why and _find(_INVOICE_MENTION, words) and not documents and not out.left_out:
             why = "it mentions an invoice but has none attached" + (
-                " (it may be a link to a portal: download it and add it on Import invoices)"
+                " (it may be a link to a portal: download it and add it on the Add invoices page)"
                 if _LINK.search(words)
                 else ""
             )
