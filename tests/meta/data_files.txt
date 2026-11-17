@@ -1,6 +1,7 @@
 # The data-like files the repository tracks (tests/meta/test_data_files.py): reference files, sample invoices,
 # screenshots, fixtures and the app's own settings files, none with a company's data. The repository is public:
 # company files never go in. A new made-up sample is added to this list on purpose, one name a line.
+.github/ci-tests.json
 ap_coder/capture/calibration.json
 ap_coder/erp/jde_orchestrations.json
 data/bank_accounts.csv
