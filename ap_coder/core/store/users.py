@@ -54,6 +54,7 @@ from typing import Any
 from .. import authenticator
 from ._base import _now
 from .dialect import begin_write, json_get
+from .peek import read_only_uri
 
 READONLY, CLERK, APPROVER, ADMIN = "readonly", "clerk", "approver", "admin"
 MANAGER = "manager"  # confirms the cost allocation of the invoices sent to them, nothing else (D-138)
@@ -306,7 +307,7 @@ def sign_in_accounts(db: Path) -> int:
     beside it (the update reads that file's time as the database's last use: ``scripts/upgrade.py``)."""
     how = "mode=ro" if db.with_name(db.name + "-wal").exists() else "mode=ro&immutable=1"  # (ro: none made, B-2317)
     try:
-        conn = sqlite3.connect(f"{db.resolve().as_uri()}?{how}", uri=True, timeout=5)
+        conn = sqlite3.connect(read_only_uri(db.resolve(), how), uri=True, timeout=5)  # (a network path too)
         try:
             return int(conn.execute("SELECT COUNT(*) FROM users").fetchone()[0])
         finally:
