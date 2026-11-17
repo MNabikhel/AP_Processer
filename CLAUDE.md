@@ -119,6 +119,7 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
   first day (`scripts/ci/first_day.py`, about two minutes more, in a temporary folder); `--walk` / `--no-walk`
   force or skip it.
 - Test: `python -m pytest -q` runs all but the slow tests (about 7 minutes; serially, no xdist). The whole suite with
-  the browser tests, `python -m pytest -q -m ""`, takes about 28 minutes (docs/REFERENCE.md): CI runs it on pushes to
-  main and on pull requests, so leave it to CI.
+  the browser tests, `python -m pytest -q -m ""`, takes about 28 minutes (docs/REFERENCE.md): CI runs it on pull requests
+  (Ubuntu 3.12 and Windows 3.14 only; every Python and the Mac jobs on main after a merge and nightly, D-260), so leave
+  it to CI.
 - Lint: `ruff check ap_coder tests scripts` and `ruff format --check ap_coder tests scripts`.

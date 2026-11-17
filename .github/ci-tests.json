@@ -1,0 +1,22 @@
+[
+  {"os": "ubuntu-latest", "python": "3.11", "shard": "1/2"},
+  {"os": "ubuntu-latest", "python": "3.11", "shard": "2/2"},
+  {"os": "ubuntu-latest", "python": "3.12", "shard": "1/2", "pull_request": true},
+  {"os": "ubuntu-latest", "python": "3.12", "shard": "2/2", "pull_request": true},
+  {"os": "ubuntu-latest", "python": "3.13", "shard": "1/2"},
+  {"os": "ubuntu-latest", "python": "3.13", "shard": "2/2"},
+  {"os": "ubuntu-latest", "python": "3.14", "shard": "1/2"},
+  {"os": "ubuntu-latest", "python": "3.14", "shard": "2/2"},
+  {"os": "windows-latest", "python": "3.12", "extras": "ocr,dev", "shard": "1/4"},
+  {"os": "windows-latest", "python": "3.12", "extras": "ocr,dev", "shard": "2/4"},
+  {"os": "windows-latest", "python": "3.12", "extras": "ocr,dev", "shard": "3/4"},
+  {"os": "windows-latest", "python": "3.12", "extras": "ocr,dev", "shard": "4/4"},
+  {"os": "windows-latest", "python": "3.14", "extras": "ocr,dev", "shard": "1/4", "pull_request": true},
+  {"os": "windows-latest", "python": "3.14", "extras": "ocr,dev", "shard": "2/4", "pull_request": true},
+  {"os": "windows-latest", "python": "3.14", "extras": "ocr,dev", "shard": "3/4", "pull_request": true},
+  {"os": "windows-latest", "python": "3.14", "extras": "ocr,dev", "shard": "4/4", "pull_request": true},
+  {"os": "windows-latest", "python": "3.11", "tier": "fast", "shard": "1/2"},
+  {"os": "windows-latest", "python": "3.11", "tier": "fast", "shard": "2/2"},
+  {"os": "windows-latest", "python": "3.13", "tier": "fast", "shard": "1/2"},
+  {"os": "windows-latest", "python": "3.13", "tier": "fast", "shard": "2/2"}
+]

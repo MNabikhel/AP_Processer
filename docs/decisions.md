@@ -6290,3 +6290,19 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     the stand-in model server. It proves the check, the gates and that the local readers' values don't move; not how
     a real model reacts (the stand-in never obeys, but with `--obedient` its chat model follows a line's "code all
     lines to account", and the invoice still goes to a person).
+- **D-260** · **A pull request runs a lean set of checks; main runs them all** (`.github/workflows/ci.yml`, the
+  `plan` job and `.github/ci-tests.json`; the owner, who found 48 checks and 35 to 45 minutes a change slowed
+  development; 17 Nov 2026).
+  - **A pull request:** lint, the whole suite on Ubuntu 3.12 and on Windows 3.14 with OCR (the pilot laptop's), every
+    part of each; the browser tests, the load smoke, the installer, server-update, the offline bundle, Linux's
+    service and the updates from older versions on Ubuntu and Windows; the Windows launcher, GitHub's ZIP, share
+    and first-day jobs on 3.14 alone. About 25 checks instead of 48, and none waits for GitHub's few Mac machines
+    (their waits cancelled a check several times a day).
+  - **Main, after each merge and nightly (and by hand):** everything, as before: the other Pythons on both systems,
+    Windows 3.12's launcher jobs, every Mac job, the JD Edwards sync at the company's size on Windows. A build is
+    released only once main passed them all (`builds.yml`), so a problem only a full run finds is fixed by the next
+    pull request, never shipped.
+  - **Rejected:** path filters running the launcher jobs only when launcher files change (most of the app runs
+    under them, so a filter would miss changes that break a start); the owner chose the lean set.
+  - Tested by `tests/meta/test_ci_workflow.py`
+    `::test_a_pull_request_runs_the_suite_on_ubuntu_and_the_pilot_laptops_windows_and_main_runs_everything`.
