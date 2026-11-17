@@ -45,6 +45,7 @@ SHEET, NOT_READY = "Keying sheet", "Not ready"
 LINE_COLUMNS = ["Account number", "Account description", "Amount", "Explanation -Remark-"]
 WIDTHS = [26, 36, 16, 36]
 NOTE_WIDTH = 84  # characters of a note's row: the three columns beside its label
+STANDARD_TYPE = "PV"  # Standard Voucher Entry's own document type: any other is said (B-2747)
 CREDIT_TERMS = "none (a credit)"  # a credit memo's Payment terms: none is typed, as the files send none (B-896)
 # Rows of a printed page under the column names (upright Letter or A4 at full size; fewer than fit, to be safe): a
 # voucher that would run over the page starts on the next one.
@@ -92,6 +93,7 @@ class Voucher:
     recovered: float  # the tax JD Edwards posts itself: not in the lines
     po_matched: bool = False  # no G/L lines: JD Edwards distributes it from the receipts
     bank: tuple[str, str] | None = None  # (the G/L bank account as typed, its name); None: no bank account entered
+    doc_type: str = STANDARD_TYPE  # the document type (VLDCT): said on the sheet when it is not PV (B-2747)
     lines: list[Line] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -179,6 +181,7 @@ def vouchers(
             po_number=str(final.get("po_number") or "").strip(), tax_code=v.tax_code, tax_area=v.tax_area,
             tax=None if tax is None else tax / 100, taxable=None if taxable is None else taxable / 100,
             recovered=v.recoverable / 100, po_matched=v.po_matched, bank=bank,
+            doc_type=jde_zfiles._doc_type(v, settings) or STANDARD_TYPE,
             lines=[Line(jde_accounts.ani(e["account"]),
                         str((gl_names or {}).get(str(e.get("gl_code") or "").strip()) or ""),
                         e["cents"] / 100, jde_remarks.line_remark(e)) for e in v.entries],
@@ -256,10 +259,13 @@ def _head(v: Voucher, title: str) -> list[Row]:
     the pay item, then the G/L distribution's own (the purchase order)."""
     bank = [] if v.bank is None else [[("G/L bank account", LABEL), (v.bank[0], TEXT), ("Bank account", LABEL),
                                        (v.bank[1], PLAIN)]]  # fmt: skip
+    kind = [] if v.doc_type == STANDARD_TYPE else [[("Document type", LABEL), (v.doc_type, TEXT), ("", PLAIN),
+                                                    ("", PLAIN)]]  # fmt: skip
     return [
         [(title, TITLE), (f"AP Coder invoice {v.invoice_id}", TITLE), ("", TITLE), ("", TITLE)],
         [("Supplier number", LABEL), (v.supplier_number, TEXT), ("Supplier name", LABEL), (v.supplier_name, PLAIN)],
         [("Company", LABEL), (v.company, TEXT), ("Invoice number", LABEL), (v.invoice_number, TEXT)],
+        *kind,
         [("Invoice date", LABEL), (v.invoice_date, DATE), ("G/L date", LABEL), (v.gl_date, DATE)],
         [("Currency", LABEL), (v.currency, TEXT), ("Gross amount", LABEL), (v.gross, MONEY)],
         [("Payment terms", LABEL), (v.terms, TEXT), ("Remark", LABEL), (v.remark, TEXT)],

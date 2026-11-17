@@ -871,6 +871,19 @@ def test_printed_terms_with_no_jd_edwards_code_are_never_put_in_the_payment_term
     assert field(plain, "Payment terms").value == "N30" and not said(plain, "Note")
 
 
+def test_a_document_type_other_than_the_standard_voucher_is_on_the_sheet():
+    """B-2747: the batch files send a credit note with the credit document type when one is set (Settings → JD Edwards
+    E1), but the keying sheet did not say it: the credit was typed as a standard voucher (PV). The sheet gives the
+    document type whenever it is not PV, as the files send it."""
+    js = settings(credit_document_type="PD")
+    ready, _ = jde_keying.vouchers([one_line(), credit()], js, lookup, on=ON_DAY)
+    data = jde_keying.build_xlsx(ready, [])
+    invoice, minus = blocks(openpyxl.load_workbook(io.BytesIO(data))[jde_keying.SHEET])
+    assert field(minus, "Document type").value == "PD"
+    assert "Document type" not in [c.value for row in invoice for c in row]  # PV, the standard voucher: not said
+    assert jde_zfiles.voucher_rows(credit(), "40417", js)[0][0]["VLDCT"] == "PD"
+
+
 def test_a_tax_area_of_another_province_than_the_tax_charged_is_said_and_holds_nothing():
     """B-2345: the tax area follows the ship-to, while the tax charged can be another province's: an Alberta supplier
     charging the GST only on goods shipped to Ontario went to ONHST with 5% tax (and an Ontario supplier's HST on a
