@@ -171,7 +171,7 @@ class Prior:
     latest_approved_on: str = ""
     word_lines: Mapping[str, Mapping[str, int]] = field(default_factory=dict)  # a word -> {account: lines with it}
     word_weight: Mapping[str, float] = field(default_factory=dict)  # a word several accounts share counts for less
-    recent: bool = False  # its journal lines count by their age (``age_weight``): its shares are not its counts
+    recent: bool = False  # its lines' ages (``age_weight``) made its shares other than they would be without them
     # A word of AP's remarks for the supplier that only one of its business units' lines have, on ``UNIT_WORD_LINES``
     # lines at least ("4410 Alder" on Facilities alone): what tells a unit apart when the line says it (D-226).
     unit_words: Mapping[str, str] = field(default_factory=dict)
@@ -381,6 +381,7 @@ class _Count:
     def __init__(self) -> None:
         self.journal_lines = self.approved = self.other = self.invoices = self.newest = 0
         self.weight = 0.0
+        self.unaged = 0.0  # ``weight`` with every journal line counting ``JOURNAL_WEIGHT``, whatever its age
         self.vouchers: set[Any] = set()
         self.last = ""
         self.shapes: Counter[str] = Counter()
@@ -400,7 +401,6 @@ class _Counted:
         self.vouchers: dict[Any, int] = {}  # a journal voucher -> its coding lines
         self.words: dict[str, Counter[str]] = {}  # a word -> {account: lines with it}
         self.latest: tuple[int, str, str] = (0, "", "")  # the latest line a person approved: (id, account, day)
-        self.ages: set[float] = set()  # what the journal's lines counted for, by their age
 
     def said(self, pair: tuple[str, str], text: Any, lines: int = 1) -> None:
         for word in keys(str(text or "")):
@@ -413,9 +413,8 @@ class _Counted:
             pair = (clean(line["business_unit"]), code_of(line["object"], line["subsidiary"]))
             use = self.uses.setdefault(pair, _Count())
             use.journal_lines += 1
-            weight = age_weight(line["gl_date"], latest)
-            use.weight += weight
-            self.ages.add(weight)
+            use.weight += age_weight(line["gl_date"], latest)
+            use.unaged += JOURNAL_WEIGHT
             use.vouchers.add(line["voucher_id"])
             use.last = max(use.last, str(line["gl_date"] or ""))
             self.vouchers[line["voucher_id"]] = int(line["voucher_coding_lines"] or 1)
@@ -437,6 +436,7 @@ class _Counted:
             use = self.uses.setdefault(pair, _Count())
             n, by_person = int(row["lines"]), row["outcome"] in WEIGHTS
             use.weight += n * WEIGHTS.get(row["outcome"], JOURNAL_WEIGHT)
+            use.unaged += n * WEIGHTS.get(row["outcome"], JOURNAL_WEIGHT)
             use.approved += n if by_person else 0
             use.other += 0 if by_person else n
             use.invoices += int(row["invoices"] or 0)
@@ -528,8 +528,15 @@ def _built(number: str, name: str, found_by: str, note: str, lines: list[dict[st
         latest_approved=counted.latest[1], latest_approved_on=counted.latest[2],
         word_lines={w: dict(c) for w, c in counted.words.items()},
         word_weight={w: 1.0 / len(c) for w, c in counted.words.items() if len(c) > 1},
-        recent=len(counted.ages) > 1,
+        recent=_aged(counted.uses.values(), weight),
     )  # fmt: skip
+
+
+def _aged(uses: Any, weight: float) -> bool:
+    """Whether the lines' ages changed the accounts' shares (``Prior.recent``): not when every line is of the latest
+    year, nor when all of them went to one account."""
+    unaged = sum(u.unaged for u in uses)
+    return any(abs(u.weight / weight - u.unaged / unaged) > 1e-9 for u in uses)
 
 
 def _unit_words(uses: Mapping[tuple[str, str], _Count], offices: frozenset[str]) -> dict[str, str]:

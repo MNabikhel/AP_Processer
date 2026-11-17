@@ -6060,8 +6060,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **AP's approvals here** keep their weights (3 as proposed, 5 coded or changed): as much against a line of the
     latest year as before, more against older ones. Imported past coding and bulk approvals count 1, as before.
   - **What a person reads:** the counts stay counts ("6 of this supplier's 18 lines posted in JD Edwards"); when a
-    supplier's lines weigh differently by age, the reason, the shares of a line left for a person and the why under
-    the Account box add ", recent lines counting more" (`decided_by.recent`), so a share that is not lines over lines
-    is never shown unexplained.
+    supplier's shares are other than they would be with every line counting 1 (its lines' ages differ and they went
+    to more than one account: `_aged`), the reason, the shares of a line left for a person and the why under the
+    Account box add ", recent lines counting more" (`decided_by.recent`), so a share that is not lines over lines
+    by age is never shown unexplained; "24 of 24" over two years says nothing more.
   - **Bench:** `bench coding --journal --quick` and `bench coding --quick` are the same before and after: the
     made-up company's journal covers one year, every line within 12 months of its latest date.
