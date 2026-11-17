@@ -23,7 +23,7 @@ from ap_coder.core.store import APPROVED, REVIEW
 from ap_coder.erp import jde_formats, jde_keying, jde_settings, jde_voucher, jde_zfiles
 from tests.erp.test_jde_keying import LINES, blocks, field, said
 from tests.review_page import ReviewPage
-from tests.webclient import PAGE, client_for, follow, post
+from tests.webclient import client_for, follow, post
 
 NEW_NUMBER = "99001"  # the new supplier's JD Edwards address number, once it is set up
 TAX_WORDS = {"quebec": "GST + QST", "usd_new_supplier": "No tax charged"}  # each line's tax code as shown; else GST
@@ -409,9 +409,11 @@ def test_the_line_split_across_two_business_units_is_two_lines_of_the_voucher(ch
 def test_the_batch_files_of_the_same_invoices_agree_with_the_sheet(chart_company, chart_company_client):
     store = chart_company.store
     batch, workbook = _sheet(chart_company_client, store, _approve_the_ready_ones(chart_company_client, chart_company))
-    answer = chart_company_client.post(f"/exports/batches/{batch}/download?fmt={jde_settings.FORMAT}", headers=PAGE)
-    assert answer.status_code == 200
-    with zipfile.ZipFile(io.BytesIO(answer.content)) as files:
+    from ap_coder.web.pages import exports as exports_page
+
+    # (the batch's Z-files as they would be made: a keying batch is not downloaded as them, B-2745)
+    data, _name, _mime = exports_page.jde_file(store, batch)
+    with zipfile.ZipFile(io.BytesIO(data)) as files:
         heads = list(csv.DictReader(io.StringIO(files.read(jde_zfiles.HEADER_FILE).decode())))
         lines = list(csv.DictReader(io.StringIO(files.read(jde_zfiles.DIST_FILE).decode())))
     sheet = blocks(workbook[jde_keying.SHEET])

@@ -201,14 +201,17 @@ def _batch(client, store, fmt="xlsx"):
 
 
 def test_batch_downloads_are_the_export_functions_files(client, busy):
+    names, ids = export_page.gl_names(busy), busy.vendor_ids()
+    # CSV and custom CSV: byte for byte, each of a batch made in it (a batch goes again only in its own format, or as
+    # the Excel workbook: B-2745)
+    for fmt in ("csv", "custom"):
+        batch = _batch(client, busy, fmt)
+        invoices = [busy.get_invoice(i) for i in busy.batch_invoice_ids(batch)]
+        data, name, _ = exports.build(fmt, invoices, names, batch, ids, layout=export_page.layout(busy))
+        assert attachment(client.get(f"/exports/batches/{batch}/download?fmt={fmt}"), name, "text/csv") == data
+        busy.undo_export_batch(batch)
     batch = _batch(client, busy)
     invoices = [busy.get_invoice(i) for i in busy.batch_invoice_ids(batch)]
-    names, ids = export_page.gl_names(busy), busy.vendor_ids()
-    # CSV and custom CSV: byte for byte
-    data, name, mime = exports.build("csv", invoices, names, batch, ids)
-    assert attachment(client.get(f"/exports/batches/{batch}/download?fmt=csv"), name, "text/csv") == data
-    data, name, _ = exports.build("custom", invoices, names, batch, ids, layout=export_page.layout(busy))
-    assert attachment(client.get(f"/exports/batches/{batch}/download?fmt=custom"), name, "text/csv") == data
     # Excel: the same cells (the workbook's own creation time differs by the second)
     data, name, mime = exports.build("xlsx", invoices, names, batch, ids)
     got = attachment(client.get(f"/exports/batches/{batch}/download"), name, mime)
@@ -223,7 +226,7 @@ def test_batch_downloads_are_the_export_functions_files(client, busy):
 
 
 def test_jde_download_is_the_zip_jde_builds(client, busy):
-    batch = _batch(client, busy)
+    batch = busy.create_export_batch([i["id"] for i in busy.unexported_approved()], "jde")  # (made as JD Edwards)
     data, name, mime = export_page.jde_file(busy, batch)
     got = attachment(client.post(f"/exports/batches/{batch}/download?fmt=jde", headers=PAGE), name, mime)
     with zipfile.ZipFile(io.BytesIO(got)) as a, zipfile.ZipFile(io.BytesIO(data)) as b:

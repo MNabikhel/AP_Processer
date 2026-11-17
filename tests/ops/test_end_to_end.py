@@ -4,7 +4,6 @@ correction, how confidence and weeks are shown, per-reviewer counts, vendor spen
 import datetime as dt
 import io
 import json
-import re
 import zipfile
 
 import pytest
@@ -184,17 +183,18 @@ def test_a_usd_vendor_shows_its_usd_spend_not_zero_cad(db):
 # --- 8. Download again ------------------------------------------------------------------------------------------------
 
 
-def test_download_again_defaults_to_the_batchs_format_and_warns_about_jde_left_outs(db):
+def test_download_again_defaults_to_the_batchs_format_and_offers_no_jde_file_of_another_batch(db):
+    """A CSV batch is downloaded again as CSV (or the Excel workbook): never as JD Edwards files, which would put its
+    invoices into the ERP a second time (B-2745; before, it was offered, with a warning of the invoices left out)."""
     invoice_id = db.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", _gt(), {})
     db.approve_invoice(invoice_id, _gt(), "Jane")
     batch = db.create_export_batch([invoice_id], "csv")
     client = client_for(db)
-    page = client.get("/exports", params={"batch": batch}).text
-    pick = page.split('name="bfmt"', 1)[1].split("</select>", 1)[0]
-    assert '<option value="csv" selected>' in pick
-    assert "cannot go to JD Edwards and" not in page
-    warning = re.sub(r"\s+", " ", client.get("/exports", params={"batch": batch, "bfmt": "jde"}).text)
-    assert f"1 of 1 invoice in batch {batch} cannot go to JD Edwards" in warning and "holds no invoice" in warning
+    for asked in ({"batch": batch}, {"batch": batch, "bfmt": "jde"}):
+        page = client.get("/exports", params=asked).text
+        pick = page.split('name="bfmt"', 1)[1].split("</select>", 1)[0]
+        assert '<option value="csv" selected>' in pick and 'value="jde"' not in pick
+        assert "cannot go to JD Edwards and" not in page
 
 
 # --- 9. Page reader set-up steps ------------------------------------------------------------------------------------

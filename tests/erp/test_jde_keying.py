@@ -609,15 +609,36 @@ def test_a_keying_batchs_sheet_downloaded_again_keeps_its_vouchers_once_they_are
     store.import_erp_register([{"vendor_name": final["vendor_name"], "invoice_number": final["invoice_number"],
                                 "total": final["grand_total"]}])  # fmt: skip
     assert sheet() == first
-    # Another batch's sheet (made as Excel) is still checked against the register: that one is in the ERP already.
+    # Another batch (made as Excel) has no keying sheet: its invoices may be in the ERP by then (B-2745).
     follow(client, post(client, "/exports/batches/1/undo"))
     follow(client, post(client, "/exports/create", {"fmt": "xlsx", "ids": [northwind["id"]]}))
-    wb = openpyxl.load_workbook(
-        io.BytesIO(client.get(f"/exports/batches/2/download?fmt={jde_keying.FORMAT}").content))  # fmt: skip
-    assert [values(b) for b in blocks(wb[jde_keying.SHEET])] == [
-        [["No voucher to type: see the sheet “Not ready”.", None, None, None]]
-    ]
-    assert "already in the ERP" in wb[jde_keying.NOT_READY]["H2"].value
+    assert client.get(f"/exports/batches/2/download?fmt={jde_keying.FORMAT}").status_code == 409
+
+
+def test_a_batch_is_downloaded_again_only_in_its_own_format_or_as_the_excel_workbook(
+    tmp_path, cost_centers_demo_template
+):
+    """B-2745: "Download again" offered every format for any batch, so a keying-sheet batch (typed by hand) could be
+    downloaded as JD Edwards batch files and loaded too: each voucher in JD Edwards twice. A batch goes again in its
+    own format, or as the Excel workbook, which people read and no loader takes; any other is refused."""
+    from tests.webclient import PAGE, follow, post
+
+    store, client, northwind, _ = demo(tmp_path, cost_centers_demo_template)
+    follow(client, post(client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": [northwind["id"]]}))
+    (batch,) = store.export_batches()
+    page = client.get(f"/exports?batch={batch['id']}").text
+    offered = page.split('name="bfmt"', 1)[1].split("</select>", 1)[0]
+    assert f'value="{jde_keying.FORMAT}"' in offered and 'value="xlsx"' in offered
+    assert f'value="{jde_settings.FORMAT}"' not in offered and 'value="csv"' not in offered
+    assert 'value="custom"' not in offered
+    for fmt in (jde_settings.FORMAT, "csv", "custom"):
+        answer = client.post(f"/exports/batches/{batch['id']}/download?fmt={fmt}", headers=PAGE)
+        assert answer.status_code == 409 and "twice" in answer.text, fmt
+    assert client.get(f"/exports/batches/{batch['id']}/download?fmt=xlsx").status_code == 200
+    assert client.get(f"/exports/batches/{batch['id']}/download?fmt={jde_keying.FORMAT}").status_code == 200
+    # Asked for another format in the address, the page offers the batch's own
+    page = client.get(f"/exports?batch={batch['id']}&bfmt={jde_settings.FORMAT}").text
+    assert f'action="/exports/batches/{batch["id"]}/download?fmt={jde_settings.FORMAT}"' not in page
 
 
 def test_the_keying_sheet_is_offered_only_where_jd_edwards_is_shown(store):
@@ -629,8 +650,10 @@ def test_the_keying_sheet_is_offered_only_where_jd_edwards_is_shown(store):
     assert {jde_settings.FORMAT, jde_keying.FORMAT} <= set(exports_page.shown_formats(store))
 
 
-def test_a_voucher_jd_edwards_has_through_the_api_is_on_not_ready_never_to_be_typed_too(tmp_path, monkeypatch):
-    """A JD Edwards batch's keying sheet: a voucher posted through the API is not one to type (D-210)."""
+def test_a_jd_edwards_batch_has_no_keying_sheet_so_no_voucher_is_typed_too(tmp_path, monkeypatch):
+    """A JD Edwards batch's vouchers are loaded from its files or posted through the API: it has no keying sheet,
+    before its vouchers are posted or after, so none is typed too (B-2745; before, its sheet listed a voucher posted
+    through the API as Not ready and the others to type, though the file may have been loaded, D-210)."""
     from ap_coder.erp import jde_ais, jde_sync
     from tests.erp.test_jde_post import batch_of
     from tests.fake_ais import PASSWORD, FakeAis
@@ -643,20 +666,11 @@ def test_a_voucher_jd_edwards_has_through_the_api_is_on_not_ready_never_to_be_ty
     with FakeAis() as ais:
         store, batch = batch_of(tmp_path, ais)
         client = client_for(store)
-
-        def sheet():
-            answer = client.get(f"/exports/batches/{batch}/download?fmt={jde_keying.FORMAT}")
-            wb = openpyxl.load_workbook(io.BytesIO(answer.content))
-            return ([b[0][0].value for b in blocks(wb[jde_keying.SHEET])],
-                    list(wb[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True)))  # fmt: skip
-
-        assert sheet() == (["Voucher 1 of 1"], [])
+        assert client.get(f"/exports/batches/{batch}/download?fmt={jde_keying.FORMAT}").status_code == 409
         for step in ("dry-run", "post"):
             post(client, f"/exports/batches/{batch}/jde-api/{step}")
             assert client.app.state.jobs.get("jde-api").wait(30)
-        titles, held = sheet()
-        assert titles == ["No voucher to type: see the sheet “Not ready”."]
-        assert [(row[0], row[7]) for row in held] == [(1, "already posted to JD Edwards through the API")]
+        assert client.get(f"/exports/batches/{batch}/download?fmt={jde_keying.FORMAT}").status_code == 409
 
 
 def test_a_keying_sheet_batch_typed_with_code_b_counts_as_jd_edwards_accruing_the_pst(tmp_path):
