@@ -20,8 +20,8 @@
       <tbody>
         {% for s in sessions %}
         <tr>
-          <td><a href="/admin/users/{{ s.user_id }}">{{ s.name }}</a> <span class="muted">{{ s.username }}{% if s.mine %} (you){% endif %}</span></td>
-          <td>{{ s.browser_name }}</td><td>{{ s.address }}</td><td>{{ s.since_text }}</td><td>{{ s.seen_text }}</td>
+          <td class="w"><a href="/admin/users/{{ s.user_id }}">{{ s.name }}</a> <span class="muted">{{ s.username }}{% if s.mine %} (you){% endif %}</span></td>
+          <td class="w">{{ s.browser_name }}</td><td>{{ s.address }}</td><td class="w">{{ s.since_text }}</td><td class="w">{{ s.seen_text }}</td>
           <td class="r">{% if server_mode and not s.mine %}<form method="post" action="/admin/users/{{ s.user_id }}/sign-out" data-confirm="Sign {{ s.username }} out on every computer and browser? Their password stays the same.">
             <input type="hidden" name="back" value="sign-in">
             <button class="btn" type="submit"><span class="ms" aria-hidden="true">logout</span>Sign out everywhere</button></form>{% endif %}</td>

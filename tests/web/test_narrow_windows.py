@@ -206,7 +206,8 @@ def server_roles(chromium, tmp_path):
     store = Store(tmp_path / "private" / "ap_coder.db")
     uid = store.add_user("boss", "correct horse battery", role="admin", display_name="Pat Boss", must_change=False)
     enrol(store, uid)
-    store.add_user("clara", "correct horse battery", role="clerk", display_name="Clara Lee", must_change=False)
+    clara = store.add_user("clara", "correct horse battery", role="clerk", display_name="Clara Lee", must_change=False)
+    store.start_session(clara, "10.0.0.8", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0 Safari/537.36")
     store.add_role("Accounts payable team lead for Ontario", ["view", "code", "approve"])
 
     def sign_in(page):
@@ -245,4 +246,18 @@ def test_in_a_browser_a_long_role_name_leaves_the_users_buttons_in_the_card(serv
     page.goto(f"{base}/admin/users")
     wrap = page.locator(".table-wrap").first
     assert wrap.evaluate("(e) => e.scrollWidth <= e.clientWidth + 1"), wrap.evaluate("(e) => e.scrollWidth")
+    page.close()
+
+
+def test_in_a_browser_the_sign_in_pages_buttons_stay_in_view_at_683(server_roles):
+    """B-2587: on a laptop at 200 % (683 px) the Admin panel's Sign-in table was some 120 px wider than its card: each
+    session's Sign out everywhere was past the edge, seen only by scrolling the table sideways."""
+    browser, base, sign_in = server_roles
+    page = browser.new_page(viewport={"width": 683, "height": 800})
+    sign_in(page)
+    page.goto(f"{base}/admin/sign-in")
+    wrap = page.locator("#sessions .table-wrap")
+    assert wrap.evaluate("(e) => e.scrollWidth <= e.clientWidth + 1"), wrap.evaluate("(e) => e.scrollWidth")
+    button = page.locator("#sessions button:has-text('Sign out everywhere')").bounding_box()
+    assert button["x"] + button["width"] <= wrap.bounding_box()["x"] + wrap.bounding_box()["width"] + 1
     page.close()
