@@ -45,6 +45,7 @@ from ap_coder.erp import (
     stamp,
 )
 from ap_coder.erp.import_specs import ERP_REGISTER, VOUCHERS
+from ap_coder.web import account_lines
 from ap_coder.web.core import (
     by_currency,
     current_store,
@@ -236,7 +237,8 @@ def batch_file(store: Store, batch: int, fmt: str) -> tuple[bytes, str, str]:
         return keying_file(store, batch)
     invoices = store.get_invoices(store.batch_invoice_ids(batch))
     return exports.build(fmt, invoices, gl_names(store), batch, store.vendor_ids(), layout=layout(store),
-                         tax_treatments=store.tax_treatments(), bank_accounts=bank_accounts(store))  # fmt: skip
+                         tax_treatments=store.tax_treatments(), bank_accounts=bank_accounts(store),
+                         joined=account_lines.in_use(reference_or_none(store)))  # fmt: skip
 
 
 def register_name(store: Store) -> str:

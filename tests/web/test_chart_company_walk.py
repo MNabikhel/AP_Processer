@@ -437,6 +437,29 @@ def test_the_batch_files_of_the_same_invoices_agree_with_the_sheet(chart_company
     assert typed == [(line["VNANI"], line["VNAA"], line["VNEXA"]) for line in lines]
 
 
+def test_the_excel_exports_by_gl_account_sheet_totals_each_whole_account_string(chart_company, chart_company_client):
+    """B-2746: the Excel export's "By GL account" sheet added up one object and subsidiary across every business unit
+    as one account ("7510.5107": ten business units' cell phones as one line), as Month-end did before B-2606. With a
+    chart of accounts each account is its one string, business unit.object.subsidiary, totalled so."""
+    from collections import defaultdict
+
+    from ap_coder.core import chart
+
+    client, store = chart_company_client, chart_company.store
+    ids = _approve_the_ready_ones(client, chart_company)
+    follow(client, post(client, "/exports/create", {"fmt": "xlsx", "ids": ids}))
+    batch = store.export_batches()[0]["id"]
+    workbook = openpyxl.load_workbook(io.BytesIO(client.get(f"/exports/batches/{batch}/download?fmt=xlsx").content))
+    lines = list(workbook["GL lines"].iter_rows(min_row=2, values_only=True))
+    heads = [c.value for c in workbook["GL lines"][1]]
+    gl, unit, amount = (heads.index(h) for h in ("GL account", "Cost center", "Amount"))
+    want: dict[str, float] = defaultdict(float)
+    for row in lines:
+        want[chart.join_account(row[unit], row[gl]) if row[unit] else row[gl]] += row[amount]
+    got = {row[0]: row[3] for row in workbook["By GL account"].iter_rows(min_row=2, values_only=True)}
+    assert got == pytest.approx(dict(want)) and "0021061010.7510.5107" in got and "7510.5107" not in got
+
+
 # --- the new supplier, in USD -------------------------------------------------------------------------------------
 
 
