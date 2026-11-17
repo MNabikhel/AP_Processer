@@ -182,6 +182,18 @@ def test_a_restore_on_settings_keeps_the_laptops_admin_and_its_sign_in(store, ow
     assert store.get_setting(SIGN_IN) == LAPTOP and store.find_user("admin")["name"] == "Pat Lee"
 
 
+def test_a_restore_on_the_laptop_says_its_admin_is_logged_out(store, owner):
+    """The restore ends every session, the laptop Admin's too: the page went to Settings, which sent the owner to the
+    login page with no word why (the server's says so)."""
+    backup = store.backup_now()
+    client = browser(laptop(store))
+    first_sign_in(client)
+    answer = client.post("/settings/data/restore", data={"name": backup.name, "confirm": "RESTORE"}, headers=PAGE)
+    assert answer.json()["redirect"].startswith("/login?"), answer.text
+    page = client.get(answer.json()["redirect"])
+    assert page.status_code == 200 and "logged out" in page.text
+
+
 def test_the_who_are_you_page_shows_nothing_before_the_sign_in(store, owner):
     """Open to anyone (roles.OPEN), the "Who are you?" page showed the owner's name and the menu without a session."""
     client = browser(laptop(store))

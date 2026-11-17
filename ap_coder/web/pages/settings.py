@@ -69,6 +69,7 @@ from ap_coder.web.core import (
     render,
     reviewer,
     server_mode,
+    signs_in,
     simple_screens,
     use_simple,
 )
@@ -690,6 +691,8 @@ def restore_backup(request: Request, name: str = Form(""), confirm: str = Form("
     if server_mode(request):  # every session ended, this one too: the accounts stayed as they were
         said += " The user accounts are as they were; everyone is logged out: log in again."
         return done(request, f"/login?next={tab_url('data')}", said)
+    if signs_in(request):  # a laptop's Admin (D-243): their session ended too
+        return done(request, f"/login?next={tab_url('data')}", said + " You are logged out: sign in again.")
     return done(request, tab_url("data"), said)
 
 
