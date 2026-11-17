@@ -706,3 +706,32 @@ def test_in_a_browser_teaching_a_field_waits_for_words_that_take_long_and_says_p
     said = page.inner_text("#toasts")
     assert "AP Coder didn't answer" in said and "signal" not in said and len(page.held) == 1, said
     assert errors == []
+
+
+def test_in_a_browser_an_invoice_of_several_pages_says_so_and_leads_to_the_next_page(browser, store):
+    """B-2637: a pilot tester's PDF of several pages seemed to show only its first page on the review screen. Every
+    page was there, but only behind "1 of 2" in grey at the end of the tools; scrolling down the page ended at its
+    foot. The card's head says how many pages, and under each page but the last a Next page button turns to it."""
+    page, errors = _open(browser, store, vendor="Mont-Royal")
+    assert "2 pages" in page.inner_text(".rvw-doc-head")
+    page.evaluate("(() => { const s = document.querySelector('.iv-stage'); s.scrollTop = s.scrollHeight; })()")
+    foot = page.locator(".iv-page-foot")
+    assert foot.is_visible() and "Page 1 of 2" in foot.inner_text()
+    foot.get_by_role("button", name="Next page").click()
+    assert "Page 2 of 2" in page.inner_text(".iv-where") and "Page 2 of 2" in foot.inner_text()
+    assert foot.get_by_role("button", name="Next page").count() == 0 or not foot.get_by_role(
+        "button", name="Next page").is_visible()  # fmt: skip
+    foot.get_by_role("button", name="Previous page").click()
+    assert "Page 1 of 2" in page.inner_text(".iv-where")
+    # Fit page still shows the whole page and the button under it, without scrolling.
+    _stuck(page)
+    page.click("[aria-label='Fit page']")
+    room = page.evaluate(
+        "[document.querySelector('.iv-stage').scrollHeight, document.querySelector('.iv-stage').clientHeight]"
+    )
+    assert room[0] <= room[1] + 1, room
+    page.close()
+    # A one-page invoice: neither.
+    page, errors_one = _open(browser, store, vendor="Cascade")
+    assert "pages" not in page.inner_text(".rvw-doc-head") and not page.locator(".iv-page-foot").is_visible()
+    assert errors == [] and errors_one == []

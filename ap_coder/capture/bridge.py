@@ -146,6 +146,12 @@ def review_issues(capture: CaptureResult, assumed_currency: str | None = None, *
         quoted = "; ".join(capture.instructions)
         said = f"this invoice contains text addressed to software ({quoted}): check every field and account against "
         out.append((WARNING, "TEXT_ADDRESSED_TO_SOFTWARE", said + "the page yourself"))
+    if capture.several_invoices:  # one voucher of two bills would pay one and lose the other: a person splits it
+        which = ", ".join(capture.several_invoices)
+        out.append((WARNING, "SEVERAL_INVOICES", f"this file seems to hold {len(capture.several_invoices)} invoices, "
+                    f"each with its own number and total ({which}). Split it into one file per invoice, add each one "
+                    "on Add invoices, then reject this one (Reject, with the reason); if it is one invoice after all, "
+                    "check it as any other"))  # fmt: skip
     return out
 
 

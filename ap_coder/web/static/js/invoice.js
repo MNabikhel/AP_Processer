@@ -1071,9 +1071,10 @@ function setVendor(name) {
 
 /* ---------- The vendor list's tax numbers (D-65) ----------
    A vendor of the vendor list fills each blank GST/HST, QST and PST number with its own, and says so under the field
-   ("From the vendor list — not printed on the invoice"); a number filled from the vendor follows it when the vendor
-   changes. A number read from the invoice or typed is never touched. The server applies the same rule on every check
-   (invoice_form.fill_from_vendor), so a vendor typed in is filled too; here it is at once, with Undo. */
+   ("From the vendor list or its approved invoices — not printed on the invoice"); a number filled from the vendor
+   follows it when the vendor changes. A number read from the invoice or typed is never touched. The server applies the
+   same rule on every check (invoice_form.fill_from_vendor), so a vendor typed in is filled too; here it is at once,
+   with Undo. A number the list does not hold is the server's to fill, from the vendor's approved invoices (B-2638). */
 
 const TAX_FIELDS = { gst_hst_registration_number: "gst", qst_registration_number: "qst", pst_registration_number: "pst" };
 const fromVendorBox = document.querySelector("input[data-from-vendor]");
@@ -1142,24 +1143,29 @@ function vendorChanged(waited = false) {
     unread = null;
   }
   const changed = [];
+  const open = []; // blank, and the list has no number: the server fills the one on the vendor's approved invoices (B-2638)
   for (const [name, column] of Object.entries(TAX_FIELDS)) {
     const el = input(name);
     if (!el) continue;
     const number = String(found?.[column] || "").trim();
     const current = el.value.trim();
+    const fillable = !absent.includes(name) && (!Array.isArray(unread) || unread.includes(name));
     if (name in fields) {
       if (number !== current) {
         el.value = number;
         changed.push(name);
       }
       if (number) fields[name] = number;
-      else delete fields[name];
-    } else if (!current && number && !absent.includes(name) && (!Array.isArray(unread) || unread.includes(name))) {
+      else {
+        delete fields[name];
+        if (fillable) open.push(name);
+      }
+    } else if (!current && number && fillable) {
       el.value = fields[name] = number;
       changed.push(name);
-    }
+    } else if (!current && fillable) open.push(name);
   }
-  setFromVendor({ vendor: key, fields });
+  setFromVendor(open.length ? { vendor: key, fields, open } : { vendor: key, fields });
   if (!changed.length) return;
   showVendorMatch();
   for (const name of changed) viewer?.setEdited(name, input(name).value.trim(), false);

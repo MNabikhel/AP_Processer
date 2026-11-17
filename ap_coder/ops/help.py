@@ -866,6 +866,17 @@ CHECKS: dict[str, CheckHelp] = {
         "Look through the other pages yourself before approving; for a long file, ask the vendor for the invoice on "
         "its own. It is never approved without a person.",
     ),
+    "SEVERAL_INVOICES": CheckHelp(
+        READING, "Several invoices in one file",
+        "The file seems to hold more than one invoice: a page further on starts an invoice of its own, with its own "
+        "invoice number and its own total (several invoices scanned or saved as one file). Approved as it is, one "
+        "voucher would be made of them, and an invoice could be paid wrongly or not at all. The finding names each "
+        "invoice's number and pages. A second page of terms, a packing slip or the same invoice's lines running on "
+        "is not counted.",
+        "Split the file into one file per invoice (a PDF tool can save pages as a new file), add each one on Add "
+        "invoices, then reject this one with the reason. If it is one invoice after all, check it and approve it as "
+        "any other. It is never approved without a person.",
+    ),
     "CLAIM_RECEIPT_NOT_ADDED": CheckHelp(
         READING, "Receipt not in the claim's total",
         "One of the receipts joined into this expense claim adds nothing to it: its total could not be read, or it "

@@ -272,6 +272,8 @@ class CaptureResult:
     not_invoice: str = ""  # why this may not be an invoice, in words (``not_invoice.not_an_invoice``); "": it is one
     # Text on it addressed to software, quoted (``instructions.addressed_to_software``, D-259); []: none
     instructions: list[str] = field(default_factory=list)
+    # The invoices the file seems to hold, each "4521 on page 1" (``not_invoice.several_invoices``, D-261); []: one
+    several_invoices: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -285,6 +287,7 @@ class CaptureResult:
             **({"pages_not_read": list(self.pages_not_read)} if self.pages_not_read else {}),
             **({"not_invoice": self.not_invoice} if self.not_invoice else {}),
             **({"instructions": list(self.instructions)} if self.instructions else {}),
+            **({"several_invoices": list(self.several_invoices)} if self.several_invoices else {}),
         }
 
     @classmethod
@@ -296,6 +299,7 @@ class CaptureResult:
             page_count=int(d.get("page_count") or 0), pages_left_out=int(d.get("pages_left_out") or 0),
             credit_note=bool(d.get("credit_note")), pages_not_read=[int(n) for n in d.get("pages_not_read") or []],
             not_invoice=str(d.get("not_invoice") or ""), instructions=[str(s) for s in d.get("instructions") or []],
+            several_invoices=[str(s) for s in d.get("several_invoices") or []],
         )  # fmt: skip
 
     def status_counts(self) -> dict[str, int]:

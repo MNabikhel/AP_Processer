@@ -3,7 +3,8 @@ confirmation, a notice): said from plain evidence on the page, for a person to r
 its own, and silent on an invoice: a title counts only standing alone at the top of the first page, above any title
 that says invoice.
 
-``not_an_invoice(layout, fields, items)`` gives the reason in words, or "".
+``not_an_invoice(layout, fields, items)`` gives the reason in words, or "". ``several_invoices(layout)``: the invoices a
+file of several pages seems to hold, each with its own number and total, for a person to split it (D-261).
 """
 
 from __future__ import annotations
@@ -115,3 +116,45 @@ def not_an_invoice(layout: DocLayout, fields: dict[str, Any], items: list[Any]) 
             item.amount for item in items):  # fmt: skip
         return "no invoice number and no amounts were found on it"
     return ""
+
+
+# --- A file that holds several invoices (D-261) ------------------------------------------------------------------
+# Each page is read on its own by the rule reader: its invoice number, and a total its subtotal and taxes add up to. A
+# new number is a new invoice only when the pages up to it closed with such a total of their own: a continuation page
+# that prints the number again (or a misread of it), a page of terms or a packing slip naming the same invoice is the
+# same invoice.
+
+
+def _key(number: Any) -> str:
+    return re.sub(r"[^0-9A-Z]", "", str(number or "").upper())
+
+
+def several_invoices(layout: DocLayout) -> list[str]:
+    """The invoices a file of several pages seems to hold, each "4521 on page 1" / "4530 on pages 2 to 3"; [] for one
+    invoice (or one page)."""
+    from .reader import read_fields
+
+    if len(layout.pages) < 2:
+        return []
+    starts: list[tuple[int, str]] = []  # (the page it starts on, its number)
+    totalled = set()  # the pages with a total that their subtotal and taxes add up to
+    for page in layout.pages:
+        if not page.words:
+            continue
+        read = read_fields(DocLayout([page], layout.source))
+        number = next((str(r.value) for r in read.get("invoice_number") or [] if _key(r.value)), "")
+        if number and (not starts or _key(starts[-1][1]) != _key(number)):
+            starts.append((page.number, number))
+        if any("adds-up" in r.method for r in read.get("grand_total") or []):
+            totalled.add(page.number)
+    if len(starts) < 2:
+        return []
+    last = layout.pages[-1].number
+    found = []
+    for i, (first, number) in enumerate(starts):
+        begin = layout.pages[0].number if i == 0 else first
+        end = starts[i + 1][0] - 1 if i + 1 < len(starts) else last
+        if not any(begin <= n <= end for n in totalled):
+            return []  # pages without a total of their own: part of the invoice before or after them
+        found.append(f"{number} on page {begin}" if begin == end else f"{number} on pages {begin} to {end}")
+    return found
