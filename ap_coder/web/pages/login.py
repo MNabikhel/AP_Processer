@@ -230,8 +230,8 @@ def login_save(request: Request, username: str = Form(""), password: str = Form(
     pending = store.start_pending(user["id"])  # the password alone is no session (D-146)
     wanted = _next(next)
     have = user.get("permissions") or ()
-    if CONFIRM in have and VIEW not in have and wanted == HOME:  # a Manager's role (D-250)
-        wanted = "/manager"  # a Manager's own page: the review queue is not theirs (D-138)
+    if VIEW not in have and wanted == HOME:  # the review queue is not theirs (D-250)
+        wanted = "/manager" if CONFIRM in have else "/"  # a Manager's own page (D-138), else the first they may open
     if user["must_change"]:
         answer = done(request, _step_url(user, wanted),
                       flash_message("Choose your own password before you carry on: the one you were given is "

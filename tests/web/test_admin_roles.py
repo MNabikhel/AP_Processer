@@ -9,7 +9,7 @@ from ap_coder.core.store.roles import OWN_USERS
 from ap_coder.core.store.users import OWN_OFF
 from tests.web.test_laptop_sign_in import browser, first_sign_in, laptop
 from tests.web.test_server_security import app_for, client_of
-from tests.web.test_server_web import account, log_in
+from tests.web.test_server_web import GOOD, account, log_in
 from tests.webclient import PAGE, add_clean
 
 LEAD = ["view", "activity", "import", "code", "approve", "final_approve", "export", "post", "controls"]
@@ -179,3 +179,28 @@ def test_the_plain_refusal_page_shows_a_roles_name_as_text(store, monkeypatch):
     monkeypatch.setattr(core, "render", broken)
     page = lead.get("/settings", headers=HTML)
     assert page.status_code == 403 and "AP &lt;i&gt;lead&lt;/i&gt;" in page.text and "<i>" not in page.text
+
+
+def test_a_role_that_sees_no_invoices_lands_on_a_page_it_may_open(store):
+    """B-2578: a role without See invoices and reports (people's accounts only, or bringing invoices in) signed in to
+    the review queue and "Not allowed", and the menu's AP Coder and the refusal's button led back there."""
+    account(store, "boss", "admin", "Pat Boss")
+    app = app_for(store)
+    boss = client_of(app, "10.0.0.7")
+    log_in(boss, "boss")
+    desk = _made(boss, "People desk", ["users"])
+    importer = _made(boss, "Importer", ["import"])
+    account(store, "ivy", desk, "Ivy Tan")
+    account(store, "ike", importer, "Ike Low")
+    for username, lands in (("ivy", "/admin"), ("ike", "/process")):
+        person = client_of(app, "10.0.0.8")
+        password = person.post("/login", data={"username": username, "password": GOOD, "next": "/review"},
+                               headers=PAGE)  # fmt: skip  # the login page's own next: the review queue
+        assert password.json()["redirect"] == "/login/code?next=%2F", password.text  # the code's step, then /
+        log_in(person, username, next="/")
+        home = person.get("/", headers=HTML)
+        assert home.status_code == 307 and home.headers["location"] == lands
+        assert person.get(lands, headers=HTML).status_code == 200
+        refused = person.get("/review", headers=HTML)
+        assert refused.status_code == 403 and 'href="/review"' not in refused.text and 'href="/"' in refused.text
+    assert boss.get("/", headers=HTML).headers["location"] == "/review"

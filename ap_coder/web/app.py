@@ -541,12 +541,17 @@ def _add_pages(app: FastAPI) -> None:
         app.include_router(importlib.import_module(f"ap_coder.web.pages.{page.module}").router)
 
     @app.get("/", include_in_schema=False)
-    def home() -> RedirectResponse:
+    def home(request: Request) -> RedirectResponse:
         from ap_coder.core.permissions import CONFIRM, VIEW  # a Manager opens its own requests (D-138)
 
         me = identity.person()
-        mine = me is not None and CONFIRM in me.granted and VIEW not in me.granted
-        return RedirectResponse("/manager" if mine else PAGES[0].path, status_code=307)
+        if me is None or VIEW in me.granted:
+            return RedirectResponse(PAGES[0].path, status_code=307)
+        if CONFIRM in me.granted:
+            return RedirectResponse("/manager", status_code=307)
+        # A role made without the invoices (D-250): the first page of the menu it may open, else the Admin panel.
+        paths = [*(p.path for p in PAGES), "/admin", "/account/password"]
+        return RedirectResponse(next(p for p in paths if core.can(request, p, "GET")), status_code=307)
 
 
 def _add_status_routes(app: FastAPI, *, address: str, server: bool) -> None:
