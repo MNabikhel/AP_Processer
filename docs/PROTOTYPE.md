@@ -63,7 +63,7 @@ team's; it opens it only with `APProcessor.bat --without-sign-in`, typed at ever
 
 A new installation shows the short menu ("Simple screens"): **To review**, **Add invoices**, **To key into JDE**,
 **Find an invoice**, **What was learned**, **Rules**, and under **Setup**: GL accounts & tax, JD Edwards files,
-Vendors, Activity, Settings; then Help. **Settings → About → Screens** (*Everything*) shows every page again.
+Suppliers, Activity, Settings; then Help. **Settings → About → Screens** (*Everything*) shows every page again.
 
 AP Coder's commands (`python -m ap_coder ...`, in sections 2, 4 and 6) are typed in **`scripts\terminal.bat`**:
 double-click it in AP Coder's folder for a command prompt there with AP Coder's own Python. A plain command prompt's

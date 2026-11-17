@@ -63,7 +63,7 @@ COMMAND_WAIT = 600.0  # seconds a command (demo, pilot-score, backup, doctor) ha
 PAST = 6  # past invoices for pilot-score --proposed (the guide says about 50 of the tester's own)
 APPROVED = "one_line"  # the day's invoice approved: one line from a supplier that always goes to one account
 MENU = ("To review", "Add invoices", "To key into JDE", "Find an invoice", "What was learned", "Rules")
-SETUP = ("GL accounts & tax", "JD Edwards files", "Vendors", "Activity", "Settings")
+SETUP = ("GL accounts & tax", "JD Edwards files", "Suppliers", "Activity", "Settings")
 # The keying sheet's header fields the guide names (section 5, To key into JDE), as the sheet labels them.
 KEYING_FIELDS = ("Supplier number", "Invoice number", "Invoice date", "G/L date", "Currency", "Gross amount",
                  "Tax explanation code", "Tax rate/area", "Tax amount", "Taxable amount",
@@ -491,7 +491,9 @@ def section_5(client: Client, work: Path, today: Path, approved: Any, bank: str)
     queue = page(client, "/review")
     ids = list(dict.fromkeys(INVOICE_LINK.findall(queue)))
     check(len(ids) == len(chosen) + PAST, f"the review queue lists {len(ids)} invoices, not {len(chosen) + PAST}")
-    says(queue, "Needs attention", "pick the account")
+    says(queue, "Needs attention")  # the rows say which accounts to pick (D-255: "Pick accounts for 4 lines")
+    picks = re.search(r"Pick (the account for line \d+|accounts for \d+ lines)", plain(queue))
+    check(picks is not None, f"no row says which accounts to pick: {plain(queue)[:1500]}")
     number = approved.number
     screens = {int(i): page(client, f"/review/{i}") for i in ids}
     found = [i for i, shown in screens.items() if f'value="{html.escape(number)}"' in shown]
