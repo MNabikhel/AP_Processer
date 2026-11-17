@@ -1106,7 +1106,7 @@ FAQ: list[tuple[str, str]] = [
         "invoice attached), send it, and record the answer there when it comes, with the reply email kept. On a "
         "company server, a Manager account answers on screen. Confirmed or sent back, the invoice comes back to the "
         "review queue: approve it as usual, or change it and send it again. The screen says if the coding changed "
-        "after it was confirmed. The invoice directory's Next to act column says who it waits for.",
+        "after it was confirmed. The Next to act column of the Invoice directory says who it waits for.",
     ),
     (
         "I made a mistake. Can I undo it?",
@@ -1136,7 +1136,7 @@ ROUTINE: list[tuple[str, list[tuple[str, str]]]] = [
     ("Every day", [
         ("Process new invoices", "process"),
         ("Review queue (see Today)", "review"),
-        ("Vendor calls: the invoice directory", "search"),
+        ("Vendor calls: Invoice directory", "search"),
         ("Export to the ERP", "exports"),
     ]),
     ("Every week", [
@@ -1256,7 +1256,7 @@ WHATS_NEW: list[str] = [
     "The AI reviewer: the chat model in LM Studio checks every invoice against its pages before it can skip review.",
     "The review screen shows two numbers: Reading (how sure the header is) and Coding (how sure the lines are).",
     "Tick Meals & entertainment on a GL account: only half the GST/HST and QST on its lines is claimed.",
-    "The Invoice directory: every invoice in one table, with a filter over each column, saved layouts and Excel.",
+    "Invoice directory: every invoice in one table, with a filter over each column, saved layouts and Excel.",
     "A correction AP keeps making becomes a lesson; AP Coder asks once for the reason (Learning & accuracy → Lessons).",
     "On the review screen, G goes to the line still to code.",
     "AP Coder can also run on a company server: each person logs in with their own account.",
