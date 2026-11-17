@@ -236,3 +236,21 @@ def test_an_invoice_waiting_for_gl_accounts_links_to_them_only_for_whoever_may_o
     page = reader.get(f"/review/{invoice}").text
     assert "Waiting for your GL accounts" in page and 'href="/accounts"' not in page
     assert reader.get("/accounts", headers=HTML).status_code == 403
+
+
+def test_a_persons_page_links_their_invoices_only_for_whoever_may_open_them(store):
+    """B-2584: a person's page (What they did) linked each invoice to its review screen, which refused a role made
+    to manage people's accounts without See invoices and reports."""
+    account(store, "boss", "admin", "Pat Boss")
+    ann = account(store, "ann", "clerk", "Ann Lee")
+    app = app_for(store)
+    boss, desk = client_of(app, "10.0.0.7"), client_of(app, "10.0.0.8")
+    log_in(boss, "boss")
+    account(store, "ivy", _made(boss, "People desk", ["users"]), "Ivy Tan")
+    log_in(desk, "ivy", next="/admin")
+    invoice = add_clean(store)
+    store.log_event("note", invoice, "Ann Lee", {"text": "asked the vendor"})
+    assert f'href="/review/{invoice}"' in boss.get(f"/admin/users/{ann}").text
+    page = desk.get(f"/admin/users/{ann}").text
+    assert "asked the vendor" in page and f'href="/review/{invoice}"' not in page
+    assert desk.get(f"/review/{invoice}", headers=HTML).status_code == 403
