@@ -8,6 +8,7 @@ import hashlib
 import http.server
 import io
 import json
+import os
 import threading
 import time
 import zipfile
@@ -363,3 +364,21 @@ def test_a_folder_an_earlier_yes_unzipped_is_started_again_not_downloaded_again(
     assert github.asked == [f"/repos/{launch.releases.REPO}/releases?per_page=20"]
     (launch.ROOT.parent / TOP / "ap_coder" / "BUILD").write_text("d4d4d4d 2026-11-01T10:00:00+00:00\n")
     assert _offer(launch) is None and len(launch.handed) == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows files have no executable bit")
+def test_the_new_folders_launchers_stay_executable(launch, github, monkeypatch):
+    """A Mac's desktop "AP Coder.command" runs the new folder's APProcessor.command itself (``exec``): unzipped
+    without the modes the ZIP keeps, it would be refused ("Permission denied") at the next double-click."""
+    _answer(launch, monkeypatch, "")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(release_zip())) as source, zipfile.ZipFile(buffer, "w") as archive:
+        for info in source.infolist():
+            if info.filename.endswith(".command"):
+                info.external_attr = 0o100755 << 16  # (as git archive writes an executable file)
+            archive.writestr(info, source.read(info))
+    github.publish(buffer.getvalue())
+    assert _offer(launch) == 0
+    folder = launch.ROOT.parent / TOP
+    assert os.access(folder / "APProcessor.command", os.X_OK)
+    assert not os.access(folder / "scripts" / "launch.py", os.X_OK)

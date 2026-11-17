@@ -228,6 +228,10 @@ def take(release: Release, beside: Path, data: Path, say: Callable[[str], None] 
                 if stat.S_ISLNK(info.external_attr >> 16):
                     raise UpdateError(f"the ZIP holds a link ({info.filename})")
             archive.extractall(unpacking)
+            for info in archive.infolist():  # (extractall drops the modes: a Mac's launcher runs APProcessor.command)
+                if os.name != "nt" and (info.external_attr >> 16) & 0o111 and not info.is_dir():
+                    path = unpacking / info.filename
+                    path.chmod(path.stat().st_mode | 0o755)
         found = unpacking / top
         if not (found / "ap_coder").is_dir() or not (found / "scripts" / "launch.py").is_file():
             raise UpdateError("the ZIP holds no AP Coder")
