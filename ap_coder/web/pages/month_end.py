@@ -1,6 +1,6 @@
 """Month-end: the accruals schedule, costs incurred by the period end that are not in the ERP yet.
-``GET /month-end?end=YYYY-MM-DD``; the schedule downloads as a CSV (``GET /month-end/accruals.csv?end=``,
-``accruals.to_csv``)."""
+``GET /month-end?end=YYYY-MM-DD``; the schedule downloads as an Excel workbook to read (``GET
+/month-end/accruals.xlsx?end=``, codes as text) or a CSV (``accruals.csv``, ``accruals.to_csv``)."""
 
 from __future__ import annotations
 
@@ -16,9 +16,10 @@ from ap_coder.core import chart as accounts
 from ap_coder.core import ui
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.erp import accruals
+from ap_coder.erp.exports import table_workbook
 from ap_coder.web import account_lines
 from ap_coder.web.core import address_day, get_store, money, page_router, reference_or_none, render
-from ap_coder.web.files import download
+from ap_coder.web.files import XLSX, download
 from ap_coder.web.invoice_grid import NEEDS_CC, NEEDS_GL
 from ap_coder.web.pages import downloads
 
@@ -172,20 +173,31 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
 async def accruals_csv(request: Request) -> Response:
     """The accruals schedule as a CSV: on the company server made by its background process (``downloads``,
     D-169)."""
-    return await downloads.answer(request, "/month-end/accruals.csv", _accruals_now)
+    return await downloads.answer(request, "/month-end/accruals.csv", _made_now(write_accruals, "text/csv"))
 
 
-def _accruals_now(request: Request) -> Response:
-    params, name = accruals_params(request)
-    return download(downloads.written(write_accruals, get_store(request), params), name, "text/csv")
+@router.get("/month-end/accruals.xlsx")
+async def accruals_xlsx(request: Request) -> Response:
+    """The accruals schedule as an Excel workbook, to read: codes stay text (B-2650). On the company server made by
+    its background process, as the CSV."""
+    return await downloads.answer(request, "/month-end/accruals.xlsx", _made_now(write_accruals_xlsx, XLSX))
+
+
+def _made_now(write: Any, media: str) -> Any:
+    def made(request: Request) -> Response:
+        params, name = accruals_params(request)
+        return download(downloads.written(write, get_store(request), params), name, media)
+
+    return made
 
 
 def accruals_params(request: Request) -> tuple[dict[str, Any], str]:
     period_end = address_day(request.query_params.get("end", ""), accruals.default_period_end())
-    return {"end": period_end.isoformat()}, f"accruals_{period_end}.csv"
+    suffix = "xlsx" if request.url.path.endswith(".xlsx") else "csv"
+    return {"end": period_end.isoformat()}, f"accruals_{period_end}.{suffix}"
 
 
-def write_accruals(store: Any, params: dict[str, Any], out: BinaryIO, step: Any) -> None:
+def _schedule(store: Any, params: dict[str, Any], step: Any) -> tuple[list[accruals.Accrual], dt.date]:
     step(0, 0, "Working out the accruals…")
     period_end = dt.date.fromisoformat(params["end"])
     items = accruals.build(store, period_end)  # (never settled: booked from)
@@ -194,4 +206,14 @@ def write_accruals(store: Any, params: dict[str, Any], out: BinaryIO, step: Any)
     joined = account_lines.in_use(reference_or_none(store)) if items else False
     items = [replace(a, gl_code=accounts.join_account(unit, a.gl_code)) if (unit := unit_of(a, joined)) else a
              for a in items]  # fmt: skip
-    out.write(accruals.to_csv(items, period_end))
+    return items, period_end
+
+
+def write_accruals(store: Any, params: dict[str, Any], out: BinaryIO, step: Any) -> None:
+    out.write(accruals.to_csv(*_schedule(store, params, step)))
+
+
+def write_accruals_xlsx(store: Any, params: dict[str, Any], out: BinaryIO, step: Any) -> None:
+    items, period_end = _schedule(store, params, step)
+    table_workbook(out, f"Accruals at {period_end}", accruals.HEADER, accruals.table(items), accruals.CODES,
+                   ("Amount",))  # fmt: skip

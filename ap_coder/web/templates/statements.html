@@ -74,7 +74,10 @@
 <section class="card">
   <div class="card-head">
     <h4 id="result-title">{{ names[vendor] }}: the statement compared with AP Coder{% if erp %} and {{ erp }}{% endif %}</h4>
-    <a class="btn" href="/statements/reconciliation.csv?{{ query }}" download><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
+    <div class="row">
+      <a class="btn" href="/statements/reconciliation.xlsx?{{ query }}" download><span class="ms" aria-hidden="true">table_view</span>Download (Excel)</a>
+      <a class="btn sm ghost" href="/statements/reconciliation.csv?{{ query }}" download title="For another program; Excel drops the leading zeros of codes in a CSV">CSV</a>
+    </div>
   </div>
   <div class="table-wrap">
     <table class="apc-table">

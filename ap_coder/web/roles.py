@@ -100,9 +100,9 @@ RULES: dict[tuple[str, str], str] = {
         "GET /search", "GET /search/export.csv", "GET /search/export.xlsx", "GET /search/{invoice_id:int}/approved.pdf",
         # The exports list, the reports and their downloads.
         "GET /exports", "GET /exports/duplicates.csv",
-        "GET /month-end", "GET /month-end/accruals.csv",
+        "GET /month-end", "GET /month-end/accruals.csv", "GET /month-end/accruals.xlsx",
         "GET /sales-tax", "GET /sales-tax/claims.csv", "GET /sales-tax/self-assessment.csv",
-        "GET /statements", "GET /statements/reconciliation.csv",
+        "GET /statements", "GET /statements/reconciliation.csv", "GET /statements/reconciliation.xlsx",
         "GET /spend", "GET /spend/data.xlsx",
         "GET /insights", "GET /insights/business-case",
         "GET /help", "GET /help/quick-start", "GET /help/report",
@@ -158,8 +158,8 @@ RULES: dict[tuple[str, str], str] = {
         "GET /jde-files",  # what is loaded of JD Edwards' exports (loading them: setup)
         "GET /jde-files/template/{key}",  # a blank template of a report's columns (D-234)
         "GET /imports/template/{key}",  # the same, of any import of the app
-        # The rows of what is loaded, and their CSV (D-221): whoever opens the page; changing a row is setup.
-        "GET /jde-files/loaded/{what}", "GET /jde-files/loaded/{what}.csv",
+        # The rows of what is loaded, and their Excel and CSV (D-221): whoever opens the page; changing a row is setup.
+        "GET /jde-files/loaded/{what}", "GET /jde-files/loaded/{what}.csv", "GET /jde-files/loaded/{what}.xlsx",
         "GET /purchase-orders", "GET /purchase-orders/template.csv",
         "GET /learning", "POST /learning/lessons/explain",
         # The fixed coding rules: anyone who reviews invoices adds, changes, removes and undoes them; every change is

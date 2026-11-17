@@ -842,3 +842,44 @@ def test_the_accruals_csv_of_a_chart_company_gives_each_account_as_its_one_strin
     rows = list(csv.DictReader(io.StringIO(data.decode("utf-8-sig").split("\n", 1)[1])))
     coded = [r for r in rows if r["GL account"] not in ("", "UNASSIGNED")]
     assert sorted(r["GL account"] for r in coded) == sorted(chart.join_account(a.cost_center, a.gl_code) for a in items)
+
+
+def _sheet(response, name: str) -> list[list]:
+    data = attachment(response, name, files.XLSX)
+    return [list(row) for row in openpyxl.load_workbook(io.BytesIO(data)).active.iter_rows(values_only=True)]
+
+
+def test_the_accruals_schedule_downloads_as_a_workbook_whose_accounts_stay_text(chart_company_client):
+    """B-2650: the accruals CSV, opened in Excel, made an account 0021061010.1620.130 a number or a reference 000417
+    the number 417. The page's main download is a workbook to read: the CSV's rows, each code a text cell, leading
+    zeros and all, each amount a number; the CSV stays, a link beside it."""
+    from tests.web.test_web_jde_loaded import same_rows
+
+    client = chart_company_client
+    end = dt.date.today() + dt.timedelta(days=60)
+    page = client.get(f"/month-end?end={end}").text
+    assert f'href="/month-end/accruals.xlsx?end={end}"' in page and f'href="/month-end/accruals.csv?end={end}"' in page
+    sheet = _sheet(client.get(f"/month-end/accruals.xlsx?end={end}"), f"accruals_{end}.xlsx")
+    lines = list(csv.reader(io.StringIO(client.get(f"/month-end/accruals.csv?end={end}").content.decode("utf-8-sig"))))
+    same_rows(sheet, lines[1:])  # (the CSV's first line is its title: the sheet's name)
+    assert len(sheet) > 1 and all(isinstance(cells[6], (int, float)) for cells in sheet[1:])
+    accounts = [cells[4] for cells in sheet[1:] if cells[4] not in (None, "UNASSIGNED")]
+    assert accounts and all(isinstance(a, str) and a.startswith("0") for a in accounts)  # 0021061010.1620.130
+
+
+def test_a_statement_reconciliation_downloads_as_a_workbook_whose_invoice_numbers_stay_text(client, busy):
+    """B-2650: the reconciliation's CSV, opened in Excel, made the invoice number 000417 the number 417. Its main
+    download is a workbook: the CSV's rows, invoice numbers text, amounts numbers; the CSV stays beside it."""
+    from tests.web.test_web_jde_loaded import same_rows
+
+    key, content = _statement(busy)
+    content += b"000417,2026-09-02,50.00\n"
+    page = follow(client, client.post("/statements/upload", data={"vendor": key},
+                                      files={"file": ("s.csv", content, "text/csv")}, headers=PAGE))  # fmt: skip
+    query = page.url.query.decode()
+    assert "/statements/reconciliation.xlsx?" in page.text and "/statements/reconciliation.csv?" in page.text
+    sheet = _sheet(client.get(f"/statements/reconciliation.xlsx?{query}"), "statement_reconciliation.xlsx")
+    lines = list(csv.reader(io.StringIO(client.get(f"/statements/reconciliation.csv?{query}").text.lstrip("﻿"))))
+    same_rows(sheet, lines)
+    assert ["000417", 50.0] in [[cells[1], cells[3]] for cells in sheet]
+    assert all(isinstance(cells[3], (int, float)) for cells in sheet[1:] if cells[3] is not None)

@@ -131,7 +131,8 @@ how many tax IDs are business numbers. A tax ID that is a word (CHARITABLE, GOVE
 (a US EIN) is kept as written and compared with nothing.
 
 **See what is loaded.** Once a file is loaded, *What is loaded* at the top links to its rows: a table with a search
-box, filters, a count and *Download ... as CSV* (codes keep their leading zeros). In the chart, the business units and
+box, filters, a count and *Download ... (Excel)* (codes keep their leading zeros; the *CSV* beside it is for another
+program, as Excel drops them from a CSV). In the chart, the business units and
 the suppliers, **Change** beside a row lets you correct it: an account's description, whether it can be posted to
 and its meals tick; a business unit's name and status; a supplier's name, hold, note, tax numbers and terms. What
 you change is kept when you load a newer file (the page shows what the file says beside it), and every change is in

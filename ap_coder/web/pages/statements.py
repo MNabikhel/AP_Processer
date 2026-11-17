@@ -3,13 +3,14 @@
 The statement is uploaded (``POST /statements/upload``, or picked from the emails triage set aside:
 ``POST /statements/emailed/<entry>/<n>``) and waits an hour (``files.keep_upload``: never kept with the invoices), then
 ``GET /statements?vendor=&file=&col_<field>=`` shows its columns and the reconciliation, the email asking the vendor
-for what is missing (``&lang=``) and ``GET /statements/reconciliation.csv`` (same address) downloads
-``statements.to_csv``. ``&open_items=1``: the statement lists only unpaid invoices, ticked on the upload and kept in
-each address after it (D-242).
+for what is missing (``&lang=``) and ``GET /statements/reconciliation.xlsx`` (same address) downloads it as a
+workbook to read, ``reconciliation.csv`` as ``statements.to_csv``. ``&open_items=1``: the statement lists only unpaid
+invoices, ticked on the upload and kept in each address after it (D-242).
 """
 
 from __future__ import annotations
 
+import io
 from collections.abc import Collection
 from typing import Any
 from urllib.parse import urlencode
@@ -21,12 +22,14 @@ from ap_coder.coding import vendor_mail
 from ap_coder.core.store import Store
 from ap_coder.erp import jde_keying, jde_settings
 from ap_coder.erp import statements as stm
+from ap_coder.erp.exports import table_workbook
 from ap_coder.erp.import_specs import STATEMENTS
 from ap_coder.intake import inbox
 from ap_coder.web.core import done, get_store, invoice_dir, money, page_router, refuse, render, reviewer
 from ap_coder.web.files import (
     _MAX_BYTES,
     TOO_BIG,
+    XLSX,
     SheetError,
     download,
     keep_upload,
@@ -200,10 +203,8 @@ def statements_emailed(
     )
 
 
-@router.get("/statements/reconciliation.csv")
-def reconciliation_csv(
-    request: Request, vendor: str = "", file: str = "", sheet: str = "", open_items: str = ""
-) -> Response:
+def _reconciled(request: Request, vendor: str, file: str, sheet: str, open_items: str) -> stm.Reconciliation:
+    """The reconciliation the page shows, for its downloads."""
     store = get_store(request)
     try:
         _upload, df, _sheets = read_upload(file, sheet or None, [STATEMENTS])
@@ -213,5 +214,23 @@ def reconciliation_csv(
     chosen = picked_columns(request.query_params, stm.COLUMN_ALIASES, columns, stm.map_columns(columns))
     if not mapping_ready(chosen):
         raise HTTPException(status_code=400, detail="Pick the invoice number column and an amount or balance column.")
-    rec = reconciliation(store, vendor, df.to_dict("records"), chosen, bool(open_items))
+    return reconciliation(store, vendor, df.to_dict("records"), chosen, bool(open_items))
+
+
+@router.get("/statements/reconciliation.csv")
+def reconciliation_csv(
+    request: Request, vendor: str = "", file: str = "", sheet: str = "", open_items: str = ""
+) -> Response:
+    rec = _reconciled(request, vendor, file, sheet, open_items)
     return download(stm.to_csv(rec), "statement_reconciliation.csv", "text/csv")
+
+
+@router.get("/statements/reconciliation.xlsx")
+def reconciliation_xlsx(
+    request: Request, vendor: str = "", file: str = "", sheet: str = "", open_items: str = ""
+) -> Response:
+    """The reconciliation as an Excel workbook, to read: invoice numbers stay text (B-2650)."""
+    out = io.BytesIO()
+    rec = _reconciled(request, vendor, file, sheet, open_items)
+    table_workbook(out, "Statement reconciliation", stm.HEADER, stm.table(rec), stm.CODES, stm.AMOUNTS)
+    return download(out.getvalue(), "statement_reconciliation.xlsx", XLSX)
