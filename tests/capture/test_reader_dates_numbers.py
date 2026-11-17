@@ -508,3 +508,19 @@ def test_the_value_of_a_label_on_the_row_below_is_not_the_invoice_number_of_the_
              (350, 300, "Total"), (480, 300, "50.00")]  # fmt: skip
     got = _read(_pdf(tmp_path, items, name="no_number.pdf")).fields["invoice_number"].value
     assert got != "C-10022"
+
+
+def test_a_date_labelled_after_the_invoice_number_on_its_line_is_read(tmp_path):
+    """B-2702: "Invoice # 55012 Date: 2026-10-04" (one line, one space apart: a text invoice, a PDF printed so, the page
+    reader's line) gave the number but no invoice date: the review screen said none was found and put in the day it
+    was read. A date's label after the invoice's number on its line is read; another number's ("PO 4471 Date ...") is
+    not the invoice's date."""
+    for line, date in (("Invoice # 55012 Date: 2026-10-04", "2026-10-04"),
+                       ("Invoice No. 55012 Invoice Date: 2026-10-04", "2026-10-04"),
+                       ("Facture no F-20931 Date : 3 octobre 2026", "2026-10-03")):  # fmt: skip
+        items = [(40, 50, "Northwind Supply Ltd."), (40, 110, line), (350, 300, "Total"), (480, 300, "50.00")]
+        got = _read(_pdf(tmp_path, items, name="one_line.pdf")).fields["invoice_date"].value
+        assert got == date, (line, got)
+    items = [(40, 50, "Northwind Supply Ltd."), (40, 110, "PO 4471 Date: 2026-09-15"), (350, 300, "Total"),
+             (480, 300, "50.00")]  # fmt: skip
+    assert _read(_pdf(tmp_path, items, name="po_line.pdf")).fields["invoice_date"].value != "2026-09-15"

@@ -77,6 +77,13 @@ def _label_hits(line: Line) -> list[_LabelHit]:
         seen = {h.field for h in hits}
         hits += [h for h in _hits_at(line, text, after_colon, chained=set(after_colon))
                  if "/" in h.label_text and h.field not in seen]  # fmt: skip
+    # "Invoice # 55012 Date: 2026-10-04", one space apart (a text invoice, the page reader's line): the date's label
+    # after the invoice's number on a line the number's label starts (B-2702).
+    if any(h.field == "invoice_number" and h.start == 0 for h in hits):
+        after_number = [m.end() for m in re.finditer(r"\d\s+(?=[a-z])", text) if m.end() not in starts]
+        seen = {h.field for h in hits}
+        hits += [h for h in _hits_at(line, text, after_number, chained=set(after_number))
+                 if h.field in ("invoice_date", "due_date") and h.field not in seen]  # fmt: skip
     if len(text) != len(line.text):
         # "Fittings ½ in., PO # 4500123456": "½" is three characters in plain text; the value is read from the line.
         at = plain_with_offsets(line.text)[1]
