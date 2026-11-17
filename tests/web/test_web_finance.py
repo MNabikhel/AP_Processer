@@ -798,7 +798,9 @@ def test_a_statement_finds_the_vouchers_of_a_supplier_number_typed_with_a_leadin
     settings = jde_settings.load(store)
     settings.an8_overrides["quill courier services"] = f"0{an8}"  # AP Coder's own name for it, and its number
     jde_settings.save(store, settings)
-    records = [{"Invoice No": first["invoice_number"], "Date": first["invoice_date"], "Amount": f"{first['total']:.2f}"}]
+    records = [
+        {"Invoice No": first["invoice_number"], "Date": first["invoice_date"], "Amount": f"{first['total']:.2f}"}
+    ]
     rec = statements_page.reconciliation(store, "quill courier services", records,
                                          {"number": "Invoice No", "date": "Date", "amount": "Amount"})  # fmt: skip
     (line,) = rec.lines
