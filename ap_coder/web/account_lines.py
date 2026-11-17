@@ -253,6 +253,25 @@ def row_views(reference: ReferenceData, lines: list[dict[str, Any]], proposed: l
     return views
 
 
+SAID_ABOVE = "Pick its account"  # a line whose reason is said once above the lines (``said_above``)
+
+
+def said_above(views: list[dict[str, Any]], numbers: list[Any]) -> str:
+    """The reason two or more lines to fix share ("This supplier's 3 lines ... went to 3 accounts: ...: pick the
+    account."), said once above the lines with their numbers (D6); those rows then say ``SAID_ABOVE`` with their
+    offers. ``numbers``: the rows' line numbers, in ``views``' order. "" when no reason is shared."""
+    notes = [v["note"] for v in views if v["state"] == FIX and v["note"]]
+    shared = max(notes, key=notes.count) if notes else ""
+    if notes.count(shared) < 2:
+        return ""
+    which = []
+    for view, number in zip(views, numbers, strict=True):
+        if view["state"] == FIX and view["note"] == shared:
+            view["note"] = SAID_ABOVE
+            which.append(str(number or "").removesuffix(".0"))
+    return f"Lines {', '.join(which)}: {shared[:1].lower() + shared[1:] if shared[1:2].islower() else shared}"
+
+
 TWO_AREAS = ("This invoice charges two federal taxes or rates: its lines are in two tax areas, and one voucher's pay "
              "item takes one. Check which lines carry each tax")  # fmt: skip
 

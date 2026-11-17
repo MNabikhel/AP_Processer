@@ -294,6 +294,8 @@
 
     <section class="card inv-lines">
       {% if grid.account %}{# a chart of accounts is imported: one Account box a line (D-214) #}
+      {# why the lines to fix were left for a person, when they share it: said once (D6), drawn again by each check #}
+      <p class="acct-said" data-lines-note{% if not grid.lines_note %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-lines-note-text>{{ grid.lines_note }}</span></p>
       <div class="table-wrap">
         <table class="apc-table inv-grid-table inv-lines-grid acct{% if grid.lines | length > 8 %} many{% endif %}" id="lines" aria-label="Lines">
           <thead><tr><th class="c-no">#</th><th class="c-acct">Account</th><th class="r c-amt">Amount</th><th class="c-desc">Remark <span class="rm-legend" title="A remark with a dashed edge is AP Coder's suggestion: no one has been in its box yet">suggested</span></th><th class="c-tax">Tax</th><th class="c-del"><span class="rvw-sr">More for the line</span></th></tr></thead>

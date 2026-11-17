@@ -747,6 +747,10 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 .acct-note.fix {background: var(--lg-danger-weak);} .acct-note.fix b, .acct-note.fix .ms {color: var(--lg-danger);}
 .acct-note.check {background: var(--lg-warning-weak);}
 .acct-note.check b, .acct-note.check .ms {color: var(--lg-warning);}
+/* D6: why the lines to fix were left for a person, said once above them when they share it */
+.acct-said {margin: 0 0 8px; padding: 6px 10px; border-radius: 6px; font-size: 12.5px; line-height: 18px;
+  background: var(--lg-danger-weak); color: var(--lg-text);}
+.acct-said .ms {font-size: 15px; vertical-align: -3px; margin-right: 4px; color: var(--lg-danger);}
 .acct-cands {list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px;}
 .acct-cands li {margin: 0; min-width: 0;}
 .acct-cands button {display: flex; align-items: baseline; gap: 10px; width: 100%; min-width: 0; min-height: 24px;

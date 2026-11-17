@@ -11,7 +11,7 @@ import pytest
 
 from ap_coder.core import chart
 from ap_coder.web import account_lines
-from ap_coder.web.account_lines import LINE_ACCOUNT
+from ap_coder.web.account_lines import LINE_ACCOUNT, SAID_ABOVE
 from ap_coder.web.invoice_form import LINE_REMARK
 from tests.conftest import copy_database
 from tests.review_page import ReviewPage
@@ -54,12 +54,37 @@ def test_a_line_left_for_a_person_is_marked_with_why_and_the_accounts_offered(ch
     proposed = chart_company.store.get_invoice(page.id)["ai_output"]["line_items"]
     rows = _rows(page.text)
     assert len(rows) == 4
+    # D6: the reason the four lines share ("This supplier's 3 lines ... went to 3 accounts ...") is said once, above
+    # them, not on every line
+    said = re.search(r"<p class=\"acct-said\" data-lines-note><span [^>]*>error</span><span [^>]*>([^<]*)</span>",
+                     page.text).group(1)  # fmt: skip
+    assert html_unescape(said) == f"Lines 1, 2, 3, 4: t{proposed[0]['reasoning_justification'][1:]}"
     for row, line in zip(rows, proposed, strict=True):
         assert 'class="acct-row is-fix"' in row and f'name="{LINE_ACCOUNT}" value=""' in row
-        assert "<b>To fix:</b>" in row and "went to 3 accounts" in row  # the line's own reason
+        slot = row.split('data-live-line="slot">', 1)[1]
+        assert f"<b>To fix:</b> <span data-acct-why>{SAID_ABOVE}</span>" in slot and "went to 3 accounts" not in slot
         offered = re.findall(r'data-use-account="([^"]+)"', row)
         assert offered == [c["account"] for c in line["candidates"]][:3] and len(offered) == 3  # the first three
         assert line["candidates"][0]["name"] in row and "of this supplier" in row  # its name and why it is offered
+
+
+def test_the_reason_lines_share_is_said_above_them_by_each_check_and_goes_back_to_a_line_left_alone(
+    chart_company, chart_company_client
+):
+    """D6: each check says the shared reason again for the lines still to fix; once one line is left, its row says it
+    and nothing is said above."""
+    invoice, _ = chart_company.invoices["four_lines"]
+    page = _page(chart_company, chart_company_client, "four_lines")
+    page.set_account(1, invoice.parts[0].account)
+    answer = page.check()
+    assert answer["lines_note"].startswith("Lines 2, 3, 4: this supplier's 3 lines")
+    assert [SAID_ABOVE in view["slot"] for view in answer["lines"]] == [False, True, True, True]
+    page.set_account(2, invoice.parts[1].account)
+    page.set_account(3, invoice.parts[2].account)
+    answer = page.check()
+    assert answer["lines_note"] == "" and "went to 3 accounts" in answer["lines"][3]["slot"]
+    views = [{"state": account_lines.FIX, "note": "One reason"}, {"state": account_lines.FIX, "note": "Another"}]
+    assert account_lines.said_above(views, [1, 2]) == "" and views[0]["note"] == "One reason"  # nothing shared
 
 
 def test_a_string_the_chart_does_not_have_is_refused_and_never_replaced_by_the_account_before(

@@ -96,6 +96,11 @@ function applySections(answer, posted = null) {
   if (answer.header) applyHeader(answer.header, posted);
   if (Array.isArray(answer.taxes)) applyTaxRows(answer.taxes, posted);
   if (Array.isArray(answer.lines)) applyLineViews(answer.lines, posted);
+  const linesNote = document.querySelector("[data-lines-note]"); // why the lines to fix were left, said once (D6)
+  if (linesNote && typeof answer.lines_note === "string") {
+    linesNote.querySelector("[data-lines-note-text]").textContent = answer.lines_note;
+    linesNote.hidden = !answer.lines_note;
+  }
   if (Array.isArray(answer.supplier_accounts)) accounts.supplier = answer.supplier_accounts;
   followList(); // a list open on a box the sections drawn again have moved
   openFlaggedDetails();
