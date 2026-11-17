@@ -64,7 +64,9 @@ def test_what_it_releases_is_what_the_launcher_takes(tmp_path):
     _run([*git, "commit", "-q", "-m", "First"], repo)
     _run(["git", "tag", "v0.3.1-build.0000000"], repo)  # the last build released
     (repo / "scripts" / "launch.py").write_text("# faster\n")
-    _run([*git, "commit", "-q", "-am", "Merge pull request #140: Faster reading of scans"], repo)
+    _run([*git, "commit", "-q", "-am", "Merge pull request #140: Faster reading of scans from the inbox"], repo)
+    (repo / "scripts" / "launch.py").write_text("# plainer\n")  # GitHub's own merge subject: the title is below it
+    _run([*git, "commit", "-q", "-am", "Merge pull request #141 from someone/plainer-words\n\nPlainer words"], repo)
     sha = _run(["git", "rev-parse", "HEAD"], repo).strip()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -82,7 +84,8 @@ def test_what_it_releases_is_what_the_launcher_takes(tmp_path):
     releases = load_script("releases", "ap_script_releases_workflow")
     assert releases.TAG.match(tag).groups() == ("0.3.1", short)
     notes = (repo / "notes.md").read_text()
-    assert notes.startswith("- #140 Faster reading of scans\n") and "First" not in notes
+    assert notes.startswith("- #141 Plainer words\n- #140 Faster reading of scans from the inbox\n")
+    assert "First" not in notes
     built = releases.BUILT.search(notes)
     assert built and built.group(1) == short and releases.paths._utc(built.group(2))
     archive = repo / "dist" / f"{name}.zip"
