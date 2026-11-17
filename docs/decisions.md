@@ -6093,7 +6093,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     role with users). Segregation is unchanged: the second approval is another account's, `vouched_for`, the poster
     who approved. Every role made, changed, deleted or given is in the Activity log with who and what changed, the
     names kept in it. A restore keeps the roles with the accounts (`KEPT_TABLES`).
-  - **Nobody gives, or manages, more than their own role may do** (after a security review: B-2581): a role made,
+  - **Nobody gives, or manages, more than their own role may do** (after a security review: B-2561): a role made,
     changed or given (also to a new account) holds only permissions the person's own role has, and the accounts they
     change, reset, turn off or on or sign out everywhere may do nothing more than theirs (`permissions.beyond`; code
     covers confirm, as it opens every manager's request, so an Admin makes and manages Managers). Checked by the store

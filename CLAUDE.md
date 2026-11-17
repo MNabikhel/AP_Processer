@@ -22,12 +22,14 @@ guides, the bug log (BUGS.md), decisions (decisions.md) and the owner's to-do li
 - The database (`Store`): the package `core/store/`, one part per subject (list in its `__init__.py`): `invoices.py`
   (approvals `approve_invoice`/`final_approve`), `_base.py` (schema, `SCHEMA_VERSION`), `accounts.py` (`events`),
   backups `backups.py` + `backup_files.py` (D-143; command line `ops/backup_cmd.py`), people `users.py`, managers
-  confirming the coding `managers.py` (D-138; their email `coding/manager_mail.py`, page `web/pages/manager.py`).
-  Who the reviewer is: `web/identity.py`. Server mode: `web/roles.py` (every route needs a rule,
-  `tests/web/test_roles.py`), `web/access.py`, `web/pages/login.py`; service and updates `ops/service.py`,
-  `ops/server_update.py`; the owner's laptop serving a few colleagues `ops/share.py` (D-224; Windows CI
-  `scripts/ci/share_end_to_end.py`); the pilot tester's guide followed step by step `scripts/ci/first_day.py` (D-225;
-  Windows CI `windows-first-day`).
+  confirming the coding `managers.py` (D-138; their email `coding/manager_mail.py`, page `web/pages/manager.py`). Who
+  the reviewer is: `web/identity.py`. Server mode: `web/roles.py` (every route needs a rule naming a permission,
+  `tests/web/test_roles.py`), the permissions and built-in roles `core/permissions.py` (D-250; the built-in roles'
+  access frozen in `tests/web/test_role_permissions.py`), roles an Admin makes `core/store/roles.py`, the Admin panel
+  `web/pages/admin.py` + `admin_roles.py` + `users.py` (D-249), `web/access.py`, `web/pages/login.py`; service and
+  updates `ops/service.py`, `ops/server_update.py`; the owner's laptop serving a few colleagues `ops/share.py` (D-224;
+  Windows CI `scripts/ci/share_end_to_end.py`); the pilot tester's guide followed step by step `scripts/ci/first_day.py`
+  (D-225; Windows CI `windows-first-day`).
 - With a JD Edwards chart of accounts loaded (D-209 to D-214; the one-laptop guide: `docs/PROTOTYPE.md`): a line's
   account string `business unit.object.subsidiary` is joined and split only in `core/chart.py` (`AccountPairs`: which
   pairs exist and can be posted to); the chart's tables `core/store/chart.py`, its reader `core/chart_file.py`; the past

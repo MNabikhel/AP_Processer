@@ -89,7 +89,7 @@ def test_an_admin_never_takes_manage_users_from_themselves(people):
         store.edit_role(keeper, "People keeper", ["view"], by_user=boss)  # their own role, through the role
     assert store.role_info(keeper)["permissions"] == ["view", "users"]
     with pytest.raises(ValueError, match="more than your own role"):
-        store.set_role(boss, "admin", by_user=boss)  # nor gives themselves more (B-2581)
+        store.set_role(boss, "admin", by_user=boss)  # nor gives themselves more (B-2561)
     store.set_role(boss, "admin")  # the console
     store.set_role(ann, "clerk", by_user=boss)  # someone else's: fine while another manages the people
 
@@ -143,7 +143,7 @@ def test_a_database_of_schema_28_without_the_roles_is_brought_up_to_date(tmp_pat
 
 def test_nobody_gives_or_manages_more_than_their_own_role_may_do(people):
     """A role with Manage users and roles alone (an HR role) can't widen itself, make or give a role with more, nor
-    touch an account that may do more than it (B-2581); the console, the server's owner, is not held back."""
+    touch an account that may do more than it (B-2561); the console, the server's owner, is not held back."""
     store, boss, ann = people
     hr = store.add_role("HR", ["users"], by_user=boss)
     store.set_role(ann, hr, by_user=boss)

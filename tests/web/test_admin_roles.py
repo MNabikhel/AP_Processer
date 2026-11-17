@@ -133,7 +133,7 @@ def test_a_laptops_own_sign_in_has_no_roles_page(store, monkeypatch):
 
 def test_a_role_that_only_manages_people_never_makes_itself_admin(store):
     """An HR role (Manage users and roles alone) through the pages: it can't tick more for itself, make a role with
-    more, give more, nor demote or turn off the Admin (B-2581). The Roles page says so."""
+    more, give more, nor demote or turn off the Admin (B-2561). The Roles page says so."""
     boss = account(store, "boss", "admin", "Pat Boss")
     ann = account(store, "ann", "clerk", "Ann Lee")
     app = app_for(store)
