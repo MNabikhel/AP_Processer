@@ -145,8 +145,13 @@ def tax_context(store: Store) -> dict[str, Any]:
     posts = taxes_jde_posts(store)
     return {
         "taxes": [
-            {"type": t, "where": WHERE.get(t, ""), "treatment": treatments[t].treatment, "gl": treatments[t].gl_code,
-             "jde_posts": t in posts}
+            {
+                "type": t,
+                "where": WHERE.get(t, ""),
+                "treatment": treatments[t].treatment,
+                "gl": treatments[t].gl_code,
+                "jde_posts": t in posts,
+            }
             for t in TAX_TYPES
         ],
         "jde_posts": [t for t in TAX_TYPES if t in posts],
