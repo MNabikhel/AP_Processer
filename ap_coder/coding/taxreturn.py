@@ -84,8 +84,8 @@ MEALS_WHY = (
 # Tax charged in error (B-925): only the tax properly payable is claimable (ETA s.169); what was charged too much is
 # recovered from the vendor (s.232: a credit note), not claimed. From the findings still open when it was approved.
 WRONG_RATE = (
-    "Tax charged at the wrong rate: recover the excess from the vendor (credit note, ETA s.232), claim only the right "
-    "rate"
+    "Tax charged at the wrong rate: claim the tax at the right rate, never more than was charged (ETA s.169); recover "
+    "the excess from the vendor (credit note, ETA s.232)"
 )
 NOT_PAYABLE = (
     "Tax charged that isn't payable here (HST where GST applies: claim the GST part only; GST beside the HST: claim "

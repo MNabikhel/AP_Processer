@@ -58,6 +58,21 @@ def test_tax_charged_in_error_is_a_claim_to_check(tmp_path):
     assert b"wrong rate" in taxreturn.to_csv(report)
 
 
+def test_tax_charged_below_the_rate_is_never_claimed_at_the_rate_in_force(tmp_path):
+    """B-2722: HST charged at 13% on a Nova Scotia supply (14% in force) was flagged "Tax charged at the wrong rate:
+    recover the excess from the vendor ..., claim only the right rate": there is no excess, and the claim at 14% is
+    more than the tax paid. Only the tax charged may be claimed (ETA s.169), never more."""
+    store = _store(tmp_path)
+    under = doc([line(1, 1000.0, taxes=["HST"], cc="CC400")], [tl("HST", "NS", 0.13, 1000.0, 130.0)], prov="NS",
+                invoice_date="2025-06-10", invoice_number="NS-2")  # fmt: skip
+    _approve(store, tmp_path, under)
+    report = taxreturn.build(store, dt.date(2025, 4, 1), dt.date(2025, 6, 30))
+    (claim,) = report.claims
+    assert claim.amount == 130.0 and taxreturn.WRONG_RATE in claim.issues
+    assert "claim only the right rate" not in taxreturn.WRONG_RATE
+    assert "never more than was charged" in taxreturn.WRONG_RATE
+
+
 def test_a_finding_fixed_before_approval_is_no_risk(tmp_path):
     # Read at 15% (the finding stored when it was read), the reviewer corrected the rate to 14% and approved with
     # nothing left open: the approval's open issues are what counts.
