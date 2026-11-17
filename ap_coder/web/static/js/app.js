@@ -491,7 +491,7 @@ document.addEventListener("keydown", (event) => {
   });
 });
 
-/* The Menu buttons: the menu's own, under 1200 px (base.html: its icons only, or a bar above the page under 901 px),
+/* The Menu buttons: the bar's above the page under 901 px (base.html),
    and the review screen's with a chart of accounts (the menu is off that screen below 1820 px). One opens the whole
    menu over the page, the focus on its first link; Esc, a click or the focus outside it, or a second press closes it. */
 const MENU_TOGGLES = "[data-rail-toggle], [data-menu-toggle]";

@@ -1,7 +1,7 @@
 """The dashboard in a narrow window: a laptop zoomed in with Ctrl+scroll (a 1366-wide screen at 150% is 911 CSS
 pixels wide, at 200% 683; a 1920-wide one at 175% is 1097), and a phone (390). No page scrolls sideways, and the menu
-stays small: icons only from 901 to 1199 px, a bar with a Menu button under that, the whole menu over the page from
-the button."""
+stays small: narrower from 901 to 1199 px, its words shown (D8), a bar with a Menu button under that, the whole menu
+over the page from the button."""
 
 from __future__ import annotations
 
@@ -76,23 +76,26 @@ def test_in_a_browser_no_page_scrolls_sideways_and_the_menu_stays_small_when_zoo
 
 
 @pytest.mark.parametrize("width", [1097, 911])
-def test_in_a_browser_the_menu_shows_its_icons_only_on_a_zoomed_in_laptop(browser, demo_store, width):
-    """From 901 to 1199 px the 256 px menu took a quarter of the window and more (28% at 911); its icons only now,
-    each page's name in its tooltip and still read out by a screen reader."""
+def test_in_a_browser_the_menu_shows_its_words_on_a_zoomed_in_laptop(browser, demo_store, width):
+    """From 901 to 1199 px the 256 px menu took a quarter of the window and more (28% at 911), then its icons alone
+    left the pilot tester guessing at 150% (D8): a narrower menu now, each page's name shown in full."""
     chromium, base = browser
     page = chromium.new_page(viewport={"width": width, "height": 700})
     for path in ("/review", "/settings", f"/review/{_invoice(demo_store)}"):
         page.goto(base + path)
         look = page.evaluate(_LOOK)
-        assert not look["sideways"] and look["menu"] <= 1 / 8, (path, look)
-    link = page.locator('.rail a.nav-link[href="/exports"]')
-    assert link.get_attribute("title") == "Exports"
-    assert page.evaluate("document.querySelector('.rail a[href=\"/exports\"] .label').textContent") == "Exports"
-    assert page.get_by_role("link", name="Exports").count() == 1  # its name, though not shown
+        assert not look["sideways"] and look["menu"] <= 0.25, (path, look)
+    page.goto(base + "/review")
+    assert page.locator(".rail").bounding_box()["width"] <= 210
+    shown = page.locator(".rail .nav-link .label:visible").all()  # (the pages folded under More: hidden till opened)
+    assert len(shown) >= 8
+    for label in shown:
+        assert label.evaluate("e => e.scrollWidth <= e.clientWidth"), label.inner_text()  # whole, not cut short
+    assert page.locator("[data-rail-toggle]:visible").count() == 0  # nothing hidden to open
     page.close()
 
 
-@pytest.mark.parametrize("width", [1097, 683])
+@pytest.mark.parametrize("width", [683, 390])
 def test_in_a_browser_the_menu_button_opens_the_whole_menu_over_the_page_and_esc_closes_it(browser, width):
     chromium, base = browser
     page = chromium.new_page(viewport={"width": width, "height": 700})
