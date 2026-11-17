@@ -242,6 +242,28 @@ def test_the_remark_box_is_marked_suggested_until_visited_counts_and_is_never_cu
     assert not errors
 
 
+def test_use_each_lines_first_offer_fills_the_empty_lines_in_one_change_undo_puts_back(browser, chart_company):
+    """D5: an invoice of many lines took one click a line to take its offered account. "Use each line's first offer"
+    fills every line whose box is empty with the first account offered under it; a line with an account keeps it;
+    Undo puts the boxes back as they were."""
+    invoice_id = chart_company.invoices["four_lines"][1]
+    lines = chart_company.store.get_invoice(invoice_id)["ai_output"]["line_items"]
+    page, errors = _review(browser, chart_company, "four_lines")
+    box = '[data-grid="lines"] [data-row]:nth-child({}) input[data-account]'
+    kept = lines[1]["candidates"][-1]["account"]  # line 2 coded by hand to its last offer first
+    page.click(f'[data-grid="lines"] [data-row]:nth-child(2) [data-use-account="{kept}"]')
+    page.click("[data-first-offers]")
+    wait_until(page, lambda: page.input_value(box.format(4)) != "")
+    filled = [page.input_value(box.format(n)) for n in range(1, 5)]
+    assert filled == [lines[0]["candidates"][0]["account"], kept, lines[2]["candidates"][0]["account"],
+                      lines[3]["candidates"][0]["account"]]  # fmt: skip
+    assert "3 lines took the first account offered." in page.inner_text("body")
+    page.keyboard.press("Control+z")
+    wait_until(page, lambda: page.input_value(box.format(1)) == "")
+    assert [page.input_value(box.format(n)) for n in range(1, 5)] == ["", kept, "", ""]
+    assert not errors
+
+
 def test_the_suggested_remark_follows_the_account_picked(browser, chart_company):
     from ap_coder.ai.supplier_prior import prior_for
     from ap_coder.coding.remark import suggested

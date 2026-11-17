@@ -364,6 +364,9 @@
             <button type="button" class="btn primary sm" data-fill-go><span class="ms" aria-hidden="true">playlist_add_check</span>Use it on the lines without one</button>
           </div>
         </details>
+        {% if grid.lines | map(attribute="acct") | selectattr("state", "equalto", "fix") | selectattr("candidates") | list %}{# D5 #}
+        <button type="button" class="btn sm" data-first-offers title="Each line without an account takes the first account offered under it; lines that have one keep theirs. Undo puts them back."><span class="ms" aria-hidden="true">done_all</span>Use each line's first offer</button>
+        {% endif %}
         {% else %}
         <details class="pop" data-fill>
           <summary class="btn sm"><span class="ms" aria-hidden="true">playlist_add_check</span>Apply to all lines…</summary>

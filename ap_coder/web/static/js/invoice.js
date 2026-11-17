@@ -396,6 +396,20 @@ document.addEventListener("click", (e) => {
   const more = e.target.closest?.("[data-row-menu]"); // the row's own menu button: as a right-click on the line
   if (more) openFor(rowOf(more), more);
 });
+// "Use each line's first offer" (D5): every line whose Account box is empty takes the first account offered under it,
+// in one change Undo puts back; a line with an account, or words typed, keeps them.
+document.addEventListener("click", (e) => {
+  if (!e.target.closest?.("[data-first-offers]")) return;
+  const rows = gridRows().filter((row) => !accountBox(row)?.value.trim() && row.querySelector("[data-use-account]"));
+  if (!rows.length) {
+    toast({ text: "No line without an account has one offered under it.", tone: "info" }, 3000);
+    return;
+  }
+  const said = rows.length === 1 ? `${lineName(rows[0])} took` : `${rows.length} lines took`;
+  undoable(`${said} the first account offered.`, () => {
+    for (const row of rows) setAccount(row, row.querySelector("[data-use-account]").dataset.useAccount);
+  });
+});
 
 /** The tax rows' provinces as the server checked them: a row put in the old place of supply follows a new one
     (B-935, B-1020). Only a box that still holds what was sent is changed, and only when the rows are those sent. */
