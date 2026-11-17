@@ -208,3 +208,34 @@ def test_a_role_either_reviews_invoices_or_confirms_as_a_manager(people):
     key = store.add_role("Coder", ["view", "code"])
     with pytest.raises(ValueError, match="Confirm coding as a manager"):
         store.edit_role(key, "Coder", ["view", "code", "confirm"], by_user=boss)
+
+
+def test_an_account_added_with_a_role_made_here_is_named_by_that_roles_name_in_the_activity_log(people):
+    """B-2576: "ann.lee (Ann Lee) can log in as role-1": the role's key, not its name."""
+    store, boss, _ = people
+    key = store.add_role("AP lead", LEAD, by_user=boss)
+    store.add_user("cy", GOOD, role=key, display_name="Cy Tan", by_user=boss)
+    store.add_user("di", GOOD, role="approver", by_user=boss)
+    (cy,) = [e for e in store.events(actions=["user_added"]) if e["detail"]["username"] == "cy"]
+    (di,) = [e for e in store.events(actions=["user_added"]) if e["detail"]["username"] == "di"]
+    store.edit_role(key, "AP leads", LEAD, by_user=boss)  # the log reads as it was said then
+    assert describe(cy) == "cy (Cy Tan) can log in as AP lead"
+    assert describe(di) == "di (di) can log in as Approver"
+
+
+def test_nobody_deletes_a_role_that_may_do_more_than_theirs_and_the_refusal_reads_well(people):
+    """B-2577: a role with Manage users and roles alone could delete a role it could not change, and the refusal to
+    change one said "The role AP lead role may do more than yours"."""
+    store, boss, ann = people
+    hr = store.add_role("HR", ["users"], by_user=boss)
+    store.set_role(ann, hr, by_user=boss)
+    lead = store.add_role("AP lead", LEAD, by_user=boss)
+    with pytest.raises(ValueError, match=r"^The AP lead role may do more than yours \(See invoices"):
+        store.edit_role(lead, "AP lead", ["users"], by_user=ann)
+    with pytest.raises(ValueError, match=r"^The AP lead role may do more than yours"):
+        store.delete_role(lead, by_user=ann)
+    assert store.role_info(lead) is not None
+    helper = store.add_role("HR helper", ["users"], by_user=ann)
+    store.delete_role(helper, by_user=ann)  # one within their own: fine
+    store.delete_role(lead, by_user=boss)
+    assert store.role_info(helper) is None and store.role_info(lead) is None

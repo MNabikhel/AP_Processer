@@ -422,6 +422,10 @@ class UsersMixin:
                 (name, shown, role, hashed, int(must_change), _now()),
             )
             by = {"by_user": int(by_user)} if by_user is not None else {}
+            if role not in ROLE_LABELS:  # a role made here: its name then, as role_changed keeps it (D-250)
+                from .roles import role_name_of
+
+                by["role_name"] = role_name_of(conn, role)
             self._log(conn, "user_added", None, actor or None, {"username": name, "name": shown, "role": role, **by})
             return int(cur.lastrowid)
 

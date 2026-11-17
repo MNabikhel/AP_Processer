@@ -151,7 +151,7 @@ class RolesMixin:
             if row is None:
                 raise KeyError(key)
             before = perms.permissions_of(key, row["permissions"])
-            self._may_manage(conn, by_user, before, f"The role {row['name']}", "it")
+            self._may_manage(conn, by_user, before, f"The {row['name']}", "it")
             self._may_give(conn, by_user, kept)
             shown = self._check_name(conn, name, key)
             if perms.USERS in before and perms.USERS not in kept:
@@ -172,8 +172,9 @@ class RolesMixin:
                 change["was"] = row["name"]
             self._log(conn, "role_edited", None, actor or None, change)
 
-    def delete_role(self, key: str, *, actor: str = "") -> None:
-        """A role made here deleted, only while no account has it (turned off ones too: ``ROLE_IN_USE``)."""
+    def delete_role(self, key: str, *, actor: str = "", by_user: int | None = None) -> None:
+        """A role made here deleted, only while no account has it (turned off ones too: ``ROLE_IN_USE``), and never by
+        ``by_user`` when it may do more than theirs (``MANAGES_MORE``), as for changing it."""
         if key in perms.BUILT_IN:
             raise ValueError(f"{perms.ROLE_LABELS[key]} is a built-in role: it can't be deleted.")
         with self._conn() as conn:
@@ -181,6 +182,7 @@ class RolesMixin:
             row = conn.execute(f"SELECT * FROM roles WHERE key = ? AND {LIVE}", (key,)).fetchone()
             if row is None:
                 raise KeyError(key)
+            self._may_manage(conn, by_user, perms.permissions_of(key, row["permissions"]), f"The {row['name']}", "it")
             count = conn.execute("SELECT COUNT(*) FROM users WHERE role = ?", (key,)).fetchone()[0]
             if count:
                 people = f"{count} account{'s' if count != 1 else ''}"

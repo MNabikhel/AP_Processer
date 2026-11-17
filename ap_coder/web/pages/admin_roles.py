@@ -84,8 +84,9 @@ def save_role(request: Request, key: str, name: str = Form(""),
 def delete_role(request: Request, key: str) -> JSONResponse:
     users.server_only(request)
     role = _role(request, key)
+    me = identity.person()
     try:
-        get_store(request).delete_role(key, actor=reviewer())
+        get_store(request).delete_role(key, actor=reviewer(), by_user=me.user_id if me else None)
     except ValueError as exc:
         return refuse(str(exc))
     return done(request, PATH, f"Role {role['name']} deleted.")
