@@ -132,6 +132,9 @@ TOUCHPOINTS = {
     "no redirect followed); never run by the app",
     "scripts/launch.py": "pip --no-index from the wheelhouse (PyPI only with AP_ALLOW_INTERNET=1); socket binds "
     "127.0.0.1; webbrowser opens http://localhost",
+    "scripts/releases.py": "a newer tested AP Coder (D-247): only the launcher, only AP Coder from GitHub's ZIP or a "
+    "checkout (never the offline bundle, never with AP_ALLOW_INTERNET=0 or AP_UPDATE_CHECK=0), one GET of GitHub's "
+    "releases, and the ZIP only once the person said yes; GitHub's hosts only, every redirect checked",
     "scripts/running.py": "the dashboard on 127.0.0.1 (no proxy)",
     "scripts/fetch_models.py": "model download only with AP_ALLOW_INTERNET=1 (else copied from models/)",
     "scripts/check.py": "git status on this checkout, for the changed files (no network)",
@@ -452,6 +455,26 @@ def launch_module(monkeypatch):
     module = load_script("launch", "ap_script_launch_offline")
     yield module
     sys.modules.pop("ap_script_launch_offline", None)
+
+
+@pytest.mark.parametrize("how", ["offline bundle", "AP_ALLOW_INTERNET=0"])
+def test_the_launcher_never_asks_github_for_a_release_offline(offline_guard, launch_module, tmp_path, monkeypatch, how):
+    """D-247: the check for a newer tested AP Coder is for GitHub's ZIP only: the offline bundle, or the code alone with
+    AP_ALLOW_INTERNET=0, sends nothing, its switch left on."""
+    _bait(monkeypatch)
+    here = tmp_path / "AP_Processer"
+    (here / "ap_coder").mkdir(parents=True)
+    (here / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.3.0"\n')
+    monkeypatch.setattr(launch_module, "ROOT", here)
+    monkeypatch.setattr(launch_module.fetch_models, "BUNDLE_MODELS", here / "models")
+    monkeypatch.delenv("AP_UPDATE_CHECK", raising=False)
+    if how == "offline bundle":
+        (here / "bundle_manifest.json").write_text("{}")
+    else:
+        monkeypatch.setenv("AP_ALLOW_INTERNET", "0")
+    monkeypatch.setattr(launch_module.releases, "newest", lambda: pytest.fail("GitHub asked"))
+    assert launch_module.offer_update(launch_module.parse([])[0], []) is None
+    assert offline_guard.attempts == []
 
 
 @pytest.mark.skipif(importlib.util.find_spec("pip") is None, reason="pip isn't installed in this Python")

@@ -1,0 +1,67 @@
+# A tested build (D-247): once CI passed on main for a commit, a GitHub release of it, which the launcher of AP Coder
+# from GitHub's ZIP (or a checkout) asks about at its next start (scripts/releases.py): "Update now? [Y/n]". Its tag
+# v<version>-build.<commit>, its source ZIP laid out as GitHub's own (one folder, ap_coder/BUILD stamped by git
+# archive), SHA256SUMS, and notes: the subjects of what was merged since the last build, then the build line the
+# launcher orders builds by. The pilot releases (release.yml) are another kind: the launcher leaves them out.
+name: Tested builds
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tested-builds
+  cancel-in-progress: false  # (each green commit in turn; an older one after a newer is left out below)
+
+jobs:
+  build:
+    name: Release the tested commit
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - name: Tag, ZIP, SHA256SUMS and notes, then the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' pyproject.toml | head -1)
+          short=$(git rev-parse --short=7 "$SHA")
+          tag="v$version-build.$short"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "$tag: released already"
+            exit 0
+          fi
+          last=$(git tag --list 'v*-build.*' --sort=-creatordate | head -1)
+          if [ -n "$last" ] && git merge-base --is-ancestor "$SHA" "$last^{commit}"; then
+            echo "$tag: $last is newer and released already"
+            exit 0
+          fi
+          name="AP_Processer-$version-build.$short"
+          mkdir dist
+          git archive --format=zip --prefix="$name/" -o "dist/$name.zip" "$SHA"
+          (cd dist && sha256sum "$name.zip" > SHA256SUMS && cat SHA256SUMS)
+          {
+            if [ -n "$last" ]; then
+              git log --first-parent --format='%s' "$last..$SHA"
+            else
+              git log --first-parent --format='%s' -n 10 "$SHA"
+            fi | sed -E 's/^Merge pull request #([0-9]+)[^:]*: */#\1 /; s/^/- /'
+            echo
+            echo "Build $short, committed $(TZ=UTC git show -s --date=format-local:'%Y-%m-%dT%H:%M:%SZ' --format=%cd "$SHA")"
+          } > notes.md
+          cat notes.md
+          gh release create "$tag" --target "$SHA" --title "AP Coder $version (build $short)" --notes-file notes.md \
+            --latest=false "dist/$name.zip" dist/SHA256SUMS

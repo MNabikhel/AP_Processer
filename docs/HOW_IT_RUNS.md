@@ -15,7 +15,9 @@ internal system, D-104) and server mode, which listens on the network over HTTPS
 ([section 10](#10-the-network-every-place-and-its-gate)).
 The setup is offline too from the offline bundle; from the code alone (GitHub's ZIP or a git checkout: no
 `bundle_manifest.json`, `wheelhouse/` or `models/`) it downloads its packages and OCR models once, unless
-`AP_ALLOW_INTERNET=0` (`scripts/launch.py:plain_download`); the dashboard it starts stays offline.
+`AP_ALLOW_INTERNET=0` (`scripts/launch.py:plain_download`); the dashboard it starts stays offline. Its launcher also
+asks GitHub once a start for a newer tested release, and downloads one only when the person says yes (D-247,
+[section 6](#6-update-and-takeover-from-an-older-install)).
 
 Contents: [1 The files](#1-the-files-that-start-ap-coder) ·
 [2 Flowchart](#2-the-launcher-at-a-glance) ·
@@ -222,6 +224,16 @@ in ...: use its shortcut* (the newer one is opened when it runs), and it puts it
 it up. A database a newer AP Coder made stops it too (`database_too_new(early=True)`, sqlite alone). When the current
 install is an older one (`older_install`), the window asks *Update it to Y? ... [Y/n]* before anything is stopped,
 recorded or pointed here; No changes nothing. `--yes`, `AP_NO_PAUSE=1` or no terminal: no question, as before.
+
+**A newer tested release** (`scripts/launch.py:offer_update`, `scripts/releases.py`, D-247): right after that, in
+phase 1, AP Coder from GitHub's ZIP or a checkout asks GitHub's releases for the newest tested build (tag
+`v<version>-build.<commit>`, made by `.github/workflows/builds.yml` once CI passed on main). Newer than this folder (a
+higher version, or the same one committed later): said with its notes, then *Update now? [Y/n]*. Yes: its ZIP is
+downloaded beside this folder, checked against its SHA256SUMS, unzipped into a new folder beside this one (a name that
+would land outside it refuses the ZIP), and that folder's own `APProcessor` is run in this window
+(`launch.handover`, this start's lock let go; `AP_UPDATE_FROM` tells it the takeover was said yes to), which takes over
+as below. No: remembered for that release (`update_skipped` in the record; `--update` asks again). A failure is said
+and this version starts.
 
 **Already running** (`scripts/running.py:take_over`, at the start of `run`): candidate ports are the one asked for,
 this folder's last, every install's last, 8501, and the one in `<data>/.ap_coder_server.json`. On each:
@@ -650,6 +662,7 @@ messages, so it stays on the computer like the data. The dashboard's Activity pa
 | 18 | `ap_coder/erp/hub/run.py:export` | the finance hub feed: a shared folder, or OneLake (`ap_coder/erp/hub/onelake.py:push_allowed`) | off until an Admin turns it on (Settings → Finance hub); OneLake only with `AP_ALLOW_INTERNET=1` |
 | 19 | `ap_coder/erp/jde_ais.py:internal_address` | the company's JD Edwards AIS Server, its saved address only | off until an Admin sets it up (Settings → JD Edwards E1); a named internal system (D-104): an address on the internet is refused unless `AP_ALLOW_INTERNET=1` |
 | 20 | server mode (`ap_coder/web/server.py:serve`) | listens on every network card, over HTTPS (inbound) | only on a server set up for it (`AP_SERVER_MODE=1`, [SERVER.md](SERVER.md)) |
+| 21 | `scripts/releases.py:newest`, `take` (from `scripts/launch.py:offer_update`) | api.github.com: one GET of the repository's releases (no identifier sent); once the person says yes, the release's ZIP and SHA256SUMS from github.com and the hosts it redirects to (objects / release-assets.githubusercontent.com), every redirect checked | only the launcher of the code alone, GitHub's ZIP or a checkout (`plain_download`: never the offline bundle, never with `AP_ALLOW_INTERNET=0`), not with `--no-update`, `AP_UPDATE_CHECK=0`, `--no-start`, server mode or a demo; 5 seconds at most; the download only after *Update now? [Y/n]* (D-247) |
 
 Tests: `tests/offline/test_offline*.py`, `tests/offline/test_network_gates.py`, and a web test that fails if a page connects out.
 

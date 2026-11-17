@@ -390,7 +390,17 @@ whole data folder.
 
 ## Updating AP Coder
 
-When IT gives you a new offline bundle, or you download a new GitHub ZIP:
+**From GitHub's ZIP, AP Coder asks for you** (D-247). Each time you start it, it asks GitHub (one request, nothing
+about you or this computer sent) whether a newer *tested* version is out: one that passed all of AP Coder's checks on
+GitHub. When there is one, the window says which, with what is new, and asks *Update now? [Y/n]*. Enter (or *y*)
+downloads it from GitHub, checks it is the file GitHub lists, unzips it into a new folder beside this one, and
+starts it: it takes over as below. *n* starts this version and does not ask about that one again
+(`APProcessor.bat --update` asks again). It never updates by itself, never with nobody at the window, and never from
+the offline bundle (IT's bundle asks nothing: IT gives you the next one). When GitHub can't be reached, the window says
+*Couldn't check for a newer version of AP Coder; starting this one*, within 5 seconds. To switch the question off:
+start with `--no-update` once, or set `AP_UPDATE_CHECK=0` (e.g. `setx AP_UPDATE_CHECK 0`).
+
+When IT gives you a new offline bundle, or you download a new GitHub ZIP yourself:
 
 1. Unzip it **anywhere**: a new folder (e.g. `C:\APCoder\app-0.3`) is fine, and so is unzipping it over
    the old folder: when Windows asks about files with the same names, choose *Replace the files in the
