@@ -93,7 +93,7 @@
     {{ ui.avatar(p.vendor_name or p.po_number) }}
     <div>
       <div><b>{{ p.po_number }}</b> {{ ui.pill(*detail.pill) }}</div>
-      <div class="muted">{{ p.vendor_name }} · updated {{ p.updated_at | time_ago }}</div>
+      <div class="muted">{{ p.vendor_name }} · {% if p.currency %}in {{ p.currency }}{% else %}no currency in its file: taken as CAD{% endif %} · updated {{ p.updated_at | time_ago }}</div>
     </div>
   </div>
   <div class="table-wrap">
@@ -108,7 +108,7 @@
         </tr>
         {% endfor %}
       </tbody>
-      <tfoot><tr><td></td><td>Total</td><td></td><td></td><td></td><td></td><td class="r">{{ detail.total | money }}</td><td></td><td></td></tr></tfoot>
+      <tfoot><tr><td></td><td>Total</td><td></td><td></td><td></td><td></td><td class="r">{{ detail.total | money(p.currency) }}</td><td></td><td></td></tr></tfoot>
     </table>
   </div>
   {% if detail.invoices %}

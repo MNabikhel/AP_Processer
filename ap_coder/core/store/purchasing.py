@@ -179,13 +179,16 @@ class PurchasingMixin:
             for key, order in orders.items():
                 head = order["row"]
                 status = "closed" if all(r.get("status") == "closed" for r in order["lines"]) else OPEN
+                # The PO's currency: its lines' first ('' when the file gives none: taken as CAD, B-2760).
+                currency = next((r["currency"] for r in order["lines"] if r.get("currency")), "")
                 conn.execute(
-                    """INSERT INTO purchase_orders (po_key, po_number, vendor_name, vendor_key, status, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(po_key) DO UPDATE SET po_number = excluded.po_number,
-                       vendor_name = excluded.vendor_name, vendor_key = excluded.vendor_key,
-                       status = excluded.status, updated_at = excluded.updated_at""",
+                    """INSERT INTO purchase_orders (po_key, po_number, vendor_name, vendor_key, status, updated_at,
+                       currency) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(po_key) DO UPDATE SET
+                       po_number = excluded.po_number, vendor_name = excluded.vendor_name,
+                       vendor_key = excluded.vendor_key, status = excluded.status, updated_at = excluded.updated_at,
+                       currency = excluded.currency""",
                     (key, head["po_number"], head.get("vendor_name") or "", vendor_key(head.get("vendor_name") or ""),
-                     status, now),
+                     status, now, currency),
                 )  # fmt: skip
                 conn.execute("DELETE FROM po_lines WHERE po_key = ?", (key,))
                 used: set[int] = set()

@@ -52,6 +52,8 @@ PROPOSED = "proposed: not approved yet"
 EXPORTED_LATE = "exported after the month end"
 # An expected recurring invoice not accrued: its vendor's received, not invoiced PO lines are, and it would bill them.
 ON_PO = "left out: its received, not invoiced purchase-order lines are accrued instead"
+# A received, not invoiced line of a PO whose file gave no currency, on a schedule with other currencies (B-2760).
+CAD_ASSUMED = "currency assumed CAD: the purchase-order file gave none"
 # The export batches made after a period end (``?``): their invoices were not in the ERP at that period end (D-133).
 _LATE_BATCHES = "SELECT id FROM export_batches WHERE substr(created_at, 1, 10) > ?"
 # The Month-end page's schedule: under a stream of changes (100 people approving) worked out again at most this often
@@ -71,6 +73,7 @@ class Accrual:
     currency: str = "CAD"
     note: str = ""
     old: bool = False  # dated more than OLD_DAYS before the period end: accrued, flagged for AP to check
+    cad_assumed: bool = False  # of a PO whose file gave no currency: CAD, as taken (B-2760)
 
 
 # Each received PO's accruals as last worked out in this process, by database and period end: {PO: (a digest of what
@@ -87,7 +90,7 @@ PARTS_KEPT = 8  # the databases and period ends kept
 PARTS_ANSWER = "received_parts"
 # The accruals as they are kept for every process (``Store.shared_answer``, ``keep_answer``): each its fields in
 # ``Accrual``'s order. Another format when what is kept changes, so what an older AP Coder kept is worked out again.
-ACCRUALS_FORMAT = "accruals-1"
+ACCRUALS_FORMAT = "accruals-2"
 _FIELDS = tuple(f.name for f in fields(Accrual))
 
 
@@ -214,7 +217,9 @@ def _accrued(full: dict, lines: list) -> list[Accrual]:
                 li["gl_code"],
                 li["cost_center"],
                 times(qty, li["unit_price"]),
+                full["currency"] or "CAD",
                 note=f"{qty:g} received and not invoiced at {li['unit_price']:,.2f}",
+                cad_assumed=not full["currency"],
             )  # fmt: skip
         )
     return out
@@ -456,15 +461,23 @@ def by_gl_columns(accruals: list[Accrual]) -> tuple[list[str], list[tuple[str, d
     return currencies, sorted(rows, key=lambda r: -max(r[1].values()))
 
 
+def said_cad(accruals: list[Accrual]) -> bool:
+    """Whether the PO lines taken as CAD, their file giving no currency, are said to be: on a schedule in other
+    currencies too, where CAD is a guess that matters (B-2760); one all in CAD says nothing of it."""
+    return any(a.cad_assumed for a in accruals) and any((a.currency or "CAD") != "CAD" for a in accruals)
+
+
 def to_csv(accruals: list[Accrual], period_end: dt.date) -> bytes:
     out = io.StringIO()
     w = csv.writer(out)
     w.writerow([f"Accruals at {period_end.isoformat()}"])
     w.writerow(["Source", "Vendor", "Reference", "Description", "GL account", "Cost center", "Amount", "Currency",
                 "Note"])  # fmt: skip
+    said = said_cad(accruals)
     for a in accruals:
+        note = f"{a.note}; {CAD_ASSUMED}" if a.cad_assumed and said else a.note
         w.writerow(csv_row([a.source, a.vendor, a.reference, a.description, a.gl_code, a.cost_center,
-                            f"{a.amount:.2f}", a.currency, a.note]))  # fmt: skip
+                            f"{a.amount:.2f}", a.currency, note]))  # fmt: skip
     return ("\ufeff" + out.getvalue()).encode("utf-8")
 
 

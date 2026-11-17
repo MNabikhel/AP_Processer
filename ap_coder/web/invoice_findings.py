@@ -134,6 +134,7 @@ CODE_FIELDS = {
     "INVOICE_DATE_NOT_FOUND": "invoice_date", "OLD_INVOICE_DATE": "invoice_date", "FUTURE_INVOICE_DATE": "invoice_date",
     "DUE_BEFORE_INVOICE": "due_date", "JDE_DATE_RANGE": "invoice_date",
     "CURRENCY_UNKNOWN": "currency", "CURRENCY_FORMAT": "currency", "JDE_CURRENCY": "currency",
+    "PO_CURRENCY_DIFFERS": "currency",
     "PO_UNKNOWN": "po_number", "PO_CLOSED": "po_number", "PO_VENDOR_MISMATCH": "po_number", "JDE_PO_LONG": "po_number",
     "SUBTOTAL_MISMATCH": "subtotal", "TOTAL_MISMATCH": "grand_total", "TAX_LINES_TOTAL_MISMATCH": "tax_total",
     "JDE_TAX_AREA": "ship_to_province",

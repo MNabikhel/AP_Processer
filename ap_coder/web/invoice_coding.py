@@ -132,15 +132,15 @@ def po_section(store: Store, coding: InvoiceCoding, invoice_id: int) -> dict[str
             if received:
                 qty += f" / {_fmt_qty(m.received)}"
         pills = [(flags[p], "info" if p == "coding" else "warn") for p in m.problems if p in flags] or [("OK", "ok")]
-        left = match.left[m.po_line]
+        left = match.left.get(m.po_line)  # (none: the PO and the invoice in two currencies, B-2760)
         rows.append({"line": m.invoice_line, "description": m.description,
                      "po_line": f"{m.po_line} · {m.po_description}",
                      "coding": " · ".join(x for x in (f"GL {m.po_gl}" if m.po_gl else "", m.po_cc) if x),
                      "qty": qty, "price": signed(m.unit_price),
                      "price_po": signed(m.po_unit_price) if "price" in m.problems else "",
-                     "left": _left_text(left.left), "over": left.left < 0, "left_how": _left_how(left),
-                     "pills": pills})  # fmt: skip
-    notes = [f"PO total {signed(po.get('total'))}"]
+                     "left": _left_text(left.left) if left else "—", "over": bool(left and left.left < 0),
+                     "left_how": _left_how(left) if left else match.currencies, "pills": pills})  # fmt: skip
+    notes = [f"PO total {signed(po.get('total'))}" + (f" {po['currency']}" if po.get("currency") else "")]
     if match.other_invoices:
         notes.append(f"{signed(match.billed_before)} already invoiced on "
                      + ", ".join(f"#{o['id']}" for o in match.other_invoices[:5]))  # fmt: skip
@@ -150,12 +150,15 @@ def po_section(store: Store, coding: InvoiceCoding, invoice_id: int) -> dict[str
     how = ("Left to expense: each PO line's amount less what this and the other invoices bill on it"
            + ("; where the PO import gave an open amount (as the ERP had it at the last PO import), that amount "
               "less this invoice and the ones not exported yet" if opened else "") + ".")  # fmt: skip
+    if match.currencies:
+        how = f"Left to expense: not worked out, as {match.currencies}."
     return {
         "found": True, "label": label, "rows": rows, "received": received,
         "status": (f"{plural(problems, 'line')} to check", "warn") if problems else ("Matches the PO", "ok"),
         "notes": " · ".join(notes) + ". Billed quantities include earlier invoices on this PO. " + how,
         "differs": len(match.coding_differs),
-        "total_left": _left_text(match.total_left), "total_over": match.total_left < 0,
+        "total_left": "—" if match.currencies else _left_text(match.total_left),
+        "total_over": not match.currencies and match.total_left < 0,
     }  # fmt: skip
 
 
