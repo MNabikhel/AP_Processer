@@ -26,7 +26,7 @@ from typing import Any
 
 from .. import permissions as perms
 from ._base import _now
-from .dialect import begin_write
+from .dialect import begin_write, in_list, nocase
 
 CUSTOM = "role-"  # the key of a role made here: role-1, role-2...
 MAX_ROLE_NAME = 40
@@ -39,8 +39,6 @@ MANAGES_MORE = ("{whose} role may do more than yours ({missing}): someone whose 
 BOTH = ("A role either reviews invoices or confirms coding as a manager: untick Review and code invoices or Confirm "
         "coding as a manager (a role that reviews invoices opens every manager's request already).")  # fmt: skip
 LIVE = "deleted_at = ''"  # a role not deleted
-_MANAGES = (f"(users.role = '{perms.ADMIN}' OR users.role IN (SELECT r.key FROM roles r WHERE EXISTS (SELECT 1 FROM "
-            f"json_each(r.permissions) WHERE value = '{perms.USERS}')))")  # fmt: skip
 
 
 def role_name_of(conn: Any, key: str) -> str:
@@ -90,7 +88,7 @@ class RolesMixin:
         """The roles made here, by name, each with how many accounts have it (turned off ones too)."""
         with self._conn() as conn:
             rows = conn.execute("SELECT r.*, (SELECT COUNT(*) FROM users u WHERE u.role = r.key) AS people FROM "
-                                f"roles r WHERE {LIVE} ORDER BY r.name COLLATE NOCASE").fetchall()  # fmt: skip
+                                f"roles r WHERE {LIVE} ORDER BY {nocase('r.name')}").fetchall()  # fmt: skip
         return [_row(r, int(r["people"])) for r in rows]
 
     def all_roles(self) -> list[dict[str, Any]]:
@@ -115,7 +113,7 @@ class RolesMixin:
             raise ValueError(f"{shown} is a built-in role: give yours another name.")
         if re.fullmatch(re.escape(CUSTOM) + r"\s*\d+", folded):  # a role's key (the console takes a key or a name)
             raise ValueError(f"{shown} is how AP Coder names a role inside: give yours another name.")
-        taken = conn.execute(f"SELECT name FROM roles WHERE name = ? COLLATE NOCASE AND key != ? AND {LIVE}",
+        taken = conn.execute(f"SELECT name FROM roles WHERE {nocase('name')} = ? AND key != ? AND {LIVE}",
                              (shown, key))  # fmt: skip
         if (found := taken.fetchone()) is not None:
             raise ValueError(f"There is already a role {found[0]}.")
@@ -195,7 +193,10 @@ class RolesMixin:
     @staticmethod
     def _active_admins(conn: Any) -> int:
         """The active accounts that manage the people: an Admin's, or a role made here with ``users``."""
-        return int(conn.execute(f"SELECT COUNT(*) FROM users WHERE active = 1 AND {_MANAGES}").fetchone()[0])
+        keys = [r["key"] for r in conn.execute("SELECT key, permissions FROM roles").fetchall()
+                if perms.USERS in json.loads(r["permissions"] or "[]")]  # fmt: skip
+        sql = f"SELECT COUNT(*) FROM users WHERE active = 1 AND (role = ? OR {in_list('role')})"
+        return int(conn.execute(sql, (perms.ADMIN, json.dumps(keys))).fetchone()[0])
 
     @staticmethod
     def _role_permissions(conn: Any, role: str) -> list[str]:
