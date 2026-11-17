@@ -223,10 +223,10 @@ def test_the_setup_step_names_the_self_tests_state(store, monkeypatch):
     assert step("off")[0] == "todo" and "Start server, then Check again" in step("off")[2]
 
 
-def test_the_rail_calls_the_manual_import_import_invoices(client):
-    """The review queue is the work list; the page that brings invoices in by hand is "Import invoices" (same URL)."""
+def test_the_rail_calls_the_manual_import_add_invoices(client):
+    """The review queue is the work list; the page that brings invoices in by hand is "Add invoices" (same URL)."""
     text = client.get("/review").text
-    assert 'href="/process"' in text and "Import invoices" in text and "Process invoices" not in text
+    assert 'href="/process"' in text and "Add invoices" in text and "Process invoices" not in text
 
 
 def test_retry_reads_again_only_an_invoice_that_failed(client, demo, monkeypatch, tmp_path):

@@ -68,7 +68,7 @@ def test_the_next_step_walks_through_them_one_by_one(fresh):
     assert f'href="{process.JDE_LINKS[process.HISTORY_STEP]}"' in card()
     fresh.import_history([{"vendor_name": "Northwind Supply", "description": "Copy paper", "gl_code": "6000",
                            "cost_center": "", "amount": 50.0, "date": "2026-01-05"}])  # fmt: skip
-    assert "Import your first invoices" in card()
+    assert "Add your first invoices" in card()
     # The checklist counts every row it shows, on both pages (B-503).
     welcome = re.search(r"aria-label='(\d+)/(\d+)'", client.get("/review").text).groups()
     assert welcome == re.search(r"(\d+) of (\d+) done", client.get("/process").text).groups()
@@ -89,7 +89,7 @@ def test_without_jd_edwards_the_rows_show_but_the_next_step_is_unchanged(fresh):
     assert process.JDE_STEP not in labels and process.VENDOR_STEP in labels and process.HISTORY_STEP in labels
     load_sample_setup(fresh)
     page = _client(fresh).get("/review").text
-    assert "Import your first invoices" in page.split('class="card next-step"', 1)[1] and WHY in page
+    assert "Add your first invoices" in page.split('class="card next-step"', 1)[1] and WHY in page
 
 
 def test_the_links_open_the_import_they_point_to(fresh):

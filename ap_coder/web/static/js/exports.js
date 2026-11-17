@@ -1,5 +1,14 @@
-/* Exports: the ticked invoices' count on the Export button, and the custom layout's live preview. */
+/* Exports: the ticked invoices' count on the Export button, the batch just made downloaded as the page opens (Simple
+   screens: Export downloads in the same click), and the custom layout's live preview. */
 import { escapeHtml, post } from "./app.js";
+
+const auto = document.querySelector("a[data-auto-download]");
+if (auto) {
+  const url = new URL(location.href);
+  url.searchParams.delete("get"); // once: a reload of the page does not download it again
+  history.replaceState(history.state, "", url);
+  auto.click();
+}
 
 const form = document.getElementById("export-form");
 if (form && document.getElementById("export-go")) { // (Read-only on the server: the list without the button, D-98)

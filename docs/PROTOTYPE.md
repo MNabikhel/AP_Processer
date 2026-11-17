@@ -63,7 +63,7 @@ team's; it opens it only with `APProcessor.bat --without-sign-in`, typed at ever
 
 A new installation shows the short menu ("Simple screens"): **To review**, **Add invoices**, **To key into JDE**,
 **Find an invoice**, **What was learned**, **Rules**, and under **Setup**: GL accounts & tax, JD Edwards files,
-Vendors, Activity, Settings; then Help. **Settings → About → Screens** (*Everything*) shows every page again.
+Suppliers, Activity, Settings; then Help. **Settings → About → Screens** (*Everything*) shows every page again.
 
 AP Coder's commands (`python -m ap_coder ...`, in sections 2, 4 and 6) are typed in **`scripts\terminal.bat`**:
 double-click it in AP Coder's folder for a command prompt there with AP Coder's own Python. A plain command prompt's
@@ -224,13 +224,13 @@ and how what it proposed compares with what was keyed; `proposed_score.md` has e
      last paid from, else the default of the invoice's currency; pick another from the list. An invoice in a
      currency no bank account is in gets a warning and is not held.
    - **Approve** (Ctrl+Enter). An invoice whose accounts are all guesses asks for a reason first.
-3. **To key into JDE:** with *JD Edwards keying sheet* chosen (a new installation opens on it), **Export N
-   invoices** puts the approved invoices on a **keying sheet** and **Download batch N** gives it (Excel): one block a
+3. **To key into JDE:** **Export N invoices** puts the approved invoices on a **keying sheet** and downloads it in
+   the same click (Excel; **Download it again** if you need another copy): one block a
    voucher, the header fields JD Edwards asks for (supplier number, invoice number, dates, currency, gross amount, tax
    explanation code, tax rate/area, tax amount, taxable amount, and the G/L bank account once bank accounts are
    entered), then one row a line (account, amount, remark). Print it or keep it beside JD Edwards and key from it.
-   An invoice that is not ready is listed with why and is not put on the sheet. The same page makes the JD Edwards
-   batch files (*JD Edwards E1 (Z-tables)*), for when the JDE team can load one.
+   An invoice that is not ready is listed with why and is not put on the sheet. Under **Other formats and tools** the
+   same page makes the JD Edwards batch files (*JD Edwards E1 (Z-tables)*), for when the JDE team can load one.
 
 What AP Coder leaves to a person, always with a reason: a supplier it does not know, a line it cannot code with
 confidence, an invoice whose numbers do not add up, two tax areas on one invoice, a possible duplicate, a document

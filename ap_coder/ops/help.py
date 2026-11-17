@@ -1009,7 +1009,7 @@ FAQ: list[tuple[str, str]] = [
     (
         "Our invoices arrive by email. Do I have to save each PDF?",
         "No: save the email itself into the invoices folder (classic Outlook: drag it there, a .msg; Outlook on the "
-        "web or new Outlook: Download, a .eml), or upload it on Import invoices. Each email is sorted: invoices "
+        "web or new Outlook: Download, a .eml), or upload it on Add invoices. Each email is sorted: invoices "
         "and credit notes go to the review queue, statements to Statements, and anything else (a reminder, a "
         "quote, a bank-detail change, flagged as possible fraud) waits under Emails that need a person on Import "
         "invoices. Signature logos are left out. IT can have the AP mailbox save every email there (the mailbox "

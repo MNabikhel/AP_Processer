@@ -11,7 +11,7 @@ import pytest
 
 from ap_coder.core import chart
 from ap_coder.web import account_lines
-from ap_coder.web.account_lines import LINE_ACCOUNT
+from ap_coder.web.account_lines import LINE_ACCOUNT, SAID_ABOVE
 from ap_coder.web.invoice_form import LINE_REMARK
 from tests.conftest import copy_database
 from tests.review_page import ReviewPage
@@ -54,12 +54,37 @@ def test_a_line_left_for_a_person_is_marked_with_why_and_the_accounts_offered(ch
     proposed = chart_company.store.get_invoice(page.id)["ai_output"]["line_items"]
     rows = _rows(page.text)
     assert len(rows) == 4
+    # D6: the reason the four lines share ("This supplier's 3 lines ... went to 3 accounts ...") is said once, above
+    # them, not on every line
+    said = re.search(r"<p class=\"acct-said\" data-lines-note><span [^>]*>error</span><span [^>]*>([^<]*)</span>",
+                     page.text).group(1)  # fmt: skip
+    assert html_unescape(said) == f"Lines 1, 2, 3, 4: t{proposed[0]['reasoning_justification'][1:]}"
     for row, line in zip(rows, proposed, strict=True):
         assert 'class="acct-row is-fix"' in row and f'name="{LINE_ACCOUNT}" value=""' in row
-        assert "<b>To fix:</b>" in row and "went to 3 accounts" in row  # the line's own reason
+        slot = row.split('data-live-line="slot">', 1)[1]
+        assert f"<b>To fix:</b> <span data-acct-why>{SAID_ABOVE}</span>" in slot and "went to 3 accounts" not in slot
         offered = re.findall(r'data-use-account="([^"]+)"', row)
         assert offered == [c["account"] for c in line["candidates"]][:3] and len(offered) == 3  # the first three
         assert line["candidates"][0]["name"] in row and "of this supplier" in row  # its name and why it is offered
+
+
+def test_the_reason_lines_share_is_said_above_them_by_each_check_and_goes_back_to_a_line_left_alone(
+    chart_company, chart_company_client
+):
+    """D6: each check says the shared reason again for the lines still to fix; once one line is left, its row says it
+    and nothing is said above."""
+    invoice, _ = chart_company.invoices["four_lines"]
+    page = _page(chart_company, chart_company_client, "four_lines")
+    page.set_account(1, invoice.parts[0].account)
+    answer = page.check()
+    assert answer["lines_note"].startswith("Lines 2, 3, 4: this supplier's 3 lines")
+    assert [SAID_ABOVE in view["slot"] for view in answer["lines"]] == [False, True, True, True]
+    page.set_account(2, invoice.parts[1].account)
+    page.set_account(3, invoice.parts[2].account)
+    answer = page.check()
+    assert answer["lines_note"] == "" and "went to 3 accounts" in answer["lines"][3]["slot"]
+    views = [{"state": account_lines.FIX, "note": "One reason"}, {"state": account_lines.FIX, "note": "Another"}]
+    assert account_lines.said_above(views, [1, 2]) == "" and views[0]["note"] == "One reason"  # nothing shared
 
 
 def test_a_string_the_chart_does_not_have_is_refused_and_never_replaced_by_the_account_before(
@@ -122,6 +147,54 @@ def test_a_line_a_person_coded_no_longer_says_to_pick_the_account(chart_company,
     assert page.approve()["ok"]
     stored = chart_company.store.get_invoice(page.id)["final_output"]["line_items"]
     assert [li["reasoning_justification"] for li in stored] == ["Picked by a person."] * 4
+
+
+def test_lines_the_first_offer_filled_say_so_and_are_learned_as_suggestions_taken(chart_company, chart_company_client):
+    """D5: the lines "Use each line's first offer" filled said "picked by a person", and an approval learned them
+    as a person's own coding (weighed as a correction in the supplier's coding, 5 against 3). They say "first offer,
+    taken with one click" under the box and in their reason, and are learned as the suggestion taken; a line a person
+    picked among the offers is still theirs."""
+    from ap_coder.coding.review import FIRST_OFFER, PICKED
+
+    store = chart_company.store
+    page = _page(chart_company, chart_company_client, "four_lines")
+    proposed = store.get_invoice(page.id)["ai_output"]["line_items"]
+    for n in (1, 3, 4):
+        page.take_first_offer(n, proposed[n - 1]["candidates"][0]["account"])
+    page.set_account(2, proposed[1]["candidates"][-1]["account"])  # a person's own pick among the offers
+    caps = [row["cap"] for row in page.check()["lines"]]
+    assert ["first offer, taken with one click" in cap for cap in caps] == [True, False, True, True], caps
+    assert "picked by a person" in caps[1]
+    assert page.approve()["ok"]
+    stored = store.get_invoice(page.id)["final_output"]["line_items"]
+    assert [li["decided_by"].get("first_offer", False) for li in stored] == [True, False, True, True]
+    assert [li["reasoning_justification"].startswith(FIRST_OFFER) for li in stored] == [True, False, True, True]
+    assert stored[1]["reasoning_justification"].startswith(PICKED)
+    with store._conn() as conn:
+        learned = conn.execute("SELECT line_number, outcome, suggested_gl FROM feedback WHERE invoice_id = ? "
+                               "ORDER BY line_number", (page.id,)).fetchall()  # fmt: skip
+    assert [(r[0], r[1]) for r in learned] == [(1, "accepted"), (2, "coded"), (3, "accepted"), (4, "accepted")]
+    assert learned[0][2] == proposed[0]["candidates"][0]["code"]  # the offer taken, as what was suggested
+
+
+def test_a_first_offer_changed_or_emptied_after_the_click_is_no_longer_said_to_be_one():
+    from ap_coder.coding.review import FIRST_OFFER, PICKED, decided_on_screen
+
+    left = "This supplier's 3 lines posted in JD Edwards went to 3 accounts: 33% / 33% / 33%: pick the account."
+    offers = [{"account": f"0021022510.{gl}", "code": gl, "business_unit": "0021022510"} for gl in ("1450", "2480")]
+    proposed = [{"line_number": n, "description": f"item {n}", "predicted_gl_code": "UNASSIGNED",
+                 "predicted_cost_center": "UNASSIGNED", "reasoning_justification": left, "candidates": offers}
+                for n in (1, 2, 3)]  # fmt: skip
+    clicked = {"reasoning_justification": FIRST_OFFER}
+    lines = [{**proposed[0], **clicked, "predicted_gl_code": "1450", "predicted_cost_center": "0021022510"},
+             {**proposed[1], **clicked, "predicted_gl_code": "2480", "predicted_cost_center": "0021022510"},
+             {**proposed[2], **clicked}]  # fmt: skip
+    decided_on_screen(lines, proposed)
+    assert lines[0]["decided_by"] == {"source": "person", "candidate": 1, "first_offer": True}
+    assert (
+        lines[1]["decided_by"] == {"source": "person", "candidate": 2} and lines[1]["reasoning_justification"] == PICKED
+    )
+    assert lines[2]["decided_by"] == {} and lines[2]["reasoning_justification"] == left
 
 
 def test_a_reason_a_person_picked_keeps_what_the_line_says_of_its_tax():
@@ -259,7 +332,7 @@ def test_a_line_without_its_account_is_one_finding(chart_company, chart_company_
     page = _page(chart_company, chart_company_client, "four_lines")
     checks = page.check()["sections"]["checks"]
     assert "Lines 1, 2, 3, 4: no account yet: pick one" in checks
-    assert "Before you can approve (1)" in checks and "no GL account yet" not in checks.split("Details and what")[0]
+    assert "To fix before approving (1)" in checks and "no GL account yet" not in checks.split("Details and what")[0]
     assert 'data-code="CC_UNASSIGNED" hidden>' in checks  # the same line's second code: in the list, not shown
 
 

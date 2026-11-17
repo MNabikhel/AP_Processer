@@ -14,7 +14,7 @@ from ap_coder.core.store import Store
 from ap_coder.ops.help import AREAS, CHECKS, FAQ, QUICK_START, TAX
 from ap_coder.web import minimd
 from ap_coder.web.app import create_app
-from ap_coder.web.pages.help import matching_checks
+from ap_coder.web.pages.help import matching_checks, menu_names
 
 
 @pytest.fixture
@@ -45,8 +45,9 @@ def test_help_shows_getting_started_questions_and_where_the_data_is(client):
     for title, _, path in QUICK_START:
         assert title in plain and f'href="{path}"' in plain
     assert 'href="/accounts"' in plain and 'href="/exports"' in plain  # each step opens its page
+    names = menu_names(client.app.state.store)  # (the pages under the names every menu now shows: D-252)
     for question, answer in FAQ:
-        assert question in plain and answer in plain
+        assert names(question) in plain and names(answer) in plain
     assert "How every invoice is read" in plain and "OvisOCR2 reads every page too," in plain
     assert "Your AP routine" in plain and "Every month" in plain
     assert "Shortcuts" in plain and "apc-kbd" in plain
@@ -153,4 +154,4 @@ def test_help_with_jd_edwards_keying_says_what_the_pilot_guide_and_the_menu_say(
     other = create_app(Settings(), Store(chart_company.store.path.parent / "x.db"))
     plain = html.unescape(page(TestClient(other, base_url="http://localhost")))
     assert "pick a GL account for GST, HST and QST" in plain and "Exports are Excel or CSV" in plain
-    assert "Learning & accuracy" in plain
+    assert "(What was learned → Lessons)" in plain  # every menu names the page so now (D-252)

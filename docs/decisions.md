@@ -6153,6 +6153,62 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     by age is never shown unexplained; "24 of 24" over two years says nothing more.
   - **Bench:** `bench coding --journal --quick` and `bench coding --quick` are the same before and after: the
     made-up company's journal covers one year, every line within 12 months of its latest date.
+- **D-252** · **One set of page names, and "supplier" with JD Edwards' words** (`web/core.py` `page_meta`,
+  `menu_group`, `jde_words`, `our_words`, the templates' `words` filter, app.js `ourWords`; the owner's choice D3 of
+  the screen previews; 17 Nov 2026).
+  - **Every menu names the pages as the Simple menu did:** To review, Add invoices, Find an invoice, What was learned,
+    Rules. With JD Edwards shown, and in Simple screens (`jde_words`), Vendors is Suppliers, Vendor statements
+    Supplier statements and Exports To key into JDE (`pages.JDE_TITLES`), in the menu, the page's title and Help
+    (`help.menu_names`). A page's breadcrumb is the menu group it is under (Setup, More), or none.
+  - **"Supplier" is JD Edwards' word**, so with its words a person reads supplier for vendor: Help (the checks, the
+    questions, how it reads), the Suppliers page's labels, tile, search and columns, the queue's column and search
+    box, the review screen's Supplier box (its hint, placeholder, the line under it and Add new supplier…) and the
+    setup checklist ("Supplier master"; its key in `STEP_LINKS` stays "Vendor master"). One helper says it,
+    `our_words` (a word swap, "Vendors" → "Suppliers"), used for words only, never an address or a name in the code;
+    without JD Edwards everything says vendor, as before. The checks' own findings (Not in the vendor list…) are
+    the checks' words everywhere, exports and reports included, and are left as they are.
+  - **"Import invoices" is "Add invoices"** wherever a person reads it (the next step card, the intake messages).
+- **D-253** · **The menu folds to its icons by its own button; the page follows the window at every zoom**
+  (`static/js/rail_fold.js`, `app.css` `html.menu-folded`, `invoice.css`; the owner's choice D8; 17 Nov 2026).
+  - **The owner:** "the ability to easily minimize the panel on the left, and the main page adjusting as I zoom".
+    From 901 to 1199 px the menu keeps its words, narrower (208 px), not its icons alone (a pilot tester guessed at
+    them at 150 %). A button at its top folds it to 64 px of icons and back: a real button (Tab, Enter), its name and
+    tooltip saying what it does ("Fold the menu to its icons", "Show the menu's words"), each page's name still in
+    its link's tooltip and read out.
+  - **Remembered by the browser** (`localStorage` "apc-menu-folded", in a try: a browser that keeps nothing still
+    folds, for the page). A classic script where the button is drawn sets it before the page beside it is drawn,
+    as `nav_more.js` does (the server's Content-Security-Policy runs no inline script).
+  - **The page takes the room:** folded, from 901 px, the page starts at 64 px and may grow to 1848 px. On the review
+    screen with a chart of accounts the menu is off the screen below 1820 px behind its Menu button (D-214); folded,
+    it is small enough to stay, in place of that button. Under 901 px the bar's Menu button opens the whole menu, as
+    before; the fold button is not shown there.
+  - **Every zoom of a 1366 laptop** (80 % to 200 %: 1707 to 683 px to the page) checked on the queue, the review
+    screen, Exports and Settings, open and folded: the page fills its width and nothing goes past the edge. From
+    901 to 1199 px the page's sides are 24 px and a fitted table's cells narrower, so a table fits beside the menu's
+    words (B-2607).
+- **D-254** · **A line "Use each line's first offer" filled is a suggestion taken, not a person's pick**
+  (`coding/review.py` `FIRST_OFFER`, `first_offer_taken`; `core/store/_base.py` `first_offer`;
+  `web/account_lines.py` `why_words`; the owner's choice D5; 17 Nov 2026).
+  - **The button** fills every line whose Account box is empty with the first account offered under it, in one change
+    Undo puts back. Each line it fills says "first offer, taken with one click" under its box and in its reason (the
+    button writes `FIRST_OFFER` in place of why it was left, as `PICKED` is written for a pick); what decided it is
+    `decided("person", candidate=1, first_offer=True)`. A line whose account a person changes after the click, or
+    picks among the offers, is a person's pick, as before; one emptied again says why it was left.
+  - **What is learned:** the approval counts the line as the suggestion taken (`ACCEPTED`, the offer as what was
+    suggested), weighed 3 in the supplier's coding as a line approved as proposed is, not 5 as a person's own coding
+    (D-251); it is not "AP coded lines the AI left blank".
+- **D-255** · **The other screen changes the owner approved, and the ones declined** (the screen previews D1 to D15;
+  17 Nov 2026).
+  - **Approved:** D1, in Simple screens Export downloads the keying sheet in the same click, the other formats and
+    tools folded; D2, Add invoices says LM Studio is not running in its banner and checklist, not a Next step card
+    too; D4, one "To fix before approving" box, each item "must be fixed" or "or approve anyway with a reason"; D6,
+    the reason lines share said once above them, the queue's "Pick accounts for N lines", no confidence shown "-";
+    D7, Ctrl+Enter approves with the suggested remarks as shown; D9, Settings → JD Edwards E1 in Simple screens shows
+    the company and the tax areas, the rest under "For the JD Edwards team"; D13, the made-up company has its
+    province set. D3, D5 and D8: D-252, D-254 and D-253.
+  - **Declined by the owner, not brought in:** D10 (one drop zone for JD Edwards' files), D11 (the first sign-in's
+    steps reordered), D12 (Azure, the AIS API and the AI's advanced settings hidden), D14 (tables stacked as cards on
+    a phone) and D15 (the queue's "Approve N" hidden).
 - **D-256** · **A purchase order keeps its currency; amounts are compared with it only in one currency**
   (`coding/po.py` `COLUMN_ALIASES["currency"]`, `_currencies`, `PoMatch.currencies`; `purchase_orders.currency`,
   schema 30; `erp/accruals.py` `Accrual.cad_assumed`, `said_cad`; the owner's to-do item; 17 Nov 2026; B-2612).

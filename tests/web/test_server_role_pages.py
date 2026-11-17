@@ -138,9 +138,9 @@ def test_no_page_offers_a_role_what_it_is_refused(servers, role, state):
 # --- The review screen for Read-only (B-1100, B-1101) ----------------------------------------------------------------
 
 EDITING = ("data-vendor-add", 'data-add-row="lines"', "data-split>", 'data-add-row="taxes"', "data-teach>",
-           "data-note-form", "rvw-status-group block", "Press G to go")  # fmt: skip
-# (Add new vendor, Add a line, Split a line, Add a tax line, Teach a field, the notes form, the "Before you can
-# approve" panel)
+           "data-note-form", '<li class="block"', "Press G to go")  # fmt: skip
+# (Add new vendor, Add a line, Split a line, Add a tax line, Teach a field, the notes form, the account to pick
+# among what to fix before approving)
 
 
 def test_read_only_opens_an_invoice_read_only_and_posts_nothing(servers):

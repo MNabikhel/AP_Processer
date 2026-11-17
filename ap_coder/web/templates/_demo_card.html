@@ -1,5 +1,5 @@
 {# Settings → Data & backups: load or remove the demo invoices (the bundled samples, already read and coded). The one
-   place they are offered (D-221): not on a first start, the queue or Import invoices.
+   place they are offered (D-221): not on a first start, the queue or Add invoices.
    Needs: demo_available, demo_count, demo_blocked (your own invoices are there: the samples would be counted with
    them, D-137). #}
 {% if demo_available and can("/demo/load") %}{# server mode: the demo is an Admin's (D-98) #}

@@ -329,6 +329,24 @@ def test_jde_tab_shows_every_part(client):
                  "Supplier address numbers (AN8)", "Before the first live load"):  # fmt: skip
         assert part in text
     assert "<b>Company numbers</b>" in text  # the checklist's own Markdown
+    assert "For the JD Edwards team" not in text  # every page shown: everything open, as before
+
+
+def test_in_simple_screens_the_jde_tab_shows_the_company_and_tax_areas_and_folds_the_rest(client, store):
+    """D9: the worksheet, the AIS API, the F0411Z1 fields, the GL → BU mapping, the default BU and the tax areas were
+    all open to a pilot tester who sets only the company and checks the tax areas."""
+    from ap_coder.web import core
+
+    store.set_setting(core.SCREENS, core.SIMPLE)
+    store.set_setting(core.SHOW_JDE, "1")
+    text = client.get("/settings/jde").text
+    company, fold, tax = text.index('name="company"'), text.index('id="team-fields"'), text.index('id="tax-map"')
+    team = text.index('id="jde-team"')
+    assert company < fold < text.index('name="user"') < text.index('name="default_bu"') < tax < team
+    for card in ('id="worksheet"', 'id="api"', 'id="gl-map"', 'id="terms"', 'id="an8"'):
+        assert text.index(card) > team, card
+    # still one form, every field in it: Save keeps what the fold holds
+    assert text.count('action="/settings/jde"') == 1 and text.index('name="default_bu"') < text.index("Save JD Edwards")
 
 
 def test_jde_general_settings_are_saved_and_checked(client, store):

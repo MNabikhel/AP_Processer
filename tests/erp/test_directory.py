@@ -206,7 +206,7 @@ def test_a_layout_named_standard_leaves_a_choice_of_the_standard_layout_alone(st
 def test_the_page_filters_sorts_and_shows_the_columns_chosen(store):
     client = client_for(store)
     page = client.get("/search").text
-    assert "Invoice directory" in page and page.count("<tr>") >= 10 and 'name="f_vendor"' in page
+    assert "Find an invoice" in page and page.count("<tr>") >= 10 and 'name="f_vendor"' in page
     page = client.get("/search?col=gl&col=vendor&col=total&f_total=%3C0&sort=total&dir=asc").text
     assert page.index(">GL accounts<") < page.index(">Vendor<") and "Rows 1–1 of 1" in page
     assert 'aria-sort="ascending"' in page

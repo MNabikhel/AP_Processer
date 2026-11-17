@@ -2,7 +2,8 @@
 
 * A finding in a clerk's words (``readable``), the same one on several lines said once (``grouped_issues``).
 * The confidence (``confidence_pct``, ``confidences``, ``low_confidence``).
-* The checks panel: ``checks_summary`` (before you can approve, must be fixed, check before approving) and
+* The checks panel: ``checks_summary`` (to fix before approving, each must be fixed or approved anyway with a
+  reason; check before approving) and
   ``checks_details``; which invoice detail a finding is about (``FIELD_FLAGS``, ``CODE_FIELDS``) and which box it goes
   to (``GOTO_BOX``); a detail marked "Not on this invoice" (``settle_absent``).
 * What "Approve anyway" never covers (``HARD_CODES``, ``is_hard``, ``hard_reasons``), the key of the errors it does
@@ -150,16 +151,34 @@ GOTO_BOX = {
 }
 
 
-# The groups of the checks, in order: what keeps Approve closed (a GL account or cost center to pick: G goes to the
-# first), the errors (to fix, or to approve anyway), and the warnings to check (B-465).
+# The groups of the checks, in order: what to fix before approving (a GL account or cost center to pick first, G goes
+# to the first; then the errors), and the warnings to check (B-465). Each item to fix says whether "Approve anyway"
+# covers it (D4): a pick, and what makes the voucher invalid (``HARD_CODES``), must be fixed; any other error may be
+# approved anyway with a reason.
 BLOCK, FIX, LOOK = "block", "err", "warn"
-GROUP_TITLES = {BLOCK: "Before you can approve", FIX: "Must be fixed", LOOK: "Check before approving"}
+GROUP_TITLES = {FIX: "To fix before approving", LOOK: "Check before approving"}
+MUST, ANYWAY = "must be fixed", "or approve anyway with a reason"
+
+
+def _grouped(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``items`` under their headings (``GROUP_TITLES``), the picks first among those to fix; a heading with no item
+    shown is left out."""
+    groups = []
+    for kind, title in GROUP_TITLES.items():
+        mine = sorted(
+            (i for i in items if (LOOK if i["kind"] == LOOK else FIX) == kind), key=lambda i: i["kind"] != BLOCK
+        )
+        shown = sum(1 for i in mine if not i.get("folded"))
+        if shown:
+            groups.append({"kind": kind, "title": f"{title} ({shown})", "items": mine})
+    return groups
 
 
 def checks_summary(report: Any, errors: list[Any], warnings: list[Any], account: bool = False) -> dict[str, Any]:
-    """All the checks as one status: passed, or what needs attention (one line each; details below), grouped:
-    before you can approve (what keeps Approve closed), must be fixed, check before approving. ``account``: a line
-    is one Account box (a chart of accounts), so a line without its account is one finding, not one a code."""
+    """All the checks as one status: passed, or what needs attention (one line each; details below), grouped: to fix
+    before approving (each marked must be fixed, or may be approved anyway with a reason), check before approving.
+    ``read_groups``: the same without the picks, for a screen that can't pick (read-only, D-98). ``account``: a line is
+    one Account box (a chart of accounts), so a line without its account is one finding, not one a code."""
     low = low_confidence(report) if not errors else []
     items: list[dict[str, Any]] = []
     for bad, text, code, lines in grouped_issues(errors + warnings):
@@ -169,22 +188,24 @@ def checks_summary(report: Any, errors: list[Any], warnings: list[Any], account:
         links = ([{"href": f"/review/{n}", "text": f"Open #{n}"} for n in re.findall(r"#(\d+)", text)]
                  if code == "DUPLICATE_INVOICE" else [])  # fmt: skip
         field = "" if lines else CODE_FIELDS.get(code) or FIELD_FLAGS.get(code, ("", None))[0]
+        hard = kind == BLOCK or code in HARD_CODES or code.startswith("JDE_")
+        mark = "" if kind == LOOK else MUST if hard else ANYWAY
         items.append({"bad": kind != LOOK, "kind": kind, "text": text, "goto": goto, "links": links, "code": code,
-                      "field": field, "lines": lines})  # fmt: skip
+                      "field": field, "lines": lines, "mark": mark})  # fmt: skip
     for text in low:
         items.append({"bad": False, "kind": LOOK, "text": text})
     if account:
         account_lines.said_once(items)
     if not items:
         return {"tone": "ok", "icon": "check_circle", "title": "All checks passed", "items": [], "groups": [],
-                "sub": "Totals reconcile, taxes verified, all codes valid."}  # fmt: skip
-    counts = {k: sum(1 for i in items if i["kind"] == k and not i.get("folded")) for k in GROUP_TITLES}
-    groups = [{"kind": k, "title": f"{GROUP_TITLES[k]} ({counts[k]})",
-               "items": [i for i in items if i["kind"] == k]} for k in GROUP_TITLES if counts[k]]  # fmt: skip
+                "read_groups": [], "sub": "Totals reconcile, taxes verified, all codes valid."}  # fmt: skip
+    groups = _grouped(items)
+    picks = any(i["kind"] == BLOCK and not i.get("folded") for i in items)
     title = " · ".join(g["title"] for g in groups)
-    tone, icon = ("err", "error") if counts[BLOCK] or counts[FIX] else ("warn", "visibility")
+    tone, icon = ("err", "error") if groups and groups[0]["kind"] == FIX else ("warn", "visibility")
     return {"tone": tone, "icon": icon, "title": title, "items": [i for g in groups for i in g["items"]],
-            "groups": groups, "sub": "Press G to go to the first one." if counts[BLOCK] else ""}  # fmt: skip
+            "groups": groups, "read_groups": _grouped([i for i in items if i["kind"] != BLOCK]),
+            "sub": "Press G to go to the first one." if picks else ""}  # fmt: skip
 
 
 def checks_details(report: Any) -> list[dict[str, str]]:
@@ -194,8 +215,9 @@ def checks_details(report: Any) -> list[dict[str, str]]:
         where = f"Line {issue.line_number}: " if issue.line_number else ""
         about = help_for(issue.code)
         hint = setup_contact(about.action) if about and issue.severity != "info" else ""  # an Admin on the server
-        kind, title = {"error": ("error", "Must be fixed"), "info": ("info", "Good to know")}.get(
-            issue.severity, ("warning", GROUP_TITLES[BLOCK] if issue.code in GOTO_BOX else GROUP_TITLES[LOOK])
+        error = "Must be fixed" if is_hard(issue) else "To fix, or approve anyway with a reason"
+        kind, title = {"error": ("error", error), "info": ("info", "Good to know")}.get(
+            issue.severity, ("warning", GROUP_TITLES[FIX] if issue.code in GOTO_BOX else GROUP_TITLES[LOOK])
         )
         items.append({"kind": kind, "title": title, "message": where + readable(issue.message, cap=not where),
                       "code": issue.code,

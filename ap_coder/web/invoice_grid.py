@@ -196,6 +196,8 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
     return {  # "guessed": an account no approval backs, marked for the reviewer to check (B-463)
         "account": account,
         "acct_empty": account_lines.EMPTY,
+        # the reason the lines to fix share, said once above them (D6)
+        "lines_note": account_lines.said_above(views, [row.get("line_number") for row in draft.lines]),
         "lines": [
             {
                 **row,

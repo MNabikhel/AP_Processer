@@ -230,26 +230,34 @@ def test_a_lesson_on_a_blank_account_reads_left_blank_not_unassigned(tmp_path):
     assert change == "1 change(s): line 1 GL: blank → 6110"
 
 
-# --- B-465: what keeps Approve closed is grouped first ----------------------------------------------------------------
+# --- B-465, D4: what to fix before approving is one group, first; each item says if Approve anyway covers it ----------
 
 
-def test_what_keeps_approve_closed_is_its_own_group_before_the_errors_and_warnings():
+def test_what_to_fix_is_one_group_first_each_item_marked_must_be_fixed_or_approve_anyway():
+    """D4: "Before you can approve" and "Must be fixed" were two red boxes alike that meant different things (an error
+    of the second may be approved anyway with a reason). One group, "To fix before approving", the account to pick
+    first; each item says "must be fixed" or "or approve anyway with a reason"."""
     from ap_coder.coding.validation import ERROR, WARNING, Issue
-    from ap_coder.web.invoice_findings import checks_details, checks_summary
+    from ap_coder.web.invoice_findings import ANYWAY, MUST, checks_details, checks_summary
 
-    errors = [Issue(ERROR, "TOTAL_MISMATCH", "subtotal + tax = 10.00 but the total is 12.00")]
+    errors = [Issue(ERROR, "TOTAL_MISMATCH", "subtotal + tax = 10.00 but the total is 12.00"),
+              Issue(ERROR, "VENDOR_NOT_IN_MASTER", "this vendor is not in the vendor list")]  # fmt: skip
     warnings = [Issue(WARNING, "GL_UNASSIGNED", "no GL account yet: pick one", 1),
                 Issue(WARNING, "INVOICE_DATE_NOT_FOUND", "no invoice date found: check it")]  # fmt: skip
     report = SimpleNamespace(requires_review=True, adjusted_confidence=0.5, review_threshold=0.85,
                              issues=errors + warnings, checks={})  # fmt: skip
     c = checks_summary(report, errors, warnings)
-    assert [g["title"] for g in c["groups"]] == ["Before you can approve (1)", "Must be fixed (1)",
-                                                 "Check before approving (1)"]  # fmt: skip
-    assert c["groups"][0]["items"][0]["goto"] == {"box": "line_gl", "line": 1} and "G" in c["sub"]
+    assert [g["title"] for g in c["groups"]] == ["To fix before approving (3)", "Check before approving (1)"]
+    fix = c["groups"][0]["items"]
+    assert fix[0]["goto"] == {"box": "line_gl", "line": 1} and "G" in c["sub"]  # the pick first: G goes to it
+    assert {i["code"]: i["mark"] for i in fix} == {"GL_UNASSIGNED": MUST, "TOTAL_MISMATCH": MUST,
+                                                   "VENDOR_NOT_IN_MASTER": ANYWAY}  # fmt: skip
+    assert c["groups"][1]["items"][0]["mark"] == ""
+    assert [g["title"] for g in c["read_groups"]] == ["To fix before approving (2)", "Check before approving (1)"]
     titles = {d["code"]: d["title"] for d in checks_details(report)}
-    assert titles["GL_UNASSIGNED"] == "Before you can approve" and titles["INVOICE_DATE_NOT_FOUND"] == (
-        "Check before approving"
-    )
+    assert titles == {"GL_UNASSIGNED": "To fix before approving", "TOTAL_MISMATCH": "Must be fixed",
+                      "VENDOR_NOT_IN_MASTER": "To fix, or approve anyway with a reason",
+                      "INVOICE_DATE_NOT_FOUND": "Check before approving"}  # fmt: skip
 
 
 # --- The demo invoices on Import invoices: said while they are loaded, never asked to be removed (was B-468) ----------

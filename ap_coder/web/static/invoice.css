@@ -133,6 +133,11 @@
 .rvw-status-group.warn .rvw-status-title {color: var(--rv-warning);}
 .rvw-status-key {margin-left: auto; font-weight: 400; font-size: 12px; color: var(--rv-muted);}
 .rvw-status li .t {display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
+/* D4: an item to fix says whether it must be fixed or may be approved anyway with a reason */
+.rvw-mark {display: inline-block; margin-left: 4px; padding: 0 7px; border-radius: 999px; font-size: 11.5px;
+  font-weight: 600; line-height: 18px; white-space: nowrap; color: var(--rv-muted); background: var(--lg-surface);
+  border: 1px solid var(--lg-hairline);}
+.rvw-mark.must {color: var(--rv-danger);}
 /* a line's missing account or cost center: a link-like button to its box (B-443) */
 .rvw-goto {border: 0; padding: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer;
   text-decoration: underline; text-decoration-color: currentColor; text-underline-offset: 2px;}
@@ -275,6 +280,7 @@
 .inv-actionbar {position: sticky; bottom: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between;
   gap: 16px; flex-wrap: wrap; margin: 16px -40px -96px; padding: 10px 40px; background: var(--lg-surface);
   border-top: 1px solid var(--lg-border);}
+@media (max-width: 1199px) {.inv-actionbar {margin: 16px -24px -96px; padding: 10px 24px;}}  /* the page's own sides (app.css) */
 @media (max-width: 900px) {.inv-actionbar {margin: 16px -16px -64px; padding: 10px 16px;}}
 .inv-actionbar-left {display: flex; align-items: center; gap: 16px; flex-wrap: wrap; min-width: 0;}
 /* "Pick a GL account for lines 1, 3 and a cost center for…" wraps instead of widening the page on a phone */
@@ -620,7 +626,7 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 /* The Shortcuts list inside its panel at 1366: what a key does wraps (B-795). */
 .rvw-nav .pop-body .apc-table td:last-child {white-space: normal; overflow-wrap: anywhere;}
 .rvw-nav details.pop > .pop-body {max-width: calc(100vw - 32px); overflow-x: hidden;}
-/* A detail whose check is an error: red, as under "Must be fixed" at the top; amber stays for what is to check. */
+/* A detail whose check is an error: red, as the errors to fix at the top; amber stays for what is to check. */
 .inv-details .is-flagged.is-error input, .inv-details .is-flagged.is-error select {border-color: var(--rv-danger);
   background: var(--rv-danger-weak);}
 .inv-details .is-flagged.is-error > .inv-flag {color: var(--rv-danger);}
@@ -742,6 +748,10 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 .acct-note.fix {background: var(--lg-danger-weak);} .acct-note.fix b, .acct-note.fix .ms {color: var(--lg-danger);}
 .acct-note.check {background: var(--lg-warning-weak);}
 .acct-note.check b, .acct-note.check .ms {color: var(--lg-warning);}
+/* D6: why the lines to fix were left for a person, said once above them when they share it */
+.acct-said {margin: 0 0 8px; padding: 6px 10px; border-radius: 6px; font-size: 12.5px; line-height: 18px;
+  background: var(--lg-danger-weak); color: var(--lg-text);}
+.acct-said .ms {font-size: 15px; vertical-align: -3px; margin-right: 4px; color: var(--lg-danger);}
 .acct-cands {list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px;}
 .acct-cands li {margin: 0; min-width: 0;}
 .acct-cands button {display: flex; align-items: baseline; gap: 10px; width: 100%; min-width: 0; min-height: 24px;
@@ -766,7 +776,7 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 
 /* ---- The frame (D-214), from the window itself: the page never scrolls sideways; from 1200 px two panes (the
    invoice, the form: their minimums add up with a scrollbar), under it one above the other; the menu behind its
-   button below 1820 px; the strip and the bar give way under 720 px of height. ---- */
+   button below 1820 px (folded to its icons, D8: shown from 901 px); the strip and the bar give way under 720 px of height. ---- */
 html:has(.inv-acct) {scrollbar-gutter: stable; scroll-padding-top: 84px; scroll-padding-bottom: 72px;}
 html:has(.inv-acct) .main {max-width: none; padding: 0 12px 64px;}
 html:has(.inv-acct) .main > * + * {margin-top: 8px;}
@@ -786,6 +796,12 @@ html:has(.inv-acct) .rvw-nav > .spacer {flex-grow: 0;}
   html.menu-open:has(.inv-acct) .rail {display: flex; position: fixed; inset: 0 auto 0 0; width: 256px; z-index: 60;
     overflow: hidden; border-right: 1px solid var(--lg-border); border-bottom: 0; box-shadow: var(--lg-shadow-pop);}
   html.menu-open:has(.inv-acct) .rail > .nav:not(.nav-pinned) {overflow-y: auto;}
+}
+/* the menu folded to its icons (D8): shown, as on every page, from 901 px; its Menu button not needed */
+@media (min-width: 901px) and (max-width: 1819px) {
+  html.menu-folded:has(.inv-acct) .rail {display: flex;}
+  html.menu-folded:has(.inv-acct) .main {margin-left: 64px;}
+  html.menu-folded:has(.inv-acct) .inv-menu-btn {display: none;}
 }
 @media (max-width: 1100px) {html:has(.inv-acct) .rvw-pos-bar, html:has(.inv-acct) .rvw-nav .pop {display: none;}}
 html:has(.inv-acct) .topbar {display: none;}  /* the screen's own Menu button in its place */

@@ -116,10 +116,12 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
         header["help"] = analysis.live.get("help") or {}  # a note with a one-click fix under a field (D-75)
         header["an8"] = analysis.live.get("an8")  # the supplier's JD Edwards number, when it is the export in use
     # With a chart of accounts: what each line's row says under its boxes, for the account now in it (D-214)
-    rows = (_line_views(invoice_grid.grid(reference, draft, inv.get("ai_output") or {}, checked=analysis))
-            if account_lines.in_use(reference) else None)  # fmt: skip
+    grid = (invoice_grid.grid(reference, draft, inv.get("ai_output") or {}, checked=analysis)
+            if account_lines.in_use(reference) else {})  # fmt: skip
+    rows = _line_views(grid) if grid else None
     return JSONResponse({"ok": True, "valid": analysis.coding is not None, "allow": analysis.allow, "draft": kept,
-                         **({"lines": rows, "supplier_accounts": account_lines.supplier_accounts(
+                         **({"lines": rows, "lines_note": grid["lines_note"],  # said once above them (D6)
+                             "supplier_accounts": account_lines.supplier_accounts(
                              store, reference, draft.header.get("vendor_name") or "")} if rows is not None else {}),
                          "problems": analysis.problems, "vendor_accounts": used, "header": header,
                          "tax_codes": codes["options"], "tax_code_labels": codes["labels"],

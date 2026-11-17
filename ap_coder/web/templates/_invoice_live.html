@@ -37,19 +37,24 @@
 {% endif %}
 {%- endmacro %}
 
+{# An item to fix: must be fixed, or may be approved anyway with a reason (D4: invoice_findings.MUST, ANYWAY) #}
+{% macro mark(i) -%}
+{%- if i.mark %} <span class="rvw-mark{{ ' must' if i.mark.startswith('must') else '' }}">{{ i.mark }}</span>{% endif %}
+{%- endmacro %}
+
 {% macro check_item(i) -%}
 <li class="{{ i.kind or ('err' if i.bad else 'warn') }}" title="{{ i.text }}"{% if i.code %} data-code="{{ i.code }}"{% endif %}{% if i.field %} data-field-of="{{ i.field }}"{% endif %}{% if i.folded %} hidden{% endif %}><span class="m" aria-hidden="true">{{ '!' if i.kind == 'warn' or not i.bad else '✕' }}</span>
-    {%- if i.goto %}<button type="button" class="rvw-goto" data-goto-line="{{ i.goto.box }}" data-line="{{ i.goto.line }}" title="Go to line {{ i.goto.line }} (G)"><span class="t">{{ i.text }}</span></button>
-    {%- else %}<span class="t">{{ i.text }}</span>{% endif %}
+    {%- if i.goto %}<button type="button" class="rvw-goto" data-goto-line="{{ i.goto.box }}" data-line="{{ i.goto.line }}" title="Go to line {{ i.goto.line }} (G)"><span class="t">{{ i.text }}{{ mark(i) }}</span></button>
+    {%- else %}<span class="t">{{ i.text }}{{ mark(i) }}</span>{% endif %}
     {%- for l in i.links or [] %} <a class="rvw-dup-link" href="{{ l.href }}" target="_blank" rel="noopener" title="Opens in a new tab: this one stays as it is">{{ l.text }}<span class="ms" aria-hidden="true">open_in_new</span></a>{% endfor %}</li>
 {%- endmacro %}
 
 {% macro status_block(tone, icon, title, items, sub="", groups=none) -%}
 <div class="rvw-status {{ tone }}" role="status">
-  {% if groups %}{# B-465: what keeps Approve closed, what must be fixed, what to check: each under its own heading #}
+  {% if groups %}{# B-465, D4: what to fix before approving, what to check: each under its own heading #}
   {% for g in groups %}<div class="rvw-status-group {{ g.kind }}">
-    <div class="rvw-status-title"><span class="ms" aria-hidden="true">{{ {'block': 'block', 'err': 'error', 'warn': 'visibility'}[g.kind] }}</span><span>{{ g.title }}</span>
-      {%- if g.kind == 'block' and sub %}<span class="rvw-status-key">{{ sub }}</span>{% endif %}</div>
+    <div class="rvw-status-title"><span class="ms" aria-hidden="true">{{ {'err': 'error', 'warn': 'visibility'}[g.kind] }}</span><span>{{ g.title }}</span>
+      {%- if g.kind == 'err' and sub %}<span class="rvw-status-key">{{ sub }}</span>{% endif %}</div>
     {% if g.kind == 'warn' and g["items"] | length > 3 %}{# many to check: the first three, the rest folded (#14's five PO warnings) #}
     <ul>{% for i in g["items"][:3] %}{{ check_item(i) }}{% endfor %}</ul>
     <details class="rvw-status-more"><summary>{{ g["items"] | length - 3 }} more to check</summary>
@@ -72,9 +77,8 @@
 {% for p in live.problems %}{{ ui.check("error", "Fix this field", p) }}{% endfor %}
 {% else %}
 {% set c = live.checks %}
-{% if live.read_only %}{# Read-only (D-98): the checks, without "Before you can approve" (nothing for them to pick) #}
-{% set groups = c.groups | rejectattr("kind", "equalto", "block") | list %}
-{% if groups %}{{ status_block(c.tone, c.icon, c.title, [], "", groups) }}
+{% if live.read_only %}{# Read-only (D-98): the checks, without the accounts to pick (nothing for them to pick) #}
+{% if c.read_groups %}{{ status_block(c.tone, c.icon, c.title, [], "", c.read_groups) }}
 {% elif c.groups %}{{ status_block("warn", "visibility", "Not ready to approve: a line still needs its coding", []) }}
 {% else %}{{ status_block(c.tone, c.icon, c.title, c["items"], c.sub) }}{% endif %}
 {% else %}

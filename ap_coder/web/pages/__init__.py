@@ -18,31 +18,26 @@ class Page:
     title: str  # the rail label and the page title
     path: str  # where it lives ("/review")
     icon: str  # a Material Symbols name for the rail
-    section: str  # the page header's breadcrumb
     subtitle: str = ""  # the one-line description under the page title
     module: str = ""  # ap_coder.web.pages.<module>, which has a ``router``
     more: bool = False  # folded under "More" in the rail
 
 
-W, C, M, A, S = "Work", "Close & compliance", "Master data", "Analytics", "System"
-
 PAGES: list[Page] = [
-    Page("review", "Review queue", "/review", "inbox", W, "Invoices waiting for review.", module="review"),
+    Page("review", "To review", "/review", "inbox", "Invoices waiting for review.", module="review"),
     Page(
         "process",
-        "Import invoices",
+        "Add invoices",
         "/process",
         "upload_file",
-        W,
         "Bring invoices in by hand: upload files or saved emails, or pick up new files in the invoices folder.",
         module="process",
     ),
     Page(
         "search",
-        "Invoice directory",
+        "Find an invoice",
         "/search",
         "manage_search",
-        W,
         "Every invoice in one table: filter any column (vendor, number, PO, dates, amounts, status, GL account, "
         "approver, export batch), sort, choose the columns, save the layout, export what you see.",
         module="search",
@@ -52,7 +47,6 @@ PAGES: list[Page] = [
         "Exports",
         "/exports",
         "ios_share",
-        C,
         "Hand approved invoices to the ERP in batches. Each invoice goes out once; any batch can be downloaded again.",
         module="exports",
     ),
@@ -61,16 +55,14 @@ PAGES: list[Page] = [
         "GL accounts & tax",
         "/accounts",
         "account_tree",
-        M,
         "The codes the AI may use, how each sales tax posts, and your coding policy.",
         module="accounts",
     ),
     Page(
         "rules",
-        "Coding rules",
+        "Rules",
         "/rules",
         "rule_settings",
-        M,
         "Lines that always go to the same account: the rules, every change made to them, and what each one coded.",
         module="rules",
         more=True,
@@ -80,7 +72,6 @@ PAGES: list[Page] = [
         "Manager confirmations",
         "/manager",
         "how_to_reg",
-        W,
         "Invoices sent to a manager to confirm their cost allocation: the ones still waiting, and what to do next.",
         module="manager",
         more=True,
@@ -90,7 +81,6 @@ PAGES: list[Page] = [
         "Month-end",
         "/month-end",
         "event_available",
-        C,
         "What to accrue: goods received but not invoiced, invoices not in the ERP yet, and regular bills not arrived.",
         module="month_end",
         more=True,
@@ -100,7 +90,6 @@ PAGES: list[Page] = [
         "Sales tax",
         "/sales-tax",
         "percent",
-        C,
         "The GST/HST and QST you paid to vendors and can claim back on your return, from approved invoices.",
         module="sales_tax",
         more=True,
@@ -110,7 +99,6 @@ PAGES: list[Page] = [
         "Vendor statements",
         "/statements",
         "fact_check",
-        C,
         "Compare a vendor's statement with the invoices you hold: find missing invoices and amount differences.",
         module="statements",
         more=True,
@@ -120,7 +108,6 @@ PAGES: list[Page] = [
         "JD Edwards files",
         "/jde-files",
         "drive_folder_upload",
-        M,
         "Load JD Edwards' own exports: the chart of accounts, the business units, the suppliers, the past invoice "
         "coding and the vouchers already entered.",
         module="jde_files",
@@ -131,7 +118,6 @@ PAGES: list[Page] = [
         "Vendors",
         "/vendors",
         "storefront",
-        M,
         "Everyone who has sent an invoice: spend, how well the AI codes them, and your controls.",
         module="vendors",
         more=True,
@@ -141,17 +127,15 @@ PAGES: list[Page] = [
         "Purchase orders",
         "/purchase-orders",
         "shopping_cart",
-        M,
         "Invoices that quote a PO are checked against it: price, quantity ordered and received, and coding.",
         module="purchase_orders",
         more=True,
     ),
     Page(
         "learning",
-        "Learning & accuracy",
+        "What was learned",
         "/learning",
         "insights",
-        A,
         "How often the coding is right, and what AP Coder has learned.",
         module="learning",
         more=True,
@@ -161,7 +145,6 @@ PAGES: list[Page] = [
         "Spend",
         "/spend",
         "donut_small",
-        A,
         "Where the money goes, by month, GL account, cost center and vendor, from approved invoices.",
         module="spend",
         more=True,
@@ -171,7 +154,6 @@ PAGES: list[Page] = [
         "Insights",
         "/insights",
         "query_stats",
-        A,
         "How much goes straight through and the time it saves.",
         module="insights",
         more=True,
@@ -181,7 +163,6 @@ PAGES: list[Page] = [
         "Activity",
         "/activity",
         "history",
-        A,
         "Who processed, changed, approved, rejected, deleted or exported what, and when.",
         module="activity",
         more=True,
@@ -191,7 +172,6 @@ PAGES: list[Page] = [
         "Settings",
         "/settings",
         "settings",
-        S,
         "Review behaviour, how invoices are read, touchless processing, your data and backups.",
         module="settings",
     ),
@@ -200,7 +180,6 @@ PAGES: list[Page] = [
         "Help",
         "/help",
         "help",
-        S,
         "How AP Coder works, what each check means and what to do about it.",
         module="help",
     ),
@@ -219,12 +198,14 @@ BY_KEY: dict[str, Page] = {p.key: p for p in PAGES}
 PINNED = {"settings", "help"}  # at the rail's foot, always on screen
 
 # Simple screens (Settings → About → "What is shown", ``core.simple_screens``): the menu of one person coding invoices
-# to JD Edwards account strings. Its everyday pages in the menu's order, each with its name there (the coding rules
-# among them: anyone changes them, D-217), then the pages
-# under "Setup", then Help. Every other page is left out of the menu, not removed: its address still opens.
-SIMPLE_MAIN: dict[str, str] = {"review": "To review", "process": "Add invoices", "exports": "To key into JDE",
-                               "search": "Find an invoice", "learning": "What was learned",
-                               "rules": "Rules"}  # fmt: skip
+# to JD Edwards account strings. Its everyday pages in the menu's order (the coding rules among them: anyone changes
+# them, D-217), then the pages under "Setup", then Help. Every other page is left out of the menu, not removed: its
+# address still opens.
+SIMPLE_MAIN: tuple[str, ...] = ("review", "process", "exports", "search", "learning", "rules")
 SIMPLE_SETUP: tuple[str, ...] = ("accounts", "jde_files", "vendors", "activity", "settings")
 SIMPLE_KEYS = {*SIMPLE_MAIN, *SIMPLE_SETUP, "help"}
+# With JD Edwards (Settings → About, ``core.jde_shown``) and in Simple screens, in every menu and page title: JD
+# Edwards' own words (a supplier, not a vendor), and the exports are what AP keys into it (``core.page_meta``).
+JDE_TITLES: dict[str, str] = {"exports": "To key into JDE", "vendors": "Suppliers",
+                              "statements": "Supplier statements"}  # fmt: skip
 BANNER_PAGES = {"process", "review"}  # where OvisOCR2's one-line warning shows under the page header

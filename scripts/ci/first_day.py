@@ -20,7 +20,7 @@ in their order:
 4. ``pilot-score --journal --hold-out 2``; past invoices copied into the invoices folder and processed, then
    ``pilot-score --proposed --vouchers ... --journal ...``;
 5. the day's invoices chosen on Add invoices and processed; the review queue; one invoice opened (its Account box
-   filled, with why; its remark suggested; its bank account), approved; To key into JDE: Export, Download batch, the
+   filled, with why; its remark suggested; its bank account), approved; To key into JDE: Export (it downloads), the
    keying sheet's header fields and its line;
 6. ``backup now``, Settings -> Data & backups, Activity, ``doctor``.
 
@@ -63,7 +63,7 @@ COMMAND_WAIT = 600.0  # seconds a command (demo, pilot-score, backup, doctor) ha
 PAST = 6  # past invoices for pilot-score --proposed (the guide says about 50 of the tester's own)
 APPROVED = "one_line"  # the day's invoice approved: one line from a supplier that always goes to one account
 MENU = ("To review", "Add invoices", "To key into JDE", "Find an invoice", "What was learned", "Rules")
-SETUP = ("GL accounts & tax", "JD Edwards files", "Vendors", "Activity", "Settings")
+SETUP = ("GL accounts & tax", "JD Edwards files", "Suppliers", "Activity", "Settings")
 # The keying sheet's header fields the guide names (section 5, To key into JDE), as the sheet labels them.
 KEYING_FIELDS = ("Supplier number", "Invoice number", "Invoice date", "G/L date", "Currency", "Gross amount",
                  "Tax explanation code", "Tax rate/area", "Tax amount", "Taxable amount",
@@ -491,7 +491,9 @@ def section_5(client: Client, work: Path, today: Path, approved: Any, bank: str)
     queue = page(client, "/review")
     ids = list(dict.fromkeys(INVOICE_LINK.findall(queue)))
     check(len(ids) == len(chosen) + PAST, f"the review queue lists {len(ids)} invoices, not {len(chosen) + PAST}")
-    says(queue, "Needs attention", "pick the account")
+    says(queue, "Needs attention")  # the rows say which accounts to pick (D-255: "Pick accounts for 4 lines")
+    picks = re.search(r"Pick (the account for line \d+|accounts for \d+ lines)", plain(queue))
+    check(picks is not None, f"no row says which accounts to pick: {plain(queue)[:1500]}")
     number = approved.number
     screens = {int(i): page(client, f"/review/{i}") for i in ids}
     found = [i for i, shown in screens.items() if f'value="{html.escape(number)}"' in shown]
@@ -520,16 +522,16 @@ def section_5(client: Client, work: Path, today: Path, approved: Any, bank: str)
     check(answer.get("redirect"), f"the approval was not made: {answer}")
     seen("approved")
 
-    step("5. To key into JDE: Export puts it on a keying sheet; Download batch")
+    step("5. To key into JDE: Export puts it on a keying sheet and downloads it")
     exports = page(client, "/exports")
     says(exports, "JD Edwards keying sheet", "Export 1 invoice")
     form = export_form(exports)
     check(("ids", str(invoice_id)) in form, f"the approved invoice is not ticked to export: {form}")
     check(("fmt", "jde_keying") in form, f"the page does not put it on the keying sheet: {form}")
     made = page(client, post(client, "/exports/create", form)["redirect"])
-    link = re.search(r'href="(/exports/batches/(\d+)/download[^"]*)"[^>]*download>', made)
-    check(link, "the page offers no Download batch")
-    says(made, f"Batch {link.group(2)} created", f"Download batch {link.group(2)}")
+    link = re.search(r'href="(/exports/batches/(\d+)/download[^"]*)"[^>]*data-auto-download>', made)
+    check(link, "the page does not download the batch as it opens")
+    says(made, f"Batch {link.group(2)} created", "Its file is downloading", "Download it again")
     status, sheet, _ = client.request("GET", html.unescape(link.group(1)))
     check(status == 200 and sheet[:2] == b"PK", f"the keying sheet did not download: {status} {sheet[:300]!r}")
     keying = work / "keying_sheet.xlsx"

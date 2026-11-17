@@ -1,7 +1,7 @@
 """The dashboard in a narrow window: a laptop zoomed in with Ctrl+scroll (a 1366-wide screen at 150% is 911 CSS
 pixels wide, at 200% 683; a 1920-wide one at 175% is 1097), and a phone (390). No page scrolls sideways, and the menu
-stays small: icons only from 901 to 1199 px, a bar with a Menu button under that, the whole menu over the page from
-the button."""
+stays small: narrower from 901 to 1199 px, its words shown (D8), a bar with a Menu button under that, the whole menu
+over the page from the button; its own button folds it to its icons from 901 px (D8)."""
 
 from __future__ import annotations
 
@@ -76,23 +76,26 @@ def test_in_a_browser_no_page_scrolls_sideways_and_the_menu_stays_small_when_zoo
 
 
 @pytest.mark.parametrize("width", [1097, 911])
-def test_in_a_browser_the_menu_shows_its_icons_only_on_a_zoomed_in_laptop(browser, demo_store, width):
-    """From 901 to 1199 px the 256 px menu took a quarter of the window and more (28% at 911); its icons only now,
-    each page's name in its tooltip and still read out by a screen reader."""
+def test_in_a_browser_the_menu_shows_its_words_on_a_zoomed_in_laptop(browser, demo_store, width):
+    """From 901 to 1199 px the 256 px menu took a quarter of the window and more (28% at 911), then its icons alone
+    left the pilot tester guessing at 150% (D8): a narrower menu now, each page's name shown in full."""
     chromium, base = browser
     page = chromium.new_page(viewport={"width": width, "height": 700})
     for path in ("/review", "/settings", f"/review/{_invoice(demo_store)}"):
         page.goto(base + path)
         look = page.evaluate(_LOOK)
-        assert not look["sideways"] and look["menu"] <= 1 / 8, (path, look)
-    link = page.locator('.rail a.nav-link[href="/exports"]')
-    assert link.get_attribute("title") == "Exports"
-    assert page.evaluate("document.querySelector('.rail a[href=\"/exports\"] .label').textContent") == "Exports"
-    assert page.get_by_role("link", name="Exports").count() == 1  # its name, though not shown
+        assert not look["sideways"] and look["menu"] <= 0.25, (path, look)
+    page.goto(base + "/review")
+    assert page.locator(".rail").bounding_box()["width"] <= 210
+    shown = page.locator(".rail .nav-link .label:visible").all()  # (the pages folded under More: hidden till opened)
+    assert len(shown) >= 8
+    for label in shown:
+        assert label.evaluate("e => e.scrollWidth <= e.clientWidth"), label.inner_text()  # whole, not cut short
+    assert page.locator("[data-rail-toggle]:visible").count() == 0  # nothing hidden to open
     page.close()
 
 
-@pytest.mark.parametrize("width", [1097, 683])
+@pytest.mark.parametrize("width", [683, 390])
 def test_in_a_browser_the_menu_button_opens_the_whole_menu_over_the_page_and_esc_closes_it(browser, width):
     chromium, base = browser
     page = chromium.new_page(viewport={"width": width, "height": 700})
@@ -113,6 +116,102 @@ def test_in_a_browser_the_menu_button_opens_the_whole_menu_over_the_page_and_esc
     page.mouse.click(width - 10, 650)  # a click on the page closes it
     assert button.get_attribute("aria-expanded") == "false"
     page.close()
+
+
+_FOLD = "[data-rail-fold]"
+# The menu's and the page's sides: (the menu's width, the page's left and right, whether the window scrolls sideways).
+_SIDES = """() => { const rail = document.querySelector('.rail');
+  const main = document.querySelector('.main').getBoundingClientRect();
+  return [getComputedStyle(rail).display === 'none' ? 0 : Math.round(rail.getBoundingClientRect().width),
+          Math.round(main.left), Math.round(main.right), document.documentElement.scrollWidth > innerWidth]; }"""
+
+
+@pytest.mark.parametrize("width", [1707, 1366, 911])
+def test_in_a_browser_the_menu_folds_to_its_icons_by_its_button_and_the_browser_remembers_it(
+    browser, demo_store, width
+):
+    """D8, the owner: "the ability to easily minimize the panel on the left". From the keyboard too; the page takes the
+    width the menu gave up, at each zoom of a 1366 laptop (80% is 1707 px to the page, 150% 911), and every page and
+    the review screen open folded until the button is pressed again."""
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": width, "height": 700})
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(base + "/review")
+    rail, left, right, _ = page.evaluate(_SIDES)
+    assert rail > 200 and left == rail
+    button = page.locator(_FOLD)
+    assert button.get_attribute("aria-label") == button.get_attribute("title") == "Fold the menu to its icons"
+    button.focus()
+    page.keyboard.press("Enter")
+    assert button.get_attribute("aria-label") == "Show the menu's words"
+    assert page.evaluate(_SIDES) == [64, 64, right, False]  # the page as wide as it was, on the left too
+    settings = page.get_by_role("link", name="Settings", exact=True)
+    assert settings.is_visible() and settings.get_attribute("title") == "Settings"  # read out, named in its tooltip
+    assert settings.bounding_box()["width"] <= 48
+    for path in ("/settings", "/exports", f"/review/{_invoice(demo_store)}"):
+        page.goto(base + path)
+        sides = page.evaluate(_SIDES)
+        assert sides[:2] == [64, 64] and not sides[3], (path, sides)
+    page.locator(_FOLD).click()
+    page.reload()
+    assert page.evaluate(_SIDES)[0] > 200 and page.locator(_FOLD).get_attribute("aria-label").startswith("Fold")
+    assert errors == []
+    page.close()
+
+
+def test_in_a_browser_a_folded_menu_leaves_the_bar_and_its_menu_alone_in_a_narrow_window(browser):
+    """Under 901 px (a 1366 laptop at 200%) the bar's Menu button opens the whole menu, words and all, folded or not;
+    the fold button is not there to press."""
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": 1366, "height": 700})
+    page.goto(base + "/review")
+    page.locator(_FOLD).click()
+    page.set_viewport_size({"width": 683, "height": 700})
+    page.reload()
+    assert page.locator(f"{_FOLD}:visible").count() == 0
+    page.locator("[data-rail-toggle]:visible").click()
+    assert page.locator('.rail a[href="/settings"]').bounding_box()["width"] > 150
+    assert page.evaluate("document.documentElement.scrollWidth") <= 683
+    page.close()
+
+
+def test_in_a_browser_the_fold_button_works_where_the_browser_keeps_nothing(browser):
+    """A browser that refuses its storage to the page (a locked-down profile): the button still folds the menu, the
+    page goes on without an error, and the next page opens with its words."""
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": 1366, "height": 700})
+    page.add_init_script("Object.defineProperty(window, 'localStorage', {get() { throw new Error('denied'); }});")
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(base + "/review")
+    page.locator(_FOLD).click()
+    assert page.evaluate(_SIDES)[0] == 64
+    page.goto(base + "/settings")
+    assert page.evaluate(_SIDES)[0] > 200
+    assert errors == []
+    page.close()
+
+
+@pytest.mark.parametrize("width", [1366, 1093, 911])
+def test_in_a_browser_the_review_screen_with_a_chart_shows_the_folded_menu(chromium, chart_company, width):
+    """With a chart of accounts the menu is off the review screen below 1820 px, behind its Menu button (D-214); folded
+    it is small enough to stay (D8): its icons beside the screen, the Menu button gone, nothing past the edge. Folding
+    it from the menu opened over the screen closes that and leaves it folded beside it."""
+    app = create_app(web_settings(), chart_company.store, start_reader=False)
+    with browser_on(chromium, app) as (browser, base):
+        page = browser.new_page(viewport={"width": width, "height": 700})
+        page.goto(f"{base}/review/{chart_company.invoices['four_lines'][1]}")
+        assert page.evaluate(_SIDES)[:2] == [0, 0]
+        menu = page.locator("[data-menu-toggle]")
+        menu.click()
+        page.locator(_FOLD).click()
+        assert menu.get_attribute("aria-expanded") == "false" and not menu.is_visible()
+        rail, left, right, sideways = page.evaluate(_SIDES)
+        assert (rail, left, sideways) == (64, 64, False) and right >= width - 20  # (its scrollbar's gutter)
+        page.reload()
+        assert page.evaluate(_SIDES)[:2] == [64, 64]
+        page.close()
 
 
 @pytest.mark.parametrize("width", [683, 390])
@@ -290,3 +389,16 @@ def test_in_a_browser_find_an_invoice_fits_a_laptop_and_each_filter_shows_its_ow
                     for name in ("vendor", "invoice_number", "currency")}  # fmt: skip
         assert examples["vendor"] == "north*" and "north" not in examples["invoice_number"] + examples["currency"]
         page.close()
+
+
+def test_in_a_browser_the_users_buttons_are_in_view_beside_the_menus_words(server_roles):
+    """B-2607: with the menu showing its words from 901 to 1199 px (D8, 208 px where its icons took 64), the Users
+    table at 911 px was 723 px wide in a card of 581: Clara's Turn off out of sight past the card's edge."""
+    browser, base, sign_in = server_roles
+    page = browser.new_page(viewport={"width": 911, "height": 800})
+    sign_in(page)
+    page.goto(f"{base}/admin/users")
+    card = page.locator(".table-wrap").first.bounding_box()
+    off = page.locator('tr[data-user="clara"] button', has_text="Turn off").bounding_box()
+    assert off["x"] + off["width"] <= card["x"] + card["width"] + 1, (off, card)
+    page.close()

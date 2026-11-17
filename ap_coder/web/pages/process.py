@@ -1,4 +1,4 @@
-"""Import invoices: the setup checklist, uploading invoices, picking up new files in the invoices folder.
+"""Add invoices: the setup checklist, uploading invoices, picking up new files in the invoices folder.
 
 Each upload and each pick-up puts its files in the import queue (``core/store/imports.py``, D-168), which keeps them
 over a restart; they are read in turn, fairly between the people who brought them. On the company server its capture
@@ -448,14 +448,14 @@ def name_step() -> tuple[str, str, str]:
 
 
 def first_steps(store: Store, settings: Settings, has_invoices: bool) -> tuple[list[tuple[str, str, str]], int, int]:
-    """(steps, done, needed) of getting started, the same on Import invoices' Setup card and the review queue's
+    """(steps, done, needed) of getting started, the same on Add invoices' Setup card and the review queue's
     welcome page: ``setup_steps``, then processing the first invoices. Every row shown is counted (B-503)."""
     steps = setup_steps(store, settings)
     steps.append(("ok" if has_invoices else "todo", "Process your first invoices", "done" if has_invoices else "to do"))
     return steps, sum(1 for s, _, _ in steps if s == "ok"), len(steps)
 
 
-# Where each getting-started step is done: its row on the welcome page and Import invoices links there until it is.
+# Where each getting-started step is done: its row on the welcome page and Add invoices links there until it is.
 STEP_LINKS = {
     LM_STUDIO: "/settings/reading",
     "Reading invoices": "/settings/reading",
@@ -480,7 +480,7 @@ def step_links(steps: list[tuple[str, str, str]]) -> dict[str, str]:
 
 
 def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
-    """The one thing to do next on a new laptop, as the welcome page and Import invoices show it: the name (each
+    """The one thing to do next on a new laptop, as the welcome page and Add invoices show it: the name (each
     approval is recorded under it), the GL accounts (or the sample ones, to look around first), the sales tax
     accounts, then the first invoices. None once all four are done (LM Studio is the checklist's first row, with
     Check again, and has its own banner)."""
@@ -527,7 +527,7 @@ def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
                     "text": f"{HISTORY_WHY}: load the Transaction Journal from JD Edwards (report R09321), the "
                             "invoices posted in a year or more, so the first invoices are coded already."}  # fmt: skip
     if state["Process your first invoices"][0] != "ok":
-        return {"title": "Import your first invoices", "icon": "upload_file", "button": "Import invoices",
+        return {"title": "Add your first invoices", "icon": "upload_file", "button": "Add invoices",
                 "href": STEP_LINKS["Process your first invoices"],
                 "text": "Upload a few PDFs, scans or photos: each is read, coded and checked, then waits for you in "
                         "the review queue."}  # fmt: skip
@@ -876,7 +876,9 @@ def process_page(request: Request) -> HTMLResponse:
     waiting = [i for i in recent if i["status"] == REVIEW]
     reasons = attention(store, reference_or_none(store), waiting) if waiting else {}
     recent = [{**i, "needs_attention": i["id"] in reasons} for i in recent]  # its pill says what the queue says
-    steps, coming, links = shown_setup(request, steps, next_step(steps))
+    # LM Studio not ready is said by the banner and the checklist's first row, never a Next step card besides (the
+    # welcome page keeps it, B-529): the card is the next step after it.
+    steps, coming, links = shown_setup(request, steps, next_step([s for s in steps if s[1] != LM_STUDIO]))
     files, not_read, folder_note = (shared_files if server_mode(request) else folder_files)(store)
     return render(
         request, "process.html", "process",
