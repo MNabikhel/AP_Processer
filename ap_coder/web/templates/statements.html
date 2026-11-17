@@ -73,12 +73,12 @@
 {% if rec.period_unknown %}<div class="flash warn" id="statement-period-unknown"><span class="ms" aria-hidden="true">warning</span><div>The statement's dates read either way (day or month first) and its invoices didn't tell which, so its period couldn't be told: the invoices it leaves out may not be listed as Not on statement.</div></div>{% elif rec.dates_unread %}<div class="flash warn" id="statement-dates-unread"><span class="ms" aria-hidden="true">warning</span><div>None of the statement's dates could be read (or no date column is picked), so its period couldn't be told: the invoices it leaves out are not listed as Not on statement. Dates written like 2026-09-15 or 15/09/2026 can be read.</div></div>{% endif %}
 <section class="card">
   <div class="card-head">
-    <h4 id="result-title">{{ names[vendor] }}: the statement compared with AP Coder</h4>
+    <h4 id="result-title">{{ names[vendor] }}: the statement compared with AP Coder{% if erp %} and {{ erp }}{% endif %}</h4>
     <a class="btn" href="/statements/reconciliation.csv?{{ query }}" download><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
   </div>
   <div class="table-wrap">
     <table class="apc-table">
-      <thead><tr><th></th><th>Invoice #</th><th>Date</th><th class="r">Statement</th><th class="r">AP Coder</th><th class="r">Difference</th><th>In AP Coder</th></tr></thead>
+      <thead><tr><th></th><th>Invoice #</th><th>Date</th><th class="r">Statement</th><th class="r">Ours</th><th class="r">Difference</th><th>Found in</th></tr></thead>
       <tbody>
         {% for r in lines %}{% set li = r.line %}
         <tr>

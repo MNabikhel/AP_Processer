@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import io
+import re
 import zipfile
 
 import openpyxl
@@ -751,3 +752,33 @@ def test_a_sheet_of_thousands_of_columns_is_refused_before_it_is_read(client, mo
     book.save(raw)
     with pytest.raises(files.SheetError, match="1,000 columns"):
         files.read_sheet("statement.xlsx", raw.getvalue())
+
+
+def test_a_statement_is_compared_with_the_vouchers_loaded_from_jd_edwards_too(chart_company, chart_company_client):
+    """B-2609: a statement was compared only with AP Coder's own invoices, so every invoice already keyed in JD
+    Edwards (the voucher list loaded on JD Edwards files) showed "Not received". It is compared with both, and each
+    line says where its invoice was found."""
+    store, client = chart_company.store, chart_company_client
+    key = next(v["vendor_key"] for v in store.vendor_summaries() if v["vendor_name"].startswith("Quill"))
+    in_jde = [r for r in store.erp_register() if r["an8"] == store.vendor_ids()[key]]
+    (mine,) = store.vendor_invoices(key)
+    content = ("Invoice No,Date,Amount\n"
+               f"{in_jde[0]['invoice_number']},{in_jde[0]['invoice_date']},{in_jde[0]['total']:.2f}\n"
+               f"{in_jde[1]['invoice_number']},{in_jde[1]['invoice_date']},{in_jde[1]['total'] + 5:.2f}\n"
+               f"{mine['invoice_number']},{mine['invoice_date']},{mine['grand_total']:.2f}\n"
+               "NOWHERE-1,2025-02-01,10.00\n").encode()  # fmt: skip
+    page = follow(client, client.post("/statements/upload", data={"vendor": key},
+                                      files={"file": ("s.csv", content, "text/csv")}, headers=PAGE))  # fmt: skip
+    rows = {re.sub(r"<[^>]+>", "", cells[1]).strip(): [re.sub(r"<[^>]+>|\s+", " ", c).strip() for c in cells]
+            for cells in (re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)
+                          for row in page.text.split('id="result"', 1)[1].split("<tbody>", 1)[1]
+                          .split("</tbody>", 1)[0].split("</tr>")) if len(cells) > 1}  # fmt: skip
+    first, second = in_jde[0]["invoice_number"], in_jde[1]["invoice_number"]
+    assert rows[first][0].endswith("Matched") and "In JD Edwards" in rows[first][6], rows[first]
+    assert rows[second][0].endswith("Amount differs") and "In JD Edwards" in rows[second][6], rows[second]
+    assert rows[mine["invoice_number"]][0].endswith("Matched") and "JD Edwards" not in rows[mine["invoice_number"]][6]
+    assert rows["NOWHERE-1"][0].endswith("Not received")
+    assert "and the vouchers loaded from JD Edwards" in page.text
+    query = page.url.query.decode()
+    data = client.get(f"/statements/reconciliation.csv?{query}").content.decode("utf-8-sig")
+    assert data.count("In JD Edwards") == 2
