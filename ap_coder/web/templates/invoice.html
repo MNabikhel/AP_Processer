@@ -528,10 +528,8 @@
     <p class="muted small">{% if same %}You approved it first, so another person gives the final approval, logged in with their own account.{% else %}It takes another person than the first approver, with their own account.{% endif %}
       Not going ahead? Send back returns it to the review queue.</p></div>
     {% else %}
-    <p class="muted small">{% if same %}You approved it first, so someone else gives the final approval, on{% else %}It takes another person on{% endif %}
-      another computer login: on one laptop with one Windows login it can't be given. To test it, sign in to this laptop
-      with a second Windows account and open AP Coder there, or have a colleague open it from their computer over the
-      office network. Not going ahead? Send back returns it to the review queue.</p></div>
+    <p class="muted small">{% if same %}You approved it first, so someone else gives the final approval,{% else %}It takes another person than the first approver,{% endif %}
+      a colleague with an account of their own: on one laptop one person can't give both, so share it (<code>python -m ap_coder share</code>) and they sign in to give it. Not going ahead? Send back returns it to the review queue.</p></div>
     {% endif %}
     {% if can("/review/1/final-approve") %}
     <div class="row end">
