@@ -1,7 +1,7 @@
 """The JD Edwards keying sheet: what a person reads while typing vouchers into Standard Voucher Entry (D-210).
 
 For the approved invoices of an export batch, one block per voucher, in the order the screen asks: the header
-(supplier, company, invoice number, dates, currency), the pay item (gross amount, payment terms, remark, due date,
+(supplier, company, invoice number, dates, currency), the pay item (gross amount, payment terms code, remark, due date,
 tax explanation code, tax rate/area, tax and taxable amounts; the G/L bank account once bank accounts are entered,
 D-220), then its G/L distribution (the account string as it is
 typed, ``BU.Object.Subsidiary``; the account's description; the amount, net of the tax JD Edwards posts itself, a
@@ -81,7 +81,7 @@ class Voucher:
     gl_date: dt.date
     currency: str
     gross: float
-    terms: str  # the JD Edwards terms code when the terms table has one, else the terms as printed
+    terms: str  # the JD Edwards terms code; "" when there is none (the printed terms are in a note, B-2744)
     remark: str
     due: dt.date | None  # None: JD Edwards works it out from the terms
     po_number: str
@@ -155,6 +155,11 @@ def vouchers(
             terms = CREDIT_TERMS
         warnings, notes = _said(v, settings, tax is not None, fx_rates)
         warnings = [*((warned or {}).get(v.inv_id) or []), *warnings]
+        printed = str(final.get("payment_terms") or "").strip()
+        if not terms and printed:  # never the printed terms in JD Edwards' 3-character code (B-2744)
+            notes.insert(0, f"Payment terms “{printed}” are printed and have no JD Edwards code (Settings → JD Edwards "
+                         "E1): Payment terms is left blank, as the batch files send it, so JD Edwards takes the "
+                         "supplier's own terms. Type their code if they differ.")  # fmt: skip
         bank = None
         if bank_accounts:
             code = str(final.get("pay_from_account") or "")
@@ -168,7 +173,7 @@ def vouchers(
             invoice_date=jde_formats._date(final.get("invoice_date")),
             gl_date=jde_settings.gl_date_of(final, settings, on)[0],
             currency=v.currency, gross=v.gross / 100,
-            terms=terms or str(final.get("payment_terms") or "").strip(),
+            terms=terms,
             remark=jde_remarks.voucher_remark(inv),
             due=jde_voucher.sent_due(final, inv) if settings.send_due_date else None,
             po_number=str(final.get("po_number") or "").strip(), tax_code=v.tax_code, tax_area=v.tax_area,

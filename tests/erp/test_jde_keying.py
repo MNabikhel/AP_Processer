@@ -182,22 +182,36 @@ def test_codes_are_text_cells_amounts_are_numbers_and_dates_are_dates():
     assert (company.value, company.data_type, company.number_format) == ("00001", "s", "@")
 
 
-def test_a_voucher_split_across_two_business_units_has_a_line_each_with_its_remark_cut_at_30():
+def test_a_voucher_split_across_two_business_units_has_a_line_each_with_its_remark_cut_at_a_word_end():
     (block,) = blocks(workbook([split()])[jde_keying.SHEET])
     assert lines_and_check(block) == [
-        [f"{HQ}.6420.2210", "Data lines", 100, "Courier to the north office, t"],
+        [f"{HQ}.6420.2210", "Data lines", 100, "Courier to the north office"],
         [f"{HQ}.0042", "Office supplies", 200, "Toner"],
         [f"{IT}.6431", "Courier", 300, "Same-day courier"],
         ["Check", "G/L lines + recovered tax = gross", 600, "600.00 + 78.00 = 678.00: balanced"],
     ]
-    assert field(block, "Remark").value == "Courier to the north office, t"  # the first line's
+    assert field(block, "Remark").value == "Courier to the north office"  # the first line's, at a word end (B-2743)
     assert (field(block, "Taxable amount").value, field(block, "Tax amount").value) == (600, 78)
     assert (field(block, "Tax explanation code").value, field(block, "Tax rate/area").value) == ("V", "ON-HST")
 
 
+def test_a_line_without_a_remark_is_keyed_with_its_description_cut_at_a_word_end():
+    """B-2743: a line with no remark of its own was keyed with its description cut at 30 characters mid-word
+    ("Professional consulting servic"), on the sheet and in the batch files' explanation (VNEXA). It is cut at a word
+    end within 30 (``remark.fit``)."""
+    final = one_line()["final_output"]
+    final["line_items"][0]["description"] = "Professional consulting services in October"
+    invoice = coded({k: v for k, v in final.items() if k != "gl_distribution"})
+    (block,) = blocks(workbook([invoice])[jde_keying.SHEET])
+    assert lines_and_check(block)[0][3] == "Professional consulting"
+    files = jde_zfiles.export_batch([invoice], settings(), lookup, batch=7, on=ON_DAY)
+    (dist,) = csv.DictReader(io.StringIO(files[jde_zfiles.DIST_FILE].decode()))
+    assert dist["VNEXA"] == "Professional consulting"
+
+
 def test_a_line_with_a_remark_of_its_own_is_on_the_sheet_with_it():
     """D-213: the "Explanation -Remark-" column and the pay item's Remark carry the line's remark, fitted to 30
-    characters at a word end; a line without one keeps its description cut at 30."""
+    characters at a word end; a line without one its description, at a word end too (B-2743)."""
     invoice = split()
     lines = invoice["final_output"]["line_items"]
     lines[0].update(remark="KT Oct.parcels 3-1-204", remark_from="person")
@@ -505,7 +519,8 @@ def test_the_exports_page_offers_the_keying_sheet_and_downloads_it_for_a_batch(t
     assert field(block, "Supplier number").value == "10023"
     assert field(block, "Supplier name").value == northwind["vendor_name"]
     assert any(str(row[0].value).startswith("CC400.") and row[1].value for row in block)  # an account, described
-    assert block[-1][0].value == "Check" and block[-1][3].value.endswith(": balanced")
+    check = next(row for row in block if row[0].value == "Check")  # (a note under it: the terms have no code)
+    assert check[3].value.endswith(": balanced")
     assert list(wb[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True)) == []
 
 
@@ -825,6 +840,21 @@ def test_a_credit_note_that_prints_payment_terms_is_keyed_with_none():
     assert field(block, "Payment terms").value == "none (a credit)"
     head = jde_zfiles.voucher_rows(printed, "40417", settings())[0][0]
     assert head["VLPTC"] == ""
+
+
+def test_printed_terms_with_no_jd_edwards_code_are_never_put_in_the_payment_terms_field():
+    """B-2744: printed terms the terms table has no code for ("2/10 Net 30") were shown in Payment terms, JD Edwards'
+    3-character code, which they can't be typed in, while the batch files send it blank (the supplier's own terms).
+    The field is blank, as the files send it, and a note gives the printed terms for the person to pick the code."""
+    printed = one_line()
+    printed["final_output"]["payment_terms"] = "2/10 Net 30"
+    (block,) = blocks(workbook([printed])[jde_keying.SHEET])
+    assert field(block, "Payment terms").value is None
+    assert jde_zfiles.voucher_rows(printed, "40417", settings())[0][0]["VLPTC"] == ""
+    (note,) = [n for n in said(block, "Note") if "2/10 Net 30" in n]
+    assert "no JD Edwards code" in note and "blank" in note
+    (plain,) = blocks(workbook([one_line()])[jde_keying.SHEET])  # terms with a code: the code, nothing said
+    assert field(plain, "Payment terms").value == "N30" and not said(plain, "Note")
 
 
 def test_a_tax_area_of_another_province_than_the_tax_charged_is_said_and_holds_nothing():
