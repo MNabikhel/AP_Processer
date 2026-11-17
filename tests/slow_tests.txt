@@ -100,6 +100,7 @@ tests/ai/test_uniform_reading.py::test_the_decision_knows_how_many_pages_the_pag
 tests/ai/test_verifier.py::test_a_reopen_during_the_review_keeps_aps_corrections
 tests/ai/test_verifier.py::test_the_model_is_asked_to_think_with_the_pages
 tests/ai/test_verifier.py::test_the_servers_outage_is_not_the_reviewers_verdict
+tests/bench/test_adversarial.py::test_through_the_pipeline_an_obeyed_line_still_goes_to_a_person
 tests/bench/test_bench.py::test_a_supplier_stream_keeps_the_vendor_and_varies_the_content
 tests/bench/test_bench.py::test_generator_is_deterministic
 tests/bench/test_bench.py::test_harness_runs_end_to_end_with_the_stub
