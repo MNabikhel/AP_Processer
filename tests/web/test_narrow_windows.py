@@ -261,3 +261,30 @@ def test_in_a_browser_the_sign_in_pages_buttons_stay_in_view_at_683(server_roles
     button = page.locator("#sessions button:has-text('Sign out everywhere')").bounding_box()
     assert button["x"] + button["width"] <= wrap.bounding_box()["x"] + wrap.bounding_box()["width"] + 1
     page.close()
+def test_in_a_browser_the_journals_forget_button_stays_on_one_line_on_a_laptop(chromium, chart_company):
+    """B-2607: at 1366 px the journal table of JD Edwards files broke its Forget button in two, "Forg / et"."""
+    app = create_app(web_settings(), chart_company.store, start_reader=False)
+    with browser_on(chromium, app) as (browser, base):
+        page = browser.new_page(viewport={"width": 1366, "height": 800})
+        page.goto(f"{base}/jde-files")
+        button = page.locator(".imp-journals button", has_text="Forget").first
+        lines = button.evaluate("b => { const r = document.createRange(); r.selectNodeContents(b.lastChild); "
+                                "return r.getClientRects().length; }")  # fmt: skip
+        assert lines == 1
+        page.close()
+
+
+def test_in_a_browser_find_an_invoice_fits_a_laptop_and_each_filter_shows_its_own_example(chromium, chart_company):
+    """B-2608: in a 1366 px window Find an invoice's table was 1599 px wide, "Where it stands" cut off and "Next to
+    act" out of sight; and the Currency and Invoice # filters showed "north*", the Vendor's example."""
+    app = create_app(web_settings(), chart_company.store, start_reader=False)
+    with browser_on(chromium, app) as (browser, base):
+        page = browser.new_page(viewport={"width": 1366, "height": 800})
+        page.goto(f"{base}/search")
+        wrap = page.evaluate("() => { const w = document.querySelector('.dir-table').parentElement; "
+                             "return [w.scrollWidth, w.clientWidth]; }")  # fmt: skip
+        assert wrap[0] <= wrap[1], wrap
+        examples = {name: page.get_attribute(f"input[name=f_{name}]", "placeholder")
+                    for name in ("vendor", "invoice_number", "currency")}  # fmt: skip
+        assert examples["vendor"] == "north*" and "north" not in examples["invoice_number"] + examples["currency"]
+        page.close()

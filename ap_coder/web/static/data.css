@@ -117,10 +117,14 @@ button.link.danger {color: var(--lg-danger);}
 .dir-sort.on {color: var(--lg-text); font-weight: 600;}
 .dir-sort .ms {font-size: 15px;}
 .dir-filters td {padding: 4px 6px; height: auto; background: var(--lg-head);}
-.dir-filters input, .dir-filters select {width: 100%; min-width: 90px; height: 30px; font-size: 12.5px; box-sizing: border-box;}
+.dir-filters input, .dir-filters select {width: 100%; min-width: 56px; height: 30px; font-size: 12.5px; box-sizing: border-box;}
 .dir-filters input.r {text-align: right;}
 .dir-filters input[aria-invalid="true"] {border-color: var(--lg-danger);}
-.dir-where {min-width: 16rem; color: var(--lg-muted);}
+.dir-where {color: var(--lg-muted);}
+/* The default columns fit a laptop's 1366 px: no column of words wider than it need be, less room around each
+   cell (B-2608) */
+.dir-table th, .dir-table td {padding-left: 8px; padding-right: 8px;}
+.dir-table td.w, .dir-table td.dir-where {min-width: 8rem;}
 .dir-actions {text-align: right; white-space: nowrap;}
 .dir-actions form {display: inline;}
 .dir-pager {display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px;

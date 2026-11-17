@@ -7,7 +7,8 @@
   <span class="dir-move"><button type="button" class="dir-icon" data-move="-1" aria-label="Move {{ c.label }} up"><span class="ms" aria-hidden="true">arrow_upward</span></button><button type="button" class="dir-icon" data-move="1" aria-label="Move {{ c.label }} down"><span class="ms" aria-hidden="true">arrow_downward</span></button></span>
 </li>{% endmacro %}
 {% macro col_label(key) %}{{ all_columns[key].label if key in all_columns else key }}{% endmacro %}
-{% macro placeholder(c) %}{{ {"money": ">1000", "date": "2026-09", "number": "42"}.get(c.kind, "north*") }}{% endmacro %}
+{# each filter's example: its own column's, never another's (B-2608) #}
+{% macro placeholder(c) %}{{ {"vendor": "north*", "invoice_number": "*0912", "po": "PO-88*", "currency": "USD", "gl": "6010", "file": "*.pdf"}.get(c.key) or {"money": ">1000", "date": "2026-09", "number": "42"}.get(c.kind, "") }}{% endmacro %}
 {% block content %}
 <section class="card flush" id="directory">
   <form id="dir" method="get" action="/search#directory" role="search" class="rq-toolbar dir-toolbar">
