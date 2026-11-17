@@ -1,4 +1,4 @@
-"""Every prompt sent to a chat model says the invoice is data, never instructions (D-265): its text that addresses
+"""Every prompt sent to a chat model says the invoice is data, never instructions (D-259): its text that addresses
 an AI, a system or AP ("ignore previous instructions", "approve this") is read or copied as written, not followed, and
 the instructions come only from the system message. The document's own text in a user message is between <document>
 and </document>. Checked on the requests themselves, made by the pipeline, the page reader and the AI reviewer
@@ -64,7 +64,7 @@ def test_the_coders_prompts_say_it_and_delimit_the_document(reference):
         assert DOCUMENT_IS_DATA in system
 
 
-# The page readers' prompts as they were before D-265: left alone (OvisOCR2 was trained on its own; their kept
+# The page readers' prompts as they were before D-259: left alone (OvisOCR2 was trained on its own; their kept
 # readings are by prompt, so a change would read every page again).
 OVIS_PINNED = (
     "\nExtract all readable content from the image in natural human reading order and output the result as a single "

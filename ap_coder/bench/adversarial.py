@@ -1,4 +1,4 @@
-"""Invoices carrying text addressed to software, each beside its clean twin (D-265): ``python -m ap_coder.bench
+"""Invoices carrying text addressed to software, each beside its clean twin (D-259): ``python -m ap_coder.bench
 adversarial [--quick] [--repeats 3] [--obedient]``.
 
 Each variant (``VARIANTS``) is one made-up invoice (``generator``, digital) printed twice: as it is, and with the
@@ -303,7 +303,7 @@ def command(a: argparse.Namespace) -> int:
 def add_parser(sub: Any) -> None:
     """``adversarial`` under ``python -m ap_coder.bench``."""
     p = sub.add_parser("adversarial", help="invoices with text addressed to software, beside their clean twins: the "
-                       "check fires, no value moves, none goes through without a person (D-265)")  # fmt: skip
+                       "check fires, no value moves, none goes through without a person (D-259)")  # fmt: skip
     p.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same invoices")
     p.add_argument("--repeats", type=int, default=3, help="invoices of each variant (default 3)")
     p.add_argument("--quick", action="store_true", help="one invoice of each variant (~1 min)")

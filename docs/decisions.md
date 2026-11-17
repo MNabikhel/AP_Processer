@@ -6248,7 +6248,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Kept:** a negative line that reverses no earlier line (a true credit: another amount, account or remark, or
     nothing before it) counts as it did. The file's own counts (Settings, the suppliers' list) are of what was loaded,
     voids included.
-- **D-265** · **Text on an invoice addressed to software always goes to a person, and every prompt says the invoice
+- **D-259** · **Text on an invoice addressed to software always goes to a person, and every prompt says the invoice
   is data, never instructions** (`capture/instructions.py`, `TEXT_ADDRESSED_TO_SOFTWARE`; `ai/prompts.py`
   `DOCUMENT_IS_DATA`; `bench/adversarial.py`; the owner's guardrails against prompt injection;
   17 Nov 2026).

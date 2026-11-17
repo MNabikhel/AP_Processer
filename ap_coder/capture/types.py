@@ -270,7 +270,7 @@ class CaptureResult:
     credit_note: bool = False  # titled as a credit note: a person applies it, whatever the sign of its total
     pages_not_read: list[int] = field(default_factory=list)
     not_invoice: str = ""  # why this may not be an invoice, in words (``not_invoice.not_an_invoice``); "": it is one
-    # Text on it addressed to software, quoted (``instructions.addressed_to_software``, D-265); []: none
+    # Text on it addressed to software, quoted (``instructions.addressed_to_software``, D-259); []: none
     instructions: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:

@@ -114,7 +114,10 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
 ## Run and test
 - Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"` (or double-click `APProcessor.bat` / `APProcessor.command`).
 - Run: `python -m ap_coder serve` (http://127.0.0.1:8501); `python -m ap_coder doctor`; `python scripts/pilot_check.py`.
-- Check a change: `python scripts/check.py` (ruff on the changed files, then their tests; a minute or two).
+- Check a change: `python scripts/check.py` (ruff on the changed files, then their tests; a minute or two); when a
+  page, its words (`ops/help.py`), `docs/PROTOTYPE.md` or the launcher changed, it also walks the pilot tester's
+  first day (`scripts/ci/first_day.py`, about two minutes more, in a temporary folder); `--walk` / `--no-walk`
+  force or skip it.
 - Test: `python -m pytest -q` runs all but the slow tests (about 7 minutes; serially, no xdist). The whole suite with
   the browser tests, `python -m pytest -q -m ""`, takes about 28 minutes (docs/REFERENCE.md): CI runs it on pushes to
   main and on pull requests, so leave it to CI.

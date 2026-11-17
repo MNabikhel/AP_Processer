@@ -18,7 +18,7 @@ decision number then says what was done).
 - **User-facing wording in one place (after the pilot, once the wording settles).** The words people see kept by key in
   one file, with tests that check each key is used and each page's key exists, so a wording change is one edit and
   can't silently break the first-day walk.
-- **A sweep of the timing-sensitive tests.** Beyond B-2670 and B-2671: find the tests that wait on a sleep or race a
+- **A sweep of the timing-sensitive tests.** Beyond B-2634 and B-2635: find the tests that wait on a sleep or race a
   thread (`time.sleep`, short deadlines, "until" right after a start) and make them wait on an event or a step the test
   controls.
 - **Shorter docs and docstrings from now on.** Say what a thing does in a line or two; move old decision detail to

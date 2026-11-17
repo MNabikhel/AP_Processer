@@ -213,7 +213,7 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
 
 
 # Said before anything else there is to fix: nothing else matters for a document that is not an invoice, and nothing
-# on one with text addressed to software is to be trusted unchecked (D-265).
+# on one with text addressed to software is to be trusted unchecked (D-259).
 SAID_FIRST = frozenset({"NOT_AN_INVOICE", "TEXT_ADDRESSED_TO_SOFTWARE"})
 
 

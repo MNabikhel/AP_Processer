@@ -1,4 +1,4 @@
-"""The adversarial bench (``python -m ap_coder.bench adversarial``, D-265): invoices carrying text addressed to
+"""The adversarial bench (``python -m ap_coder.bench adversarial``, D-259): invoices carrying text addressed to
 software beside their clean twins. The check fires on every steering twin and on no look-alike nor clean twin, the
 text moves no value, and none goes through without a person, also when the stand-in chat model obeys the text."""
 

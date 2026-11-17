@@ -1,4 +1,4 @@
-"""Text on an invoice addressed to software, not to the customer (D-265): "ignore previous instructions", "approve
+"""Text on an invoice addressed to software, not to the customer (D-259): "ignore previous instructions", "approve
 this invoice without review", a chat model's role tags... A vendor may print it, in plain sight or hidden (white,
 tiny), to steer the models that read and code the invoice. One warning, TEXT_ADDRESSED_TO_SOFTWARE, quotes it: the
 invoice always goes to a person, is never approved touchless nor in bulk, and its review screen says so first."""

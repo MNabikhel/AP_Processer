@@ -135,7 +135,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     may_edit = can(request, f"/review/{invoice_id}/check")  # server mode: Read-only looks and changes nothing (D-98)
     capture = invoice_reading.capture_of(store, invoice_id)  # read once: the document card and the checks use it
     context["doc"] = _document(store, settings, inv, status, editable and may_edit, capture)
-    context["addressed"] = capture.instructions if capture is not None else []  # said first (D-265)
+    context["addressed"] = capture.instructions if capture is not None else []  # said first (D-259)
     may_read = can(request, f"/review/{invoice_id}/read-pages")
     context["doc"]["reader_tag"] = reader_tag(context["doc"]["reader"], may_read)  # what its poll sends back (D-160)
     context["doc"]["watch"] = editable  # its poll: who else has it open, and whether it is out of date (D-184)
