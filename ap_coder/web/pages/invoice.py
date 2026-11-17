@@ -100,11 +100,11 @@ def _manager_context(request: Request, store: Store, inv: dict[str, Any], lines:
     """What the review screen says about a manager confirming the coding (D-138): the request waiting (a parked
     invoice), the last answer and whether the lines on screen still are the ones confirmed, who can be asked."""
     from ap_coder.core.store.managers import CONFIRMED, same_coding
-    from ap_coder.core.store.users import MANAGER
+    from ap_coder.web.access import confirms
 
     answer = store.last_manager_answer(inv["id"])
     changed = bool(answer and answer["status"] == CONFIRMED and lines and not same_coding(answer["lines"], lines))
-    users = [u for u in store.list_users() if u["role"] == MANAGER and u["active"]] if server_mode(request) else []
+    users = [u for u in store.list_users() if confirms(u)] if server_mode(request) else []
     known = store.cost_center_managers()
     centers = [str(li.get("predicted_cost_center") or "") for li in lines or []]
     suggested = next((known[c] for c in centers if c in known), {})

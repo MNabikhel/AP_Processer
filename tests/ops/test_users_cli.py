@@ -118,3 +118,27 @@ def test_sign_in_on_names_admin_admin_only_before_the_first_account(db, capsys):
     assert cli.main(["--db", db, "users", "sign-in", "on"]) == 0
     said = capsys.readouterr().out
     assert "password admin" not in said and "your own password" in said
+
+
+def test_the_console_lists_the_roles_and_gives_one_made_on_the_admin_panel(db, monkeypatch, capsys):
+    """D-250: ``users roles`` lists every role and what it may do; ``role`` and ``add --role`` take a role made on
+    Roles by its name; a role there is not is refused before any password is asked for."""
+    store = Store(db)
+    ann = store.add_user("ann", GOOD, role="clerk", display_name="Ann Lee")
+    key = store.add_role("AP lead", ["view", "approve"])
+    assert cli.main(["--db", db, "users", "roles"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("Read-only (built in, 0 accounts): See invoices and reports, See the activity log")
+    assert out[-1] == "AP lead (made here, 0 accounts): See invoices and reports, Approve invoices"
+    assert cli.main(["--db", db, "users", "role", "ann", "ap LEAD"]) == 0
+    assert store.user(ann)["role"] == key and "ann is now AP lead." in capsys.readouterr().out
+    assert cli.main(["--db", db, "users", "list"]) == 0
+    assert re.search(r"ann\s+AP lead\s+Ann Lee", capsys.readouterr().out)
+    typed(monkeypatch, GOOD, GOOD)
+    assert cli.main(["--db", db, "users", "add", "cy", "--role", "AP lead"]) == 0
+    assert store.find_user("cy")["role"] == key
+    monkeypatch.setattr(getpass, "getpass", lambda prompt="": pytest.fail("asked for a password"))
+    assert cli.main(["--db", db, "users", "add", "dee", "--role", "boss"]) == 1
+    assert "There is no role boss" in capsys.readouterr().err
+    assert cli.main(["--db", db, "users", "role", "ann", "boss"]) == 1
+    assert "There is no role 'boss'" in capsys.readouterr().err and store.user(ann)["role"] == key

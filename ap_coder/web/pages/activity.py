@@ -21,10 +21,11 @@ from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
 from ap_coder.core import ui
 from ap_coder.core.audit import ACTIONS, describe
+from ap_coder.core.permissions import USERS
 from ap_coder.core.safe import csv_row
 from ap_coder.core.store import Store, fold_text
 from ap_coder.erp import controls, insights
-from ap_coder.web.access import is_admin
+from ap_coder.web.access import has
 from ap_coder.web.core import address_day, get_store, page_router, render, server_mode
 from ap_coder.web.files import download
 from ap_coder.web.pages import downloads
@@ -52,7 +53,8 @@ GROUPS = {
     "Backups": ["backup_made", "backup_restored"],
     "Logins": ["login", "login_failed", "login_locked", "logout", "password_changed", "password_reset", "user_added",
                "role_changed", "user_cost_centers_set", "user_deactivated", "user_activated", "address_unlocked",
-               "downloaded", "authenticator_enrolled", "authenticator_reset"],
+               "downloaded", "authenticator_enrolled", "authenticator_reset", "sessions_ended", "role_created",
+               "role_edited", "role_deleted"],
 }  # fmt: skip
 TIMELINE_SHOWN = 200  # the events a page of the timeline shows; the older ones are on the next (B-1597)
 TABLE_SHOWN = 1000
@@ -168,11 +170,11 @@ ACCOUNT_GROUP = "Logins"  # logins, refusals, lockouts and changes to accounts: 
 def _hidden(request: Request) -> tuple[str, ...]:
     """The events the person asking may not see: on the server, the login and account events are an Admin's only (a
     refusal names the account tried, and the addresses people log in from are theirs)."""
-    return () if is_admin(request) else tuple(GROUPS[ACCOUNT_GROUP])
+    return () if has(request, USERS) else tuple(GROUPS[ACCOUNT_GROUP])
 
 
 def _groups(request: Request) -> list[str]:
-    return ["All", *(g for g in GROUPS if g != ACCOUNT_GROUP or is_admin(request))]
+    return ["All", *(g for g in GROUPS if g != ACCOUNT_GROUP or has(request, USERS))]
 
 
 def distinct_people(actors: Iterable[str], events: Iterable[dict[str, Any]]) -> list[str]:

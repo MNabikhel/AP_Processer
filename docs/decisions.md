@@ -6045,3 +6045,71 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     it). The card, the pages, the suggestions' reasons ("14 lines posted in JD Edwards", "this supplier's usual
     account: 14 of 15 past lines"), the command line and the guides now say past invoice coding. The code's names
     (`journal`, `journal_files`) stay.
+- **D-249** · **One Admin panel where people sign in, and a page per person** (`web/pages/admin.py`,
+  `templates/admin*.html`, `_admin_tabs.html`, `_paused.html`; `core/store/users.py` `live_sessions`,
+  `sign_in_events`, `sign_out_everywhere`; 16 Nov 2026). The owner asked for it: what an Admin looks after was on
+  Users (reached from the rail's foot), Activity and Settings' tabs.
+  - **One entry:** *Admin* in the menu, above Settings and Help, for whoever may open `/admin` (its rule in
+    `web/roles.py`), only where people sign in (`signs_in`: the server, `share`, a laptop's own sign-in, D-243). It
+    replaces the foot's *Users* link. Its tabs: Overview, Users (`/admin/users`, the address kept), Sign-in
+    (`/admin/sign-in`: every session within its time, whose, the browser and system in words, the address, since
+    and last used, and the pauses, lifted there too), Activity (`/activity`, as it is). The overview links to the
+    Azure Document Intelligence, JD Edwards AIS and backup settings, which stay on their Settings tabs.
+  - **A page per person** (`/admin/users/<id>`): name, username, role, status, added, last login; where they are
+    signed in now; their latest sign-ins, logouts and tries that didn't match (off the audit trail by username, so
+    a reset that clears `login_attempts` keeps them); what they did (the Activity log's own query by the name their
+    events are recorded under, 50 a page, newest first, each invoice linked); and the Users page's actions, which come
+    back to the page (`back=user`). New: *Sign out everywhere* (`sessions_ended` in the Activity log), never one's
+    own account (Your password's *Log out everywhere else* keeps this browser signed in). A session's token, or its
+    hash, is never shown.
+  - **On a laptop's own sign-in** only its Admin signs in: the panel has their own page, Sign-in and Activity; the
+    people (and, D-250, the roles) stay the server's, `/admin/users` answering 404 there as before.
+  - **Left as it was:** what a person did is found by their name, as on Activity: two accounts with one name share it
+    (the page says so).
+- **D-250** · **Roles are sets of permissions; the five built in stay as they were, and an Admin makes others:
+  schema 29** (`core/permissions.py`, `core/store/roles.py`, `web/roles.py` `RULES` by permission,
+  `web/pages/admin_roles.py`; `tests/web/test_role_permissions.py`; 16 Nov 2026). The owner asked for roles the Admin
+  can make and edit.
+  - **The permissions** (fixed in the code, one per route, from what the minimum roles guarded): view (invoices and
+    reports), activity (the log), import (bring invoices in, statements), code (review and code, the setup pages,
+    the coding rules, send to a manager), approve (the first approval, bulk), final_approve (the second, send back),
+    export (batches, the dry run, the Spend workbook), post (to JD Edwards' API), controls (lift holds, bank
+    accounts), setup (the imports and lists, the learning's resets), undo (delete, undo batches and anyone's
+    approval, release a held voucher), settings (Settings, the demo, the export layout, the server's own details),
+    users (people, roles, sign-ins) and confirm (a manager's own requests, D-138). A route without a rule needs every
+    permission an Admin has, as it needed an Admin.
+  - **The built-in roles give exactly what they gave:** Read-only view and activity; Clerk also import, code,
+    approve, export; Approver also final_approve, post, controls; Admin also setup, undo, settings, users (not
+    confirm: an Admin opens every request as AP, and is never offered as a manager); Manager confirm. Proved by a
+    table made by the code before the change (`tests/fixtures/role_access_before.json`: every route, every job's
+    progress and each check written in the pages, for each role), compared with the code now. The checks in the pages
+    name permissions too (`access.has`, `Person.granted`): the Logins events need users, the server's details
+    settings, lifting a hold controls, undoing another's approval undo, a bulk approval going on approve.
+  - **Made roles** (`roles`: a key `role-<n>` kept in `users.role`, a name, a JSON list): from scratch or a copy,
+    changed (from the next click), deleted only while no account has it; the built-in ones are shown, never changed.
+    Given on Users or a person's page, and at the console (`users role ann "AP lead"`, `users roles` lists them).
+  - **Guardrails:** an Admin never takes Manage users and roles from themselves (their role, their role's ticks, or
+    turning their own account off); the last active account that has it keeps it (`LAST_ADMIN`, now counting any
+    role with users). Segregation is unchanged: the second approval is another account's, `vouched_for`, the poster
+    who approved. Every role made, changed, deleted or given is in the Activity log with who and what changed, the
+    names kept in it. A restore keeps the roles with the accounts (`KEPT_TABLES`).
+  - **Nobody gives, or manages, more than their own role may do** (after a security review: B-2561): a role made,
+    changed or given (also to a new account) holds only permissions the person's own role has, and the accounts they
+    change, reset, turn off or on or sign out everywhere may do nothing more than theirs (`permissions.beyond`; code
+    covers confirm, as it opens every manager's request, so an Admin makes and manages Managers). Checked by the store
+    in the transaction that writes, not only by the pages. The server's console (`python -m ap_coder users ...`) is the
+    server's owner and is not held back, as it adds the first Admin and is the way back in.
+  - **A role's name** is NFKC-normalised before it is compared with the built-in ones (full-width look-alikes), and
+    never `role-<n>` (the console takes a key or a name). Look-alikes from other alphabets are not caught: an Admin
+    names the roles, and a name only labels the permissions shown beside it.
+  - **A deleted role's key is never reused:** its row is kept, marked `deleted_at`, so old events and the finance hub
+    feed (which sends the key) never name another role by it; its name is free again.
+  - **A role either reviews invoices (code) or confirms as a manager (confirm), not both:** the manager's page shows
+    only their own requests to a role without code, so a role with both would be offered as a manager and refused
+    its answer; with code it opens every request anyway.
+  - **No approval limit per role:** the code has one limit, the company's (Settings → Automation), over which a
+    second approval is needed; a limit per person would be a new control, not part of this.
+  - **Schema 29:** the table comes from `_SCHEMA`; the version is its own so an older AP Coder, which knows the five
+    roles only (it would let a person with a made role do nothing, and its console's list fails on one), refuses the
+    database; going back uses the before-update backup (docs/UPGRADING.md).
+  - **A laptop's own sign-in** has no Roles page: only its Admin signs in there (D-243).

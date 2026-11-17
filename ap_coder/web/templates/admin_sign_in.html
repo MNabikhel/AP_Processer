@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{# The Admin panel's Sign-in (pages/admin.py, D-249): every session within its time, whose and from where, and the
+   pauses after tries that didn't match. Never a session's token. #}
+{% block header %}
+<header class="apc-head apc-anim"><div>
+  {{ ui.breadcrumbs(["AP Coder", "Admin"]) }}
+  <h1 class="apc-title">Sign-in</h1>
+  <div class="apc-sub">Who is signed in now, on which computer and browser, and what is paused.</div>
+</div></header>
+{% endblock %}
+{% block content %}
+{% include "_admin_tabs.html" %}
+<div class="col">
+<section class="card" id="sessions">
+  <h4><span class="ms" aria-hidden="true">devices</span> Signed in now</h4>
+  {% if sessions %}
+  <div class="table-wrap">
+    <table class="apc-table fit">
+      <thead><tr><th>Person</th><th>Browser</th><th>Address</th><th>Signed in</th><th>Last used</th><th></th></tr></thead>
+      <tbody>
+        {% for s in sessions %}
+        <tr>
+          <td><a href="/admin/users/{{ s.user_id }}">{{ s.name }}</a> <span class="muted">{{ s.username }}{% if s.mine %} (you){% endif %}</span></td>
+          <td>{{ s.browser_name }}</td><td>{{ s.address }}</td><td>{{ s.since_text }}</td><td>{{ s.seen_text }}</td>
+          <td class="r">{% if server_mode and not s.mine %}<form method="post" action="/admin/users/{{ s.user_id }}/sign-out" data-confirm="Sign {{ s.username }} out on every computer and browser? Their password stays the same.">
+            <input type="hidden" name="back" value="sign-in">
+            <button class="btn" type="submit"><span class="ms" aria-hidden="true">logout</span>Sign out everywhere</button></form>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">A session ends after its idle minutes or its hours in all (docs/SERVER.md), at logout, and when its
+    password changes.</p>
+  {% else %}
+  <p class="muted">No one is signed in now.</p>
+  {% endif %}
+</section>
+
+{% set back = "sign-in" %}
+{% include "_paused.html" %}
+{% if not paused and not paused_names %}
+<section class="card" id="no-pauses">
+  <h4><span class="ms" aria-hidden="true">lock_open</span> Paused logins</h4>
+  <p class="muted">Nothing is paused now. After 5 tries that didn't match for one username from one address, or 30
+    from one address, logins pause there for 15 minutes; they show here, to lift once you know why.</p>
+</section>
+{% endif %}
+</div>
+{% endblock %}

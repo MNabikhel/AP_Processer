@@ -1,0 +1,2104 @@
+{
+ "about": "Who could use each route, see each job's progress and pass each check, of the five fixed roles, before roles were made of permissions (D-250). Made by the code of origin/main 2d07def; never edited by hand.",
+ "checks": {
+  "bulk_approval_goes_on": [
+   "clerk",
+   "approver",
+   "admin"
+  ],
+  "counts_as_an_admin": [
+   "admin"
+  ],
+  "home_is_the_manager_page": [
+   "manager"
+  ],
+  "is_admin": [
+   "admin"
+  ],
+  "makes_the_spend_workbook": [
+   "clerk",
+   "approver",
+   "admin"
+  ],
+  "may_lift_hold": [
+   "approver",
+   "admin"
+  ],
+  "offered_as_a_manager": [
+   "manager"
+  ],
+  "sees_only_their_own_manager_requests": [
+   "manager"
+  ],
+  "undoes_anyones_approval": [
+   "admin"
+  ]
+ },
+ "jobs": {
+  "(any other)": [
+   "admin"
+  ],
+  "azure-test": [
+   "admin"
+  ],
+  "jde-api": [
+   "clerk",
+   "approver",
+   "admin"
+  ],
+  "jde-sync": [
+   "admin"
+  ],
+  "process": [
+   "readonly",
+   "clerk",
+   "approver",
+   "admin"
+  ],
+  "settings-doctor": [
+   "admin"
+  ],
+  "spend-data": [
+   "readonly",
+   "clerk",
+   "approver",
+   "admin"
+  ]
+ },
+ "routes": {
+  "GET /": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": true
+  },
+  "GET /account/password": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": true
+  },
+  "GET /accounts": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /accounts/bank/template.csv": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /accounts/{table}.csv": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /activity": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /activity/controls-report": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /activity/events.csv": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /admin/users": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /downloads/{job_id:int}": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /exports": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /exports/batches/{batch:int}/approved-pdfs.zip": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /exports/batches/{batch:int}/download": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /exports/duplicates.csv": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /exports/jde/dry-run.txt": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /healthz": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "GET /help": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /help/quick-start": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /help/report": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /help/report/setup": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /imports/template/{key}": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /insights": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /insights/business-case": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /jde-files": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /jde-files/loaded/{what}": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /jde-files/loaded/{what}.csv": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /jde-files/template/{key}": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /jobs/{name}": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /learning": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /learning/training.zip": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /login": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "GET /login/authenticator": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "GET /login/code": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "GET /login/first": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "GET /login/new-password": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "GET /logout": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": true
+  },
+  "GET /manager": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "GET /manager/{request_id:int}": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "GET /manager/{request_id:int}/email.eml": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /manager/{request_id:int}/page/{number:int}.png": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "GET /manager/{request_id:int}/reply": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /month-end": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /month-end/accruals.csv": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /process": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /process/inbox/{entry_id}/file/{n}": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /process/status": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /purchase-orders": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /purchase-orders/template.csv": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /readyz": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "GET /review": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /review/accounts.json": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /review/bulk": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /review/bulk/status": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /review/vendors.json": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /review/{invoice_id:int}": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /review/{invoice_id:int}/approved.pdf": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /review/{invoice_id:int}/page/{number:int}.png": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /review/{invoice_id:int}/reader": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /review/{invoice_id:int}/words": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /rules": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /sales-tax": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /sales-tax/claims.csv": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /sales-tax/self-assessment.csv": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /search": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /search/export.csv": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /search/export.xlsx": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /search/{invoice_id:int}/approved.pdf": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /settings": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /settings/azure-check": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /settings/data/backups/{name}": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /settings/jde/worksheet.xlsx": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /settings/reading/self-test": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /settings/{tab}": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /spend": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /spend/data.xlsx": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /statements": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /statements/reconciliation.csv": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /vendors": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "GET /who": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "HEAD /login": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "POST /account/password": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": true
+  },
+  "POST /account/sessions/end-others": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": true
+  },
+  "POST /accounts/bank/import": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /accounts/bank/remove": {
+   "open": false,
+   "roles": [
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /accounts/bank/save": {
+   "open": false,
+   "roles": [
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /accounts/bank/upload": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /accounts/policy": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /accounts/sample": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /accounts/tax": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /accounts/{table}/import": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /accounts/{table}/save": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /accounts/{table}/upload": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /admin/users/add": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /admin/users/addresses/unlock": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /admin/users/usernames/unlock": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /admin/users/{user_id:int}/activate": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /admin/users/{user_id:int}/cost-centers": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /admin/users/{user_id:int}/deactivate": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /admin/users/{user_id:int}/reset": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /admin/users/{user_id:int}/reset-authenticator": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /admin/users/{user_id:int}/role": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /demo/load": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /demo/remove": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /exports/batches/{batch:int}/download": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /exports/batches/{batch:int}/jde-api/dry-run": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /exports/batches/{batch:int}/jde-api/post": {
+   "open": false,
+   "roles": [
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /exports/batches/{batch:int}/jde-api/release": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /exports/batches/{batch:int}/undo": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /exports/create": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /exports/jde-api/retry": {
+   "open": false,
+   "roles": [
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /exports/layout": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /exports/layout/preview": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /exports/register/clear": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /exports/register/import": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /exports/register/upload": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /insights/assumptions": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/chart/load": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/chart/settings": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/chart/upload": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/company": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/journal/forget": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/journal/load": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/journal/upload": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/loaded/{what}/edit": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/meals": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/suppliers/load": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/suppliers/upload": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/units/load": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/units/upload": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/vouchers/load": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /jde-files/vouchers/upload": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /learning/history/forget": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /learning/history/teach": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /learning/history/upload": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /learning/journal/as-table": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /learning/journal/forget": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /learning/journal/load": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /learning/lessons/explain": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /learning/lessons/retire": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /learning/memory/forget": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /learning/suppliers/allow": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /learning/suppliers/hold": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /learning/suppliers/reset-layout": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /login": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "POST /login/authenticator": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "POST /login/code": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "POST /login/first": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "POST /login/new-password": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "POST /logout": {
+   "open": false,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": true
+  },
+  "POST /manager/{request_id:int}/answer": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "POST /manager/{request_id:int}/record": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /manager/{request_id:int}/withdraw": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /process/folder": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /process/inbox/{entry_id}/done": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /process/inbox/{entry_id}/to-queue/{n}": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /process/open-folder": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /process/upload": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /process/voucher": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /purchase-orders/delete": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /purchase-orders/import": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /purchase-orders/sample": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /purchase-orders/status": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /purchase-orders/upload": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/bulk-approve": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/sample-gl": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/apply-rules": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/approve": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/check": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/correct": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/fill-lines": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/manager": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/note": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/park": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/po-coding": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/read-pages": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/reject": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/restore": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/resume": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/review-again": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/separate": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/split": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/start-over": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/suggestion": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/teach": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/undo-approve": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/vendor": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id:int}/why": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id}/delete": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id}/final-approve": {
+   "open": false,
+   "roles": [
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id}/reopen": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id}/retry": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id}/send-back": {
+   "open": false,
+   "roles": [
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /review/{invoice_id}/unpark": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /rules": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /rules/add": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /rules/undo": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /search/presets": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /search/presets/default": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /search/presets/delete": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /search/{invoice_id:int}/unpark": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/about/screens": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/about/show": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/automation/limit": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/automation/touchless": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/azure-check": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/azure-check/test": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/data/backup": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/data/backup-copy": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/data/backup-time": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/data/open-folder": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/data/restore": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/hub": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/hub/run": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/jde": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/jde/an8": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/jde/api": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/jde/api/sync": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/jde/api/test": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/jde/gl-map": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/jde/gl-map/import": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/jde/gl-map/upload": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/jde/tax-map": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/jde/terms": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/jde/worksheet": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/jde/worksheet/upload": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/reading/azure": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/reading/azure-test": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/reading/check": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/reading/load-model": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/reading/reviewer": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/reading/self-test": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/reading/servers": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /settings/review": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /shutdown": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  },
+  "POST /spend/data": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /statements/emailed/{entry_id}/{n}": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /statements/upload": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /vendors/master/import": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /vendors/master/upload": {
+   "open": false,
+   "roles": [
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /vendors/save": {
+   "open": false,
+   "roles": [
+    "clerk",
+    "approver",
+    "admin"
+   ],
+   "signed_in": false
+  },
+  "POST /who": {
+   "open": true,
+   "roles": [
+    "readonly",
+    "clerk",
+    "approver",
+    "admin",
+    "manager"
+   ],
+   "signed_in": false
+  }
+ }
+}

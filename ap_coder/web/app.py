@@ -542,10 +542,11 @@ def _add_pages(app: FastAPI) -> None:
 
     @app.get("/", include_in_schema=False)
     def home() -> RedirectResponse:
-        from ap_coder.core.store.users import MANAGER  # a Manager opens its own requests (D-138)
+        from ap_coder.core.permissions import CONFIRM, VIEW  # a Manager opens its own requests (D-138)
 
         me = identity.person()
-        return RedirectResponse("/manager" if me and me.role == MANAGER else PAGES[0].path, status_code=307)
+        mine = me is not None and CONFIRM in me.granted and VIEW not in me.granted
+        return RedirectResponse("/manager" if mine else PAGES[0].path, status_code=307)
 
 
 def _add_status_routes(app: FastAPI, *, address: str, server: bool) -> None:
@@ -618,7 +619,7 @@ def _add_status_routes(app: FastAPI, *, address: str, server: bool) -> None:
     def job_status(name: str, request: Request, only: str = "") -> JSONResponse:
         registry = core.jobs(request)
         me = identity.person()
-        if server and me is not None and not roles.allowed(me.role, roles.JOB_NEEDS.get(name, roles.ADMIN)):
+        if server and me is not None and not roles.allowed(me.granted, roles.JOB_NEEDS.get(name, roles.ADMIN)):
             raise HTTPException(status_code=404, detail="No such job.")  # (as if there were none: D-109)
         if name == "process":  # the imports' progress is the import queue's, the same in every web worker (D-168)
             from ap_coder.web.pages.process import import_status

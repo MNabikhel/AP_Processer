@@ -2,12 +2,13 @@
 {# Users (pages/users.py, server mode, Admin only): who can log in and with which role (D-97, D-98). #}
 {% block header %}
 <header class="apc-head apc-anim"><div>
-  {{ ui.breadcrumbs(["AP Coder", "System"]) }}
+  {{ ui.breadcrumbs(["AP Coder", "Admin"]) }}
   <h1 class="apc-title">Users</h1>
   <div class="apc-sub">Who can log in to AP Coder, and what each role may do.</div>
 </div></header>
 {% endblock %}
 {% block content %}
+{% include "_admin_tabs.html" %}
 <div class="col">
 {% if temporary %}
 <section class="card" id="temporary">
@@ -27,7 +28,7 @@
       <tbody>
         {% for u in users %}
         <tr data-user="{{ u.username }}">
-          <td>{{ u.username }}{% if u.id == me %} <span class="muted">(you)</span>{% endif %}</td>
+          <td><a href="/admin/users/{{ u.id }}" title="Their page: sessions, sign-ins and what they did">{{ u.username }}</a>{% if u.id == me %} <span class="muted">(you)</span>{% endif %}</td>
           <td class="w">{{ u.display_name }}</td>
           <td>
             <form method="post" action="/admin/users/{{ u.id }}/role" class="row">
@@ -36,7 +37,7 @@
               </select>
               <button class="btn" type="submit">Change</button>
             </form>
-            {% if u.role == "manager" %}
+            {% if "confirm" in u.permissions %}
             <form method="post" action="/admin/users/{{ u.id }}/cost-centers" class="row">
               <input type="text" name="cost_centers" value="{{ u.cost_centers }}" maxlength="500" placeholder="their cost centers, e.g. CC-200, CC-300" aria-label="Cost centers {{ u.username }} answers for">
               <button class="btn" type="submit">Save</button>
@@ -77,50 +78,7 @@
   </div>
 </section>
 
-{% if paused %}
-<section class="card" id="paused">
-  <h4><span class="ms" aria-hidden="true">lock_clock</span> Paused addresses</h4>
-  <p class="muted">After 30 tries that didn't match from one address, logins from it pause for 15 minutes. Several
-    people may share an address (an office's internet connection, a remote desktop server): lift it once you know
-    why.</p>
-  <div class="table-wrap">
-    <table class="apc-table fit">
-      <thead><tr><th>Address</th><th>Paused until</th><th></th></tr></thead>
-      <tbody>
-        {% for p in paused %}
-        <tr><td>{{ p.address }}</td><td>{{ p.until }}</td>
-          <td class="r"><form method="post" action="/admin/users/addresses/unlock" data-confirm="Let logins from {{ p.address }} go on now?">
-            <input type="hidden" name="address" value="{{ p.address }}">
-            <button class="btn" type="submit"><span class="ms" aria-hidden="true">lock_open</span>Lift the pause</button></form></td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-{% endif %}
-
-{% if paused_names %}
-<section class="card" id="paused-names">
-  <h4><span class="ms" aria-hidden="true">lock_clock</span> Paused usernames</h4>
-  <p class="muted">After 5 tries that didn't match for one username from one address, logins as that username from
-    there pause for 15 minutes; after 10 within an hour from anywhere, from every address but those the person
-    logged in from lately, for a few minutes at first. Someone may have forgotten their password: lift it once you know
-    why.</p>
-  <div class="table-wrap">
-    <table class="apc-table fit">
-      <thead><tr><th>Username</th><th>From</th><th>Paused until</th><th></th></tr></thead>
-      <tbody>
-        {% for p in paused_names %}
-        <tr><td>{{ p.username }}</td><td>{{ "anywhere" if p.address == "*" else (p.address or "this server") }}</td><td>{{ p.until }}</td>
-          <td class="r"><form method="post" action="/admin/users/usernames/unlock" data-confirm="Let logins as {{ p.username }} from {{ 'anywhere' if p.address == '*' else (p.address or 'this server') }} go on now?">
-            <input type="hidden" name="username" value="{{ p.username }}"><input type="hidden" name="address" value="{{ p.address }}">
-            <button class="btn" type="submit"><span class="ms" aria-hidden="true">lock_open</span>Lift the pause</button></form></td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-{% endif %}
+{% include "_paused.html" %}
 
 <section class="card">
   <h4>Add a person</h4>
@@ -138,14 +96,15 @@
     login.</p>
 </section>
 
-<section class="card">
-  <h4>The roles</h4>
+<section class="card" id="the-roles">
+  <div class="card-head">
+    <div><h4>The roles</h4></div>
+    {% if can("/admin/roles", "GET") %}<a class="btn" href="/admin/roles"><span class="ms" aria-hidden="true">badge</span>Open Roles</a>{% endif %}
+  </div>
   <ul>
-    <li><b>Read-only</b>: looks at the review queue, invoices, reports, exports, Insights, Spend, Activity and Help. Changes nothing.</li>
-    <li><b>Clerk</b>: also imports invoices, reviews, checks and approves them (the first approval), parks, rejects and reopens them, approves in bulk and makes export batches.</li>
-    <li><b>Approver</b>: also gives the second approval to invoices over the approval limit. It must be another person than the first approver.</li>
-    <li><b>Admin</b>: everything, including Settings, users, the GL accounts and tax setup, imports, JD Edwards, backups and restore, and deleting.</li>
-    <li><b>Manager</b>: outside the others. Only confirms, or sends back, the coding of the invoices AP sends them (Manager confirmations), for the cost centers set in their row above; sees those invoices and nothing else.</li>
+    {% for r in all_roles %}
+    <li><b>{{ r.name }}</b>: {% if r.built_in %}{{ r.note }}{% else %}made here. May: {% for p in r.permissions %}{{ permissions[p][0] | lower }}{{ "." if loop.last else ", " }}{% endfor %}{% endif %}</li>
+    {% endfor %}
   </ul>
 </section>
 </div>

@@ -879,7 +879,7 @@ def can(request: Request, path: str, method: str = "POST") -> bool:
         return found is None or not identity.here_only(path, method.upper())
     from ap_coder.web import roles
 
-    return found is not None and roles.can(request.app, found.role, method, path)
+    return found is not None and roles.can(request.app, found.granted, method, path)
 
 
 def _shown_rail(request: Request, store: Store) -> dict[str, list[dict[str, Any]]]:
@@ -901,10 +901,12 @@ def account(request: Request) -> dict[str, Any] | None:
     found = identity.person()
     if not server_mode(request) or found is None or not found.user_id:
         return None
+    from ap_coder.core.permissions import VIEW
     from ap_coder.core.store.users import ROLE_LABELS
 
     return {"name": found.name, "username": found.username, "role": found.role,
-            "role_label": ROLE_LABELS.get(found.role, found.role)}  # fmt: skip
+            "role_label": found.role_label or ROLE_LABELS.get(found.role, found.role),
+            "counts_approvals": VIEW in found.granted}  # (a Manager's: none, D-138)  # fmt: skip
 
 
 def admin_notice(request: Request) -> dict[str, str] | None:
@@ -958,6 +960,8 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
         "admin_notice": admin_notice(request),  # the server's HTTPS certificate near its end, or past it (D-187)
         "account": account(request),
         "laptop_signed_in": identity.LAPTOP_ACCOUNT.get() is not None,  # its Log out and password (D-243)
+        # The menu's Admin entry: where people sign in, for whoever may open the panel (D-249).
+        "admin_link": signs_in(request) and identity.signed_in() is not None and can(request, "/admin", "GET"),
         "can": functools.partial(can, request),
     }
     base.update(context)

@@ -205,7 +205,7 @@ def workbook_state(request: Request) -> dict[str, Any] | None:
     note = (snap.get("note") or "Starting…") if snap["state"] == RUNNING else ""
     failed = (snap.get("error") or "it stopped") if snap["state"] == ERROR else ""
     me = identity.person()  # Read-only changes nothing: a Clerk or above makes it (D-98)
-    may = me is None or roles.allowed(me.role, roles.RULES[("POST", "/spend/data")])
+    may = me is None or roles.allowed(me.granted, roles.RULES[("POST", "/spend/data")])
     return {"made": made, "making": note, "failed": failed, "status": f"/jobs/{WORKBOOK_JOB}", "may_make": may}
 
 

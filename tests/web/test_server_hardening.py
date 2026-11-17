@@ -886,7 +886,7 @@ def test_a_jobs_progress_is_shown_to_the_role_that_may_start_it(web):
     assert log_in(clerk, "clerk1").status_code == 200
     assert clerk.get("/jobs/settings-doctor").status_code == 404
     assert clerk.get("/jobs/process").status_code == 200
-    assert JOB_NEEDS["settings-doctor"] == "admin"
+    assert JOB_NEEDS["settings-doctor"] == "settings"  # an Admin's permission (D-250)
     admin = _as(web, "boss", "admin")
     assert admin.get("/jobs/settings-doctor").status_code == 200
 

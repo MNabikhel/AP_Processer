@@ -350,7 +350,7 @@ def test_the_menu_shows_only_what_the_role_may_open(store):
     for path in ("/settings", "/process", "/accounts", "/learning"):
         link = f'href="{path}" class="nav-link'
         assert link not in shown and link in everything
-    assert 'href="/admin/users"' not in shown and 'href="/admin/users"' in everything
+    assert 'href="/admin" class="nav-link' not in shown and 'href="/admin" class="nav-link' in everything  # (D-249)
     for path in ("/review", "/search", "/spend", "/activity", "/help"):
         assert f'href="{path}" class="nav-link' in shown
 

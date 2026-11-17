@@ -445,7 +445,8 @@ def test_an_admins_reset_of_the_authenticator_means_setting_it_up_again(store, c
     store.authenticate("ann", GOOD, "10.0.0.9")
     with pytest.raises(LoginRefused):
         store.check_code(uid, "000000" if _code(old, clock) != "000000" else "111111", "10.0.0.9")
-    temporary = store.reset_authenticator(uid, actor="Boss", by_user=7)
+    boss = store.add_user("boss", GOOD, role="admin")  # the Admin resetting it (an account: D-250)
+    temporary = store.reset_authenticator(uid, actor="Boss", by_user=boss)
     assert not store.user(uid)["totp_on"] and store.session_user(token) is None  # logged out everywhere
     with store._conn() as conn:  # their tries that didn't match are forgotten, as at a password reset
         assert not conn.execute("SELECT COUNT(*) FROM login_attempts WHERE ok = 0").fetchone()[0]
@@ -455,7 +456,7 @@ def test_an_admins_reset_of_the_authenticator_means_setting_it_up_again(store, c
         store.authenticate("ann", GOOD, "10.0.0.5")
     assert store.authenticate("ann", temporary, "10.0.0.5")["must_change"]
     (given,) = store.events(actions=["password_reset"])
-    assert given["actor"] == "Boss" and given["detail"]["by_user"] == 7  # (D-109: not that Admin's second approver)
+    assert given["actor"] == "Boss" and given["detail"]["by_user"] == boss  # (D-109: not that Admin's second approver)
     new = store.authenticator_secret(uid)
     assert new != old
     with pytest.raises(LoginRefused):

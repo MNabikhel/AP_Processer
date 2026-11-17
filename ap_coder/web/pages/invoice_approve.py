@@ -23,6 +23,7 @@ from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_mes
 from ap_coder.coding.vendors import MOVED_OFF_HOLD
 from ap_coder.core import audit, ui
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED
+from ap_coder.core.permissions import UNDO
 from ap_coder.core.store import APPROVED, PARKED, PENDING, REJECTED, REVIEW
 from ap_coder.erp.jde_keying import keying_batches
 from ap_coder.web import identity, invoice_form
@@ -250,7 +251,7 @@ def undo_approve(request: Request, invoice_id: int) -> JSONResponse:
                PARKED: "it was parked since"}.get(inv["status"], "it is no longer approved")  # fmt: skip
         return refuse(f"There is no approval to undo: {now}. Open it to see where it stands.")
     found = identity.person()
-    if found is not None and found.user_id and found.role != "admin":  # server mode: one's own approval (D-98)
+    if found is not None and found.user_id and UNDO not in found.granted:  # server: one's own approval (D-98)
         last = next((e for e in store.events(invoice_id, ["approved", "final_approved"])), None)
         if ((last or {}).get("detail") or {}).get("user_id") != found.user_id:
             return refuse("Only the person who gave this approval (or an Admin) can undo it. To correct it, use "
@@ -314,7 +315,7 @@ async def send_to_manager(request: Request, invoice_id: int) -> JSONResponse:
 
 @one_connection
 def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONResponse:
-    from ap_coder.core.store.users import MANAGER
+    from ap_coder.web.access import confirms
 
     store, settings = get_store(request), get_settings(request)
     inv = _invoice(store, invoice_id)
@@ -336,8 +337,7 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
             picked = int(str(form.get("manager_user")))
         except ValueError:
             return refuse("Pick a manager from the list.")
-        account = next((u for u in store.list_users() if u["id"] == picked and u["role"] == MANAGER and u["active"]),
-                       None)  # fmt: skip
+        account = next((u for u in store.list_users() if u["id"] == picked and confirms(u)), None)
         if account is None:
             return refuse("That manager's account is not active any more: pick another.")
         user_id, name = picked, account["display_name"] or account["username"]

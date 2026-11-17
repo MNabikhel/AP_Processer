@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{# Roles (pages/admin_roles.py, D-250): the five built in, fixed, and the ones an Admin makes from them. #}
+{% block header %}
+<header class="apc-head apc-anim"><div>
+  {{ ui.breadcrumbs(["AP Coder", "Admin"]) }}
+  <h1 class="apc-title">Roles</h1>
+  <div class="apc-sub">What each role may do. The five built-in roles are fixed; make your own from scratch or from a copy of one.</div>
+</div></header>
+{% endblock %}
+{% block content %}
+{% include "_admin_tabs.html" %}
+<div class="col">
+<section class="card" id="roles">
+  <div class="card-head">
+    <div><h4><span class="ms" aria-hidden="true">badge</span> The roles</h4>
+      <p class="muted">A person's role is given on Users, or on their own page. A change to a role applies to everyone
+        who has it, from their next click.</p></div>
+    <a class="btn primary" href="/admin/roles/new"><span class="ms" aria-hidden="true">add</span>New role</a>
+  </div>
+  <div class="table-wrap">
+    <table class="apc-table fit">
+      <thead><tr><th>Role</th><th>May</th><th>People</th><th></th></tr></thead>
+      <tbody>
+        {% for r in roles %}
+        <tr data-role="{{ r.key }}">
+          <td><a href="/admin/roles/{{ r.key }}"><b>{{ r.name }}</b></a><br>{% if r.built_in %}{{ ui.pill("Built in", "gray") }}{% else %}{{ ui.pill("Made here", "info") }}{% endif %}</td>
+          <td class="w">{% if r.built_in %}<div class="muted">{{ r.note }}</div>{% endif %}
+            <div>{% for p in r.permissions %}{{ permissions[p][0] }}{{ "" if loop.last else " · " }}{% endfor %}</div></td>
+          <td>{{ r.people }}</td>
+          <td class="r"><div class="row end">
+            <a class="btn" href="/admin/roles/new?copy={{ r.key }}"><span class="ms" aria-hidden="true">content_copy</span>Copy</a>
+            {% if not r.built_in %}<a class="btn" href="/admin/roles/{{ r.key }}"><span class="ms" aria-hidden="true">edit</span>Edit</a>{% endif %}
+          </div></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card" id="permissions">
+  <h4><span class="ms" aria-hidden="true">checklist</span> What a role may be given</h4>
+  <dl class="stack">
+    {% for key, (label, what) in permissions.items() %}<div><dt><b>{{ label }}</b></dt><dd class="muted">{{ what }}</dd></div>{% endfor %}
+  </dl>
+  <p class="muted">Someone whose role may Manage users and roles never gives more than their own role may do: no role
+    made, changed or given with more, and no account changed, reset, turned off or signed out that may do more than
+    theirs.</p>
+  <p class="muted">Whatever the role, the second approval is always another person's than the first, and an account
+    added or reset by an Admin can't give the second approval of that Admin's invoices for 7 days.</p>
+</section>
+</div>
+{% endblock %}

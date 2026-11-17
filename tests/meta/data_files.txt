@@ -46,4 +46,5 @@ tests/fixtures/di/northwind_ON_HST_NW-2026-0912.json
 tests/fixtures/di/pacific_BC_GST_PST_PO-77120.json
 tests/fixtures/page_reader/s212-0000.pdf
 tests/fixtures/page_reader/s212-0000.truth.json
+tests/fixtures/role_access_before.json
 tests/test_times.json

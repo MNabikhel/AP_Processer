@@ -40,6 +40,7 @@ import contextlib
 import contextvars
 import hashlib
 import hmac
+import html
 import ipaddress
 import re
 import secrets
@@ -113,7 +114,8 @@ SETTINGS_HERE_ONLY = (
 class Person:
     """A colleague on another computer: the name they gave, the address their browser came from and the browser's
     own id (kept in its name cookie: the same browser after its computer got a new address). In server mode, the
-    person logged in: their account's id, username and role, the name it shows."""
+    person logged in: their account's id, username and role, the name it shows, their role's permissions and name
+    (a role an Admin made has its own, D-250)."""
 
     name: str
     address: str
@@ -121,6 +123,15 @@ class Person:
     user_id: int = 0
     username: str = ""
     role: str = ""
+    permissions: frozenset[str] | None = None  # None: a built-in role's (``granted``)
+    role_label: str = ""
+
+    @property
+    def granted(self) -> frozenset[str]:
+        """What this person may do: their role's permissions (``core/permissions.py``)."""
+        from ap_coder.core.permissions import built_in
+
+        return self.permissions if self.permissions is not None else built_in(self.role)
 
 
 PERSON: contextvars.ContextVar[Person | None] = contextvars.ContextVar("ap_coder_person", default=None)
@@ -143,7 +154,11 @@ def kept_person() -> dict[str, Any]:
     """The colleague behind the request (``person``) as work started for them keeps them, to be done as them later
     (``acting_as``); {} on this computer."""
     found = person()
-    return {} if found is None else asdict(found)
+    if found is None:
+        return {}
+    kept = asdict(found)  # kept as JSON: the permissions as a list (D-250)
+    kept["permissions"] = None if found.permissions is None else sorted(found.permissions)
+    return kept
 
 
 @contextlib.contextmanager
@@ -151,7 +166,8 @@ def acting_as(kept: dict[str, Any]) -> Iterator[None]:
     """Work done outside their request, as the person it was started for (``kept_person``): ``person()`` is them, and
     every event the store records names them and their address, as their requests' do, whether or not their session
     has ended since (a bulk approval, D-185)."""
-    found = Person(**kept) if kept else None
+    said = {**kept, "permissions": frozenset(kept["permissions"])} if kept.get("permissions") is not None else kept
+    found = Person(**said) if kept else None
     tokens = (
         PERSON.set(found),
         EVENT_ORIGIN.set((found.address or None) if found is not None else None),
@@ -448,7 +464,7 @@ class Identity:
             EVENT_ACTOR.set(signed_in.name if signed_in is not None else None),  # events record who (B-1106)
         )
         try:
-            if refusal is None and user is not None and not roles.allowed(user["role"], need):
+            if refusal is None and user is not None and not roles.allowed(user["permissions"], need):
                 refusal = await run_in_threadpool(_not_allowed, scope, receive, user, page)
             if refusal is None and path in LOGIN_FORMS and not page and security.multipart(scope):
                 refusal = JSONResponse({"ok": False, "error": security.NO_MULTIPART}, status_code=415)
@@ -485,7 +501,8 @@ def _wanted(scope: dict[str, Any]) -> str:
 
 def _account_person(user: dict[str, Any], client: str) -> Person:
     return Person(user.get("name") or user["username"], client, f"user:{user['id']}", int(user["id"]),
-                  user["username"], user["role"])  # fmt: skip
+                  user["username"], user["role"], frozenset(user.get("permissions") or ()),
+                  user.get("role_label") or "")  # fmt: skip
 
 
 def not_allowed_text(role_label: str, page: bool) -> str:
@@ -506,5 +523,5 @@ def _not_allowed(scope: dict[str, Any], receive: Any, user: dict[str, Any], page
 
         return core.render(request, "error.html", "", status_code=403, title="Not allowed", code=403, detail=text)
     except Exception:  # noqa: BLE001 - the page frame reads the database: a plain page then
-        return HTMLResponse(f"<!doctype html><meta charset=utf-8><title>Not allowed</title><p>{text}</p>"
+        return HTMLResponse(f"<!doctype html><meta charset=utf-8><title>Not allowed</title><p>{html.escape(text)}</p>"
                             '<p><a href="/">Back</a></p>', 403)  # fmt: skip

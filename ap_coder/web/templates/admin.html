@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{# The Admin panel (pages/admin.py, D-249): the people, the roles, the activity log, the sign-in, and links to the
+   connections and the backups on their Settings tabs. #}
+{% block header %}
+<header class="apc-head apc-anim"><div>
+  {{ ui.breadcrumbs(["AP Coder", "Admin"]) }}
+  <h1 class="apc-title">Admin</h1>
+  <div class="apc-sub">Who can sign in and what each role may do, what they did, and where they are signed in now.</div>
+</div></header>
+{% endblock %}
+{% block content %}
+{% include "_admin_tabs.html" %}
+<div class="col">
+<div class="apc-tiles apc-anim {{ 'n3' if server_mode else 'n2' }}">
+  {% if server_mode %}
+  {{ ui.tile("People", active | num, "group", "blue", ((people | length) - active) ~ " turned off" if (people | length) > active else "all active") }}
+  {% endif %}
+  {{ ui.tile("Signed in now", sessions | num, "devices", "green", "computers and browsers") }}
+  {{ ui.tile("Sign-in pauses", paused | num, "lock_clock", "amber" if paused else "green", "addresses and usernames" if paused else "none now") }}
+</div>
+
+<section class="card" id="people">
+  <div class="card-head">
+    <div><h4><span class="ms" aria-hidden="true">group</span> Users</h4>
+      {% if server_mode %}
+      <p class="muted">Add a person, change their role, reset a password or an authenticator app, turn an account off.
+        Each person's page shows where they are signed in and what they did.</p>
+      {% else %}
+      <p class="muted">On this laptop only its Admin signs in: you. To let colleagues in with their own accounts, its
+        owner runs <code>python -m ap_coder share</code> (docs/SERVER.md, section 16).</p>
+      {% endif %}</div>
+    <div class="row">
+      {% if me %}<a class="btn" href="/admin/users/{{ me }}"><span class="ms" aria-hidden="true">person</span>Your account</a>{% endif %}
+      {% if server_mode and can("/admin/users", "GET") %}<a class="btn primary" href="/admin/users"><span class="ms" aria-hidden="true">arrow_forward</span>Open Users</a>{% endif %}
+    </div>
+  </div>
+</section>
+
+{% if server_mode and can("/admin/roles", "GET") %}
+<section class="card" id="roles">
+  <div class="card-head">
+    <div><h4><span class="ms" aria-hidden="true">badge</span> Roles</h4>
+      <p class="muted">What each role may do: the five built in, and the ones you make from them.</p></div>
+    <a class="btn" href="/admin/roles"><span class="ms" aria-hidden="true">arrow_forward</span>Open Roles</a>
+  </div>
+</section>
+{% endif %}
+
+<section class="card" id="sign-in">
+  <div class="card-head">
+    <div><h4><span class="ms" aria-hidden="true">lock_clock</span> Sign-in</h4>
+      <p class="muted">The computers and browsers signed in now, and the addresses and usernames paused after tries
+        that didn't match.</p></div>
+    <a class="btn" href="/admin/sign-in"><span class="ms" aria-hidden="true">arrow_forward</span>Open Sign-in</a>
+  </div>
+</section>
+
+<section class="card" id="activity">
+  <div class="card-head">
+    <div><h4><span class="ms" aria-hidden="true">history</span> Activity</h4>
+      <p class="muted">The latest logins and changes to accounts. The Activity log has everything, by person.</p></div>
+    {% if can("/activity", "GET") %}<div class="row">
+      <a class="btn" href="/activity?group=Logins#log"><span class="ms" aria-hidden="true">login</span>Logins and accounts</a>
+      <a class="btn" href="/activity"><span class="ms" aria-hidden="true">arrow_forward</span>Open Activity</a>
+    </div>{% endif %}
+  </div>
+  {% if recent %}
+  <div class="table-wrap">
+    <table class="apc-table fit">
+      <thead><tr><th>When</th><th>What</th><th>Details</th></tr></thead>
+      <tbody>
+        {% for e in recent %}<tr><td>{{ e.when }}</td><td>{{ ui.pill(e.what, e.tone, e.icon) }}</td><td class="w">{{ e.details }}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Nothing yet.</p>
+  {% endif %}
+</section>
+
+{% if links %}
+<section class="card" id="connections">
+  <h4><span class="ms" aria-hidden="true">settings</span> Connections and backups</h4>
+  <p class="muted">These stay on their Settings tabs.</p>
+  <ul class="stack">
+    {% for path, icon, label, note in links %}
+    <li><a href="{{ path }}"><span class="ms" aria-hidden="true">{{ icon }}</span> {{ label }}</a> <span class="muted">· {{ note }}</span></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+</div>
+{% endblock %}
