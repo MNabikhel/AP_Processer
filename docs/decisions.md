@@ -6222,3 +6222,15 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `PO_CURRENCY_DIFFERS`, a warning: its prices, amount-only lines, PO total and left to expense are not compared
     or worked out (no exchange rate is guessed); lines are still paired and quantities ordered and received still
     compared. A warning, not a note: a price no one compared goes to a person.
+- **D-260** · **The second approval checks the invoice again** (`web/pages/review.py` `_not_approvable_now`, the
+  route `/review/<id>/final-approve`; `coding/bulk.py` `_recheck`; the owner's choice; 17 Nov 2026; B-2640).
+  - **What:** before the second approval, the coding the first approver approved is checked again as the first
+    approval and bulk approval check it (`finalise_coding` with the invoice's kept extraction, B-2611): what changed
+    since is caught (the supplier put on hold, the invoice found in the ERP's register or JD Edwards' voucher list, a
+    duplicate approved, the open period closed, an account closed).
+  - **Refused when:** an error "Approve anyway" never covers (`is_hard`: `HARD_CODES` and every `JDE_` finding), or
+    an error the first approver did not approve over (not in their approval's `open_issues`): nobody gave a reason
+    for it. The refusal says each in plain words and to send the invoice back (fixed there, approved anyway with a
+    reason there, or rejected); the second approver has no "Approve anyway" of their own.
+  - **Not refused:** warnings, and errors the first approver approved anyway with their reason (their reason
+    stands). There is no bulk second approval to change.
