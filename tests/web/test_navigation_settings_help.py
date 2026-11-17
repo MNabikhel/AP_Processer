@@ -114,6 +114,7 @@ def test_with_jd_edwards_words_the_pages_say_supplier_and_vendor_without_them(de
         "Start typing to pick from the {} list",
         "Add to the {} list",
         "Add new {}…",
+        "{} PDF</span>",  # how the invoice came in, beside the page
         "{} master<span",  # the setup checklist's step (its key in step_links stays "Vendor master")
     ]
     before = pages()
