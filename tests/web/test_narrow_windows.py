@@ -196,3 +196,30 @@ def test_in_a_browser_every_tab_of_a_tab_strip_is_seen_whole_in_a_narrow_window(
             box = tabs.nth(at).bounding_box()
             assert box["x"] >= 0 and box["x"] + box["width"] <= width + 0.5, (path, tabs.nth(at).inner_text())
     page.close()
+
+
+def test_in_a_browser_the_roles_say_what_each_may_do_in_lines_on_a_phone(chromium, tmp_path):
+    """B-2581: at 390 px the Roles table gave what each role may do a column one word wide (the page 4,400 px long,
+    a role's permissions a word a line): the role's name and the buttons beside it took the rest."""
+    from tests.webclient import authenticator_code, enrol
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    uid = store.add_user("boss", "correct horse battery", role="admin", display_name="Pat Boss", must_change=False)
+    enrol(store, uid)
+    store.add_role("Accounts payable team lead for Ontario", ["view", "code", "approve"])
+    app = create_app(web_settings(), store, start_reader=False, server=True)
+    with browser_on(chromium, app) as (browser, base):
+        page = browser.new_page(viewport={"width": 390, "height": 800})
+        page.goto(f"{base}/login")
+        page.fill("input[name=username]", "boss")
+        page.fill("input[name=password]", "correct horse battery")
+        page.click("button:has-text('Log in')")
+        page.wait_for_url("**/login/code*")
+        page.fill("input[name=code]", authenticator_code(store, "boss"))
+        page.click("button:has-text('Log in')")
+        page.wait_for_url("**/review*")
+        page.goto(f"{base}/admin/roles")
+        widths = page.eval_on_selector_all("#roles tbody td:nth-child(2)", "els => els.map((e) => e.offsetWidth)")
+        assert len(widths) == 6 and min(widths) >= 160, widths
+        assert page.evaluate("document.documentElement.scrollWidth") <= 390
+        page.close()
