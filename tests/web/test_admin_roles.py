@@ -219,3 +219,20 @@ def test_a_copy_of_a_role_with_a_long_name_is_named_in_full(store):
         assert len(offered) <= 40 and offered.endswith(" (copy)"), offered
         copy = _made(boss, offered, ["view"])
         assert store.role_info(copy)["name"] == offered
+
+
+def test_an_invoice_waiting_for_gl_accounts_links_to_them_only_for_whoever_may_open_them(store):
+    """B-2582: with no GL accounts loaded, an invoice's "Load GL accounts" led a Read-only person (or a role made
+    without Review and code invoices) to GL accounts & tax, which refused them."""
+    account(store, "boss", "admin", "Pat Boss")
+    account(store, "reader", "readonly", "Rea Der")
+    invoice = add_clean(store)
+    app = app_for(store)
+    boss, reader = client_of(app, "10.0.0.7"), client_of(app, "10.0.0.8")
+    log_in(boss, "boss")
+    log_in(reader, "reader")
+    assert "Waiting for your GL accounts" in boss.get(f"/review/{invoice}").text
+    assert 'href="/accounts"' in boss.get(f"/review/{invoice}").text
+    page = reader.get(f"/review/{invoice}").text
+    assert "Waiting for your GL accounts" in page and 'href="/accounts"' not in page
+    assert reader.get("/accounts", headers=HTML).status_code == 403
