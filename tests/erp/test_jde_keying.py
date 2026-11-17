@@ -182,22 +182,36 @@ def test_codes_are_text_cells_amounts_are_numbers_and_dates_are_dates():
     assert (company.value, company.data_type, company.number_format) == ("00001", "s", "@")
 
 
-def test_a_voucher_split_across_two_business_units_has_a_line_each_with_its_remark_cut_at_30():
+def test_a_voucher_split_across_two_business_units_has_a_line_each_with_its_remark_cut_at_a_word_end():
     (block,) = blocks(workbook([split()])[jde_keying.SHEET])
     assert lines_and_check(block) == [
-        [f"{HQ}.6420.2210", "Data lines", 100, "Courier to the north office, t"],
+        [f"{HQ}.6420.2210", "Data lines", 100, "Courier to the north office"],
         [f"{HQ}.0042", "Office supplies", 200, "Toner"],
         [f"{IT}.6431", "Courier", 300, "Same-day courier"],
         ["Check", "G/L lines + recovered tax = gross", 600, "600.00 + 78.00 = 678.00: balanced"],
     ]
-    assert field(block, "Remark").value == "Courier to the north office, t"  # the first line's
+    assert field(block, "Remark").value == "Courier to the north office"  # the first line's, at a word end (B-2743)
     assert (field(block, "Taxable amount").value, field(block, "Tax amount").value) == (600, 78)
     assert (field(block, "Tax explanation code").value, field(block, "Tax rate/area").value) == ("V", "ON-HST")
 
 
+def test_a_line_without_a_remark_is_keyed_with_its_description_cut_at_a_word_end():
+    """B-2743: a line with no remark of its own was keyed with its description cut at 30 characters mid-word
+    ("Professional consulting servic"), on the sheet and in the batch files' explanation (VNEXA). It is cut at a word
+    end within 30 (``remark.fit``)."""
+    final = one_line()["final_output"]
+    final["line_items"][0]["description"] = "Professional consulting services in October"
+    invoice = coded({k: v for k, v in final.items() if k != "gl_distribution"})
+    (block,) = blocks(workbook([invoice])[jde_keying.SHEET])
+    assert lines_and_check(block)[0][3] == "Professional consulting"
+    files = jde_zfiles.export_batch([invoice], settings(), lookup, batch=7, on=ON_DAY)
+    (dist,) = csv.DictReader(io.StringIO(files[jde_zfiles.DIST_FILE].decode()))
+    assert dist["VNEXA"] == "Professional consulting"
+
+
 def test_a_line_with_a_remark_of_its_own_is_on_the_sheet_with_it():
     """D-213: the "Explanation -Remark-" column and the pay item's Remark carry the line's remark, fitted to 30
-    characters at a word end; a line without one keeps its description cut at 30."""
+    characters at a word end; a line without one its description, at a word end too (B-2743)."""
     invoice = split()
     lines = invoice["final_output"]["line_items"]
     lines[0].update(remark="KT Oct.parcels 3-1-204", remark_from="person")
@@ -505,7 +519,8 @@ def test_the_exports_page_offers_the_keying_sheet_and_downloads_it_for_a_batch(t
     assert field(block, "Supplier number").value == "10023"
     assert field(block, "Supplier name").value == northwind["vendor_name"]
     assert any(str(row[0].value).startswith("CC400.") and row[1].value for row in block)  # an account, described
-    assert block[-1][0].value == "Check" and block[-1][3].value.endswith(": balanced")
+    check = next(row for row in block if row[0].value == "Check")  # (a note under it: the terms have no code)
+    assert check[3].value.endswith(": balanced")
     assert list(wb[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True)) == []
 
 
@@ -594,15 +609,36 @@ def test_a_keying_batchs_sheet_downloaded_again_keeps_its_vouchers_once_they_are
     store.import_erp_register([{"vendor_name": final["vendor_name"], "invoice_number": final["invoice_number"],
                                 "total": final["grand_total"]}])  # fmt: skip
     assert sheet() == first
-    # Another batch's sheet (made as Excel) is still checked against the register: that one is in the ERP already.
+    # Another batch (made as Excel) has no keying sheet: its invoices may be in the ERP by then (B-2745).
     follow(client, post(client, "/exports/batches/1/undo"))
     follow(client, post(client, "/exports/create", {"fmt": "xlsx", "ids": [northwind["id"]]}))
-    wb = openpyxl.load_workbook(
-        io.BytesIO(client.get(f"/exports/batches/2/download?fmt={jde_keying.FORMAT}").content))  # fmt: skip
-    assert [values(b) for b in blocks(wb[jde_keying.SHEET])] == [
-        [["No voucher to type: see the sheet “Not ready”.", None, None, None]]
-    ]
-    assert "already in the ERP" in wb[jde_keying.NOT_READY]["H2"].value
+    assert client.get(f"/exports/batches/2/download?fmt={jde_keying.FORMAT}").status_code == 409
+
+
+def test_a_batch_is_downloaded_again_only_in_its_own_format_or_as_the_excel_workbook(
+    tmp_path, cost_centers_demo_template
+):
+    """B-2745: "Download again" offered every format for any batch, so a keying-sheet batch (typed by hand) could be
+    downloaded as JD Edwards batch files and loaded too: each voucher in JD Edwards twice. A batch goes again in its
+    own format, or as the Excel workbook, which people read and no loader takes; any other is refused."""
+    from tests.webclient import PAGE, follow, post
+
+    store, client, northwind, _ = demo(tmp_path, cost_centers_demo_template)
+    follow(client, post(client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": [northwind["id"]]}))
+    (batch,) = store.export_batches()
+    page = client.get(f"/exports?batch={batch['id']}").text
+    offered = page.split('name="bfmt"', 1)[1].split("</select>", 1)[0]
+    assert f'value="{jde_keying.FORMAT}"' in offered and 'value="xlsx"' in offered
+    assert f'value="{jde_settings.FORMAT}"' not in offered and 'value="csv"' not in offered
+    assert 'value="custom"' not in offered
+    for fmt in (jde_settings.FORMAT, "csv", "custom"):
+        answer = client.post(f"/exports/batches/{batch['id']}/download?fmt={fmt}", headers=PAGE)
+        assert answer.status_code == 409 and "twice" in answer.text, fmt
+    assert client.get(f"/exports/batches/{batch['id']}/download?fmt=xlsx").status_code == 200
+    assert client.get(f"/exports/batches/{batch['id']}/download?fmt={jde_keying.FORMAT}").status_code == 200
+    # Asked for another format in the address, the page offers the batch's own
+    page = client.get(f"/exports?batch={batch['id']}&bfmt={jde_settings.FORMAT}").text
+    assert f'action="/exports/batches/{batch["id"]}/download?fmt={jde_settings.FORMAT}"' not in page
 
 
 def test_the_keying_sheet_is_offered_only_where_jd_edwards_is_shown(store):
@@ -614,8 +650,10 @@ def test_the_keying_sheet_is_offered_only_where_jd_edwards_is_shown(store):
     assert {jde_settings.FORMAT, jde_keying.FORMAT} <= set(exports_page.shown_formats(store))
 
 
-def test_a_voucher_jd_edwards_has_through_the_api_is_on_not_ready_never_to_be_typed_too(tmp_path, monkeypatch):
-    """A JD Edwards batch's keying sheet: a voucher posted through the API is not one to type (D-210)."""
+def test_a_jd_edwards_batch_has_no_keying_sheet_so_no_voucher_is_typed_too(tmp_path, monkeypatch):
+    """A JD Edwards batch's vouchers are loaded from its files or posted through the API: it has no keying sheet,
+    before its vouchers are posted or after, so none is typed too (B-2745; before, its sheet listed a voucher posted
+    through the API as Not ready and the others to type, though the file may have been loaded, D-210)."""
     from ap_coder.erp import jde_ais, jde_sync
     from tests.erp.test_jde_post import batch_of
     from tests.fake_ais import PASSWORD, FakeAis
@@ -628,20 +666,11 @@ def test_a_voucher_jd_edwards_has_through_the_api_is_on_not_ready_never_to_be_ty
     with FakeAis() as ais:
         store, batch = batch_of(tmp_path, ais)
         client = client_for(store)
-
-        def sheet():
-            answer = client.get(f"/exports/batches/{batch}/download?fmt={jde_keying.FORMAT}")
-            wb = openpyxl.load_workbook(io.BytesIO(answer.content))
-            return ([b[0][0].value for b in blocks(wb[jde_keying.SHEET])],
-                    list(wb[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True)))  # fmt: skip
-
-        assert sheet() == (["Voucher 1 of 1"], [])
+        assert client.get(f"/exports/batches/{batch}/download?fmt={jde_keying.FORMAT}").status_code == 409
         for step in ("dry-run", "post"):
             post(client, f"/exports/batches/{batch}/jde-api/{step}")
             assert client.app.state.jobs.get("jde-api").wait(30)
-        titles, held = sheet()
-        assert titles == ["No voucher to type: see the sheet “Not ready”."]
-        assert [(row[0], row[7]) for row in held] == [(1, "already posted to JD Edwards through the API")]
+        assert client.get(f"/exports/batches/{batch}/download?fmt={jde_keying.FORMAT}").status_code == 409
 
 
 def test_a_keying_sheet_batch_typed_with_code_b_counts_as_jd_edwards_accruing_the_pst(tmp_path):
@@ -825,6 +854,34 @@ def test_a_credit_note_that_prints_payment_terms_is_keyed_with_none():
     assert field(block, "Payment terms").value == "none (a credit)"
     head = jde_zfiles.voucher_rows(printed, "40417", settings())[0][0]
     assert head["VLPTC"] == ""
+
+
+def test_printed_terms_with_no_jd_edwards_code_are_never_put_in_the_payment_terms_field():
+    """B-2744: printed terms the terms table has no code for ("2/10 Net 30") were shown in Payment terms, JD Edwards'
+    3-character code, which they can't be typed in, while the batch files send it blank (the supplier's own terms).
+    The field is blank, as the files send it, and a note gives the printed terms for the person to pick the code."""
+    printed = one_line()
+    printed["final_output"]["payment_terms"] = "2/10 Net 30"
+    (block,) = blocks(workbook([printed])[jde_keying.SHEET])
+    assert field(block, "Payment terms").value is None
+    assert jde_zfiles.voucher_rows(printed, "40417", settings())[0][0]["VLPTC"] == ""
+    (note,) = [n for n in said(block, "Note") if "2/10 Net 30" in n]
+    assert "no JD Edwards code" in note and "blank" in note
+    (plain,) = blocks(workbook([one_line()])[jde_keying.SHEET])  # terms with a code: the code, nothing said
+    assert field(plain, "Payment terms").value == "N30" and not said(plain, "Note")
+
+
+def test_a_document_type_other_than_the_standard_voucher_is_on_the_sheet():
+    """B-2747: the batch files send a credit note with the credit document type when one is set (Settings → JD Edwards
+    E1), but the keying sheet did not say it: the credit was typed as a standard voucher (PV). The sheet gives the
+    document type whenever it is not PV, as the files send it."""
+    js = settings(credit_document_type="PD")
+    ready, _ = jde_keying.vouchers([one_line(), credit()], js, lookup, on=ON_DAY)
+    data = jde_keying.build_xlsx(ready, [])
+    invoice, minus = blocks(openpyxl.load_workbook(io.BytesIO(data))[jde_keying.SHEET])
+    assert field(minus, "Document type").value == "PD"
+    assert "Document type" not in [c.value for row in invoice for c in row]  # PV, the standard voucher: not said
+    assert jde_zfiles.voucher_rows(credit(), "40417", js)[0][0]["VLDCT"] == "PD"
 
 
 def test_a_tax_area_of_another_province_than_the_tax_charged_is_said_and_holds_nothing():

@@ -9,7 +9,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..coding.remark import fit
-from .jde_formats import _text
 from .jde_settings import REMARKS_TYPED, JdeSettings
 from .jde_voucher import _Voucher, po_not_sent
 
@@ -18,12 +17,13 @@ REMARK_WIDTH = 30  # VLRMK
 
 def line_remark(line: Mapping[str, Any]) -> str:
     """The remark of a G/L line as JD Edwards holds it (30 characters): the line's own remark (suggested or typed,
-    D-213; ``remark.fit``: the whole words that fit), else the line's description cut at 30. The batch files and
-    the keying sheet (``jde_keying``) both ask here. A remark the person emptied on purpose stays empty (D-229)."""
+    D-213; ``remark.fit``: the whole words that fit), else the line's description fitted the same way, at a word end
+    within 30, not mid-word (B-2743). The batch files and the keying sheet (``jde_keying``) both ask here. A remark
+    the person emptied on purpose stays empty (D-229)."""
     remark = fit(line.get("remark"))[0]
     if remark or line.get("remark_from") == "person":
         return remark
-    return _text(line.get("description"), REMARK_WIDTH)
+    return fit(line.get("description"))[0]
 
 
 def voucher_remark(invoice: Mapping[str, Any]) -> str:
