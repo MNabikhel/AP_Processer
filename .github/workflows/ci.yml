@@ -5,6 +5,8 @@ on:
     branches: [main]  # a branch's commits run once, as its pull request (pushing a claude/** branch too ran it twice)
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "17 8 * * *"  # nightly on main: everything, as after a merge (D-260)
 
 permissions:
   contents: read
@@ -20,40 +22,45 @@ env:
   SYNC_VOLUME: tests/erp/test_jde_sync_volume.py::test_the_sync_at_the_companys_size
 
 jobs:
+  plan:
+    # Which parts of the test matrix run (D-260): a pull request the cells marked "pull_request" in
+    # .github/ci-tests.json, main (a merge, nightly, by hand) all of them.
+    name: Which test parts run
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tests: ${{ steps.pick.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/ci-tests.json
+          sparse-checkout-cone-mode: false
+      - id: pick
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            echo "tests=$(jq -c '[.[] | select(.pull_request)]' .github/ci-tests.json)" >> "$GITHUB_OUTPUT"
+          else
+            echo "tests=$(jq -c . .github/ci-tests.json)" >> "$GITHUB_OUTPUT"
+          fi
+
   tests:
+    needs: plan
     name: Tests (${{ matrix.os }}, Python ${{ matrix.python }}${{ matrix.shard && format(', part {0}', matrix.shard) || '' }}${{ matrix.tier == 'fast' && ', fast tier' || '' }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30  # a part about half that in a passing run: a hang ends here, not after 6 hours
     strategy:
       fail-fast: false
       matrix:
-        # The whole suite on every Python on Ubuntu (about 27 minutes in one job), and on Windows, several times
-        # slower, on 3.12 (the Python APProcessor.bat installs first) and on the newest (3.14: the one the pilot
-        # laptop has), both with the OCR engine, so the tests that read scans run on Windows (they skip without it;
-        # its PP-OCRv4 models come inside the rapidocr package: nothing is downloaded); the fast tier on the other
-        # two. Each is split into even parts run side by side (--shard, tests/conftest.py: whole files, by the times
-        # in tests/test_times.json), so the run ends when the slowest part does (D-233).
-        include:
-          - {os: ubuntu-latest, python: "3.11", shard: "1/2"}
-          - {os: ubuntu-latest, python: "3.11", shard: "2/2"}
-          - {os: ubuntu-latest, python: "3.12", shard: "1/2"}
-          - {os: ubuntu-latest, python: "3.12", shard: "2/2"}
-          - {os: ubuntu-latest, python: "3.13", shard: "1/2"}
-          - {os: ubuntu-latest, python: "3.13", shard: "2/2"}
-          - {os: ubuntu-latest, python: "3.14", shard: "1/2"}
-          - {os: ubuntu-latest, python: "3.14", shard: "2/2"}
-          - {os: windows-latest, python: "3.12", extras: "ocr,dev", shard: "1/4"}
-          - {os: windows-latest, python: "3.12", extras: "ocr,dev", shard: "2/4"}
-          - {os: windows-latest, python: "3.12", extras: "ocr,dev", shard: "3/4"}
-          - {os: windows-latest, python: "3.12", extras: "ocr,dev", shard: "4/4"}
-          - {os: windows-latest, python: "3.14", extras: "ocr,dev", shard: "1/4"}
-          - {os: windows-latest, python: "3.14", extras: "ocr,dev", shard: "2/4"}
-          - {os: windows-latest, python: "3.14", extras: "ocr,dev", shard: "3/4"}
-          - {os: windows-latest, python: "3.14", extras: "ocr,dev", shard: "4/4"}
-          - {os: windows-latest, python: "3.11", tier: fast, shard: "1/2"}
-          - {os: windows-latest, python: "3.11", tier: fast, shard: "2/2"}
-          - {os: windows-latest, python: "3.13", tier: fast, shard: "1/2"}
-          - {os: windows-latest, python: "3.13", tier: fast, shard: "2/2"}
+        # The cells are in .github/ci-tests.json (the plan job picks them): the whole suite on every Python on Ubuntu
+        # (about 27 minutes in one job), and on Windows, several times slower, on 3.12 (the Python APProcessor.bat
+        # installs first) and on the newest (3.14: the one the pilot laptop has), both with the OCR engine, so the
+        # tests that read scans run on Windows (they skip without it; its PP-OCRv4 models come inside the rapidocr
+        # package: nothing is downloaded); the fast tier on the other two. Each is split into even parts run side by
+        # side (--shard, tests/conftest.py: whole files, by the times in tests/test_times.json), so the run ends when
+        # the slowest part does (D-233). A pull request runs the cells marked "pull_request" (Ubuntu 3.12, Windows
+        # 3.14): the rest run on main after each merge and nightly, and a build is released only once main passed
+        # them all (D-260).
+        include: ${{ fromJSON(needs.plan.outputs.tests) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -253,6 +260,8 @@ jobs:
       fail-fast: false
       matrix:
         python: ["3.12", "3.14"]
+        # a pull request: 3.14 alone, the pilot laptop's (main and nightly: both, D-260)
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"python":"3.12"}]' || '[]') }}
     env:
       AP_NO_PAUSE: "1"
       AP_ALLOW_INTERNET: "1"  # set up online, from PyPI (no wheelhouse here); the offline bundle job runs without it
@@ -389,6 +398,8 @@ jobs:
       fail-fast: false
       matrix:
         python: ["3.12", "3.14"]  # 3.14: what a new laptop gets from python.org
+        # a pull request: 3.14 alone, the pilot laptop's (main and nightly: both, D-260)
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"python":"3.12"}]' || '[]') }}
     timeout-minutes: 30
     env:
       AP_NO_PAUSE: "1"
@@ -685,6 +696,8 @@ jobs:
       fail-fast: false
       matrix:
         python: ["3.12", "3.14"]  # 3.14: what a new laptop gets from python.org
+        # a pull request: 3.14 alone, the pilot laptop's (main and nightly: both, D-260)
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"python":"3.12"}]' || '[]') }}
     timeout-minutes: 20  # the install about 3 minutes, the share's run under one: a hang ends here
     env:
       AP_NO_PAUSE: "1"
@@ -719,6 +732,8 @@ jobs:
       fail-fast: false
       matrix:
         python: ["3.12", "3.14"]  # 3.14: what a new laptop gets from python.org
+        # a pull request: 3.14 alone, the pilot laptop's (main and nightly: both, D-260)
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"python":"3.12"}]' || '[]') }}
     timeout-minutes: 20  # the install about 3 minutes, the day a few: a hang ends here
     env:
       AP_NO_PAUSE: "1"
@@ -745,6 +760,7 @@ jobs:
     # unzip it to a fresh folder, hide every other Python, double-click APProcessor.command with the internet
     # cut off (every proxy points at a closed port, as in the Windows job), then read the sample invoices.
     name: Offline bundle on macOS (no internet)
+    if: github.event_name != 'pull_request'  # GitHub's few Mac machines: main and nightly only (D-260)
     runs-on: macos-latest
     timeout-minutes: 25  # about 6 minutes in a passing run: a hang ends here, not after 6 hours
     env:
@@ -847,6 +863,7 @@ jobs:
     # old folder; and GitHub's ZIP of this main with the old .wheelhouse copied in again, which must stop with one
     # plain sentence naming the Mac bundle (not a list of packages).
     name: The pilot tester's Mac (Python 3.14 only) updated from PR 8
+    if: github.event_name != 'pull_request'  # GitHub's few Mac machines: main and nightly only (D-260)
     runs-on: macos-latest
     timeout-minutes: 25
     env:
@@ -1065,6 +1082,7 @@ jobs:
     # remove, and the plist is gone. scripts/ci/macos_service.py (it prints the service's logs and what launchd says
     # on a failure, and removes the test daemon).
     name: The server's service on macOS (launchd)
+    if: github.event_name != 'pull_request'  # GitHub's few Mac machines: main and nightly only (D-260)
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
@@ -1129,6 +1147,8 @@ jobs:
           - {name: "the first version, unzipped over", sha: 81f691e, how: cli, where: over}
           - {name: "PR 1, its data in private", sha: db95511, how: by-hand, where: new-folder}
           - {name: "PR 8, the last before the web app", sha: e1cf61a, how: launcher, where: new-folder}
+        # a pull request: no Mac (GitHub's few Mac machines: main and nightly, D-260)
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"macos-latest"}]' || '[]') }}
     defaults:
       run:
         shell: bash
