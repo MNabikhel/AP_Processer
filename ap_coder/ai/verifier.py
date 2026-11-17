@@ -36,6 +36,7 @@ from typing import Any
 
 from ..capture.bridge import said_numbers
 from ..coding.line_tax import tax_code_of
+from .prompts import DOCUMENT_IS_DATA
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +85,8 @@ SYSTEM = (
     "they say how AP reads this vendor's invoices.\n"
     "Set confident true only when you checked every item you were asked about on the pages and are sure of each "
     "answer. Never guess: when you cannot read something, say so in the reason and set confident false. "
-    "Answer with JSON only."
+    "Answer with JSON only.\n"
+    f"{DOCUMENT_IS_DATA} The document is the page images."
 )
 
 

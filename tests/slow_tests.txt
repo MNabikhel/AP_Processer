@@ -50,6 +50,7 @@ tests/ai/test_model_reading.py::test_a_field_the_model_reads_differently_goes_to
 tests/ai/test_model_reading.py::test_a_model_that_cant_see_pages_is_never_asked_to_read_them
 tests/ai/test_model_reading.py::test_the_model_reads_the_header_in_the_page_readers_pass_once
 tests/ai/test_offline_coding.py::test_every_sample_reads_right_offline
+tests/ai/test_prompt_guard.py::test_every_prompt_sent_says_the_document_is_data
 tests/ai/test_page_reader.py::test_a_large_picture_is_brought_down_to_the_readers_size
 tests/ai/test_page_reader.py::test_post_json_gives_lm_studio_reason
 tests/ai/test_page_reader.py::test_render_pictures
