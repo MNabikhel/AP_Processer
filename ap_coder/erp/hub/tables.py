@@ -31,12 +31,14 @@ WITHDRAWN_BY = ("reopened", "sent_back")
 # Sign-in events (logins, failed logins, passwords, authenticator apps, unlocked addresses) stay out of ``activity``:
 # they are the server's security record, not the work on invoices (docs/FINANCE_HUB.md).
 SIGN_IN_ACTIONS = ("login", "logout", "login_failed", "login_locked", "password_changed", "password_reset",
-                   "address_unlocked", "downloaded", "authenticator_enrolled", "authenticator_reset")  # fmt: skip
+                   "address_unlocked", "downloaded", "authenticator_enrolled", "authenticator_reset",
+                   "sessions_ended")  # fmt: skip
 # Accounts and settings stay out too (docs/FINANCE_HUB.md "What is left out"): who has an account and what role, a
 # backup put back, and settings changed (the tax setup and the policy notes too, B-1206) are the company server's
 # administration, not the work on invoices.
 ADMIN_ACTIONS = ("user_added", "role_changed", "user_activated", "user_deactivated", "backup_restored",
-                 "settings_changed", "tax_setup_changed", "policy_changed")  # fmt: skip
+                 "settings_changed", "tax_setup_changed", "policy_changed", "user_cost_centers_set", "role_created",
+                 "role_edited", "role_deleted")  # fmt: skip
 
 
 def left_out_of_activity(action: str) -> bool:

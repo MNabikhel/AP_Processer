@@ -625,6 +625,20 @@ def test_account_and_settings_events_stay_out_of_activity(store):
     assert [r["action"] for r in tables.build(store, "activity", tables.Context())] == ["note"]
 
 
+def test_the_roles_and_the_sign_outs_stay_out_of_activity_too(store):
+    """B-2579: the roles made, changed and deleted on the Admin panel (D-250), an account signed out everywhere
+    (D-249) and a Manager's cost centers were sent to the hub's activity, which leaves the accounts out."""
+    boss = store.add_user("boss", "correct horse battery", role="admin", must_change=False)
+    key = store.add_role("AP lead", ["view", "code"], actor="Pat Boss")
+    store.edit_role(key, "AP leads", ["view"], actor="Pat Boss")
+    store.delete_role(key, actor="Pat Boss")
+    ann = store.add_user("ann", "correct horse battery", role="manager", must_change=False)
+    store.set_user_cost_centers(ann, "CC-200", actor="Pat Boss")
+    store.sign_out_everywhere(ann, actor="Pat Boss", by_user=boss)
+    store.log_event("note", 1, "Jane", {"text": "kept"})
+    assert [r["action"] for r in tables.build(store, "activity", tables.Context())] == ["note"]
+
+
 def test_a_gateway_copy_that_fails_is_a_warning_not_a_failed_run(store, tmp_path, monkeypatch):
     _approved(store, tmp_path, grand_total=500.0)
 
