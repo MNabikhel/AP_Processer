@@ -245,12 +245,19 @@ def session_limits(data: Path) -> tuple[float, float]:
     return number("session_idle_minutes", 30, 5, 480) * 60, number("session_hours", 12, 1, 168) * 3600
 
 
+def from_env_file(name: str, value: str) -> bool:
+    """Whether ``value`` of ``name`` is the one the data folder's .env put in the environment. Only
+    ``core/config.py`` reads a .env in, so where it was never imported nothing came from one: the launcher's first
+    phase, on the computer's own Python before AP Coder's packages (python-dotenv) are installed, reads server.json
+    with the standard library only (B-2636)."""
+    config = sys.modules.get("ap_coder.core.config")
+    return bool(config and config.from_env_file(name, value))
+
+
 def settings(data: Path, env: dict | None = None, **overrides: Any) -> ServerSettings:
     """The settings in effect: the defaults, then server.json, then the environment (:data:`ENV_SETTINGS`: the data
     folder's .env too, once read into it, but for :data:`OVER_ENV_FILE`), then ``overrides`` (the command line; None =
     not given)."""
-    from ..core.config import from_env_file
-
     env = os.environ if env is None else env
     values: dict[str, Any] = {k: v for k, v in read_config(data).items() if k in FIELDS}
     for name, var in ENV_SETTINGS.items():

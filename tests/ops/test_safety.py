@@ -311,6 +311,27 @@ def test_server_settings_alone_mark_a_team_servers_data_folder(laptop, started, 
     assert safety.team_server(data, db).address == "https://AP-LAPTOP:8443"
 
 
+def test_a_shared_laptops_server_settings_are_read_before_the_packages_are_installed(laptop, tmp_path):
+    """The launcher's first phase runs on Windows' own Python, before AP Coder's packages (B-2636): a laptop shared
+    with ``share`` has a server.json, and reading it must need the standard library only, never python-dotenv."""
+    import subprocess
+    import sys
+
+    data, db = laptop
+    service.write_config(data, port=8443, insecure_http=True)
+    probe = (
+        "import sys; sys.modules['dotenv'] = None; sys.modules['pydantic'] = None\n"  # (as if not installed)
+        "from pathlib import Path\n"
+        "from ap_coder.ops import safety\n"
+        f"team = safety.team_server(Path({str(data)!r}), Path({str(db)!r}))\n"
+        "print(team.address)\n"
+    )
+    root = Path(__file__).resolve().parents[2]
+    done = subprocess.run([sys.executable, "-c", probe], cwd=root, capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip().endswith(":8443")
+
+
 def test_laptop_mode_again_is_a_step_taken_on_purpose(laptop, started, capsys):
     """The way back to laptop mode on the same data: only with the option that says what it does."""
     data, db = laptop
