@@ -755,7 +755,7 @@ def test_a_sheet_of_thousands_of_columns_is_refused_before_it_is_read(client, mo
 
 
 def test_a_statement_is_compared_with_the_vouchers_loaded_from_jd_edwards_too(chart_company, chart_company_client):
-    """B-2609: a statement was compared only with AP Coder's own invoices, so every invoice already keyed in JD
+    """B-2605: a statement was compared only with AP Coder's own invoices, so every invoice already keyed in JD
     Edwards (the voucher list loaded on JD Edwards files) showed "Not received". It is compared with both, and each
     line says where its invoice was found."""
     store, client = chart_company.store, chart_company_client
@@ -785,7 +785,7 @@ def test_a_statement_is_compared_with_the_vouchers_loaded_from_jd_edwards_too(ch
 
 
 def test_month_end_with_a_chart_shows_each_account_as_its_one_string(chart_company, chart_company_client):
-    """B-2610: in a chart company Month-end showed an account as "7420.4213" with its business unit under it, and the
+    """B-2606: in a chart company Month-end showed an account as "7420.4213" with its business unit under it, and the
     By GL account table added up the lines of one object and subsidiary on every business unit as one account: a
     line's account is one string, business unit.object.subsidiary (``chart.join_account``), shown and totalled so."""
     from ap_coder.core import chart

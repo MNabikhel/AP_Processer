@@ -262,7 +262,7 @@ def test_in_a_browser_the_sign_in_pages_buttons_stay_in_view_at_683(server_roles
     assert button["x"] + button["width"] <= wrap.bounding_box()["x"] + wrap.bounding_box()["width"] + 1
     page.close()
 def test_in_a_browser_the_journals_forget_button_stays_on_one_line_on_a_laptop(chromium, chart_company):
-    """B-2607: at 1366 px the journal table of JD Edwards files broke its Forget button in two, "Forg / et"."""
+    """B-2603: at 1366 px the journal table of JD Edwards files broke its Forget button in two, "Forg / et"."""
     app = create_app(web_settings(), chart_company.store, start_reader=False)
     with browser_on(chromium, app) as (browser, base):
         page = browser.new_page(viewport={"width": 1366, "height": 800})
@@ -275,7 +275,7 @@ def test_in_a_browser_the_journals_forget_button_stays_on_one_line_on_a_laptop(c
 
 
 def test_in_a_browser_find_an_invoice_fits_a_laptop_and_each_filter_shows_its_own_example(chromium, chart_company):
-    """B-2608: in a 1366 px window Find an invoice's table was 1599 px wide, "Where it stands" cut off and "Next to
+    """B-2604: in a 1366 px window Find an invoice's table was 1599 px wide, "Where it stands" cut off and "Next to
     act" out of sight; and the Currency and Invoice # filters showed "north*", the Vendor's example."""
     app = create_app(web_settings(), chart_company.store, start_reader=False)
     with browser_on(chromium, app) as (browser, base):

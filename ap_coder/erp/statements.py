@@ -3,7 +3,7 @@
 A vendor's statement of account (CSV or Excel: one row per invoice, credit or payment) is compared with
 the invoices AP Coder holds for that vendor, then with the vouchers loaded from JD Edwards (its voucher list: the ERP
 register, ``register``), by invoice number (compared the way people mean them: "INV-00123" = "123"); each line says
-which matched (``Line.note``: "In JD Edwards ...", B-2609):
+which matched (``Line.note``: "In JD Edwards ...", B-2605):
 
 * matched: same number, same amount
 * amount differs: same number, different amount
@@ -185,7 +185,7 @@ def reconcile(
     sent to the ERP or on a keying sheet) it leaves out are counted in ``exported_left_out``, not listed (D-242).
     ``register``: this vendor's vouchers loaded from JD Edwards (``Store.erp_register`` rows: invoice_number,
     number_key, invoice_date, total), where a line no invoice of AP Coder's takes is looked for, said ``found_in``
-    (B-2609)."""
+    (B-2605)."""
 
     def get(rec: dict[str, Any], key: str) -> Any:
         return rec.get(columns[key]) if key in columns else None
@@ -227,7 +227,7 @@ def reconcile(
         # A date not read is shown as written ("1 sept. 2026"), not cut at its first word (B-2544)
         shown = date if _ISO.fullmatch(date) or _EITHER_WAY.fullmatch(date) else str(get(rec, "date") or "").strip()
         key = norm_invoice_number(raw_number)
-        same_number = by_number.get(key, []) or in_jde.get(key, [])  # AP Coder's first, else JD Edwards' (B-2609)
+        same_number = by_number.get(key, []) or in_jde.get(key, [])  # AP Coder's first, else JD Edwards' (B-2605)
 
         def opposite(inv: dict[str, Any], amount: float | None = amount) -> bool:
             return amount is not None and amount * (inv["grand_total"] or 0) < 0

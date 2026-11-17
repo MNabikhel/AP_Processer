@@ -136,7 +136,7 @@ def _from_chart(store: Store, table: str, listed: list[dict[str, Any]]) -> dict[
 
 def tax_context(store: Store) -> dict[str, Any]:
     """The Sales tax accounts tab. ``jde_posts``: a tax JD Edwards posts itself from the voucher's pay item, for which
-    no account is asked (``doctor.taxes_jde_posts``, B-2600)."""
+    no account is asked (``doctor.taxes_jde_posts``, B-2596)."""
     from ap_coder.ops.doctor import taxes_jde_posts
 
     accounts = store.list_accounts("gl_accounts")

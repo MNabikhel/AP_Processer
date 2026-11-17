@@ -219,7 +219,7 @@ def test_the_review_tab_is_one_form_with_one_save_and_the_risky_settings_folded(
     for name in ('name="threshold"', 'name="constrain"', 'name="why_after"'):
         assert name in advanced, name
     assert "Ask why after the same correction (times)" not in page
-    assert "python -m ap_coder share" in tab  # how colleagues sign in (no Who are you? page any more: B-2604)
+    assert "python -m ap_coder share" in tab  # how colleagues sign in (no Who are you? page any more: B-2600)
 
 
 def test_saving_your_name_says_your_name_was_saved(client):
@@ -493,7 +493,7 @@ def test_the_page_modules_hold_the_real_reviewer_whichever_test_ran_first():
 def test_settings_review_on_a_laptop_says_how_colleagues_sign_in_and_names_only_pages_shown(
     chart_company, chart_company_client
 ):
-    """B-2604: Settings → Review sent colleagues to a "Who are you?" page and told the person to sign in with a
+    """B-2600: Settings → Review sent colleagues to a "Who are you?" page and told the person to sign in with a
     second Windows account or have IT set up the office network, where a laptop now has its own sign-in and
     ``share``; in a chart company it asked for sites by cost center, its lines carrying business units; and in the
     Simple screens its exchange-rate note named Spend and Sales tax, pages not in the menu."""

@@ -320,7 +320,7 @@ def test_ctrl_z_on_the_next_invoice_once_edited_never_undoes_the_approval_before
 
 
 def test_an_account_half_typed_is_not_flagged_until_the_box_is_left(browser, chart_company):
-    """B-2603: typing "0021" in an Account box, its list still open, showed at once "Must be fixed (1) Line 1:
+    """B-2599: typing "0021" in an Account box, its list still open, showed at once "Must be fixed (1) Line 1:
     “0021” is not an account": the check ran at each key on what was half typed. The box is checked once it is left
     (or a choice made), and a choice made is checked at once."""
     page, errors = _review(browser, chart_company, "one_line")

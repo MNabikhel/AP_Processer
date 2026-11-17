@@ -99,7 +99,7 @@
 .imp-rows {align-self: stretch; border: 1px solid var(--lg-hairline); border-radius: var(--lg-r-sm);}
 .imp-rows td, .imp-rows th {white-space: nowrap; max-width: 18rem; overflow: hidden; text-overflow: ellipsis;}
 .imp-journals td {white-space: normal; overflow-wrap: anywhere;}
-.imp-journals td .btn {white-space: nowrap; overflow-wrap: normal;} /* "Forget" whole, never "Forg / et" (B-2607) */
+.imp-journals td .btn {white-space: nowrap; overflow-wrap: normal;} /* "Forget" whole, never "Forg / et" (B-2603) */
 .imp-said {margin: 0; padding-left: 18px; font-size: 13.5px;}
 .imp-brief {margin: 0; padding-left: 18px; font-size: 13.5px; display: flex; flex-direction: column; gap: 2px;}
 .imp-brief li:first-child {font-weight: 500;}

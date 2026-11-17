@@ -234,7 +234,7 @@ def link(key: str) -> dict[str, str] | None:
 
 def menu_names(store: Any) -> Any:
     """What puts each page's name in Help's words as the menu shows it: in Simple screens, "Invoice directory" is
-    "Find an invoice", "Learning & accuracy" "What was learned" (``pages.SIMPLE_MAIN``, B-2602)."""
+    "Find an invoice", "Learning & accuracy" "What was learned" (``pages.SIMPLE_MAIN``, B-2598)."""
     if not simple_screens(store):
         return lambda text: text
     names = {BY_KEY[key].title: title for key, title in SIMPLE_MAIN.items() if BY_KEY[key].title != title}

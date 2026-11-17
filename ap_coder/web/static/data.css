@@ -122,7 +122,7 @@ button.link.danger {color: var(--lg-danger);}
 .dir-filters input[aria-invalid="true"] {border-color: var(--lg-danger);}
 .dir-where {color: var(--lg-muted);}
 /* The default columns fit a laptop's 1366 px: no column of words wider than it need be, less room around each
-   cell (B-2608) */
+   cell (B-2604) */
 .dir-table th, .dir-table td {padding-left: 8px; padding-right: 8px;}
 .dir-table td.w, .dir-table td.dir-where {min-width: 8rem;}
 .dir-actions {text-align: right; white-space: nowrap;}

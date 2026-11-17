@@ -829,7 +829,7 @@ def test_two_attachments_that_could_not_be_read_are_not_said_repeated(store, tmp
 
 
 def test_keying_to_jd_edwards_asks_no_account_for_the_tax_it_posts_itself(chart_company, chart_company_client):
-    """B-2600: with the tax keyed on the voucher's pay item (tax code V), JD Edwards posts the GST and HST itself, yet
+    """B-2596: with the tax keyed on the voucher's pay item (tax code V), JD Edwards posts the GST and HST itself, yet
     the Sales tax accounts tab asked for an account for them and Getting started counted them as not set ("3 of 5"),
     where the checks and the doctor already need none (B-2259)."""
     from ap_coder.core.tax_setup import RECOVERABLE
@@ -849,7 +849,7 @@ def test_keying_to_jd_edwards_asks_no_account_for_the_tax_it_posts_itself(chart_
 
 
 def test_getting_started_asks_no_business_unit_for_the_tax_account_jd_edwards_posts_itself(chart_company):
-    """B-2601: on the made-up company Getting started said "1 account (2420) has no JD Edwards business unit: set a
+    """B-2597: on the made-up company Getting started said "1 account (2420) has no JD Edwards business unit: set a
     Default BU" though 2420 is the GST account JD Edwards posts itself from the pay item: no voucher is held back for
     it."""
     from ap_coder.web.core import using_store

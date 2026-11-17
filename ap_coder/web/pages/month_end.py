@@ -92,7 +92,7 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
         tiles.append((TITLES[source], value, hint))
     reference = reference_or_none(store) if items or no_date else None
     chart = chart_by_code(reference)
-    joined = account_lines.in_use(reference)  # each account one string, totalled as one (B-2610)
+    joined = account_lines.in_use(reference)  # each account one string, totalled as one (B-2606)
     flagged: dict[str, float] = {}  # dated over a year before the period end: accrued, flagged (B-474)
     for a in items:
         if a.old:

@@ -75,7 +75,7 @@ def reconciliation(
 ) -> Any:
     """The statement compared with the vendor's invoices in AP Coder, then with its vouchers loaded from JD Edwards:
     filed under its name, or under its supplier number (AN8: Settings → JD Edwards first, then the vendor master),
-    whatever name JD Edwards has (B-2609)."""
+    whatever name JD Edwards has (B-2605)."""
     an8 = str(jde_settings.load(store).an8_overrides.get(vendor) or store.vendor_ids().get(vendor) or "").strip()
     register = [row for row in store.erp_register(stm.statement_numbers(records, chosen))
                 if row["vendor_key"] == vendor or (an8 and row.get("an8") == an8)]  # fmt: skip

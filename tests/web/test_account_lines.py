@@ -242,7 +242,7 @@ def test_what_is_keyed_on_the_pay_item_is_one_line_from_the_voucher(chart_compan
 
 
 def test_not_ready_to_key_points_to_the_findings_and_never_says_their_reason_again(chart_company, chart_company_client):
-    """B-2606: the review screen said "Not ready to key: a line has no GL account (…): code it in the review screen"
+    """B-2602: the review screen said "Not ready to key: a line has no GL account (…): code it in the review screen"
     on the review screen itself, the third time the same problem was said (the findings, the bar); and "set the
     vendor's ERP ID in the vendor master", which no page calls it. The line now only points to the findings; the
     reason held back at export says what to do in plain words."""

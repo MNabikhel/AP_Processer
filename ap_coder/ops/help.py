@@ -1216,7 +1216,7 @@ def faq(server: bool = False) -> list[tuple[str, str]]:
 
 
 # With approved invoices keyed into JD Edwards (``jde_settings.in_use``), what Getting started says instead, as
-# docs/PROTOTYPE.md does (B-2602): (what to do, where it is done). The sales tax sentence: JD Edwards posts the tax
+# docs/PROTOTYPE.md does (B-2598): (what to do, where it is done). The sales tax sentence: JD Edwards posts the tax
 # itself from the voucher's pay item (``doctor.taxes_jde_posts``), or the tax is coded to G/L lines.
 JDE_TAX_POSTED = ("The Sales tax accounts tab needs nothing: the GST/HST recovered goes on the voucher's pay item and "
                   "JD Edwards posts it itself.")  # fmt: skip
@@ -1264,7 +1264,7 @@ WHATS_NEW: list[str] = [
     EXCEL_OR_CSV,
     "Pay from: the company bank account that pays each invoice, from GL accounts & tax → Bank accounts.",
 ]
-# With JD Edwards (B-2602): what What's new says instead of an item that is not so there.
+# With JD Edwards (B-2598): what What's new says instead of an item that is not so there.
 JDE_WHATS_NEW = {
     EXCEL_OR_CSV: "Approved invoices go on a keying sheet (Excel) to key into JD Edwards, or in a batch file."
 }

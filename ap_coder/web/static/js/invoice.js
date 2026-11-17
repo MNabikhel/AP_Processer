@@ -188,7 +188,7 @@ const rowOf = (el) => el?.closest?.("[data-row]") || null;
 const accountBox = (row) => row?.querySelector?.("input[data-account]") || null;
 
 /** A line's Account box typed in, its list open: what it holds is no account yet ("0021"), so the check an edit
-    starts waits until the list closes (a choice made, Esc, the box left), never flags it at each key (B-2603). */
+    starts waits until the list closes (a choice made, Esc, the box left), never flags it at each key (B-2599). */
 const typingAccount = (el) =>
   Boolean(el?.matches?.('[data-grid="lines"] input[data-account]')) && el.getAttribute("aria-expanded") === "true";
 

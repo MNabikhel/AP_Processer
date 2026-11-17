@@ -101,7 +101,7 @@ def test_settings_review_on_the_server_speaks_of_accounts_and_the_company(store)
     assert "one Windows login" not in page and "another account" in page
     assert "The company's province" in page and "Your province" not in page
     laptop = client_as(store).get("/settings/review").text
-    assert "python -m ap_coder share" in laptop and "Your province" in laptop  # (one laptop: share it, B-2604)
+    assert "python -m ap_coder share" in laptop and "Your province" in laptop  # (one laptop: share it, B-2600)
 
 
 def test_the_second_approval_tooltip_says_the_same_account(store):

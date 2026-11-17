@@ -137,7 +137,7 @@ def test_help_names_where_the_screens_show_park_and_jd_edwards_files(demo_templa
 
 
 def test_help_with_jd_edwards_keying_says_what_the_pilot_guide_and_the_menu_say(chart_company, chart_company_client):
-    """B-2602: in the Simple screens keying to JD Edwards, Getting started said to pick a GL account for GST, HST and
+    """B-2598: in the Simple screens keying to JD Edwards, Getting started said to pick a GL account for GST, HST and
     QST, to use "Learning & accuracy" and to export "as an Excel workbook or a CSV file", and What's new said "Exports
     are Excel or CSV for the pilot" and named "the Invoice directory": none of it so there (docs/PROTOTYPE.md, the
     menu). Without JD Edwards, Help says what it said."""

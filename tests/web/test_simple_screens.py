@@ -122,7 +122,7 @@ def test_simple_screens_leave_the_manager_out_of_park(demo_db, tmp_path):
 
 
 def test_simple_screens_parks_tooltip_offers_no_manager(demo_db, tmp_path):
-    """B-2605: in the Simple screens, Park's tooltip still said "or send it to the manager to confirm the coding",
+    """B-2601: in the Simple screens, Park's tooltip still said "or send it to the manager to confirm the coding",
     which Park there does not offer."""
     target = tmp_path / "demo" / "ap_coder.db"
     target.parent.mkdir(parents=True)

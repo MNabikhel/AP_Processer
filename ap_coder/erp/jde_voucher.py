@@ -24,7 +24,7 @@ from .jde_settings import AMOUNT_GROSS, PST_PROVINCES, JdeSettings, TaxArea, gl_
 # The two reasons an invoice is held back for its supplier number: the Exports page links them to Settings → JD
 # Edwards E1 → Supplier address numbers (``an8_problem``).
 NO_AN8 = "no JDE supplier number (AN8)"
-# What to do about it, in the words of the pages that do it (B-2606)
+# What to do about it, in the words of the pages that do it (B-2602)
 NO_AN8_FIX = (
     "pick the vendor from the vendor list, or add its number in Settings → JD Edwards E1 → Supplier address numbers"
 )

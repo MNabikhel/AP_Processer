@@ -209,7 +209,7 @@ def email_line(mail: Unpacked, already: int = 0, repeated: int = 0) -> tuple[str
 
 def tax_types_mapped(store: Store) -> int:
     """Tax types ready to post: added to expense lines, mapped to a GL account that still exists, or posted by JD
-    Edwards itself from the voucher's pay item with no account of ours (``doctor.taxes_jde_posts``, B-2600)."""
+    Edwards itself from the voucher's pay item with no account of ours (``doctor.taxes_jde_posts``, B-2596)."""
     from ap_coder.ops.doctor import taxes_jde_posts
 
     codes = {a["code"] for a in store.list_accounts("gl_accounts")}
@@ -352,7 +352,7 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
         saved = bool(store.get_setting(jde_settings.SETTING_KEY))
         problems = jde_settings.settings_problems(jde_settings.load(store)) if saved else []
         settings = jde_settings.load(store)
-        posts = taxes_jde_posts(store)  # (posted by JD Edwards from the pay item: no account of ours, B-2601)
+        posts = taxes_jde_posts(store)  # (posted by JD Edwards from the pay item: no account of ours, B-2597)
         missing = jde_accounts.accounts_without_bu(
             settings, [a["code"] for a in store.list_accounts("gl_accounts")],
             [t.gl_code for tax_type, t in store.tax_treatments().items()
