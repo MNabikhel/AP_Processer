@@ -356,6 +356,75 @@ def test_the_po_import_reads_an_optional_open_amount_column():
     assert "open_amount" in template_csv().decode("utf-8-sig").splitlines()[0].split(",")
 
 
+def test_the_po_import_reads_an_optional_currency_column():
+    """B-2612: a PO's currency, from its file's currency column (upper case); none: '' (taken as CAD)."""
+    for header in ("Currency", "Currency Code", "CRCD", "Curr Code"):
+        assert map_columns(["PO", "Description", "Amount", header])["currency"] == header
+    records = [{"PO": "PO-1", "Description": "Widget", "Amount": "100", "Currency": " usd "},
+               {"PO": "PO-2", "Description": "Gadget", "Amount": "40", "Currency": ""}]  # fmt: skip
+    rows, _ = rows_from_records(records, map_columns(list(records[0])))
+    assert [r["currency"] for r in rows] == ["USD", ""]
+    (none,), _ = rows_from_records(records[1:], map_columns(["PO", "Description", "Amount"]))
+    assert none["currency"] == ""
+    assert "currency" in template_csv().decode("utf-8-sig").splitlines()[0].split(",")
+
+
+def _in_currency(store, number, currency):
+    """``number``'s lines imported again, the PO in ``currency`` ('': the file gave none)."""
+    po = store.purchase_order(po_key(number))
+    store.import_purchase_orders([{**li, "po_number": po["po_number"], "vendor_name": po["vendor_name"],
+                                   "status": po["status"], "currency": currency} for li in po["lines"]])  # fmt: skip
+
+
+def test_the_po_list_adds_up_only_the_invoices_in_the_pos_currency(store, tmp_path):
+    """B-2613: the Purchase orders list added a CAD invoice's subtotal to a USD PO's Invoiced and took it off its
+    Remaining, and its tiles added USD and CAD POs together. A PO's amounts are in its currency: an invoice in another
+    is left out, and said; the tiles keep each currency apart."""
+    from tests.webclient import client_for
+
+    _in_currency(store, "PO-88213", "USD")
+    store.add_invoice(tmp_path / "a.pdf", {**_laptops(1, "NW-1"), "currency": "USD"}, {})
+    store.add_invoice(tmp_path / "b.pdf", _laptops(2, "NW-2"), {})  # in CAD
+    po = next(p for p in store.purchase_orders() if p["po_number"] == "PO-88213")
+    assert (po["invoices"], po["billed"], po["other_currency"]) == (2, 1450.0, 1)
+    assert po["remaining"] == pytest.approx(PO_TOTAL - 1450.0)
+    page = client_for(store).get("/purchase-orders").text
+    row = page.split("<b>PO-88213</b></a>")[1].split("</tr>")[0]
+    assert "15,945.00 USD" in row and "1,450.00 USD" in row and "14,495.00 USD" in row
+    assert "1 invoice in another currency, left out" in row
+    assert "plus 14,495.00 USD" in page and "plus 1,450.00 USD" in page  # the tiles: not added to the CAD POs
+    others = next(p for p in store.purchase_orders() if p["po_number"] == "PO-90377")
+    assert others["other_currency"] == 0
+
+
+def test_amounts_are_compared_with_a_po_only_in_its_own_currency(store, reference):
+    """B-2612: an invoice in CAD on a USD PO had its CAD prices compared with the PO's USD ones; amounts are compared
+    only in one currency, and the match says why not. Quantities are compared whatever the currency."""
+    dear = _laptops(2)
+    dear["line_items"][0] |= {"unit_price": 1600.0, "amount": 3200.0}
+    dear["subtotal"] = 3200.0
+    assert "PO_PRICE_OVER" in _codes(store, dear, reference)  # a PO with no currency, a CAD invoice: compared
+    _in_currency(store, "PO-88213", "USD")
+    issues, report = _issues(store, dear, reference)
+    assert {c for c, _ in issues if c.startswith("PO_")} == {"PO_CURRENCY_DIFFERS"}
+    (said,) = [i.message for i in report.issues if i.code == "PO_CURRENCY_DIFFERS"]
+    assert said == "PO-88213 is in USD, the invoice in CAD: its prices and amounts are not compared"
+    assert "PO_QTY_OVER" in _codes(store, _laptops(5), reference)  # 5 laptops billed, 3 ordered
+    match = match_invoice(InvoiceCoding.model_validate(dear), store)
+    assert match.left == {} and match.currencies == said.split(": ")[0]
+    shown = po_section(store, InvoiceCoding.model_validate(dear), 0)
+    assert shown["total_left"] == shown["rows"][0]["left"] == "—" and "PO total 15,945.00 USD" in shown["notes"]
+    assert "PO_PRICE_OVER" in _codes(store, {**dear, "currency": "USD"}, reference)  # in the PO's currency: compared
+
+    _in_currency(store, "PO-88213", "")  # the file gave none: CAD, said to be taken so
+    issues, report = _issues(store, {**dear, "currency": "USD"}, reference)
+    assert {c for c, _ in issues if c.startswith("PO_")} == {"PO_CURRENCY_DIFFERS"}
+    assert next(i.message for i in report.issues if i.code == "PO_CURRENCY_DIFFERS") == (
+        "PO-88213 has no currency in the purchase-order file, so it is taken as CAD; the invoice is in USD: its "
+        "prices and amounts are not compared"
+    )
+
+
 def test_a_database_from_before_the_open_amount_gets_its_column(tmp_path):
     path = tmp_path / "old.db"
     Store(path)

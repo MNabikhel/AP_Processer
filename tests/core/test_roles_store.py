@@ -125,7 +125,7 @@ def test_a_database_of_schema_27_gets_the_roles_and_keeps_everyones_role(tmp_pat
         conn.execute("INSERT INTO users (username, display_name, role, pw_hash, created_at) VALUES ('ann', 'Ann', "
                      "'approver', 'x', '2026-11-01')")  # fmt: skip
     store = Store(db)
-    assert store.get_setting("schema_version") == str(SCHEMA_VERSION) == "29"
+    assert store.get_setting("schema_version") == str(SCHEMA_VERSION) and SCHEMA_VERSION >= 29
     assert store.find_user("ann")["permissions"] == store.role_info("approver")["permissions"]
     assert store.custom_roles() == [] and "table roles" in shape(db)
 

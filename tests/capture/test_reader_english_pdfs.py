@@ -617,6 +617,35 @@ def test_a_deposit_or_holdback_under_a_printed_total_holds_the_total_for_a_perso
     assert held["grand_total"].status == VERIFIED
 
 
+def test_a_french_deposit_under_a_printed_total_holds_the_total_for_a_person_to_check(tmp_path):
+    """B-2625: "Total 1 149,75 | Dépôt reçu -500,00 | Solde à payer 649,75" had its total verified, the deposit never
+    said: a person, or an invoice approved without one, took 1 149,75 for what is owed, 500,00 more than the balance.
+    As "Deposit received" and "Less payment received" are, the French words for what was paid before are held."""
+    for i, label in enumerate(["Dépôt reçu", "Moins dépôt", "Acompte reçu", "Moins acompte", "Acompte versé",
+                               "Moins paiement reçu"]):  # fmt: skip
+        f = _totals(tmp_path, [("Sous-total", "1 000,00"), ("TPS", "50,00"), ("TVQ", "99,75"), ("Total", "1 149,75"),
+                               (label, "-500,00"), ("Solde à payer", "649,75")], name=f"fr{i}.pdf")  # fmt: skip
+        assert f["grand_total"].value == 1149.75, label
+        assert f["grand_total"].status == "check", label
+    head = [x for x in _NORTHWIND if x[2] not in ("Consulting services", "550.00")]
+    row = [(50, 258, "Acompte reçu sur BC 1234"), (500, 258, "550.00")]
+    f = _totals(tmp_path, _PLAIN, head=[*head, *row], name="li.pdf")
+    assert (f["grand_total"].value, f["grand_total"].status) == (621.5, VERIFIED)
+
+
+def test_a_credit_applied_under_a_printed_total_holds_the_total_for_a_person_to_check(tmp_path):
+    """B-2626: "Total 1,149.75 | Credit applied -149.75 | Balance due 1,000.00" (a credit memo the supplier took off
+    this invoice) had its total verified, the credit never said: posted at 1,149.75 with the credit memo posted as
+    well, the credit was taken twice, or the invoice overpaid. Held for a person to check, as a deposit is."""
+    labels = [("Credit applied", "Balance due"), ("Less credit memo CM-55", "Amount due"),
+              ("Crédit appliqué", "Solde dû"), ("Moins note de crédit NC-55", "Montant dû")]  # fmt: skip
+    for i, (label, due) in enumerate(labels):
+        f = _totals(tmp_path, [("Subtotal", "1,000.00"), ("GST", "50.00"), ("QST", "99.75"), ("Total", "1,149.75"),
+                               (label, "-149.75"), (due, "1,000.00")], name=f"cr{i}.pdf")  # fmt: skip
+        assert f["grand_total"].value == 1149.75, label
+        assert f["grand_total"].status == "check", label
+
+
 def test_a_line_item_named_for_a_deposit_or_holdback_or_a_holdback_of_nothing_leaves_the_total_as_it_is(tmp_path):
     """B-2492 held every total of a document printing a deposit or holdback with an amount: a line item's own words
     ("Holdback release - Phase 1 550.00") and a totals row of nothing ("Holdback 0.00") held ordinary invoices too."""
@@ -664,3 +693,30 @@ def test_a_customer_block_level_with_a_right_aligned_supplier_is_not_the_supplie
         doc.save(path)
         got = _read(path)["vendor_name"]
         assert not (got.value == "Acme Industries Inc." and got.status in (VERIFIED, "likely")), (vy, cy, got)
+
+
+def test_a_bare_payment_or_deposit_line_under_a_printed_total_holds_the_total_for_a_person_to_check(tmp_path):
+    """B-2628: "Payment received", "Paiement reçu", "Acompte" or "Deposit" with its amount under the total (no "Less")
+    left the total verified at the gross amount, more than what is owed. Held for a person to check, as "Less
+    payment received" is."""
+    for i, label in enumerate(["Payment received", "Paiement reçu", "Acompte", "Deposit", "Payments received"]):
+        f = _totals(tmp_path, [("Subtotal", "550.00"), ("HST 13%", "71.50"), ("Total", "621.50"), (label, "(100.00)"),
+                               ("Balance Due", "521.50")], name=f"bare{i}.pdf")  # fmt: skip
+        assert f["grand_total"].value == 621.5, label
+        assert f["grand_total"].status == "check", label
+
+
+def test_a_deposit_or_credit_line_with_its_reference_number_holds_the_total_for_a_person_to_check(tmp_path):
+    """B-2629: "Less credit memo #55", "Deposit no 1234", "Acompte n° 12", "Moins note de crédit 2026-55": the number
+    after the label made the line a registration number's ("No.", "#", a PST number's shape), so what was taken off
+    was never read and the total stayed verified. A real GST/HST number's line is still no amount."""
+    labels = ["Less credit memo #55", "Deposit no 1234", "Acompte n° 12", "Moins note de crédit 2026-55",
+              "Deposit received #4471"]  # fmt: skip
+    for i, label in enumerate(labels):
+        f = _totals(tmp_path, [("Subtotal", "550.00"), ("HST 13%", "71.50"), ("Total", "621.50"), (label, "(100.00)"),
+                               ("Balance Due", "521.50")], name=f"ref{i}.pdf")  # fmt: skip
+        assert f["grand_total"].value == 621.5, label
+        assert f["grand_total"].status == "check", label
+    f = _totals(tmp_path, [*_PLAIN, ("GST/HST Reg. No.: 123456782 RT0001", "")], name="reg.pdf")
+    assert (f["grand_total"].value, f["grand_total"].status) == (621.5, VERIFIED)
+    assert f["gst_hst_registration_number"].value == "123456782RT0001"

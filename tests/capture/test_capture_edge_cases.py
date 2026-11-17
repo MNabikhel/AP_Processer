@@ -617,3 +617,16 @@ def test_terms_that_differ_by_end_of_month_months_or_prox_are_other_terms():
     assert terms_key("Net 30") != terms_key("Net 10 prox")
     rows = outcome_rows({"payment_terms": "Net 30"}, {"payment_terms": "Net 30 EOM"})
     assert [r["correct"] for r in rows if r["field"] == "payment_terms"] == [False]
+
+
+def test_a_total_in_another_currency_for_reference_never_makes_it_that_currency():
+    """B-2630: "Total in USD: 98.21 (for reference only)" on an invoice otherwise in Canadian dollars (no code printed
+    elsewhere) was read as US dollars, likely, from the code on that total's line. A total given for reference or
+    information ("à titre indicatif") is not the invoice's: Canadian dollars, or not sure (the reviewer checks it)."""
+    from ap_coder.capture.normalize import currency_evidence
+
+    for note in ("Total in USD: 98.21 (for reference only)", "Total USD 98.21 - for information only",
+                 "Total en USD : 98,21 $ (à titre indicatif)"):  # fmt: skip
+        found = currency_evidence(f"Northwind Supply Ltd.\nSubtotal 125.00\nGST 6.25\nTotal 131.25\n{note}")
+        assert found is None or found[0] == "CAD" or found[1] < 0.8, (note, found)
+    assert currency_evidence("Total 131.25 CAD\nTotal in USD: 98.21 (for reference only)") == ("CAD", 0.8)

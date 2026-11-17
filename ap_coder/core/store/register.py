@@ -232,12 +232,13 @@ class RegisterMixin:
         if not key or not number:
             return []
         an8 = str(master_vendor_id(self.vendor_ids(), vendor_name) if an8 is None else an8).strip()
+        an8 = an8.lstrip("0")  # as a number: "04001" is JD Edwards' 4001 (B-2616, as B-2487)
         with self._conn() as conn:
             rows = [
                 dict(r)
                 for r in conn.execute(
                     "SELECT invoice_number, invoice_date, total FROM erp_invoices "
-                    "WHERE number_key = ? AND (vendor_key = ? OR (? != '' AND an8 = ?))",
+                    "WHERE number_key = ? AND (vendor_key = ? OR (? != '' AND ltrim(an8, '0') = ?))",
                     (number, key, an8, an8),
                 )
             ]

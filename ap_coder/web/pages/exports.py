@@ -46,6 +46,7 @@ from ap_coder.erp import (
     stamp,
 )
 from ap_coder.erp.import_specs import ERP_REGISTER, VOUCHERS
+from ap_coder.web import account_lines
 from ap_coder.web.core import (
     by_currency,
     current_store,
@@ -96,6 +97,21 @@ SHORT_FORMATS = {
 }
 AGAIN_FORMATS = {"custom": "Custom CSV", jde_settings.FORMAT: "JD Edwards E1 (ZIP)",
                  jde_keying.FORMAT: "JD Edwards keying sheet"}  # the others read as XLSX, CSV  # fmt: skip
+# A batch goes again in its own format, or as the Excel workbook (people read it; no loader takes it): in any other
+# its invoices could go into the ERP twice, a keying sheet typed by hand and its Z-files loaded too (B-2619).
+READ_ONLY_FORMAT = "xlsx"
+TWICE = (
+    "Batch {batch} went out as {made}: it is downloaded again only as that, or as the Excel workbook to look at, "
+    "so its invoices can't go into the ERP twice. To send them another way, undo the batch and make a new one."
+)
+
+
+def again_formats(batch: dict[str, Any] | None) -> list[str]:
+    """The formats batch ``batch`` may be downloaded again in: its own, and the Excel workbook (B-2619)."""
+    own = (batch or {}).get("format") or READ_ONLY_FORMAT
+    return list(dict.fromkeys([own, READ_ONLY_FORMAT]))
+
+
 # JD Edwards' formats: the Z-files to load and the sheet to type from. A batch made in one holds only invoices that
 # passed the JD Edwards checks (the others stay in Ready to export, listed with why: B-2148).
 JDE_FORMATS = (jde_settings.FORMAT, jde_keying.FORMAT)
@@ -237,7 +253,8 @@ def batch_file(store: Store, batch: int, fmt: str) -> tuple[bytes, str, str]:
         return keying_file(store, batch)
     invoices = store.get_invoices(store.batch_invoice_ids(batch))
     return exports.build(fmt, invoices, gl_names(store), batch, store.vendor_ids(), layout=layout(store),
-                         tax_treatments=store.tax_treatments(), bank_accounts=bank_accounts(store))  # fmt: skip
+                         tax_treatments=store.tax_treatments(), bank_accounts=bank_accounts(store),
+                         joined=account_lines.in_use(reference_or_none(store)))  # fmt: skip
 
 
 def register_name(store: Store) -> str:
@@ -383,7 +400,8 @@ def exports_page(
 
     # Past batches: the one picked to download again, stamp or undo
     chosen = next((b for b in live if b["id"] == batch), live[0] if live else None)
-    again_fmt = bfmt if bfmt in exports.FORMATS else (chosen["format"] if chosen else "xlsx")
+    offered = again_formats(chosen)
+    again_fmt = bfmt if bfmt in offered else offered[0]
     if again_fmt not in exports.FORMATS:
         again_fmt = "xlsx"
     left_out = (0, 0)
@@ -440,7 +458,7 @@ def exports_page(
         tools_open=bool(fmt != opening or audit or register),
         chosen=chosen,
         again_fmt=again_fmt,
-        again_formats={f: AGAIN_FORMATS.get(f, f.upper()) for f in shown_formats(store, again_fmt)},
+        again_formats={f: AGAIN_FORMATS.get(f, f.upper()) for f in offered if f in exports.FORMATS},
         left_out=left_out,
         layout=current,
         layout_rows=layout_rows,
@@ -575,6 +593,9 @@ def download_batch(request: Request, batch: int, fmt: str = "") -> Response:
     fmt = fmt or known["format"]
     if fmt not in exports.FORMATS:
         raise HTTPException(status_code=400, detail="Unknown export format.")
+    if fmt not in again_formats(known):  # never into the ERP twice: typed from a sheet and loaded too (B-2619)
+        made = SHORT_FORMATS.get(known["format"], known["format"])
+        raise HTTPException(status_code=409, detail=TWICE.format(batch=batch, made=made))
     if fmt == jde_settings.FORMAT and request.method != "POST":
         raise HTTPException(status_code=405, detail="Download the JD Edwards file with its button on the Exports page.")
     if fmt == jde_settings.FORMAT and (blocking := jde_settings.settings_problems(jde_settings.load(store))):

@@ -9,6 +9,7 @@ import zipfile
 
 import pytest
 
+from ap_coder.coding.remark import fit
 from ap_coder.coding.tax import (
     RECOVERABLE,
     TaxRateTable,
@@ -1100,7 +1101,8 @@ def test_the_remarks_stay_as_they_were_or_carry_what_a_person_types():
     ``jde_remarks.voucher_remark``: the keying sheet's too), the invoice number being in VLVINV either way."""
     inv = _invoice(ON)
     final = inv["final_output"]
-    described = [" ".join(li["description"].split())[:30].rstrip() for li in final["line_items"]]
+    # a line without a remark: its description at a word end within 30 characters, not cut mid-word (B-2617)
+    described = [fit(li["description"])[0] for li in final["line_items"]]
     assert [jde_remarks.line_remark(li) for li in final["line_items"]] == described and jde_remarks.voucher_remark(
         inv
     ) == described[0]
@@ -1398,7 +1400,8 @@ def test_a_recovered_tax_on_the_pay_item_needs_no_sales_tax_account(tmp_path):
 
 def test_a_line_with_a_remark_of_its_own_is_sent_with_it_fitted_to_30_characters():
     """D-213: ``jde_remarks.line_remark`` is the line's remark when it has one (the whole words that fit JD Edwards' 30
-    characters), else its description cut at 30 as before; the pay item's remark is the first line's."""
+    characters), else its description fitted the same way (B-2617: no longer cut mid-word at 30); the pay
+    item's remark is the first line's."""
     assert (
         jde_remarks.line_remark({"description": "Courier", "remark": "KT May.parcels 3-1-204"})
         == "KT May.parcels 3-1-204"
@@ -1410,7 +1413,8 @@ def test_a_line_with_a_remark_of_its_own_is_sent_with_it_fitted_to_30_characters
     )
     inv = _invoice(ON)
     final = inv["final_output"]
-    described = [" ".join(li["description"].split())[:30].rstrip() for li in final["line_items"]]
+    # a line without a remark: its description at a word end within 30 characters, not cut mid-word (B-2617)
+    described = [fit(li["description"])[0] for li in final["line_items"]]
     final["line_items"][0].update(remark="May janitorial 410 Elm", remark_from="supplier")
     expected = ["May janitorial 410 Elm", *described[1:]]
     assert jde_remarks.voucher_remark(inv) == "May janitorial 410 Elm"

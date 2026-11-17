@@ -205,6 +205,13 @@ def _v28_journal_dates(store: Any, conn: sqlite3.Connection) -> None:
         dialect.add_column(conn, "journal_files", "dates_read", "TEXT NOT NULL DEFAULT ''")
 
 
+def _v30_po_currency(store: Any, conn: sqlite3.Connection) -> None:
+    """Each purchase order keeps its currency (``purchase_orders.currency``, B-2612): one imported before has none
+    (''), taken as CAD as it was."""
+    if "currency" not in dialect.columns(conn, "purchase_orders"):
+        dialect.add_column(conn, "purchase_orders", "currency", "TEXT NOT NULL DEFAULT ''")
+
+
 # --- The steps whatever the version ---------------------------------------------------------------------------------
 
 
@@ -482,6 +489,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (EVERY_TIME, _answer_work),
     (EVERY_TIME, _rule_use_since),
     (28, _v28_journal_dates),
+    (30, _v30_po_currency),
 )
 MIGRATIONS: dict[int, Step] = {number: step for number, step in STEPS if number is not EVERY_TIME}
 

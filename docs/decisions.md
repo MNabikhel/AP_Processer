@@ -6209,3 +6209,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Declined by the owner, not brought in:** D10 (one drop zone for JD Edwards' files), D11 (the first sign-in's
     steps reordered), D12 (Azure, the AIS API and the AI's advanced settings hidden), D14 (tables stacked as cards on
     a phone) and D15 (the queue's "Approve N" hidden).
+- **D-256** · **A purchase order keeps its currency; amounts are compared with it only in one currency**
+  (`coding/po.py` `COLUMN_ALIASES["currency"]`, `_currencies`, `PoMatch.currencies`; `purchase_orders.currency`,
+  schema 30; `erp/accruals.py` `Accrual.cad_assumed`, `said_cad`; the owner's to-do item; 17 Nov 2026; B-2612).
+  - **Kept:** the PO file's optional Currency column (Currency Code, CRCD...), upper case, on the PO (a PO has one:
+    its lines' first given). None given is kept as '' and taken as CAD, as before, so "the file said CAD" and "the
+    file said nothing" stay told apart. The AIS sync's PO read gives none yet (HANDOFF 6.6).
+  - **Month-end:** a received, not invoiced line is accrued in its PO's currency, in that currency's column and
+    totals (never added to another). A PO with none is CAD; said ("CAD assumed", and in the CSV's note) only on a
+    schedule with another currency on it, where the guess matters: an all-CAD company sees what it saw before.
+  - **The match:** an invoice in another currency than its PO (one with none taken as CAD, said so) gets
+    `PO_CURRENCY_DIFFERS`, a warning: its prices, amount-only lines, PO total and left to expense are not compared
+    or worked out (no exchange rate is guessed); lines are still paired and quantities ordered and received still
+    compared. A warning, not a note: a price no one compared goes to a person.

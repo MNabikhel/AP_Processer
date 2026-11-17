@@ -39,6 +39,7 @@ from openpyxl.utils import get_column_letter
 
 from ..coding.tax import PLACE_OF_SUPPLY, TaxRateTable, TaxSetup, TaxTreatment, build_gl_distribution
 from ..coding.vendors import master_vendor_id
+from ..core.chart import join_account
 from ..core.safe import neutralise_sheet, xlsx_row
 
 FORMATS = {
@@ -221,10 +222,15 @@ def line_tax_codes(dist: list[dict[str, Any]], items: list[dict[str, Any]],
     return [export_code(li, province, charged) if li is not None else "" for li in entry_lines(dist, items)]
 
 
-def gl_summary(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def gl_summary(lines: list[dict[str, Any]], joined: bool = False) -> list[dict[str, Any]]:
+    """The posting lines totalled by GL account and currency. ``joined``: a chart of accounts is imported (D-209), so
+    an account is its one string, business unit.object.subsidiary, totalled as one (B-2620, as Month-end: B-2606)."""
     totals: dict[tuple[str, str, str], float] = defaultdict(float)
     for r in lines:
-        totals[(r["gl_code"] or "", r["gl_name"] or "", r["currency"] or "")] += float(r["amount"] or 0)
+        gl = r["gl_code"] or ""
+        if joined and gl and r.get("cost_center"):
+            gl = join_account(r["cost_center"], gl)
+        totals[(gl, r["gl_name"] or "", r["currency"] or "")] += float(r["amount"] or 0)
     return [
         {"gl_code": gl, "gl_name": name, "currency": cur, "amount": round(amount, 2)}
         for (gl, name, cur), amount in sorted(totals.items())
@@ -234,7 +240,7 @@ def gl_summary(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def build_xlsx(
     invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "",
     vendor_ids: dict[str, str] | None = None, tax_treatments: dict[str, TaxTreatment] | None = None,
-    bank_accounts: dict[str, dict[str, Any]] | None = None,
+    bank_accounts: dict[str, dict[str, Any]] | None = None, joined: bool = False,
 ) -> bytes:  # fmt: skip
     lines = line_rows(invoices, gl_names, batch, vendor_ids, tax_treatments, bank_accounts)
     wb = Workbook()
@@ -243,7 +249,7 @@ def build_xlsx(
     _sheet(
         wb.create_sheet(), "By GL account",
         [("gl_code", "GL account"), ("gl_name", "GL name"), ("currency", "Currency"), ("amount", "Amount")],
-        gl_summary(lines),
+        gl_summary(lines, joined),
     )  # fmt: skip
     buf = io.BytesIO()
     wb.save(buf)
@@ -480,10 +486,11 @@ def build(
     fmt: str, invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "",
     vendor_ids: dict[str, str] | None = None, layout: Any = None,
     tax_treatments: dict[str, TaxTreatment] | None = None, bank_accounts: dict[str, dict[str, Any]] | None = None,
+    joined: bool = False,
 ) -> tuple[bytes, str, str]:  # fmt: skip
     """(file bytes, file name, mime type). ``tax_treatments``: ``Store.tax_treatments()``, for the posting lines of
     an invoice approved without them stored (``distribution``); ``bank_accounts``: our bank accounts by code, for the
-    Pay from columns (D-66)."""
+    Pay from columns (D-66); ``joined``: a chart of accounts is imported (the workbook's ``gl_summary``)."""
     name = f"ap_coder_export_{batch}" if batch != "" else "ap_coder_export"
     if fmt == "jde":  # needs its settings and checks: see ap_coder.erp.jde.build_zip
         raise ValueError("JD Edwards files are built with ap_coder.erp.jde.build_zip")
@@ -505,4 +512,5 @@ def build(
             "text/csv",
         )
     mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    return build_xlsx(invoices, gl_names, batch, vendor_ids, tax_treatments, bank_accounts), f"{name}.xlsx", mime
+    data = build_xlsx(invoices, gl_names, batch, vendor_ids, tax_treatments, bank_accounts, joined)
+    return data, f"{name}.xlsx", mime

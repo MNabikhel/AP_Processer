@@ -35,7 +35,7 @@ from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unre
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104) and
 # vendor_aliases (by _SCHEMA: a vendor name read wrong, as AP corrected it, D-119), line_texts (by _SCHEMA: a
 # supplier's line descriptions as AP approved them, D-120)
-SCHEMA_VERSION = 29  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
+SCHEMA_VERSION = 30  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
 # (B-1581), 22: the ERP register's vendor names and invoice numbers as the quick search compares them (D-157), 24: the
 # events' indexes by day and by person, the register's by number (D-156), 25: the lessons' approvals counted off an
 # index (B-1714), 26: the import queue (import_batches, import_files, import_turns by _SCHEMA, its indexes; D-168),
@@ -55,6 +55,8 @@ SCHEMA_VERSION = 29  # 19: the invoices' summary and its triggers (summary.py, `
 # 28: journal_files.dates_read, how the G/L dates of a journal loaded were read ('' for one loaded before, B-2543)
 # 29: roles (by _SCHEMA: the roles an Admin makes, roles.py, D-250), a version of its own: an older AP Coder knows the
 # five built-in roles only, so it would let nobody with a role made here do anything; it refuses the database instead
+# 30: purchase_orders.currency, the PO's currency as its file gave it ('' for none, taken as CAD, and for one
+# imported before, B-2612)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -218,7 +220,8 @@ CREATE TABLE IF NOT EXISTS export_batches (
     invoices INTEGER NOT NULL, total REAL, undone_at TEXT, undone_by TEXT);
 CREATE TABLE IF NOT EXISTS purchase_orders (
     po_key TEXT PRIMARY KEY, po_number TEXT NOT NULL, vendor_name TEXT NOT NULL DEFAULT '',
-    vendor_key TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'open', updated_at TEXT NOT NULL);
+    vendor_key TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'open', updated_at TEXT NOT NULL,
+    currency TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS po_lines (
     po_key TEXT NOT NULL, line_number INTEGER NOT NULL, description TEXT NOT NULL, quantity REAL NOT NULL,
     unit_price REAL NOT NULL, amount REAL NOT NULL, received_quantity REAL, gl_code TEXT NOT NULL DEFAULT '',

@@ -40,6 +40,16 @@ def test_a_bill_counts_its_vouchers_dates_and_goes_with_its_last(tmp_path):
     assert store.remove_jde_vouchers(["1"], 4) == 1 and store.erp_register_count() == 0
 
 
+def test_a_bill_filed_under_another_name_is_found_by_a_supplier_number_typed_with_a_leading_zero(tmp_path):
+    """B-2616: ``in_erp`` (the review screen's "already in the ERP", JD Edwards not reached) compared the supplier
+    number as text, so one typed with a leading zero in Settings → JD Edwards ("04001" for 4001, as B-2487's) missed
+    the voucher JD Edwards files under its own name for the supplier."""
+    store = Store(tmp_path / "ap.db")
+    store.import_jde_vouchers([_voucher("1", name="ACME LIMITED (JDE)")], seen=1)
+    assert store.in_erp("Acme Ltd", "A-1", 10.0, an8="04001")
+    assert not store.in_erp("Acme Ltd", "A-1", 10.0, an8="0") and not store.in_erp("Acme Ltd", "A-1", 10.0, an8="")
+
+
 def test_a_voucher_keeps_the_newest_read_that_listed_it(tmp_path):
     """B-1898: a voucher took the stamp of the last read that wrote it, so an older read (two syncs at once, the lease
     lost) writing after a newer one put its older stamp back, and the newer read's sweep removed a voucher it had

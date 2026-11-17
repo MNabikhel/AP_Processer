@@ -75,10 +75,13 @@ def reconciliation(
 ) -> Any:
     """The statement compared with the vendor's invoices in AP Coder, then with its vouchers loaded from JD Edwards:
     filed under its name, or under its supplier number (AN8: Settings → JD Edwards first, then the vendor master),
-    whatever name JD Edwards has (B-2605)."""
+    whatever name JD Edwards has (B-2605); the number compared without its leading zeros, "0886135" being 886135
+    (B-2614, as the batch's duplicate check: B-2487)."""
     an8 = str(jde_settings.load(store).an8_overrides.get(vendor) or store.vendor_ids().get(vendor) or "").strip()
+    an8 = an8.lstrip("0")
     register = [row for row in store.erp_register(stm.statement_numbers(records, chosen))
-                if row["vendor_key"] == vendor or (an8 and row.get("an8") == an8)]  # fmt: skip
+                if row["vendor_key"] == vendor
+                or (an8 and str(row.get("an8") or "").strip().lstrip("0") == an8)]  # fmt: skip
     found_in = stm.IN_JDE if jde_settings.in_use(store) else stm.IN_ERP
     return stm.reconcile(records, chosen, store.vendor_invoices(vendor), open_items, register, found_in)
 

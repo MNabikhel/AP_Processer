@@ -193,3 +193,15 @@ def test_a_journal_loaded_before_its_dates_read_were_kept_says_none(tmp_path):
         conn.execute("UPDATE settings SET value = '27' WHERE key = 'schema_version'")
     assert [(f["name"], f["dates_read"]) for f in Store(db).journal_files()] == [("2024.csv", "")]
     assert shape(db) == shape(Store(tmp_path / "new" / "ap_coder.db").path)
+
+
+def test_a_purchase_order_kept_before_pos_had_a_currency_has_none(tmp_path):
+    """B-2612: a PO imported at schema 29, before a PO kept its currency, is kept with none ('': taken as CAD); the
+    database is then a new one."""
+    db = Store(tmp_path / "old" / "ap_coder.db").path
+    with closing(sqlite3.connect(db)) as conn, conn:
+        conn.execute("ALTER TABLE purchase_orders DROP COLUMN currency")
+        conn.execute("INSERT INTO purchase_orders (po_key, po_number, updated_at) VALUES ('81', 'PO-81', '2026-11')")
+        conn.execute("UPDATE settings SET value = '29' WHERE key = 'schema_version'")
+    assert Store(db).purchase_order("81")["currency"] == ""
+    assert shape(db) == shape(Store(tmp_path / "new" / "ap_coder.db").path)

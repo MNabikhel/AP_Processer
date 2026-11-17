@@ -338,6 +338,8 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 - **Left to expense** (D-139): the review screen's PO match shows what is left on each PO line after the invoice, from
   the line's amount or, when the PO file has it, an *Open amount* column (E1's AOPN, as of the last import). The AIS
   sync's PO read (`APC_OpenPOs_Read`) doesn't ask for AOPN yet: add it there to keep it current.
+- **A PO's currency** (B-2612): from the PO file's *Currency* column (E1's CRCD); without one a PO is taken as CAD.
+  The AIS sync's PO read doesn't ask for CRCD yet either, so a synced PO is CAD: add it there for USD orders.
 
 ### 6.7 Bank accounts ("Pay from")
 

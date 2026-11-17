@@ -702,6 +702,21 @@ def test_the_po_import_takes_an_optional_open_amount_column(client, store):
     assert [li["open_amount"] for li in store_po(store, "PO-9101")["lines"]] == [1500.0, None]
 
 
+def test_the_po_import_takes_an_optional_currency_column(client, store):
+    """B-2612: the PO import offers a Currency column (folded with the optional ones, D-248); a PO keeps it, and its
+    page says it; one with none is said to be taken as CAD."""
+    sheet = "PO,Item,Amount,Currency Code\nPO-9201,Drills,2000,USD\nPO-9202,Paper,300,\n"
+    page = upload(client, "/purchase-orders/upload", "pos.csv", sheet.encode())
+    assert '<label class="field">Currency' in page.text.split("More columns it can use (optional)")[-1]
+    assert '<option value="Currency Code" selected>' in page.text.split('name="col_currency"')[1].split("</select>")[0]
+    form = {"file": page.url.params["file"], "col_po_number": "PO", "col_description": "Item", "col_amount": "Amount",
+            "col_currency": "Currency Code"}  # fmt: skip
+    follow(client, client.post("/purchase-orders/import", data=form, headers=PAGE))
+    assert [store_po(store, n)["currency"] for n in ("PO-9201", "PO-9202")] == ["USD", ""]
+    assert "2,000.00 USD" in client.get("/purchase-orders?po=9201").text
+    assert "taken as CAD" in client.get("/purchase-orders?po=9202").text
+
+
 def store_po(store: Store, number: str) -> dict:
     return store.purchase_order(po_mod.po_key(number))
 

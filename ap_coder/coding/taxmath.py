@@ -134,6 +134,13 @@ def _check(coding: InvoiceCoding, setup: Any = None) -> tuple[_Sums, list[dict[s
     return sums, [_lines_row(sums, taxes_total), *tax_rows, *_self_assess_rows(sums), _total_row(coding, taxes_total)]
 
 
+def _posting_balances(coding: InvoiceCoding) -> bool:
+    """The lines and the tax lines as posted (each to the cent) are the total, to the cent: POSTING_UNBALANCED."""
+    posted = add_up([*(half_up(li.amount) for li in coding.line_items),
+                     *(half_up(t.tax_amount) for t in coding.tax_lines if not nil(t.tax_amount))])  # fmt: skip
+    return within(posted, coding.grand_total, EXACT)
+
+
 def _lines_row(sums: _Sums, taxes_total: float) -> dict[str, Any]:
     """The lines add up to the subtotal: within a cent a line and one more, as SUBTOTAL_MISMATCH (B-1866), but to the
     cent when the posting can't balance (POSTING_UNBALANCED: the lines and the tax lines as posted are not the total),
@@ -143,9 +150,7 @@ def _lines_row(sums: _Sums, taxes_total: float) -> dict[str, Any]:
     diff = half_up(lines_total - coding.subtotal)
     ok = within(diff, 0, per_line(sums.n))
     if ok and sums.items and not within(diff, 0, EXACT):  # a cent a line: right when the posting balances
-        posted = add_up([*(half_up(li.amount) for li in sums.items),
-                         *(half_up(t.tax_amount) for t in coding.tax_lines if not nil(t.tax_amount))])  # fmt: skip
-        ok = within(posted, coding.grand_total, EXACT)
+        ok = _posting_balances(coding)
     row = {"kind": "lines", "what": "Lines = subtotal", "ok": ok,
            "detail": f"{plural(sums.n, 'line')} add up to {money(lines_total)}; the subtotal is "
                      f"{money(coding.subtotal)}",
@@ -307,13 +312,20 @@ def _self_assess_rows(sums: _Sums) -> list[dict[str, Any]]:
 def _total_row(coding: InvoiceCoding, taxes_total: float) -> dict[str, Any]:
     """Subtotal + tax = total: the tax total, as TOTAL_MISMATCH adds it, and the tax lines, as
     TAX_LINES_TOTAL_MISMATCH holds them to it, the row saying which is off (B-1911). Within a cent, as TOTAL_MISMATCH
-    (B-1865), or a total rounded to the nickel for cash with its rounding a line (B-1907)."""
+    (B-1865), when the posting balances (B-2608), or a total rounded to the nickel for cash with its rounding a line
+    (B-1907)."""
     computed = half_up(coding.subtotal + coding.tax_total)
     diff = half_up(coding.grand_total - computed)
     cash = not within(diff, 0, CENT) and cash_rounded(computed, coding.grand_total,
                                                       [li.amount for li in coding.line_items])  # fmt: skip
     adds_up = within(diff, 0, CENT) or cash
     taxes_agree = within(taxes_total, coding.tax_total, CENT)
+    # A cent off either way: right when the posting balances (the subtotal rounded otherwise), as the lines row
+    # (B-1910); else it is POSTING_UNBALANCED's cent and the row says it (B-2608).
+    exact = within(diff, 0, EXACT) and within(taxes_total, coding.tax_total, EXACT)
+    if adds_up and taxes_agree and not exact and coding.line_items and not _posting_balances(coding):
+        adds_up = within(diff, 0, EXACT)
+        taxes_agree = within(taxes_total, coding.tax_total, EXACT)
     shown = diff if not adds_up else half_up(coding.grand_total - half_up(coding.subtotal + taxes_total))
     sign = "-" if coding.tax_total < 0 else "+"  # a credit's tax is taken off: -500.00 - 60.00, not + -60.00 (B-2504)
     tax = money(abs(coding.tax_total))

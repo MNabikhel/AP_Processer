@@ -399,6 +399,40 @@ def test_received_not_invoiced_is_accrued_half_up(tmp_path):
     assert accrual.amount == 8.03
 
 
+def test_a_received_usd_po_line_is_accrued_in_usd_never_added_to_the_cad_lines(tmp_path):
+    """B-2612: a PO line received, not invoiced, of a USD order was accrued as CAD and added to the CAD totals: a PO
+    keeps the currency its file gives, and one with none is taken as CAD, said so on a schedule with others."""
+    from ap_coder.coding.po import map_columns, rows_from_records
+    from tests.webclient import client_for
+
+    store = Store(tmp_path / "a.db")
+    records = [
+        {"PO Number": "PO-81", "Vendor": "Lakeside Tools Inc.", "Description": "Drill bits", "Qty": 10,
+         "Unit Price": 4.0, "Received": 10, "GL": "6010", "Currency Code": "usd"},
+        {"PO Number": "PO-82", "Vendor": "Ridge Office Supply", "Description": "Paper", "Qty": 5,
+         "Unit Price": 6.0, "Received": 5, "GL": "6010", "Currency Code": ""},
+    ]  # fmt: skip
+    rows, _ = rows_from_records(records, map_columns(list(records[0])))
+    store.import_purchase_orders(rows)
+    assert [p["currency"] for p in store.purchase_orders()] == ["USD", ""]
+    items = accruals.build(store, END)
+    assert [(a.reference, a.amount, a.currency) for a in items] == [("PO-81 line 1", 40.0, "USD"),
+                                                                     ("PO-82 line 1", 30.0, "CAD")]  # fmt: skip
+    assert accruals.summary(items)[accruals.RECEIVED] == (2, {"USD": 40.0, "CAD": 30.0})
+    assert accruals.by_gl_columns(items) == (["CAD", "USD"], [("6010", {"USD": 40.0, "CAD": 30.0})])
+    csv_text = accruals.to_csv(items, END).decode("utf-8-sig")
+    assert "PO-81 line 1,Drill bits,6010,,40.00,USD,10 received and not invoiced at 4.00\r" in csv_text
+    assert f"PO-82 line 1,Paper,6010,,30.00,CAD,5 received and not invoiced at 6.00; {accruals.CAD_ASSUMED}" in csv_text
+    page = client_for(store).get(f"/month-end?end={END}").text
+    assert '40.00 <span class="muted">USD</span>' in page and "CAD assumed" in page
+
+    # All in CAD, a PO with no currency is CAD as before, nothing said.
+    store.import_purchase_orders(rows[1:], replace_all=True)
+    (paper,) = accruals.build(store, END)
+    assert (paper.currency, accruals.CAD_ASSUMED in accruals.to_csv([paper], END).decode()) == ("CAD", False)
+    assert "CAD assumed" not in client_for(store).get(f"/month-end?end={END}").text
+
+
 def test_received_not_invoiced_works_out_again_only_the_pos_whose_billing_changed(tmp_path, monkeypatch):
     """D-166: each received PO's accruals are kept in each process (``accruals._PARTS``) and worked out again only
     once its lines, its billing invoices (which, their dates and PO) or those invoices' vendors' invoices changed,

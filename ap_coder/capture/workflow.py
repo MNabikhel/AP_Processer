@@ -405,6 +405,7 @@ def checks_today(store: Any, invoice_id: int, output: dict[str, Any], settings: 
     """The coding's checks of ``output`` (an invoice in the queue) done again now, as ``bulk_approve`` does: a vendor
     put on hold, or the same invoice entered in the ERP, while it waited is found (B-951). The ``ValidationReport``;
     None when the coding can't be read."""
+    from ..ai.extraction import kept_extraction
     from ..ai.pipeline import finalise_coding
     from ..coding.bulk import _received_on
     from ..core.config import Settings
@@ -418,7 +419,7 @@ def checks_today(store: Any, invoice_id: int, output: dict[str, Any], settings: 
     try:
         coding = InvoiceCoding.model_validate({k: v for k, v in output.items() if k != "gl_distribution"})
         inv = store.get_invoice(invoice_id) or {}
-        _, report = finalise_coding(coding, store.reference_data(), settings, store=store,
+        _, report = finalise_coding(coding, store.reference_data(), settings, kept_extraction(inv), store=store,
                                     exclude_invoice_id=invoice_id, received=_received_on(inv))  # fmt: skip
     except Exception as exc:  # noqa: BLE001 - not checked again: a person looks
         log.info("invoice %s: checks not done again (%s)", invoice_id, exc)

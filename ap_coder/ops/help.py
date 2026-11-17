@@ -472,6 +472,13 @@ CHECKS: dict[str, CheckHelp] = {
         "Invoices on this PO now add up to more than the PO total (beyond 2%).",
         "Ask the buyer for a PO change, or dispute the extra amount with the vendor.",
     ),
+    "PO_CURRENCY_DIFFERS": CheckHelp(
+        PO, "PO in another currency",
+        "The invoice is in another currency than its purchase order (a PO whose file gave no currency is taken as "
+        "CAD), so its prices and amounts were not compared with the PO's; quantities still were.",
+        "Check the invoice's currency, then compare its prices with the PO's yourself. If the PO is really in the "
+        "invoice's currency, import the POs again with a currency column.",
+    ),
     "PO_CODING_DIFFERS": CheckHelp(
         PO, "PO is coded differently",
         "The purchase order line carries a GL account or cost center different from the invoice line.",
@@ -728,8 +735,8 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "ITC_AT_RISK": CheckHelp(
         TAX, "Input tax credit at risk",
-        "HST charged on a supply where only GST applies. Only the tax properly payable can be claimed as an input tax "
-        "credit (ETA s.169).",
+        "HST charged on a supply where only GST applies, or GST charged beside the HST (which already holds the "
+        "federal part). Only the tax properly payable can be claimed as an input tax credit (ETA s.169).",
         "Ask the vendor for a corrected invoice; until then, check with your tax team what can be claimed.",
     ),
     "LINE_TAX_NOT_CHARGED": CheckHelp(

@@ -23,7 +23,7 @@ from ap_coder.core.store import APPROVED, REVIEW
 from ap_coder.erp import jde_formats, jde_keying, jde_settings, jde_voucher, jde_zfiles
 from tests.erp.test_jde_keying import LINES, blocks, field, said
 from tests.review_page import ReviewPage
-from tests.webclient import PAGE, client_for, follow, post
+from tests.webclient import client_for, follow, post
 
 NEW_NUMBER = "99001"  # the new supplier's JD Edwards address number, once it is set up
 TAX_WORDS = {"quebec": "GST + QST", "usd_new_supplier": "No tax charged"}  # each line's tax code as shown; else GST
@@ -409,9 +409,11 @@ def test_the_line_split_across_two_business_units_is_two_lines_of_the_voucher(ch
 def test_the_batch_files_of_the_same_invoices_agree_with_the_sheet(chart_company, chart_company_client):
     store = chart_company.store
     batch, workbook = _sheet(chart_company_client, store, _approve_the_ready_ones(chart_company_client, chart_company))
-    answer = chart_company_client.post(f"/exports/batches/{batch}/download?fmt={jde_settings.FORMAT}", headers=PAGE)
-    assert answer.status_code == 200
-    with zipfile.ZipFile(io.BytesIO(answer.content)) as files:
+    from ap_coder.web.pages import exports as exports_page
+
+    # (the batch's Z-files as they would be made: a keying batch is not downloaded as them, B-2619)
+    data, _name, _mime = exports_page.jde_file(store, batch)
+    with zipfile.ZipFile(io.BytesIO(data)) as files:
         heads = list(csv.DictReader(io.StringIO(files.read(jde_zfiles.HEADER_FILE).decode())))
         lines = list(csv.DictReader(io.StringIO(files.read(jde_zfiles.DIST_FILE).decode())))
     sheet = blocks(workbook[jde_keying.SHEET])
@@ -433,6 +435,29 @@ def test_the_batch_files_of_the_same_invoices_agree_with_the_sheet(chart_company
         assert head["VLRMK"] == field(block, "Remark").value  # the remarks as typed (the settings' choice)
     typed = [(row[0].value, cents(row[2].value), row[3].value) for block in sheet for row in _rows(block)]
     assert typed == [(line["VNANI"], line["VNAA"], line["VNEXA"]) for line in lines]
+
+
+def test_the_excel_exports_by_gl_account_sheet_totals_each_whole_account_string(chart_company, chart_company_client):
+    """B-2620: the Excel export's "By GL account" sheet added up one object and subsidiary across every business unit
+    as one account ("7510.5107": ten business units' cell phones as one line), as Month-end did before B-2606. With a
+    chart of accounts each account is its one string, business unit.object.subsidiary, totalled so."""
+    from collections import defaultdict
+
+    from ap_coder.core import chart
+
+    client, store = chart_company_client, chart_company.store
+    ids = _approve_the_ready_ones(client, chart_company)
+    follow(client, post(client, "/exports/create", {"fmt": "xlsx", "ids": ids}))
+    batch = store.export_batches()[0]["id"]
+    workbook = openpyxl.load_workbook(io.BytesIO(client.get(f"/exports/batches/{batch}/download?fmt=xlsx").content))
+    lines = list(workbook["GL lines"].iter_rows(min_row=2, values_only=True))
+    heads = [c.value for c in workbook["GL lines"][1]]
+    gl, unit, amount = (heads.index(h) for h in ("GL account", "Cost center", "Amount"))
+    want: dict[str, float] = defaultdict(float)
+    for row in lines:
+        want[chart.join_account(row[unit], row[gl]) if row[unit] else row[gl]] += row[amount]
+    got = {row[0]: row[3] for row in workbook["By GL account"].iter_rows(min_row=2, values_only=True)}
+    assert got == pytest.approx(dict(want)) and "0021061010.7510.5107" in got and "7510.5107" not in got
 
 
 # --- the new supplier, in USD -------------------------------------------------------------------------------------

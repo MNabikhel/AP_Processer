@@ -201,14 +201,17 @@ def _batch(client, store, fmt="xlsx"):
 
 
 def test_batch_downloads_are_the_export_functions_files(client, busy):
+    names, ids = export_page.gl_names(busy), busy.vendor_ids()
+    # CSV and custom CSV: byte for byte, each of a batch made in it (a batch goes again only in its own format, or as
+    # the Excel workbook: B-2619)
+    for fmt in ("csv", "custom"):
+        batch = _batch(client, busy, fmt)
+        invoices = [busy.get_invoice(i) for i in busy.batch_invoice_ids(batch)]
+        data, name, _ = exports.build(fmt, invoices, names, batch, ids, layout=export_page.layout(busy))
+        assert attachment(client.get(f"/exports/batches/{batch}/download?fmt={fmt}"), name, "text/csv") == data
+        busy.undo_export_batch(batch)
     batch = _batch(client, busy)
     invoices = [busy.get_invoice(i) for i in busy.batch_invoice_ids(batch)]
-    names, ids = export_page.gl_names(busy), busy.vendor_ids()
-    # CSV and custom CSV: byte for byte
-    data, name, mime = exports.build("csv", invoices, names, batch, ids)
-    assert attachment(client.get(f"/exports/batches/{batch}/download?fmt=csv"), name, "text/csv") == data
-    data, name, _ = exports.build("custom", invoices, names, batch, ids, layout=export_page.layout(busy))
-    assert attachment(client.get(f"/exports/batches/{batch}/download?fmt=custom"), name, "text/csv") == data
     # Excel: the same cells (the workbook's own creation time differs by the second)
     data, name, mime = exports.build("xlsx", invoices, names, batch, ids)
     got = attachment(client.get(f"/exports/batches/{batch}/download"), name, mime)
@@ -223,7 +226,7 @@ def test_batch_downloads_are_the_export_functions_files(client, busy):
 
 
 def test_jde_download_is_the_zip_jde_builds(client, busy):
-    batch = _batch(client, busy)
+    batch = busy.create_export_batch([i["id"] for i in busy.unexported_approved()], "jde")  # (made as JD Edwards)
     data, name, mime = export_page.jde_file(busy, batch)
     got = attachment(client.post(f"/exports/batches/{batch}/download?fmt=jde", headers=PAGE), name, mime)
     with zipfile.ZipFile(io.BytesIO(got)) as a, zipfile.ZipFile(io.BytesIO(data)) as b:
@@ -784,6 +787,29 @@ def test_a_statement_is_compared_with_the_vouchers_loaded_from_jd_edwards_too(ch
     assert data.count("In JD Edwards") == 2
 
 
+def test_a_statement_finds_the_vouchers_of_a_supplier_number_typed_with_a_leading_zero(chart_company):
+    """B-2614: the vouchers loaded from JD Edwards under another name were found by the supplier number compared as
+    text, so a number typed with a leading zero in Settings → JD Edwards ("0886135" for 886135, as B-2487's) missed
+    them and the statement's invoices already in JD Edwards showed "Not received"."""
+    from ap_coder.erp import jde_settings
+    from ap_coder.web.pages import statements as statements_page
+
+    store = chart_company.store
+    key = next(v["vendor_key"] for v in store.vendor_summaries() if v["vendor_name"].startswith("Quill"))
+    an8 = store.vendor_ids()[key]
+    (first, *_) = [r for r in store.erp_register() if r["an8"] == an8]
+    settings = jde_settings.load(store)
+    settings.an8_overrides["quill courier services"] = f"0{an8}"  # AP Coder's own name for it, and its number
+    jde_settings.save(store, settings)
+    records = [
+        {"Invoice No": first["invoice_number"], "Date": first["invoice_date"], "Amount": f"{first['total']:.2f}"}
+    ]
+    rec = statements_page.reconciliation(store, "quill courier services", records,
+                                         {"number": "Invoice No", "date": "Date", "amount": "Amount"})  # fmt: skip
+    (line,) = rec.lines
+    assert (line.status, line.note.split(",")[0]) == (stm.MATCHED, stm.IN_JDE)
+
+
 def test_month_end_with_a_chart_shows_each_account_as_its_one_string(chart_company, chart_company_client):
     """B-2606: in a chart company Month-end showed an account as "7420.4213" with its business unit under it, and the
     By GL account table added up the lines of one object and subsidiary on every business unit as one account: a
@@ -800,3 +826,19 @@ def test_month_end_with_a_chart_shows_each_account_as_its_one_string(chart_compa
         whole = chart.join_account(a.cost_center, a.gl_code)
         assert f'<div class="gl">{whole}<small>' in by_gl and f'<div class="gl">{whole}<small>' in schedule, whole
         assert f'<small class="muted">{a.cost_center}</small>' not in schedule
+
+
+def test_the_accruals_csv_of_a_chart_company_gives_each_account_as_its_one_string(chart_company, chart_company_client):
+    """B-2615: the accruals CSV (booked from) gave a chart company's account as its object and subsidiary
+    ("1620.130") with the business unit beside it ("0021061010"), as the page did before B-2606: opened in Excel they
+    are the numbers 1620.13 and 21061010, an account JD Edwards does not have. The GL account column is the one
+    string, business unit.object.subsidiary, as the page shows it (text in Excel: it is no number)."""
+    from ap_coder.core import chart
+
+    end = dt.date.today() + dt.timedelta(days=60)
+    items = [a for a in accruals.build(chart_company.store, end) if a.gl_code not in ("", "UNASSIGNED")]
+    assert items and all(a.cost_center for a in items)
+    data = attachment(chart_company_client.get(f"/month-end/accruals.csv?end={end}"), f"accruals_{end}.csv", "text/csv")
+    rows = list(csv.DictReader(io.StringIO(data.decode("utf-8-sig").split("\n", 1)[1])))
+    coded = [r for r in rows if r["GL account"] not in ("", "UNASSIGNED")]
+    assert sorted(r["GL account"] for r in coded) == sorted(chart.join_account(a.cost_center, a.gl_code) for a in items)

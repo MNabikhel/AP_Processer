@@ -10,6 +10,14 @@ Your existing data is safe. On first start the database upgrades itself (schema 
 backup of AP Coder (the database and the invoice files) is made automatically once a day (the newest 14 are
 kept).
 
+## Purchase orders keep their currency (B-2612)
+
+- **A USD purchase order is accrued in USD.** The PO import reads an optional *Currency* column: month-end's
+  received, not invoiced lines of a USD order are in USD, in their own column, never added to the CAD ones. A PO
+  without a currency is CAD, as before; on a schedule with other currencies its lines say "CAD assumed".
+- **Prices are compared with a PO in its own currency only.** An invoice in another currency than its PO has its
+  quantities matched as before, and says its prices and amounts were not compared (*PO in another currency*).
+
 ## Imports show the columns they need; "Past invoice coding" (D-248)
 
 - **The columns a file needs, first.** Each import panel shows the columns a file must have; the optional ones are
