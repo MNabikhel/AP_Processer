@@ -185,7 +185,6 @@ def test_an_arrival_that_waited_for_its_chat_slot_is_no_failure_of_the_server(tw
     such moved every call to the backup. Only the server's own time counts: an arrival that waited for its slot
     isn't counted when it gets no answer, and one left too little time isn't sent at all."""
     primary, backup = two
-    primary.set(chat_latency=(0.6, 0.6))
     monkeypatch.setattr(local_llm, "WAITED_SECONDS", 0.1)  # (1 s and 5 s in the app, the arrival's 20 s scaled)
     monkeypatch.setattr(local_llm, "SEND_SECONDS", 0.25)
     coder = InvoiceCoder(_settings(primary.base_url, backup.base_url, parallel=1), reference, provider="local")
@@ -193,22 +192,52 @@ def test_an_arrival_that_waited_for_its_chat_slot_is_no_failure_of_the_server(tw
     messages = [{"role": "system", "content": "x"}, {"role": "user", "content": "y"}]
     coder._local_create(model, messages, {"type": "object"})  # (its client made, its way of asking found)
 
-    def arrival(within: float) -> str:  # behind a call that holds the one chat slot for 0.6 s
+    holding, given_back = threading.Event(), threading.Event()
+
+    def hold(method, path, body):  # the holder's call answered only once the test gives its slot back
+        if not holding.is_set():
+            holding.set()
+            given_back.wait(10)
+
+    primary.on_request = hold
+
+    def arrival(within: float, left: float) -> str:
+        """An arrival given ``within`` seconds, behind a call holding the one chat slot until ``left`` of them are
+        left. B-2634: the arrival used to start once the server had a call under way, and the first arrival's call,
+        given up on, was still under way there: the second could take the slot before its holder did, and be answered.
+        Now the holder says it has the slot, and gives it back at a time counted from the arrival's own deadline: a
+        late thread only makes the wait longer and what is left shorter."""
+        holding.clear()
+        given_back.clear()
+        primary.set(hang_rate=0.0)
         holder = threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"}))
         holder.start()
-        assert until(lambda: primary.stats()["active"] == 1)  # the holder has the slot, and the server its call
-        try:
-            coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + within)
-            return "answered"
-        except ChatTimeout as exc:
-            return str(exc)
-        finally:
-            holder.join()
+        assert holding.wait(10)  # the holder has the slot, and the server its call
+        primary.set(hang_rate=1.0)  # the arrival's call, if sent, is never answered: it waits out its time
+        deadlines, said = [], []
+
+        def ask() -> None:
+            deadlines.append(time.monotonic() + within)
+            try:
+                coder._local_create(model, messages, {"type": "object"}, deadline=deadlines[0])
+                said.append("answered")
+            except ChatTimeout as exc:
+                said.append(str(exc))
+
+        arriving = threading.Thread(target=ask)
+        arriving.start()
+        assert until(lambda: deadlines)
+        time.sleep(max(0.0, deadlines[0] - left - time.monotonic()))
+        given_back.set()
+        arriving.join(10)
+        holder.join(10)
+        return said[0]
 
     sent = len(primary.history())
-    assert "no answer in the time an arriving invoice waits" in arrival(0.9)  # sent with 0.35 s: no answer then
+    # Waited 0.4 s, sent with up to 1.25 s left (over the 0.25 s needed): no answer then, and no failure of the server.
+    assert "no answer in the time an arriving invoice waits" in arrival(1.65, left=1.25)
     assert len(primary.history()) == sent + 2
-    assert "busy" in arrival(0.7)  # 0.15 s left once it had its slot: never sent
+    assert "busy" in arrival(0.7, left=0.1)  # 0.1 s left at most once it had its slot: never sent
     assert len(primary.history()) == sent + 3
     breaker = local_llm.chat_failover(coder.settings.llm)
     assert breaker.state()["on"] == PRIMARY and breaker.state()["failures"][PRIMARY] == 0
