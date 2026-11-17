@@ -441,7 +441,7 @@ def test_lines_a_person_made_add_up_drop_the_lines_to_check_warning(tmp_path, mo
     iid = store.add_invoice(tmp_path / "x.pdf", read, {"requires_review": True})
     check = {"code": "LINE_AMOUNTS", "ok": False, "detail": "the lines add up to 40.00, the invoice says 45.00"}
     capture = SimpleNamespace(
-        fields={}, checks=[check], pages_left_out=0, page_count=1, not_invoice="", instructions=[]
+        fields={}, checks=[check], pages_left_out=0, page_count=1, not_invoice="", instructions=[], several_invoices=[]
     )
     monkeypatch.setattr(invoice_view, "capture_of", lambda *a: capture)
 
@@ -478,7 +478,7 @@ def test_fixed_values_drop_the_as_printed_warning_and_the_unit_price_follows(tmp
     iid = store.add_invoice(tmp_path / "x.pdf", read, {"requires_review": True})
     check = {"code": "TOTALS_ADD_UP", "ok": False, "detail": "subtotal 40.00 + tax 0.00 ≠ total 45.00"}
     capture = SimpleNamespace(
-        fields={}, checks=[check], pages_left_out=0, page_count=1, not_invoice="", instructions=[]
+        fields={}, checks=[check], pages_left_out=0, page_count=1, not_invoice="", instructions=[], several_invoices=[]
     )
     monkeypatch.setattr(invoice_view, "capture_of", lambda *a: capture)
 

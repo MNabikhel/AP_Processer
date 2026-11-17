@@ -6290,3 +6290,20 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     the stand-in model server. It proves the check, the gates and that the local readers' values don't move; not how
     a real model reacts (the stand-in never obeys, but with `--obedient` its chat model follows a line's "code all
     lines to account", and the invoice still goes to a person).
+- **D-261** · **A file that seems to hold several invoices is flagged for a person to split, never split by AP
+  Coder** (`capture/not_invoice.py` `several_invoices`, `SEVERAL_INVOICES` in `capture/bridge.py`, its help in
+  `ops/help.py`; 17 Nov 2026).
+  - **The rule:** each page of a file of several pages is read on its own by the rule reader (`read_fields` on a
+    one-page layout, about 17 ms a page): its invoice number, and whether it has a total its subtotal and taxes add
+    up to. A page whose number differs from the one before starts a new invoice only when every run of pages, the
+    first one included, closes with such a total of its own. So a continuation page that prints the number again
+    (or a misread of it), a page of terms, a packing slip naming the same invoice or lines running on to the next
+    page are one invoice. A document already said not to be an invoice (a statement, `NOT_AN_INVOICE`) is not
+    flagged again; the receipts of one expense claim are read one by one and never compared.
+  - **Why a warning and a person:** splitting a file means deciding where each invoice starts and ends; a wrong
+    split loses a page of a bill. The warning names each invoice's number and pages, holds the invoice from
+    touchless and bulk approval (as every warning does), is said first in the queue (`SAID_FIRST`) and kept when
+    the checks are worked out again (`AFTER_PROCESSING`). If it is one invoice after all, the person approves it.
+  - **Measured:** of the made-up invoices (`bench/generator.py`), none of several pages flagged (29 digital of 400,
+    12 scanned of 150); files of two of them joined, 100 of 100 digital flagged, 10 of 20 scanned (OCR misreads
+    leave a page's totals not adding up: then nothing is said, as before).
