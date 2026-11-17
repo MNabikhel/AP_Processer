@@ -187,6 +187,11 @@ const rowOf = (el) => el?.closest?.("[data-row]") || null;
 /** A line's Account box (the whole account string), or null on a screen with GL account and cost center lists. */
 const accountBox = (row) => row?.querySelector?.("input[data-account]") || null;
 
+/** A line's Account box typed in, its list open: what it holds is no account yet ("0021"), so the check an edit
+    starts waits until the list closes (a choice made, Esc, the box left), never flags it at each key (B-2603). */
+const typingAccount = (el) =>
+  Boolean(el?.matches?.('[data-grid="lines"] input[data-account]')) && el.getAttribute("aria-expanded") === "true";
+
 /** The row's two hidden cells follow its Account box (the text up to the first dot is the business unit), for
     what reads a line's GL account by name; the server reads the box itself. */
 function syncAccount(row) {
@@ -474,7 +479,14 @@ function soon(ms = 450) {
   edited = true;
   followTicks(); // every edit comes here: a tax line's taxable follows the lines whose tax code carries it (B-610)
   clearTimeout(timer);
-  timer = setTimeout(check, ms);
+  timer = setTimeout(checkSoon, ms);
+}
+
+/** The check an edit starts: put off while an Account box is typed in (``typingAccount``). Approving, leaving and a
+    line action check at once, whatever is open. */
+function checkSoon() {
+  if (typingAccount(document.activeElement)) timer = setTimeout(checkSoon, 300);
+  else check();
 }
 
 /** Wait until the edits are checked and kept (before leaving the page or another action). */

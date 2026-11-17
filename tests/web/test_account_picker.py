@@ -317,3 +317,23 @@ def test_ctrl_z_on_the_next_invoice_once_edited_never_undoes_the_approval_before
     page.wait_for_url(lambda url: f"/review/{first}" in url, timeout=10000)
     assert store.get_invoice(first)["status"] == REVIEW
     assert not errors
+
+
+def test_an_account_half_typed_is_not_flagged_until_the_box_is_left(browser, chart_company):
+    """B-2603: typing "0021" in an Account box, its list still open, showed at once "Must be fixed (1) Line 1:
+    “0021” is not an account": the check ran at each key on what was half typed. The box is checked once it is left
+    (or a choice made), and a choice made is checked at once."""
+    page, errors = _review(browser, chart_company, "one_line")
+    page.click(FIRST)
+    page.keyboard.press("Control+a")
+    page.keyboard.type("00")
+    page.wait_for_timeout(1200)  # longer than the wait before a check
+    page.keyboard.type("21")
+    page.wait_for_timeout(1200)
+    page.wait_for_load_state("networkidle")
+    assert "is not an account" not in page.inner_text("body")
+    assert page.query_selector(LIST)  # still typing, the list open
+    page.keyboard.press("Tab")  # left: "0021" names no single account, so it stays and is checked
+    page.wait_for_selector('[data-grid="lines"] [data-row]:nth-child(1).is-fix')
+    assert "is not an account" in page.inner_text("body")
+    assert not errors
