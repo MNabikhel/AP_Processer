@@ -488,6 +488,23 @@ def test_gst_charged_where_hst_applies_is_hst_not_charged_not_an_itc_risk_b717(r
     assert "HST_NOT_CHARGED" in CHECKS
 
 
+def test_gst_charged_beside_the_hst_is_not_payable_and_the_hst_was_charged(reference):
+    """B-2721: GST 5% and HST 13% both charged on an Ontario line (18%: the HST already holds the federal 5%) said
+    HST_NOT_CHARGED, "the vendor should have charged HST ...; the GST is claimable", of an invoice that charged it:
+    the GST was claimed beside the HST. The GST is charged in error (ETA s.169): an ITC at risk, and the sales tax
+    report says so; HST_NOT_CHARGED stays for GST alone (B-717)."""
+    on = _invoice("ON", [("Software", 1000.0, "GST+HST")],
+                  [("GST", "", 0.05, 1000.0, 50.0), ("HST", "ON", 0.13, 1000.0, 130.0)], supplier="ON")  # fmt: skip
+    codes = {f.code: f for f in check_taxes(on, reference.tax)}
+    assert "HST_NOT_CHARGED" not in codes, codes["HST_NOT_CHARGED"].message
+    assert "ITC_AT_RISK" in codes and "GST" in codes["ITC_AT_RISK"].message and "s.169" in codes["ITC_AT_RISK"].message
+    from ap_coder.coding.taxreturn import CHARGED_IN_ERROR
+
+    assert "GST beside the HST" in CHARGED_IN_ERROR["ITC_AT_RISK"]
+    alone = _invoice("ON", [("Software", 1000.0, "GST")], [("GST", "", 0.05, 1000.0, 50.0)], supplier="AB")
+    assert {"HST_NOT_CHARGED"} <= {f.code for f in check_taxes(alone, reference.tax)}
+
+
 # --- B-718: QST not charged is not "self-assess" -----------------------------------------------------------------
 
 

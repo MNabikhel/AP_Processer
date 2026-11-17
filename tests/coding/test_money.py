@@ -193,8 +193,8 @@ def test_a_total_two_cents_off_is_a_difference_in_the_tax_check_and_a_finding(re
     for off, flagged in ((0.01, False), (0.02, True), (-0.02, True)):
         coding = _coding(lines, taxes, total=round(113 + off, 2))
         assert not _row(math_check(coding), "Subtotal + tax = total")["ok"]
-        assert _row(math_check(_coding(lines, taxes, subtotal=round(100 - off, 2), total=113)),
-                    "Subtotal + tax = total")["ok"] is not flagged  # (the posting balances: 100.00 + 13.00)
+        balances = _coding(lines, taxes, subtotal=round(100 - off, 2), total=113)  # (posted: 100.00 + 13.00)
+        assert _row(math_check(balances), "Subtotal + tax = total")["ok"] is not flagged
         assert ("TOTAL_MISMATCH" in _codes(validate_coding(coding, reference).issues)) is flagged
         tax_total = _coding(lines, taxes, tax_total=round(13 + off, 2), total=113)
         assert ("TAX_LINES_TOTAL_MISMATCH" in _codes(check_taxes(tax_total, reference.tax))) is flagged

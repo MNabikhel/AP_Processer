@@ -88,8 +88,8 @@ WRONG_RATE = (
     "rate"
 )
 NOT_PAYABLE = (
-    "Tax charged that isn't payable here (HST where GST applies): claim the GST part only, or get a corrected invoice "
-    "(ETA s.169)"
+    "Tax charged that isn't payable here (HST where GST applies: claim the GST part only; GST beside the HST: claim "
+    "the HST only), or get a corrected invoice (ETA s.169)"
 )
 TAX_WRONG = "Tax doesn't match the rate on the lines: claim only the tax properly charged, or get a corrected invoice"
 CHARGED_IN_ERROR = {"TAX_RATE_NONSTANDARD": WRONG_RATE, "ITC_AT_RISK": NOT_PAYABLE, "TAX_CALC_MISMATCH": TAX_WRONG}
