@@ -6234,3 +6234,17 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     reason there, or rejected); the second approver has no "Approve anyway" of their own.
   - **Not refused:** warnings, and errors the first approver approved anyway with their reason (their reason
     stands). There is no bulk second approval to change.
+- **D-261** · **A voided voucher and its void cancel out in the past invoice coding** (`core/store/journal.py`
+  `without_voids`, read by `journal_lines_for` and `journal_remarks`; the owner's choice; 17 Nov 2026; B-2641; with
+  D-251).
+  - **Why:** report R09321 prints no document number, so a voucher voided (often a miscoded one) and its void were
+    two lines to the wrong account, and the void, the newer, counted the more under D-251.
+  - **The match:** of one supplier's coding lines, the oldest first (G/L date, then the voucher, then its place in
+    it), a negative line cancels the latest positive line before it not cancelled yet with the same whole account
+    string (business unit.object.subsidiary), the same amount to the cent and, when the negative line has a remark,
+    the same remark. Within one file or across the files loaded (a voucher two files hold is still read once).
+    Neither counts: not toward the supplier's accounts, its vouchers, its remarks, nor the journal as a whole a
+    supplier it does not have is offered from (D-226).
+  - **Kept:** a negative line that reverses no earlier line (a true credit: another amount, account or remark, or
+    nothing before it) counts as it did. The file's own counts (Settings, the suppliers' list) are of what was loaded,
+    voids included.

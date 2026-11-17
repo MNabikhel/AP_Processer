@@ -99,6 +99,27 @@ def voucher_identity(voucher: Any) -> str:
     return hashlib.sha256(json.dumps(said, ensure_ascii=False).encode("utf-8")).hexdigest()[:32]
 
 
+def without_voids(lines: Sequence[Mapping[str, Any]]) -> list[Any]:
+    """One supplier's ``lines``, the oldest first, without the vouchers voided (D-261): the report has no document
+    number to tie a void to its voucher, so a negative line cancels the latest positive line before it, not cancelled
+    yet, with the same account string, the same amount and, when it has one, the same remark; neither is kept. A
+    negative line that cancels none (a credit) is kept as it is."""
+    open_lines: dict[tuple[str, int], list[int]] = {}  # (account, cents) -> the positive lines not cancelled yet
+    gone: set[int] = set()
+    for i, line in enumerate(lines):
+        cents = round(float(line["amount"] or 0) * 100)
+        key = (str(line["account"]), abs(cents))
+        if cents > 0:
+            open_lines.setdefault(key, []).append(i)
+        elif cents < 0:
+            remark, earlier = str(line["remark"] or "").strip(), open_lines.get(key) or []
+            for at in range(len(earlier) - 1, -1, -1):
+                if not remark or str(lines[earlier[at]]["remark"] or "").strip() == remark:
+                    gone |= {earlier.pop(at), i}
+                    break
+    return [line for i, line in enumerate(lines) if i not in gone]
+
+
 def _listed(text: Any) -> tuple[str, ...]:
     """A list of objects as saved or typed: commas, semicolons, spaces or lines between; each once, in order."""
     return tuple(dict.fromkeys(str(text or "").replace(",", " ").replace(";", " ").split()))
@@ -363,7 +384,8 @@ class JournalMixin:
         it). ``supplier_number``: as text; leading zeros and spaces around it do not matter ("0740075" finds
         "740075"). ``kinds``: which lines ("coding": what AP chose; "payable", "tax": what JD Edwards added). The
         lines of an affiliate's voucher and of one that does not balance are left out unless asked for: their coding
-        is not learned from. A voucher two files hold is read once.
+        is not learned from. A voucher two files hold is read once; a voucher voided and its void, in one file or
+        two, are not read (``without_voids``).
 
         Each line: {"voucher_id", "n" (its place in the voucher, from 1), "gl_date" (YYYY-MM-DD, "" when the report's
         could not be read), "company", "doc_type", "supplier_number" (as printed), "supplier_name" (26 characters at
@@ -378,7 +400,7 @@ class JournalMixin:
         with self._conn() as conn:
             rows = conn.execute(sql + " ORDER BY v.gl_date, v.id, l.n",
                                 (supplier_key(supplier_number), json.dumps(kinds))).fetchall()  # fmt: skip
-        return [_flags(row) for row in rows]
+        return without_voids([_flags(row) for row in rows])
 
     def journal_suppliers(self) -> list[dict[str, Any]]:
         """Every supplier of the journal, the one with the most vouchers first: {"supplier_number" (as printed),

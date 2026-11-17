@@ -654,3 +654,58 @@ def test_an_approval_here_counts_as_much_against_a_line_of_the_latest_year_and_m
     approve(store, tmp_path, coding, [CARPET])
     after = prior_for(store, "Brightway Janitorial Ltd.")
     assert [(a.account, a.weight) for a in after.accounts] == [(CARPET, 5.0), (JANITOR, 4.0 + 4 * 0.25)]
+
+
+# --- A voucher voided cancels out (D-261) -------------------------------------------------------------------------
+
+BRIGHTWAY = "BRIGHTWAY JANITORIAL LTD."
+
+
+def _miscoded(day, amount=250, remark="Oct cleaning"):
+    return (740075, BRIGHTWAY, day, [(CARPET, amount, remark)])
+
+
+def test_a_voucher_voided_and_its_void_count_for_nothing_toward_the_suppliers_accounts(store):
+    """B-2641: a voucher coded to the carpet account, voided in JD Edwards, counted as two lines of it."""
+    load_chart(store)
+    _vendor(store, BRIGHTWAY, 740075)
+    load_journal(store, [*monthly(740075, BRIGHTWAY, JANITOR, "{month} cleaning", 9),
+                         _miscoded(dt.date(2025, 10, 2)), _miscoded(dt.date(2025, 10, 9), -250)])  # fmt: skip
+    prior = prior_for(store, "Brightway Janitorial Ltd.")
+    assert [(a.account, a.lines) for a in prior.accounts] == [(JANITOR, 9)] and prior.vouchers == 9
+    assert prior.sure().account == JANITOR
+
+
+def test_a_void_loaded_in_a_later_file_cancels_the_voucher_of_an_earlier_one(store):
+    load_chart(store)
+    _vendor(store, BRIGHTWAY, 740075)
+    load_journal(store, [*monthly(740075, BRIGHTWAY, JANITOR, "{month} cleaning", 9), _miscoded(dt.date(2025, 10, 2))])
+    assert [a.account for a in prior_for(store, "Brightway Janitorial Ltd.").accounts] == [JANITOR, CARPET]
+    load_journal(store, [_miscoded(dt.date(2025, 11, 3), -250)], name="november.csv")
+    assert [a.account for a in prior_for(store, "Brightway Janitorial Ltd.").accounts] == [JANITOR]
+
+
+def test_a_credit_that_reverses_no_earlier_line_counts_as_before(store):
+    """Another amount, another remark, or no line before it to reverse: a credit, kept as it was."""
+    load_chart(store)
+    _vendor(store, BRIGHTWAY, 740075)
+    load_journal(
+        store,
+        [
+            _miscoded(dt.date(2025, 3, 1), -250),
+            _miscoded(dt.date(2025, 10, 2)),
+            _miscoded(dt.date(2025, 10, 9), -40),
+            _miscoded(dt.date(2025, 10, 10), -250, "credit"),
+        ],
+    )
+    assert [(a.account, a.lines) for a in prior_for(store, "Brightway Janitorial Ltd.").accounts] == [(CARPET, 4)]
+
+
+def test_two_voids_of_three_identical_lines_leave_one(store):
+    load_chart(store)
+    _vendor(store, BRIGHTWAY, 740075)
+    days = [dt.date(2025, 10, d) for d in (1, 2, 3, 6, 7)]
+    load_journal(store, [_miscoded(days[0]), _miscoded(days[1]), _miscoded(days[2]), _miscoded(days[3], -250),
+                         _miscoded(days[4], -250)])  # fmt: skip
+    prior = prior_for(store, "Brightway Janitorial Ltd.")
+    assert [(a.account, a.lines, a.last_date) for a in prior.accounts] == [(CARPET, 1, "2025-10-01")]

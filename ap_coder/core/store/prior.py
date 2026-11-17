@@ -9,10 +9,13 @@ journal's remarks counted by supplier and account (what a supplier it does not h
 
 from __future__ import annotations
 
+from collections import Counter
+from itertools import groupby
+from operator import itemgetter
 from typing import Any
 
 from ..memory import ACCEPTED, CODED, CORRECTED
-from .journal import VERSION_KEY
+from .journal import VERSION_KEY, without_voids
 from .summary import fetch_rows
 
 PERSON_DECIDED = (ACCEPTED, CORRECTED, CODED)  # an approval a person gave here, line by line (not bulk, not history)
@@ -32,10 +35,11 @@ _NAMES = """SELECT supplier_key, MAX(supplier_number) AS supplier_number, suppli
     FROM journal_vouchers WHERE counted = 1 AND supplier_key != '' GROUP BY supplier_key, supplier_name
     ORDER BY supplier_key, supplier_name"""
 _LAST_DATE = "SELECT MAX(gl_date) FROM journal_vouchers WHERE counted = 1 AND gl_date != ''"
-_REMARKED = """SELECT v.supplier_key, l.business_unit, l.object, l.subsidiary, l.remark, COUNT(*) AS lines
+_REMARKED = """SELECT v.supplier_key, l.business_unit, l.object, l.subsidiary, l.remark, l.account, l.amount
     FROM journal_vouchers v JOIN journal_lines l ON l.voucher_id = v.id
     WHERE v.counted = 1 AND v.affiliate = 0 AND v.balanced = 1 AND l.kind = 'coding'
-    GROUP BY v.supplier_key, l.business_unit, l.object, l.subsidiary, l.remark"""
+    ORDER BY v.supplier_key, v.gl_date, v.id, l.n"""
+_REMARK_KEY = ("supplier_key", "business_unit", "object", "subsidiary", "remark")
 
 
 class PriorMixin:
@@ -66,9 +70,14 @@ class PriorMixin:
     def journal_remarks(self) -> list[dict[str, Any]]:
         """The journal's coding lines counted by supplier, account and remark, as ``journal_lines_for`` reads them
         (an affiliate's voucher and one that does not balance left out): {"supplier_key", "business_unit",
-        "object", "subsidiary", "remark", "lines"}. A year of 25,000 lines is a few thousand rows."""
+        "object", "subsidiary", "remark", "lines"}, in that order; a voucher voided and its void left out
+        (``without_voids``). A year of 25,000 lines is a few thousand rows."""
         with self._conn() as conn:
-            return fetch_rows(conn, _REMARKED)
+            rows = fetch_rows(conn, _REMARKED)
+        counted: Counter[tuple[Any, ...]] = Counter()
+        for _, lines in groupby(rows, key=itemgetter("supplier_key")):
+            counted.update(tuple(line[k] for k in _REMARK_KEY) for line in without_voids(list(lines)))
+        return [{**dict(zip(_REMARK_KEY, key, strict=True)), "lines": n} for key, n in sorted(counted.items())]
 
     def vendors_named(self, key: str) -> list[dict[str, Any]]:
         """The vendor list's rows that go by one name: the vendor under ``key`` and those kept under "<key> #<ERP
