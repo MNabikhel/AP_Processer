@@ -6104,6 +6104,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     names the roles, and a name only labels the permissions shown beside it.
   - **A deleted role's key is never reused:** its row is kept, marked `deleted_at`, so old events and the finance hub
     feed (which sends the key) never name another role by it; its name is free again.
+  - **What works on invoices comes with view** (B-2585, `permissions.NEEDS_VIEW`): activity, import, code, approve,
+    final_approve, export, post, controls, setup and undo each bring "See invoices and reports", or a role's pages
+    led it to invoices and reports it could not open. Given when a role is saved (`_clean_permissions`) and on
+    reading one saved before (`permissions_of`, no migration); the Roles form ticks and locks the box with a note.
+    users, settings and confirm stay alone (a people desk, a settings role, a Manager); the built-in roles have it
+    already.
   - **A role either reviews invoices (code) or confirms as a manager (confirm), not both:** the manager's page shows
     only their own requests to a role without code, so a role with both would be offered as a manager and refused
     its answer; with code it opens every request anyway.

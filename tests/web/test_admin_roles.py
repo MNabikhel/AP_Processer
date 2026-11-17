@@ -34,7 +34,7 @@ def test_the_built_in_roles_are_shown_as_they_are_and_copied_as_a_start(store):
     assert clerk.count('name="permissions"') == 14 and clerk.count(" disabled>") >= 14  # every box, none to change
     copy = boss.get("/admin/roles/new?copy=clerk").text
     assert 'value="Clerk (copy)"' in copy and 'action="/admin/roles/add"' in copy
-    ticked = re.findall(r'name="permissions" value="(\w+)" checked', copy)
+    ticked = re.findall(r'name="permissions" value="(\w+)"[^>]* checked', copy)
     assert ticked == ["view", "activity", "import", "code", "approve", "export"]
     assert boss.post("/admin/roles/clerk/save", data={"name": "Clerk", "permissions": ["view"]},
                      headers=PAGE).status_code == 400  # fmt: skip
@@ -182,17 +182,17 @@ def test_the_plain_refusal_page_shows_a_roles_name_as_text(store, monkeypatch):
 
 
 def test_a_role_that_sees_no_invoices_lands_on_a_page_it_may_open(store):
-    """B-2578: a role without See invoices and reports (people's accounts only, or bringing invoices in) signed in to
+    """B-2578: a role without See invoices and reports (people's accounts only, or settings only) signed in to
     the review queue and "Not allowed", and the menu's AP Coder and the refusal's button led back there."""
     account(store, "boss", "admin", "Pat Boss")
     app = app_for(store)
     boss = client_of(app, "10.0.0.7")
     log_in(boss, "boss")
     desk = _made(boss, "People desk", ["users"])
-    importer = _made(boss, "Importer", ["import"])
+    settings = _made(boss, "Settings only", ["settings"])
     account(store, "ivy", desk, "Ivy Tan")
-    account(store, "ike", importer, "Ike Low")
-    for username, lands in (("ivy", "/admin"), ("ike", "/process")):
+    account(store, "ike", settings, "Ike Low")
+    for username, lands in (("ivy", "/admin"), ("ike", "/settings")):
         person = client_of(app, "10.0.0.8")
         password = person.post("/login", data={"username": username, "password": GOOD, "next": "/review"},
                                headers=PAGE)  # fmt: skip  # the login page's own next: the review queue
@@ -254,3 +254,21 @@ def test_a_persons_page_links_their_invoices_only_for_whoever_may_open_them(stor
     page = desk.get(f"/admin/users/{ann}").text
     assert "asked the vendor" in page and f'href="/review/{invoice}"' not in page
     assert desk.get(f"/review/{invoice}", headers=HTML).status_code == 403
+
+
+def test_the_role_form_ticks_and_locks_see_invoices_with_what_works_on_them(store):
+    """B-2585: See invoices and reports comes with anything that works on invoices; the Roles form says so, and
+    shows it ticked and locked on a role that has one of those."""
+    account(store, "boss", "admin", "Pat Boss")
+    boss = client_of(app_for(store), "10.0.0.7")
+    log_in(boss, "boss")
+    blank = boss.get("/admin/roles/new").text
+    view = re.search(r'<input type="checkbox" name="permissions" value="view"[^>]*>', blank).group(0)
+    assert 'data-implied-by="activity import code approve final_approve export post controls setup undo"' in view
+    assert "checked" not in view and "disabled" not in view
+    assert "comes with anything that works on invoices" in blank
+    copy = boss.get("/admin/roles/new?copy=clerk").text
+    view = re.search(r'<input type="checkbox" name="permissions" value="view"[^>]*>', copy).group(0)
+    assert " checked" in view and " disabled" in view
+    key = _made(boss, "Importer", ["import"])  # (a box locked is not sent: the role gets it anyway)
+    assert store.role_info(key)["permissions"] == ["view", "import"]

@@ -239,3 +239,26 @@ def test_nobody_deletes_a_role_that_may_do_more_than_theirs_and_the_refusal_read
     store.delete_role(helper, by_user=ann)  # one within their own: fine
     store.delete_role(lead, by_user=boss)
     assert store.role_info(helper) is None and store.role_info(lead) is None
+
+
+def test_a_role_that_works_on_invoices_sees_them_too(people):
+    """B-2585: a role made without See invoices and reports, but to bring invoices in, code, approve or read the
+    activity log, was led by its pages to invoices and reports it could not open. Such a role sees them: given when it
+    is saved, and on reading one saved before; a role that only manages people, changes settings or confirms as a
+    manager is left as it is, and so are the built-in ones."""
+    store, boss, ann = people
+    importer = store.add_role("Importer", ["import"])
+    assert store.role_info(importer)["permissions"] == ["view", "import"]
+    for name, alone in (("People desk", ["users"]), ("Settings only", ["settings"]), ("Confirms", ["confirm"])):
+        assert store.role_info(store.add_role(name, alone))["permissions"] == alone
+    store.edit_role(importer, "Importer", ["activity"], by_user=boss)
+    assert store.role_info(importer)["permissions"] == ["view", "activity"]
+    with store._conn() as conn:  # saved before the rule
+        conn.execute("UPDATE roles SET permissions = '[\"approve\"]' WHERE key = ?", (importer,))
+    store.set_role(ann, importer, by_user=boss)
+    assert store.role_info(importer)["permissions"] == store.user(ann)["permissions"] == ["view", "approve"]
+    assert [r["permissions"] for r in store.all_roles() if r["built_in"]] == [
+        ["view", "activity"], ["view", "activity", "import", "code", "approve", "export"],
+        ["view", "activity", "import", "code", "approve", "final_approve", "export", "post", "controls"],
+        ["view", "activity", "import", "code", "approve", "final_approve", "export", "post", "controls", "setup",
+         "undo", "settings", "users"], ["confirm"]]  # fmt: skip
