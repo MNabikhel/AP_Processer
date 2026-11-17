@@ -853,12 +853,13 @@ def candidates(description: str, vendor_name: str, feedback: list[dict[str, Any]
         kept.guess = kept.guess and other.guess  # the business unit known from either source is known (B-2518)
         if not kept.of and other.of:
             kept.lines, kept.of, kept.share, kept.example = other.lines, other.of, other.share, other.example
+            kept.recent = other.recent
         offered[c.account] = (best, kept)
 
     for c in ranked:
         offer(TIER["supplier"], _placed(reference, c.code, c.business_unit, [*prior.units_of.get(c.code, ()), *used],
                                         "supplier", c.score, c.reasons, lines=c.lines, of=c.of, share=c.share,
-                                        example=c.example))  # fmt: skip
+                                        example=c.example, recent=c.recent))  # fmt: skip
     for s in found:
         offer(TIER.get(s.source, 0), _placed(reference, s.gl_code, _unit(s.cost_center), used, s.source, s.score,
                                              s.reasons, check=s.check))  # fmt: skip
@@ -1126,7 +1127,7 @@ def why_left(prior: Prior | None, ranked: list[Candidate], reference: ReferenceD
         said = "A new supplier: not in the past invoice coding" + (f" ({prior.note})" if prior.note else "")
     else:
         use = prior.accounts[0]
-        went = f"{use.lines} of this supplier's {prior.total_said()} went to {use.account}"
+        went = f"{use.lines} of this supplier's {prior.total_said()} went to {use.account}{prior.weighed}"
         gone = status_said(reference, use.business_unit, use.code) if use.business_unit else ""
         elsewhere = next((c for c in ranked if c.source == "vendor" and c.account != use.account), None)
         if gone and use.share >= SURE_SHARE:
@@ -1134,7 +1135,7 @@ def why_left(prior: Prior | None, ranked: list[Candidate], reference: ReferenceD
         elif len(prior.accounts) > 1 and use.share < SURE_SHARE:
             more = " / ..." if len(prior.accounts) > 4 else ""
             said = (f"This supplier's {prior.total_said()} went to {len(prior.accounts)} accounts: "
-                    f"{prior.shares()}{more}")  # fmt: skip
+                    f"{prior.shares()}{more}{prior.weighed}")  # fmt: skip
         elif prior.lines < SURE_LINES:
             said = f"Only {went}: too few to code it alone"
         elif prior.latest_approved and prior.latest_approved != use.account and prior.sure(description) is None:

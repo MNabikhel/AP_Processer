@@ -158,15 +158,18 @@ def test_thirty_lines_of_history_are_not_sure_for_a_line_like_one_a_person_coded
         f"({CARPET}): check it.")  # fmt: skip
     approve(store, tmp_path, coding, [CARPET])
     prior = prior_for(store, "Brightway Janitorial Ltd.")
-    assert prior.accounts[0].account == JANITOR and round(prior.accounts[0].share, 3) == round(30 / 35, 3)
-    assert prior.sure() is None  # of all its lines: 86%, and the last line approved here went elsewhere
+    # 2025's 12 lines count 1 each, 2024's 0.5 and 2023's 0.25 (D-249): 19.5 of 24.5 with the correction's 5
+    assert prior.accounts[0].account == JANITOR and round(prior.accounts[0].share, 3) == round(19.5 / 24.5, 3)
+    assert prior.sure() is None  # of all its lines: 80%, and the last line approved here went elsewhere
     alike = "Steam clean the lobby and stair carpets on two floors"
     assert prior.sure("Day porter service").account == JANITOR and prior.sure(alike) is None
     porter, carpets = code_from_capture(captured("Brightway Janitorial Ltd.", "Day porter service", alike,
                                                  number="INV-2"), reference, store.feedback_rows(),
                                         store).coding.line_items  # fmt: skip
     assert porter.predicted_gl_code == "7340.3307"
-    assert porter.reasoning_justification == "30 of this supplier's 31 lines (30 posted in JD Edwards, 1 approved here)"
+    assert porter.reasoning_justification == (
+        "30 of this supplier's 31 lines (30 posted in JD Edwards, 1 approved here), recent lines counting more"
+    )
     assert carpets.predicted_gl_code == "UNASSIGNED"
     assert [c["account"] for c in carpets.candidates[:2]] == [CARPET, JANITOR]
 
@@ -558,3 +561,96 @@ def test_a_new_suppliers_line_is_offered_the_accounts_the_journal_has_for_its_wo
     # Near no remark and no account's name: what suppliers named alike went to, by the name alone.
     assert {c["account"] for c in saas.candidates} == {cross_border, domestic}
     assert all(c["reason"].startswith("1 of the 2 suppliers named “courier”") for c in saas.candidates)
+
+
+# --- Recent lines count more (D-249) ----------------------------------------------------------------------------
+
+
+def test_a_journal_line_counts_less_each_year_older_than_the_latest_g_l_date():
+    """Within 12 months of the latest G/L date of the journals loaded: 1; then half as much a year, never 0; a line
+    whose date could not be read counts in full (``sp.age_weight``)."""
+    latest = "2025-06-15"
+    assert [sp.age_weight(day, latest) for day in ("2025-06-15", "2024-06-16", "2024-06-15", "2023-06-16",
+                                                   "2023-06-15", "2015-01-01", "")] == [
+        1.0, 1.0, 0.5, 0.5, 0.25, 0.5**10, 1.0]  # fmt: skip
+    assert sp.age_weight("1990-01-01", latest) > 0 and sp.age_weight("2025-01-01", "") == 1.0
+
+
+def test_a_supplier_recoded_in_the_newest_year_gets_its_new_account_while_older_lines_outnumber_it(store):
+    """Twelve lines of 2023 to the janitorial account, six of 2025 to the carpet one: the carpet account is offered
+    first, and the reason says recent lines count more (its 6 of 18 lines are fewer than the other's 12)."""
+    reference = load_chart(store)
+    _vendor(store, "BRIGHTWAY JANITORIAL LTD.", 740075)
+    printed = "BRIGHTWAY JANITORIAL LTD."
+    load_journal(store, [*monthly(740075, printed, JANITOR, "{month} cleaning", 12, year=2023),
+                         *monthly(740075, printed, CARPET, "{month} cleaning", 6, year=2025)])  # fmt: skip
+    prior = prior_for(store, "Brightway Janitorial Ltd.")
+    assert [(a.account, a.lines, a.weight) for a in prior.accounts] == [(CARPET, 6, 6.0), (JANITOR, 12, 4.5)]
+    first = rank(prior, "Monthly cleaning", reference)[0]
+    assert first.account == CARPET and first.reason.startswith(
+        "6 of this supplier's 18 lines posted in JD Edwards, recent lines counting more;")  # fmt: skip
+    assert prior.sure() is None  # 57% of the weight: a person picks
+    coding = code_from_capture(captured("Brightway Janitorial Ltd.", "Monthly cleaning"), reference,
+                               store.feedback_rows(), store).coding  # fmt: skip
+    assert coding.line_items[0].reasoning_justification.startswith(
+        "This supplier's 18 lines posted in JD Edwards went to 2 accounts: 57% / 43%, recent lines counting more"
+    )
+
+
+def test_a_supplier_recoded_long_after_its_old_lines_is_coded_to_its_new_account_saying_why(store):
+    """Six lines of 2020 to one account, six of 2025 to another: 97% of the weight, coded with no one picking, and
+    the line's why says the counts are of recent lines more."""
+    from ap_coder.web.account_lines import why_words
+
+    reference = load_chart(store)
+    _vendor(store, "BRIGHTWAY JANITORIAL LTD.", 740075)
+    printed = "BRIGHTWAY JANITORIAL LTD."
+    load_journal(store, [*monthly(740075, printed, JANITOR, "{month} cleaning", 6, year=2020),
+                         *monthly(740075, printed, CARPET, "{month} cleaning", 6, year=2025)])  # fmt: skip
+    line = code_from_capture(captured("Brightway Janitorial Ltd.", "Monthly cleaning"), reference,
+                             store.feedback_rows(), store).coding.line_items[0]  # fmt: skip
+    assert line.predicted_gl_code == "7340.3313"
+    assert why_words(line.decided_by) == "this supplier's usual account: 6 of 12 past lines, recent lines counting more"
+
+
+def test_a_supplier_seen_only_three_years_before_the_latest_date_still_gets_its_account(store):
+    reference = load_chart(store)
+    _vendor(store, "BRIGHTWAY JANITORIAL LTD.", 740075)
+    load_journal(
+        store,
+        [
+            *monthly(740075, "BRIGHTWAY JANITORIAL LTD.", JANITOR, "{month} janitorial", 9, year=2022),
+            *monthly(3001, "RAPIDWAY COURIER CANADA LT", COURIER, "{month} courier", 12, year=2025),
+        ],
+    )
+    prior = prior_for(store, "Brightway Janitorial Ltd.")
+    assert prior.sure().account == JANITOR and prior.accounts[0].share == 1.0
+    line = code_from_capture(captured("Brightway Janitorial Ltd.", "Nightly office cleaning"), reference,
+                             store.feedback_rows(), store).coding.line_items[0]  # fmt: skip
+    assert line.predicted_gl_code == "7340.3307"
+    assert line.reasoning_justification.startswith("9 of this supplier's 9 lines posted in JD Edwards;")  # no note
+
+
+def test_two_accounts_of_the_same_weight_put_the_one_used_last_first(store):
+    """Two lines of a year before the latest date (0.5 each) weigh as one of the latest year: the latest first."""
+    load_chart(store)
+    _vendor(store, "BRIGHTWAY JANITORIAL LTD.", 740075)
+    printed = "BRIGHTWAY JANITORIAL LTD."
+    load_journal(store, [(740075, printed, dt.date(2024, 1, 15), [(JANITOR, 100, "cleaning")]),
+                         (740075, printed, dt.date(2024, 1, 14), [(JANITOR, 100, "cleaning")]),
+                         (740075, printed, dt.date(2025, 1, 15), [(CARPET, 100, "cleaning")])])  # fmt: skip
+    prior = prior_for(store, "Brightway Janitorial Ltd.")
+    assert [(a.account, a.weight) for a in prior.accounts] == [(CARPET, 1.0), (JANITOR, 1.0)]
+
+
+def test_an_approval_here_counts_as_much_against_a_line_of_the_latest_year_and_more_against_older_ones(store, tmp_path):
+    reference = load_chart(store)
+    _vendor(store, "BRIGHTWAY JANITORIAL LTD.", 740075)
+    printed = "BRIGHTWAY JANITORIAL LTD."
+    load_journal(store, [*monthly(740075, printed, JANITOR, "{month} janitorial", 4, year=2023),
+                         *monthly(740075, printed, JANITOR, "{month} janitorial", 4, year=2025)])  # fmt: skip
+    coding = code_from_capture(captured("Brightway Janitorial Ltd.", "Nightly office cleaning"), reference,
+                               store.feedback_rows(), store).coding  # fmt: skip
+    approve(store, tmp_path, coding, [CARPET])
+    after = prior_for(store, "Brightway Janitorial Ltd.")
+    assert [(a.account, a.weight) for a in after.accounts] == [(CARPET, 5.0), (JANITOR, 4.0 + 4 * 0.25)]

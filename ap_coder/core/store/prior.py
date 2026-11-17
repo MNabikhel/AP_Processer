@@ -31,6 +31,7 @@ _REMARKS = """SELECT final_gl, COALESCE(final_cc, '') AS final_cc, final_remark,
 _NAMES = """SELECT supplier_key, MAX(supplier_number) AS supplier_number, supplier_name, COUNT(*) AS vouchers
     FROM journal_vouchers WHERE counted = 1 AND supplier_key != '' GROUP BY supplier_key, supplier_name
     ORDER BY supplier_key, supplier_name"""
+_LAST_DATE = "SELECT MAX(gl_date) FROM journal_vouchers WHERE counted = 1 AND gl_date != ''"
 _REMARKED = """SELECT v.supplier_key, l.business_unit, l.object, l.subsidiary, l.remark, COUNT(*) AS lines
     FROM journal_vouchers v JOIN journal_lines l ON l.voucher_id = v.id
     WHERE v.counted = 1 AND v.affiliate = 0 AND v.balanced = 1 AND l.kind = 'coding'
@@ -54,6 +55,13 @@ class PriorMixin:
         a row for each name a number was printed with. Vouchers with no supplier number are left out."""
         with self._conn() as conn:
             return fetch_rows(conn, _NAMES)
+
+    def journal_last_date(self) -> str:
+        """The latest G/L date of the journal's vouchers counted (YYYY-MM-DD; "" when none has one): a line's age is
+        measured from it (``supplier_prior.age_weight``, D-249), not from today."""
+        with self._conn() as conn:
+            row = conn.execute(_LAST_DATE).fetchone()
+        return str(row[0] or "") if row else ""
 
     def journal_remarks(self) -> list[dict[str, Any]]:
         """The journal's coding lines counted by supplier, account and remark, as ``journal_lines_for`` reads them

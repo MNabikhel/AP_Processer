@@ -70,3 +70,35 @@ def test_without_ocr_installed_azures_words_are_read(make, tmp_path, monkeypatch
     name = "scan.pdf" if make is _scan else "photo.png"
     read = layout.build_layout(make(tmp_path / name), di_raw=AZURE)
     assert [w.text for w in read.pages[0].words] == ["AZURE"] and read.source == "di"
+
+
+# Parts of Azure's words of another shape: (how, whether the page's other words are still read).
+ODD_WORDS = {
+    "a word that is no object": (lambda p: p["words"].insert(0, None), True),
+    "a polygon of text": (lambda p: p["words"].insert(0, {"content": "X", "polygon": ["a"] * 8}), True),
+    "a word's content a number": (lambda p: p["words"].insert(0, {"content": 5, "polygon": [1] * 8}), True),
+    "the confidence as text": (lambda p: p["words"][0].update(confidence="high"), True),
+    "the angle as text": (lambda p: p.update(angle="level"), True),
+    "the page number as text": (lambda p: p.update(pageNumber="one"), True),
+    "the width as text": (lambda p: p.update(width="8.5in"), False),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("name", list(ODD_WORDS))
+def test_azures_words_of_another_shape_are_left_out_never_a_failure(name, tmp_path, monkeypatch):
+    """An answer kept (``azure_check.readable``) whose words are of another shape: the invoice is still read, a
+    digital PDF by its text, a scan's page OCR can't read by Azure's words that do read (D-245)."""
+    import copy
+    from pathlib import Path
+
+    from ap_coder.capture import analyze
+
+    raw = copy.deepcopy(AZURE)
+    raw["pages"][0]["words"].append({"content": "AZURE2", "polygon": [3, 1, 4, 1, 4, 1.2, 3, 1.2]})
+    how, words_read = ODD_WORDS[name]
+    how(raw["pages"][0])
+    sample = Path(__file__).resolve().parents[2] / "samples" / "northwind_ON_HST_NW-2026-0912.pdf"
+    assert analyze(sample, di_raw=raw, tables=False).fields["invoice_number"].value == "NW-2026-0912"
+    _local_ocr(monkeypatch, fails=True)
+    read = layout.build_layout(_scan(tmp_path / "scan.pdf"), di_raw=raw)
+    assert ("AZURE2" in [w.text for w in read.pages[0].words]) is words_read

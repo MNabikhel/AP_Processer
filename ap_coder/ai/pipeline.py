@@ -794,7 +794,8 @@ class InvoicePipeline:
             from ..capture import build_layout
             from .offline_coder import local_extraction
 
-            layout = build_layout(path)
+            # Azure's words, once it read the invoice and while it is on, for a page OCR can't read (D-245).
+            layout = build_layout(path, di_raw=azure_check.kept_reading(self.store, path, result.sha256))
             if invoice_id is None and any(page.turn for page in layout.pages):
                 path = result.source = _upright(path, layout, result)
             result.extraction = local_extraction(path, layout)
