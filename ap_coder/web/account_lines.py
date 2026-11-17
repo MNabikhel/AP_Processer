@@ -148,6 +148,7 @@ def why_words(decided_by: dict[str, Any] | None) -> str:
     source, lines, of = by.get("source"), by.get("lines"), by.get("of")
     if source == "supplier":
         counted = f": {lines} of {of} past {'line' if of == 1 else 'lines'}" if lines and of else ""
+        counted += ", recent lines counting more" if counted and by.get("recent") else ""  # (D-251)
         return f"this supplier's usual account{counted}"
     if source == "vendor":
         return f"approved this way {lines} {'time' if lines == 1 else 'times'}" if lines else "approved this way before"

@@ -28,7 +28,7 @@
   <p class="muted small">{{ format_help[fmt] }}</p>
   {% set jde_settings = can("/settings/jde", "GET") %}{% set export = can("/exports/create") %}{# server mode (D-98) #}
   {% for p in blocking %}
-  <div class="flash err"><span class="ms" aria-hidden="true">settings</span><div>{{ p }} {% if jde_settings %}Set it in <a href="/settings/jde">Settings → JD Edwards E1</a>{% else %}An Admin sets it in Settings → JD Edwards E1{% endif %}.</div></div>
+  <div class="flash err"><span class="ms" aria-hidden="true">settings</span><div>{{ p }} {% if jde_settings %}Set it in <a href="/settings/jde">Settings → JD Edwards E1</a>{% else %}Someone who may change settings sets it in Settings → JD Edwards E1{% endif %}.</div></div>
   {% endfor %}
   <form{% if export %} method="post" action="/exports/create"{% endif %} id="export-form" data-busy="Exporting…">
     <input type="hidden" name="fmt" value="{{ fmt }}">
@@ -61,7 +61,7 @@
     {% set one = problems | length == 1 %}
     {{ problems | length | plural("invoice") }} cannot go to JD Edwards yet and {{ "is" if one else "are" }} left out of the
     batch: fix {{ "it" if one else "them" }} (the mapping in Settings → JD Edwards E1, the vendor master's ERP ID, or the
-    invoice) and export {{ "it" if one else "them" }} later.{% if not jde_settings %} The settings and the vendor master are an Admin's.{% endif %}
+    invoice) and export {{ "it" if one else "them" }} later.{% if not jde_settings %} The settings are changed by someone who may change settings, the vendor master by someone who may change the setup.{% endif %}
     {% if jde_settings and problems | selectattr("an8") | list %}<a href="/settings/jde#an8">Set the missing supplier numbers in Settings
       → JD Edwards E1 → Supplier address numbers</a>.{% endif %}</div></div>
   <div class="table-wrap">
@@ -77,7 +77,7 @@
 </section>
 
 {% if just %}
-{% set undo_text = "undo the batch below" if can("/exports/batches/1/undo") else "ask an Admin to undo the batch below" %}
+{% set undo_text = "undo the batch below" if can("/exports/batches/1/undo") else "ask someone who may delete and undo to undo the batch below" %}
 <section class="card" id="made">
   <h4>Batch {{ just.id }} is ready</h4>
   {% if just.format == jde_format %}
@@ -180,10 +180,10 @@
 </details>
 {% else %}{# who loads it, where it can't be loaded from here (B-2477) #}
 <section class="card" id="register"><p class="muted"><b>{{ register_name }}</b>{% if register_count %} ({{ register_count | num }} known){% endif %}:
-  {{ imp.done_by("An Admin loads the ERP's invoice list.", "The ERP's invoice list is loaded") }}</p></section>
+  {{ imp.done_by("Someone who may change the setup loads the ERP's invoice list.", "The ERP's invoice list is loaded") }}</p></section>
 {% endif %}
 {% else %}
-<section class="card" id="register"><p class="muted">{{ imp.done_by("An Admin sets the ERP layout and loads the ERP's invoice list.", "The ERP layout and the ERP's invoice list are set") }}</p></section>
+<section class="card" id="register"><p class="muted">{{ imp.done_by("Someone who may change settings sets the ERP layout, and someone who may change the setup loads the ERP's invoice list.", "The ERP layout and the ERP's invoice list are set") }}</p></section>
 {% endif %}
 
 <section class="card" id="batches">
@@ -235,7 +235,7 @@
   <div class="st-sep" id="jde-api">
     <h5>JD Edwards API{% if not jde_api.on %} <span class="muted">(step 2 is off)</span>{% endif %}</h5>
     <p class="muted small">Post this batch's vouchers through the API instead of loading the files: a dry run first
-      (checked here and by JD Edwards, nothing posted), then an Approver's go-ahead. Each voucher is posted once; the
+      (checked here and by JD Edwards, nothing posted), then the go-ahead of someone who may post to JD Edwards. Each voucher is posted once; the
       files below stay the fallback and leave out what was posted.</p>
     {% if jde_api.rows %}
     <div class="table-wrap">
@@ -288,7 +288,7 @@
         <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">send</span>Post {{ jde_api.checked | plural("voucher") }} to JD Edwards</button>
       </form>
       {% elif jde_api.checked %}
-      <p class="muted small">{{ jde_api.checked | plural("voucher") }} passed the dry run: an Approver or Admin posts them.</p>
+      <p class="muted small">{{ jde_api.checked | plural("voucher") }} passed the dry run: someone who may post to JD Edwards posts them.</p>
       {% endif %}
     </div>
     {% endif %}

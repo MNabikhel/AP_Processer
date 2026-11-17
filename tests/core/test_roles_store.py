@@ -208,3 +208,57 @@ def test_a_role_either_reviews_invoices_or_confirms_as_a_manager(people):
     key = store.add_role("Coder", ["view", "code"])
     with pytest.raises(ValueError, match="Confirm coding as a manager"):
         store.edit_role(key, "Coder", ["view", "code", "confirm"], by_user=boss)
+
+
+def test_an_account_added_with_a_role_made_here_is_named_by_that_roles_name_in_the_activity_log(people):
+    """B-2583: "ann.lee (Ann Lee) can log in as role-1": the role's key, not its name."""
+    store, boss, _ = people
+    key = store.add_role("AP lead", LEAD, by_user=boss)
+    store.add_user("cy", GOOD, role=key, display_name="Cy Tan", by_user=boss)
+    store.add_user("di", GOOD, role="approver", by_user=boss)
+    (cy,) = [e for e in store.events(actions=["user_added"]) if e["detail"]["username"] == "cy"]
+    (di,) = [e for e in store.events(actions=["user_added"]) if e["detail"]["username"] == "di"]
+    store.edit_role(key, "AP leads", LEAD, by_user=boss)  # the log reads as it was said then
+    assert describe(cy) == "cy (Cy Tan) can log in as AP lead"
+    assert describe(di) == "di (di) can log in as Approver"
+
+
+def test_nobody_deletes_a_role_that_may_do_more_than_theirs_and_the_refusal_reads_well(people):
+    """B-2584: a role with Manage users and roles alone could delete a role it could not change, and the refusal to
+    change one said "The role AP lead role may do more than yours"."""
+    store, boss, ann = people
+    hr = store.add_role("HR", ["users"], by_user=boss)
+    store.set_role(ann, hr, by_user=boss)
+    lead = store.add_role("AP lead", LEAD, by_user=boss)
+    with pytest.raises(ValueError, match=r"^The AP lead role may do more than yours \(See invoices"):
+        store.edit_role(lead, "AP lead", ["users"], by_user=ann)
+    with pytest.raises(ValueError, match=r"^The AP lead role may do more than yours"):
+        store.delete_role(lead, by_user=ann)
+    assert store.role_info(lead) is not None
+    helper = store.add_role("HR helper", ["users"], by_user=ann)
+    store.delete_role(helper, by_user=ann)  # one within their own: fine
+    store.delete_role(lead, by_user=boss)
+    assert store.role_info(helper) is None and store.role_info(lead) is None
+
+
+def test_a_role_that_works_on_invoices_sees_them_too(people):
+    """B-2592: a role made without See invoices and reports, but to bring invoices in, code, approve or read the
+    activity log, was led by its pages to invoices and reports it could not open. Such a role sees them: given when it
+    is saved, and on reading one saved before; a role that only manages people, changes settings or confirms as a
+    manager is left as it is, and so are the built-in ones."""
+    store, boss, ann = people
+    importer = store.add_role("Importer", ["import"])
+    assert store.role_info(importer)["permissions"] == ["view", "import"]
+    for name, alone in (("People desk", ["users"]), ("Settings only", ["settings"]), ("Confirms", ["confirm"])):
+        assert store.role_info(store.add_role(name, alone))["permissions"] == alone
+    store.edit_role(importer, "Importer", ["activity"], by_user=boss)
+    assert store.role_info(importer)["permissions"] == ["view", "activity"]
+    with store._conn() as conn:  # saved before the rule
+        conn.execute("UPDATE roles SET permissions = '[\"approve\"]' WHERE key = ?", (importer,))
+    store.set_role(ann, importer, by_user=boss)
+    assert store.role_info(importer)["permissions"] == store.user(ann)["permissions"] == ["view", "approve"]
+    assert [r["permissions"] for r in store.all_roles() if r["built_in"]] == [
+        ["view", "activity"], ["view", "activity", "import", "code", "approve", "export"],
+        ["view", "activity", "import", "code", "approve", "final_approve", "export", "post", "controls"],
+        ["view", "activity", "import", "code", "approve", "final_approve", "export", "post", "controls", "setup",
+         "undo", "settings", "users"], ["confirm"]]  # fmt: skip

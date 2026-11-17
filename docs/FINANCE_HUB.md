@@ -89,9 +89,11 @@ workflow_runs (run_id): import-<event> and hub_export-<event> are activity event
 
 - The invoice files (PDFs, pictures, emails): only `invoice_url`.
 - A vendor's bank details (in an event's detail they are shown as `(hidden)`), and the company's own bank accounts.
-- Sign-in events (logins, failed logins, passwords, unlocked addresses): the server's security record.
-- Settings, accounts and passwords (also their events in `activity`: user_added, role_changed, user_activated,
-  user_deactivated, backup_restored, settings_changed, tax_setup_changed, policy_changed), the learning memory's
+- Sign-in events (logins, failed logins, passwords, unlocked addresses, signed out everywhere): the server's security
+  record.
+- Settings, accounts, roles and passwords (also their events in `activity`: user_added, role_changed, user_activated,
+  user_deactivated, user_cost_centers_set, role_created, role_edited, role_deleted, backup_restored,
+  settings_changed, tax_setup_changed, policy_changed), the learning memory's
   lessons (a `lesson_explained` event in `activity` says who explained one and when, without the situation or AP's
   reason), imported ERP history.
 - The computer address a change was made from: it is not in `activity`'s details.
@@ -184,7 +186,7 @@ Key: `approval_id`. Changes: compared row by row with what was sent (a fingerpri
 | `step` | string | first or second. |
 | `approver_name` | string | The name on the approval. |
 | `approver_account` | string | The account that approved (the username, on the company server; the computer login on a laptop). |
-| `approver_role` | string | The account's role on the company server (clerk, approver, admin...). |
+| `approver_role` | string | The account's role on the company server: a built-in one by its key (readonly, clerk, approver, admin, manager), one made on the Admin panel by its name. |
 | `approved_at` | timestamp | When. |
 | `amount` | decimal(18,2) | The invoice total approved. |
 | `currency` | string | Its currency. |

@@ -276,14 +276,16 @@ def test_the_import_page_says_demo_invoices_are_loaded_and_never_asks_to_remove_
         assert "in the review queue, the exports and what AP Coder learns, beside your own" in notice
         assert 'href="/settings/data#demo"' in notice  # where they can be removed, for those who may
         page = client.get("/process").text
-        assert "Remove the demo invoices before" not in page and "Ask an Admin" not in page  # a flag, never an order
+        # a flag, never an order
+        assert "Remove the demo invoices before" not in page and "Ask someone who may" not in page
         assert 'id="upload-form"' in page  # and nothing is blocked
     assert store.demo_count() == 10  # nor removed
     account(store, "ann", "clerk", "Ann Lee")  # where people sign in, a Clerk may not remove them: told who can
     ann = server_client(store)
     log_in(ann, "ann")
     notice = _demo_notice(ann)
-    assert "<b>10 demo invoices loaded.</b>" in notice and "An Admin can remove them in Settings" in notice
+    assert "<b>10 demo invoices loaded.</b>" in notice
+    assert "Someone who may change settings can remove them in Settings" in notice
     assert "href=" not in notice
     remove_demo(store)
     assert _demo_notice(client) == ""  # none loaded: nothing to say

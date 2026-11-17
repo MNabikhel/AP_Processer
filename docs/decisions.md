@@ -5906,6 +5906,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     refuses a signed-in laptop folder (its D-211 doesn't know the setting): `--without-sign-in` at every start.
   - **Left out:** more than one account and a Users page on the laptop, a Settings switch, choosing another
     username than admin, admin / admin through `share` (its console still asks), the browser path behind `--proxy`.
+    Once a laptop has been shared with `share`, its data folder is a team's and signs in as a team's (`share`, or
+    the server): going back to the laptop's own sign-in is not offered (`users sign-in on` refuses it; laptop mode
+    again is `--without-sign-in`, with no sign-in). A laptop started with `--proxy` treats every request the proxy
+    passes on as this computer's: its Admin's sign-in (password and code) is reachable from wherever the proxy
+    is, though admin / admin is still refused there.
 - **D-244** · **Each Transaction Journal loaded keeps how its G/L dates were read: schema 28**
   (`journal_files.dates_read`, `core/store/migrations.py` `_v28_journal_dates`, `ops/journal_cmd.py`
   `_dated_otherwise`; B-2543; 13 Nov 2026).
@@ -6012,14 +6017,21 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     whose build time can't be told is never offered one.
   - **Asking:** the version, its day and up to 12 lines of notes, then "Update now? [Y/n]". `--yes` takes it; nobody
     at the window (`AP_NO_PAUSE`, no terminal) is said and not taken. No: that release is not asked about again
-    (`update_skipped` in `~/.ap_coder/settings.json`; `--update` asks again), and this version starts.
+    (`update_skipped` in `~/.ap_coder/settings.json`; `--update` asks again, typed in scripts\terminal.bat or a Mac's
+    Terminal, as the next start says), and this version starts; for the rest of that day GitHub is not asked at all
+    (`update_asked`, the day of the no: a build is released at each merge, so at most one question a day, B-2574). A
+    yes that could not be installed is asked again at the next start.
   - **Taking it:** the ZIP and `SHA256SUMS` from GitHub's hosts only (api.github.com, github.com,
     objects/release-assets.githubusercontent.com), every redirect checked, over HTTPS; the SHA-256 must match; the ZIP
     must be one folder named after it, with no name outside it (absolute, `..`, a drive, a backslash) and no link,
     holding AP Coder of the release's version; unzipped beside this folder (never over it, never in the data folder),
-    then renamed into place. Its own `APProcessor` then runs in this window as a double-click would (`handover`: this
+    then renamed into place (tried again for 5 seconds while it fails: an antivirus may still be reading the new
+    files, B-2576). Its own `APProcessor` then runs in this window as a double-click would (`handover`: this
     start's lock let go, `AP_UPDATE_FROM` so D-231's question is not asked twice), and takes over: stops nothing that
-    runs (nothing does yet), backs the database up, records itself, repoints the shortcut, cleans this folder up after
+    runs (nothing does yet), backs the database and the data folder's files up before it opens them, whether or not
+    its version changes the database (`backup_before_update`, D-143's `safety_copy`, B-2578; one that can't be made
+    stops it, nothing changed), copies the OCR models from this folder's .venv rather than downloading them again
+    (each checked as a download is, B-2575), records itself, repoints the shortcut, cleans this folder up after
     its self-check (what this window still holds open: on a later start). A failure is said, the download and a half
     unzipped folder deleted, and this version starts. A folder an earlier yes unzipped, the same build, is started
     again, not downloaded again.
@@ -6102,8 +6114,15 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **A role's name** is NFKC-normalised before it is compared with the built-in ones (full-width look-alikes), and
     never `role-<n>` (the console takes a key or a name). Look-alikes from other alphabets are not caught: an Admin
     names the roles, and a name only labels the permissions shown beside it.
-  - **A deleted role's key is never reused:** its row is kept, marked `deleted_at`, so old events and the finance hub
-    feed (which sends the key) never name another role by it; its name is free again.
+  - **A deleted role's key is never reused:** its row is kept, marked `deleted_at`, so old events never name another
+    role by it; its name is free again. The finance hub feed's `approver_role` sends a made role by its name
+    (B-2593), a built-in one by its key as before.
+  - **What works on invoices comes with view** (B-2592, `permissions.NEEDS_VIEW`): activity, import, code, approve,
+    final_approve, export, post, controls, setup and undo each bring "See invoices and reports", or a role's pages
+    led it to invoices and reports it could not open. Given when a role is saved (`_clean_permissions`) and on
+    reading one saved before (`permissions_of`, no migration); the Roles form ticks and locks the box with a note.
+    users, settings and confirm stay alone (a people desk, a settings role, a Manager); the built-in roles have it
+    already.
   - **A role either reviews invoices (code) or confirms as a manager (confirm), not both:** the manager's page shows
     only their own requests to a role without code, so a role with both would be offered as a manager and refused
     its answer; with code it opens every request anyway.
@@ -6113,3 +6132,24 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     roles only (it would let a person with a made role do nothing, and its console's list fails on one), refuses the
     database; going back uses the before-update backup (docs/UPGRADING.md).
   - **A laptop's own sign-in** has no Roles page: only its Admin signs in there (D-243).
+- **D-251** · **Past invoice coding: recent lines count more** (`ai/supplier_prior.py` `age_weight`,
+  `Prior.recent`, `Prior.weighed`; `Store.journal_last_date`; `web/account_lines.py` `why_words`; the owner's
+  decision; 17 Nov 2026). Refines D-248's "the supplier prior counts every line".
+  - **The rule:** a coding line of the journal counts 1 within 12 months of the latest G/L date of the journals
+    loaded, 0.5 from 12 to 24 months before it, 0.25 from 24 to 36, halving for each further year, never 0. The age
+    is measured from that latest date, not today, so a prior does not change from one day to the next and the tests
+    stay stable; loading a newer journal moves it. A supplier recoded in the latest year is offered its new account
+    while its older lines still outnumber it; one seen only years before keeps its own account (its lines all weigh
+    alike, so its shares are as before).
+  - **A line with no date** counts 1, as before: its age is not known, and a journal whose dates could not be read
+    (one printed with two-digit years, loaded before B-2580) is not made worth less than a dated one, nor less
+    against AP's approvals, without anyone being told.
+  - **AP's approvals here** keep their weights (3 as proposed, 5 coded or changed): as much against a line of the
+    latest year as before, more against older ones. Imported past coding and bulk approvals count 1, as before.
+  - **What a person reads:** the counts stay counts ("6 of this supplier's 18 lines posted in JD Edwards"); when a
+    supplier's shares are other than they would be with every line counting 1 (its lines' ages differ and they went
+    to more than one account: `_aged`), the reason, the shares of a line left for a person and the why under the
+    Account box add ", recent lines counting more" (`decided_by.recent`), so a share that is not lines over lines
+    by age is never shown unexplained; "24 of 24" over two years says nothing more.
+  - **Bench:** `bench coding --journal --quick` and `bench coding --quick` are the same before and after: the
+    made-up company's journal covers one year, every line within 12 months of its latest date.

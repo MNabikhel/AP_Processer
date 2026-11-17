@@ -1189,22 +1189,27 @@ def _png_dpi(xres: int, yres: int) -> tuple[float, float] | None:
 
 
 def layout_from_di(raw: dict[str, Any]) -> DocLayout | None:
-    """Words from an ``AnalyzeResult.as_dict()``: polygons in the page's unit, with confidence."""
+    """Words from an ``AnalyzeResult.as_dict()``: polygons in the page's unit, with confidence. A page or a word of
+    another shape (text for a number, no object) is left out, never a failure (D-245)."""
+    from . import _di_dict, _di_list, _di_number
+
     pages = []
-    for p in raw.get("pages") or []:
-        width, height = float(p.get("width") or 0), float(p.get("height") or 0)
-        number = int(p.get("pageNumber") or len(pages) + 1)
-        if not width or not height:
+    for p in map(_di_dict, _di_list(_di_dict(raw).get("pages"))):
+        width, height = _di_number(p.get("width")) or 0.0, _di_number(p.get("height")) or 0.0
+        number = int(_di_number(p.get("pageNumber")) or len(pages) + 1)
+        if width <= 0 or height <= 0:
             continue
         words = []
-        for w in p.get("words") or []:
-            poly = w.get("polygon") or []
-            if len(poly) < 8 or not (w.get("content") or "").strip():
+        for w in map(_di_dict, _di_list(p.get("words"))):
+            poly = [_di_number(v) for v in _di_list(w.get("polygon"))]
+            content = w.get("content") if isinstance(w.get("content"), str) else ""
+            if len(poly) < 8 or None in poly or not content.strip():
                 continue
             xs, ys = poly[0::2], poly[1::2]
             box = Box(number, min(xs) / width, min(ys) / height, max(xs) / width, max(ys) / height)
-            words.append(Word(w["content"].strip(), box, float(w.get("confidence") or 0.0), "di"))
-        pages.append(PageLayout(number, width, height, words, group_lines(words, number), int(p.get("angle") or 0)))
+            words.append(Word(content.strip(), box, _di_number(w.get("confidence")) or 0.0, "di"))
+        angle = int(_di_number(p.get("angle")) or 0)
+        pages.append(PageLayout(number, width, height, words, group_lines(words, number), angle))
     return DocLayout(pages, "di") if pages else None
 
 

@@ -273,7 +273,8 @@ def test_share_starts_nothing_beside_an_ap_coder_already_running_on_this_data(la
     httpd, _ = team_server_stand_in(data, https=False, server_mode=False)  # the owner's own window, laptop mode
     try:
         assert cli.main(["share"]) == 1
-        assert "Close it first" in capsys.readouterr().out
+        said = capsys.readouterr().out
+        assert "Close it first" in said and "without sign-in" not in said  # (it may sign in now, D-243: B-2570)
         assert cli.main(["share", "--stop"]) == 0  # (not shared: nothing of the owner's window is stopped)
         assert "nothing to stop" in capsys.readouterr().out
     finally:

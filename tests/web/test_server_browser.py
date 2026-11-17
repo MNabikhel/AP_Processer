@@ -402,3 +402,24 @@ def test_in_a_browser_the_review_screen_stops_following_the_reading_once_the_ses
     assert "/review/" in page.url  # the screen stays as it is, with the edits
     _said_ended(page)  # (and says why, the screen kept in the tab: D-185)
     assert errors == []
+
+
+def test_in_a_browser_the_role_form_ticks_and_locks_see_invoices(browser, store):
+    """B-2592: ticking what works on invoices ticks See invoices and reports and locks it; unticked, it is free."""
+    page, errors = _log_in(browser, store, "boss")
+    page.goto(f"{browser[1]}/admin/roles/new")
+    view = page.locator("input[name=permissions][value=view]")
+    imports = page.locator("input[name=permissions][value=import]")
+    assert not view.is_checked() and view.is_enabled()
+    imports.check()
+    assert view.is_checked() and view.is_disabled()
+    imports.uncheck()
+    assert view.is_enabled()
+    imports.check()
+    page.fill("input[name=name]", "Importer")
+    page.click("button:has-text('Make the role')")
+    page.wait_for_url("**/admin/roles/role-*")
+    (made,) = store.custom_roles()
+    assert made["permissions"] == ["view", "import"]
+    assert page.locator("input[name=permissions][value=view]").is_disabled()
+    assert errors == []

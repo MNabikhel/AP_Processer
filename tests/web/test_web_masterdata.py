@@ -206,12 +206,12 @@ def test_a_clerk_cannot_take_a_vendor_off_hold(held):
     store, key, clients = held
     answer = clients["clerk"].post("/vendors/save", data={"key": key, "status": "active", "notes": "ok now"},
                                    headers=PAGE)  # fmt: skip
-    assert answer.status_code == 403 and "Only an Approver can take a vendor off hold." in answer.text
+    assert answer.status_code == 403 and "Only someone who may lift holds takes a vendor off hold." in answer.text
     saved = store.get_vendor(key)
     assert saved["status"] == ON_HOLD and saved["notes"] == "bank details changed"
     detail = clients["clerk"].get("/vendors?" + urlencode({"open": key})).text
     assert re.search(r'<input type="radio" name="status" value="active"[^>]* disabled', detail)
-    assert "Only an Approver can take a vendor off hold." in detail
+    assert "Only someone who may lift holds takes a vendor off hold." in detail
 
 
 def test_a_clerk_may_still_edit_a_held_vendors_notes_and_put_a_vendor_on_hold(held):
@@ -236,7 +236,7 @@ def test_a_clerk_cannot_change_a_held_vendors_tax_numbers(held, field):
                       qst_number=numbers["qst_number"], pst_number=numbers["pst_number"])  # fmt: skip
     form = {"key": key, "status": ON_HOLD, **numbers}
     refused = clients["clerk"].post("/vendors/save", data={**form, field: ""}, headers=PAGE)
-    assert refused.status_code == 403 and "Only an Approver can change" in refused.text
+    assert refused.status_code == 403 and "Only someone who may lift holds changes" in refused.text
     assert store.get_vendor(key)[field] == numbers[field]
     detail = clients["clerk"].get("/vendors?" + urlencode({"open": key})).text
     assert re.search(rf'name="{field}" value="[^"]*"[^>]* readonly', detail)
@@ -1097,7 +1097,7 @@ def test_no_bank_accounts_yet_says_what_this_person_can_do(store):
         log_in(client, role)
         page = client.get("/accounts?tab=bank").text
         said[role] = page.split("No bank accounts yet", 1)[1].split("</div>", 1)[0]
-    assert "An Approver or an Admin adds them" in said["clerk"] and "grid" not in said["clerk"]
+    assert "Someone who may keep the bank accounts adds them" in said["clerk"] and "grid" not in said["clerk"]
     assert "Type them in the grid below." in said["approver"] and "Import" not in said["approver"]
     assert "Import them above, or type them in the grid below." in said["admin"]
 

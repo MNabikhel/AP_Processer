@@ -37,8 +37,8 @@ OWN_RESET = (
     "would log you out before its temporary password is shown."
 )
 OWN_AUTHENTICATOR = (
-    "This is your own account: ask another Admin to reset your authenticator (or IT, at the server's console: users "
-    "reset-2fa). A reset here would log you out before its temporary password is shown."
+    "This is your own account: ask someone else who may manage users to reset your authenticator (or IT, at the "
+    "server's console: users reset-2fa). A reset here would log you out before its temporary password is shown."
 )
 _waiting: dict[str, tuple[float, int, str, str]] = {}  # key -> (when, the Admin's id, username, password)
 _lock = threading.Lock()

@@ -70,8 +70,9 @@ from ap_coder.web.files import (
 from ap_coder.web.invoice_grid import gl_name
 
 router = page_router()  # each plain handler: one connection a request
-LIFT_HOLD = "Only an Approver can take a vendor off hold."
-HELD_NUMBERS = "Only an Approver can change the tax numbers of a vendor on hold."  # what the hold is matched by
+LIFT_HOLD = "Only someone who may lift holds takes a vendor off hold."
+# what the hold is matched by
+HELD_NUMBERS = "Only someone who may lift holds changes the tax numbers of a vendor on hold."
 
 SORTS = {
     "spend": "Spend: high to low",

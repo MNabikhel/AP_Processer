@@ -161,7 +161,8 @@ def _restore(backup: Path, db: Path, yes: bool) -> int:
             print(f"The database here could not be opened ({damaged}): it was moved to {aside}, and the restore goes "
                   "on as onto a data folder with no database.")  # fmt: skip
             store = Store(db)
-        done = store.restore_state(backup, keep_accounts=server or store.get_setting(SIGN_IN) in LAPTOPS)  # (D-243)
+        keep = server or store.get_setting(SIGN_IN) in LAPTOPS or bool(store.user_count())  # (D-243; a team's, B-2566)
+        done = store.restore_state(backup, keep_accounts=keep)
     except (ValueError, OSError) as exc:
         print(f"Not restored: {exc}.", file=sys.stderr)
         return 1

@@ -70,7 +70,7 @@
       <div class="flash info" role="status" id="demo-loaded"><span class="ms" aria-hidden="true">science</span>
         <div><b>{{ demo_count | plural("demo invoice") }} loaded.</b> Demo invoices are in the review queue, the exports and what AP Coder learns, beside your own.
           {% if can("/demo/remove") and can("/settings/data", "GET") %}They can be removed in <a href="/settings/data#demo">Settings → Data &amp; backups</a>.
-          {%- else %}An Admin can remove them in Settings → Data &amp; backups.{% endif %}</div></div>
+          {%- else %}Someone who may change settings can remove them in Settings → Data &amp; backups.{% endif %}</div></div>
       {% endif %}
       <p class="muted">Each file is saved to the invoices folder {{ "on the server" if server_mode else "on this computer" }}, then read, coded and checked. A photo or
         a scanned picture is made into a PDF first; the picture is kept in the <code>originals</code> folder there.</p>
@@ -95,7 +95,7 @@
           <button class="btn primary" type="submit" id="upload-go" disabled data-ready="{{ 'yes' if ready else 'no' }}">
             <span class="ms" aria-hidden="true">play_arrow</span><span id="upload-label">Process uploaded invoices</span>
           </button>
-          {% if not ready %}<span class="muted">Finish the setup first (GL accounts){% if not can("/review/sample-gl") %}: an Admin imports them{% endif %}.</span>{% endif %}
+          {% if not ready %}<span class="muted">Finish the setup first (GL accounts){% if not can("/review/sample-gl") %}: someone who may change the setup imports them{% endif %}.</span>{% endif %}
         </div>
       </form>
       {% if not ready and can("/review/sample-gl") %}

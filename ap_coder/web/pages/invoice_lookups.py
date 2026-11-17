@@ -211,13 +211,15 @@ def add_vendor(
         return refuse("Choose a province from the list.")
     an8 = an8.strip()
     if an8 and not is_admin(request):
-        return refuse("Only an Admin sets a vendor's JD Edwards address number (Settings → JD Edwards E1).", 403)
+        return refuse("Only someone who may change settings sets a vendor's JD Edwards address number "
+                      "(Settings → JD Edwards E1).", 403)  # fmt: skip
     if an8 and (not an8.isdigit() or len(an8) > 8):
         return refuse(f"“{an8}” is not a JD Edwards address number (AN8): digits only, up to 8.")
     before = store.get_vendor(vendor_key(name)) or {}
     if (before.get("status") == ON_HOLD or before.get("erp_hold")) and not may_lift_hold(request):
         held = before.get("display_name") or name  # its numbers replaced, the hold would not catch them (B-1554)
-        return refuse(f"{held} is on hold: only an Approver can change its tax numbers. Pick it from the list.", 403)
+        return refuse(f"{held} is on hold: only someone who may lift holds can change its tax numbers. Pick it "
+                      "from the list.", 403)  # fmt: skip
     try:
         store.add_vendor_here(name, gst=gst, qst=qst, pst=pst, province=province, actor=reviewer(),
                               invoice_id=invoice_id)  # fmt: skip

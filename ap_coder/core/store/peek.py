@@ -6,7 +6,18 @@ library only, and nothing imported from the package."""
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
+from pathlib import Path, PurePath
+
+
+def read_only_uri(db: PurePath, how: str) -> str:
+    """The SQLite URI that opens ``db`` (an absolute path: ``resolve`` it first) with ``how`` ("mode=ro", ...). A
+    Windows network path (``\\\\server\\share``, which ``resolve`` also makes of a mapped drive) goes in the URI's
+    path, its authority left empty (``file:////server/share/...``): ``as_uri`` names the server as the authority
+    (``file://server/share/...``), which SQLite refuses ("invalid uri authority", B-2569)."""
+    uri = db.as_uri()
+    if not uri.startswith("file:///"):
+        uri = "file:////" + uri[len("file://") :]
+    return f"{uri}?{how}"
 
 
 def _read(db: Path, sql: str, params: tuple = ()) -> tuple | None:
@@ -14,7 +25,7 @@ def _read(db: Path, sql: str, params: tuple = ()) -> tuple | None:
     ``users.sign_in_accounts`` reads it); None when the file is not there or can't be read."""
     how = "mode=ro" if db.with_name(db.name + "-wal").exists() else "mode=ro&immutable=1"
     try:
-        conn = sqlite3.connect(f"{db.resolve().as_uri()}?{how}", uri=True, timeout=5)
+        conn = sqlite3.connect(read_only_uri(db.resolve(), how), uri=True, timeout=5)
         try:
             return conn.execute(sql, params).fetchone() or ()
         finally:

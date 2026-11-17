@@ -31,7 +31,7 @@
   {% else %}
   <section class="card">
     <h4><span class="ms" aria-hidden="true">fact_check</span> 2. The setup report</h4>
-    <p class="muted">An Admin copies it from this page: it says which versions and settings the server runs.</p>
+    <p class="muted">Someone who may change settings copies it from this page: it says which versions and settings the server runs.</p>
   </section>
   {% endif %}
 
@@ -62,7 +62,7 @@
       <ul>{% for path in logs %}<li><code>{{ path }}</code></li>{% endfor %}</ul>
     </details>
     {% else %}
-    <p class="muted">The full details are kept in the server's log: an Admin can attach it if you are asked to.</p>
+    <p class="muted">The full details are kept in the server's log: someone who may change settings can attach it if you are asked to.</p>
     {% endif %}
   </section>
 </div>

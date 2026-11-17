@@ -290,7 +290,7 @@ def release(store: Any, batch: int, invoice_id: int, actor: str | None, note: st
         raise ValueError(f"AP Coder #{invoice_id} is posted to JD Edwards: reverse it there (void the voucher).")
     if row["status"] == SENDING:
         raise ValueError(f"AP Coder #{invoice_id} is being sent to JD Edwards: wait for its answer.")
-    error = f"Released by {actor or 'an Admin'} after checking in JD Edwards: {note}"[:500]
+    error = f"Released by {actor or 'someone'} after checking in JD Edwards: {note}"[:500]
     if not _put(store, row["idem_key"], invoice_id, batch, rev=row["rev"], status=FAILED, maybe_sent=0, verify=0,
                 next_try=None, error=error):  # fmt: skip
         raise ValueError(f"AP Coder #{invoice_id} changed meanwhile: look at it again.")

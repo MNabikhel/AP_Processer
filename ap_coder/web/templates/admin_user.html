@@ -138,7 +138,7 @@
       <tbody>
         {% for e in events %}
         <tr><td>{{ e.when }}</td><td>{{ ui.pill(e.what, e.tone, e.icon) }}</td>
-          <td class="w">{% if e.invoice_id and e.invoice and not e.invoice.endswith("(deleted)") %}<a href="/review/{{ e.invoice_id }}">{{ e.invoice }}</a>{% else %}{{ e.invoice }}{% endif %}</td>
+          <td class="w">{% if e.invoice_id and e.invoice and not e.invoice.endswith("(deleted)") and can("/review/1", "GET") %}<a href="/review/{{ e.invoice_id }}">{{ e.invoice }}</a>{% else %}{{ e.invoice }}{% endif %}</td>
           <td class="w">{{ e.details }}</td></tr>
         {% endfor %}
       </tbody>

@@ -319,7 +319,8 @@ def internal_address(host: str, resolve: Callable[[str], list[str]] | None = Non
     public = [a for a in found if not _private(a, shared)]
     if public and not anything:
         where = "" if found == [bare] else f" ({public[0]})"
-        cgnat = (" (100.64.0.0/10: an Admin ticks \u201cthis address is on our network\u201d if it is)"
+        cgnat = (" (100.64.0.0/10: someone who may change settings ticks "
+                 "\u201cthis address is on our network\u201d if it is)"
                  if any(_private(a, True) for a in public) else "")  # fmt: skip
         return (f"{host} is an address on the internet{where}: AP Coder connects only to an AIS Server on your "
                 f"company's network{cgnat}."), ""  # fmt: skip

@@ -1068,6 +1068,42 @@ def test_offline_models_are_never_downloaded_and_a_failure_is_said_once(launch, 
     assert out.count("Not tried again") == 1
 
 
+@pytest.mark.parametrize("site", ["lib/python3.12/site-packages", "Lib/site-packages"])
+def test_an_update_copies_the_older_installs_ocr_models_instead_of_downloading_them(
+    launch, no_models, monkeypatch, capsys, tmp_path, site
+):
+    """Each update is a new folder with a new .venv (D-247): the OCR models of the AP Coder it updates are copied,
+    each checked as a download is (``fetch_models.intact``), not downloaded again. When one is not right there, they
+    are downloaded, as before."""
+    fetch_models, downloads = no_models
+    from ap_coder.core import paths
+    from ap_coder.ops import offline
+
+    monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
+    monkeypatch.setattr(offline, "table_finder_path", lambda: tmp_path / "finder.onnx")  # (in the data folder)
+    monkeypatch.setattr(fetch_models, "intact", lambda path, model: path.is_file() and path.read_bytes() == b"ok")
+    older = tmp_path / "AP_Processer-main"
+    models = older / ".venv" / site / "rapidocr" / "models"
+    models.mkdir(parents=True)
+    for model in offline.ocr_files():
+        (models / model.name).write_bytes(b"ok")
+    monkeypatch.setenv(launch.releases.UPDATE_FROM_ENV, str(older))
+    state: dict = {}
+    launch.ensure_models(first=True, state=state)
+    out = capsys.readouterr().out
+    assert downloads == [] and "Copying the OCR models from the older AP Coder" in out
+    assert "copied from the older AP Coder" in out and "Downloading" not in out and "models_failed" not in state
+    assert all(fetch_models.intact(offline.model_dir() / m.name, m) for m in offline.ocr_files())
+
+    for model in offline.ocr_files():  # never taken from an older install whose models are not all right
+        (offline.model_dir() / model.name).unlink()
+    (models / offline.ocr_files()[0].name).write_bytes(b"damaged")
+    monkeypatch.delenv(launch.releases.UPDATE_FROM_ENV)
+    paths.write_user_settings(installs=[{"folder": str(older), "version": "0.3.0"}])  # (on record: found too)
+    launch.ensure_models(first=True, state={})
+    assert downloads and "Copying the OCR models from the older AP Coder" not in capsys.readouterr().out
+
+
 def test_models_are_downloaded_only_with_the_opt_in(launch, no_models, monkeypatch, capsys):
     fetch_models, downloads = no_models
     monkeypatch.setenv("AP_ALLOW_INTERNET", "1")

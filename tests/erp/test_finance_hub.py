@@ -168,6 +168,27 @@ def test_a_reopened_approval_is_marked_withdrawn(store, tmp_path):
     assert approval["withdrawn"] is True and approval["withdrawn_at"]
 
 
+def test_an_approvers_role_made_here_is_sent_by_its_name(store):
+    """B-2593: ``approver_role`` sent "role-1" for a role made on the Admin panel (D-250), a key nobody reading the
+    hub could tell; a built-in role is sent as before (clerk, approver, admin...)."""
+    lead = store.add_role("AP lead", ["view", "approve"])
+    ann = store.add_user("ann", "correct horse battery", role="clerk", must_change=False)
+    bob = store.add_user("bob", "correct horse battery", role=lead, must_change=False)
+    events = [
+        {
+            "id": n,
+            "action": "approved",
+            "invoice_id": n,
+            "actor": who,
+            "created_at": "2026-11-17T10:00:00",
+            "detail": {"user_id": uid, "total": 100.0},
+        }
+        for n, (who, uid) in enumerate((("Ann", ann), ("Bob", bob)), 1)
+    ]
+    rows = tables.approvals(store, tables.Context(), events)
+    assert [(r["approver_account"], r["approver_role"]) for r in rows] == [("ann", "clerk"), ("bob", "AP lead")]
+
+
 def test_sign_in_events_and_bank_details_stay_out_of_activity(store):
     store.log_event("login_failed", actor="someone", detail={"username": "x"})
     store.log_event(
@@ -621,6 +642,20 @@ def test_account_and_settings_events_stay_out_of_activity(store):
                    "settings_changed", "login", "logout", "login_failed", "login_mfa_failed",
                    "authenticator_enrolled", "authenticator_reset"):  # fmt: skip
         store.log_event(action, actor="Admin", detail={"username": "ann"})
+    store.log_event("note", 1, "Jane", {"text": "kept"})
+    assert [r["action"] for r in tables.build(store, "activity", tables.Context())] == ["note"]
+
+
+def test_the_roles_and_the_sign_outs_stay_out_of_activity_too(store):
+    """B-2586: the roles made, changed and deleted on the Admin panel (D-250), an account signed out everywhere
+    (D-249) and a Manager's cost centers were sent to the hub's activity, which leaves the accounts out."""
+    boss = store.add_user("boss", "correct horse battery", role="admin", must_change=False)
+    key = store.add_role("AP lead", ["view", "code"], actor="Pat Boss")
+    store.edit_role(key, "AP leads", ["view"], actor="Pat Boss")
+    store.delete_role(key, actor="Pat Boss")
+    ann = store.add_user("ann", "correct horse battery", role="manager", must_change=False)
+    store.set_user_cost_centers(ann, "CC-200", actor="Pat Boss")
+    store.sign_out_everywhere(ann, actor="Pat Boss", by_user=boss)
     store.log_event("note", 1, "Jane", {"text": "kept"})
     assert [r["action"] for r in tables.build(store, "activity", tables.Context())] == ["note"]
 

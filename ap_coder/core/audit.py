@@ -586,7 +586,7 @@ def _account_text(action: str, d: dict[str, Any]) -> str | None:
         if action.startswith("role_") and action != "role_changed":  # a role made, changed or deleted (D-250)
             return _role_text(action, d)
         roles = {
-            "role": role(d.get("role")),
+            "role": d.get("role_name") or role(d.get("role")),
             "was": d.get("from_name") or role(d.get("from")),
             "now": d.get("to_name") or role(d.get("to")),
         }  # (a role made here: its name then, D-250)

@@ -107,7 +107,7 @@
     summary is shown first; nothing is loaded until you say so.</p>
   </div>
   {% else %}
-  <p class="muted">{{ imp.done_by("An Admin loads the past coding.", "The past coding is loaded") }}</p>
+  <p class="muted">{{ imp.done_by("Someone who may change the setup loads the past coding.", "The past coding is loaded") }}</p>
   {% endif %}
   {% endif %}
   {% if history_count and can("/learning/history/forget") %}

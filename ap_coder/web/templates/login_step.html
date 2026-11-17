@@ -85,12 +85,16 @@
                  maxlength="8" required autofocus></label>
         <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">verified_user</span>Confirm</button>
       </form>
-      {% if only_admin %}
+      {% if only_admin and console %}
+      <p class="muted">Keep the app on your phone. You are the only Admin: if you lose your phone or get a new one,
+        {{ console.where }} <code>{{ console.python }} users reset-2fa {{ username }}</code>, then set the app up
+        again.</p>
+      {% elif only_admin %}
       <p class="muted">Keep the app on your phone. You are the only Admin: if you lose your phone or get a new one,
         type <code>python -m ap_coder users reset-2fa {{ username }}</code> in a command window on the computer running
         AP Coder (on a laptop, <code>scripts\terminal.bat</code> in the AP Coder folder), then set the app up again.</p>
       {% else %}
-      <p class="muted">Keep the app on your phone. If you lose your phone or get a new one, ask an Admin to reset your
+      <p class="muted">Keep the app on your phone. If you lose your phone or get a new one, ask someone who may manage users to reset your
         authenticator, and set it up again.</p>
       {% endif %}
       {% endif %}
@@ -104,12 +108,15 @@
                  maxlength="8" required autofocus></label>
         <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">login</span>Log in</button>
       </form>
-      {% if only_admin %}
+      {% if only_admin and console %}
+      <p class="muted">Lost your phone, or got a new one? You are the only Admin: {{ console.where }}
+        <code>{{ console.python }} users reset-2fa {{ username }}</code>.</p>
+      {% elif only_admin %}
       <p class="muted">Lost your phone, or got a new one? You are the only Admin: type
         <code>python -m ap_coder users reset-2fa {{ username }}</code> in a command window on the computer running AP
         Coder (on a laptop, <code>scripts\terminal.bat</code> in the AP Coder folder, its black window closed first).</p>
       {% else %}
-      <p class="muted">Lost your phone, or got a new one? Ask an Admin to reset your authenticator.</p>
+      <p class="muted">Lost your phone, or got a new one? Ask someone who may manage users to reset your authenticator.</p>
       {% endif %}
       {% endif %}
       <p class="muted"><a href="/login">Not you? Log in again.</a></p>

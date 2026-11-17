@@ -21,8 +21,10 @@ accents or punctuation and "&" as "and":
 * a whole-name match wins over a cut one, and when two supplier numbers of the journal still fit, neither is taken
   (``Prior.note`` says so): two suppliers whose names start with the same 26 characters cannot be told apart by name.
 
-What counts for how much. A coding line of the journal counts 1 (``JOURNAL_WEIGHT``; so does a line of imported past
-coding or one approved in bulk, which nobody looked at); a line a person approved here as proposed counts 3
+What counts for how much. A coding line of the journal counts 1 (``JOURNAL_WEIGHT``) within 12 months of the latest
+G/L date of the journals loaded, half as much for each year older (``age_weight``, D-251: a supplier recoded last
+year is offered its new account, and one seen only long ago still has its own); a line of imported past coding or one
+approved in bulk, which nobody looked at, counts 1; a line a person approved here as proposed counts 3
 (``APPROVAL_WEIGHT``); a line a person coded or changed here counts 5 (``CORRECTION_WEIGHT``): a correction outweighs
 history. An account's ``share`` is its weight over the supplier's. The remarks AP approved here are counted with the
 journal's the same way (``_Counted.remarked``, D-213): one a person typed counts 5, one a person approved as
@@ -38,6 +40,7 @@ journal loaded has no prior (``EMPTY``): nothing of this is used there.
 
 from __future__ import annotations
 
+import datetime as dt
 import math
 import re
 import threading
@@ -56,6 +59,7 @@ from ..core.store.journal import supplier_key
 from .line_match import PREFIX, Index, keys, similarity, word_match
 
 JOURNAL_WEIGHT = 1.0  # a coding line of the journal (or of imported past coding, or approved in bulk)
+AGE_HALVES = 12  # months: a journal line counts half as much for each this many it is older than the latest G/L date
 APPROVAL_WEIGHT = 3.0  # a line a person approved in AP Coder as it was proposed
 CORRECTION_WEIGHT = 5.0  # a line a person coded or changed in AP Coder: a correction outweighs history
 WEIGHTS = {ACCEPTED: APPROVAL_WEIGHT, CORRECTED: CORRECTION_WEIGHT, CODED: CORRECTION_WEIGHT}
@@ -85,6 +89,19 @@ _PERIOD = re.compile(
     rf"(?<![a-z0-9])(?:(?:{_MONTHS})(?![a-z])\.?(?:\s*[/'-]?\s*(?:20)?\d\d(?!\d))?|q[1-4](?![a-z0-9])|"
     r"(?:19|20)\d\d(?!\d)|\d{5,})"
 )
+
+
+def age_weight(gl_date: Any, latest: Any) -> float:
+    """What a coding line of the journal counts for by its age (D-251): ``JOURNAL_WEIGHT`` within ``AGE_HALVES``
+    months of ``latest`` (the latest G/L date of the journals loaded: not today, so a prior does not change from one
+    day to the next), half as much for each further ``AGE_HALVES``, never 0. A line whose date could not be read
+    counts in full, as before: its age is not known, and a journal read without its dates is not made worth less."""
+    try:
+        day, last = dt.date.fromisoformat(str(gl_date or "")), dt.date.fromisoformat(str(latest or ""))
+    except ValueError:
+        return JOURNAL_WEIGHT
+    months = (last.year - day.year) * 12 + last.month - day.month - (last.day < day.day)
+    return JOURNAL_WEIGHT * 0.5 ** (max(0, months) // AGE_HALVES)
 
 
 def remark_shape(remark: Any) -> str:
@@ -154,6 +171,7 @@ class Prior:
     latest_approved_on: str = ""
     word_lines: Mapping[str, Mapping[str, int]] = field(default_factory=dict)  # a word -> {account: lines with it}
     word_weight: Mapping[str, float] = field(default_factory=dict)  # a word several accounts share counts for less
+    recent: bool = False  # its lines' ages (``age_weight``) made its shares other than they would be without them
     # A word of AP's remarks for the supplier that only one of its business units' lines have, on ``UNIT_WORD_LINES``
     # lines at least ("4410 Alder" on Facilities alone): what tells a unit apart when the line says it (D-226).
     unit_words: Mapping[str, str] = field(default_factory=dict)
@@ -185,6 +203,12 @@ class Prior:
         if top.weight / weight < SURE_SHARE or latest > top.newest:
             return None
         return top
+
+    @property
+    def weighed(self) -> str:
+        """What its counts are said with when its shares are not theirs: its lines of different ages count for
+        different weights (``recent``)."""
+        return ", recent lines counting more" if self.recent else ""
 
     def shares(self, most: int = 4) -> str:
         """The accounts' shares, the largest first: "60% / 25% / 15%"."""
@@ -221,6 +245,7 @@ class Candidate:
     name: str = ""  # the account's name
     example: str = ""  # a remark AP usually wrote for it, as written
     reasons: list[str] = field(default_factory=list)
+    recent: bool = False  # its supplier's lines count by their age: ``share`` is not ``lines`` over ``of`` (D-251)
 
     def decided(self) -> dict[str, Any]:
         """What decided a line coded to this candidate with no one picking (``LineItem.decided_by``): where the
@@ -228,6 +253,8 @@ class Candidate:
         vendor's own approvals."""
         source = "vendor" if self.source == "usual" else self.source
         counts = {"lines": self.lines, "of": self.of, "share": round(self.share, 4)} if self.of else {}
+        if self.of and self.recent:
+            counts["recent"] = True
         return decided(source, usual=True if self.source == "usual" else None, **counts)
 
     def kept(self) -> dict[str, Any]:
@@ -354,6 +381,7 @@ class _Count:
     def __init__(self) -> None:
         self.journal_lines = self.approved = self.other = self.invoices = self.newest = 0
         self.weight = 0.0
+        self.unaged = 0.0  # ``weight`` with every journal line counting ``JOURNAL_WEIGHT``, whatever its age
         self.vouchers: set[Any] = set()
         self.last = ""
         self.shapes: Counter[str] = Counter()
@@ -378,13 +406,15 @@ class _Counted:
         for word in keys(str(text or "")):
             self.words.setdefault(word, Counter())[join_account(*pair)] += lines
 
-    def journal(self, lines: list[dict[str, Any]]) -> None:
-        """The journal's coding lines of the supplier, the oldest first (``Store.journal_lines_for``)."""
+    def journal(self, lines: list[dict[str, Any]], latest: str = "") -> None:
+        """The journal's coding lines of the supplier, the oldest first (``Store.journal_lines_for``), each counting by
+        its age from ``latest``, the latest G/L date of the journals loaded (``age_weight``)."""
         for line in lines:
             pair = (clean(line["business_unit"]), code_of(line["object"], line["subsidiary"]))
             use = self.uses.setdefault(pair, _Count())
             use.journal_lines += 1
-            use.weight += JOURNAL_WEIGHT
+            use.weight += age_weight(line["gl_date"], latest)
+            use.unaged += JOURNAL_WEIGHT
             use.vouchers.add(line["voucher_id"])
             use.last = max(use.last, str(line["gl_date"] or ""))
             self.vouchers[line["voucher_id"]] = int(line["voucher_coding_lines"] or 1)
@@ -406,6 +436,7 @@ class _Counted:
             use = self.uses.setdefault(pair, _Count())
             n, by_person = int(row["lines"]), row["outcome"] in WEIGHTS
             use.weight += n * WEIGHTS.get(row["outcome"], JOURNAL_WEIGHT)
+            use.unaged += n * WEIGHTS.get(row["outcome"], JOURNAL_WEIGHT)
             use.approved += n if by_person else 0
             use.other += 0 if by_person else n
             use.invoices += int(row["invoices"] or 0)
@@ -469,11 +500,12 @@ def _use(pair: tuple[str, str], u: _Count, weight: float) -> AccountUse:
 
 
 def _built(number: str, name: str, found_by: str, note: str, lines: list[dict[str, Any]],
-           approved: dict[str, Any], offices: frozenset[str] = frozenset()) -> Prior:  # fmt: skip
+           approved: dict[str, Any], offices: frozenset[str] = frozenset(), latest: str = "") -> Prior:  # fmt: skip
     """The prior from a supplier's journal lines and the vendor's lessons counted; ``offices``: the journal's words
-    that say for whom (``_offices``), for ``Prior.unit_words``."""
+    that say for whom (``_offices``), for ``Prior.unit_words``; ``latest``: the latest G/L date of the journals
+    loaded, the lines' age is measured from (``age_weight``)."""
     counted = _Counted()
-    counted.journal(lines)
+    counted.journal(lines, latest)
     counted.approved(approved)
     weight = sum(u.weight for u in counted.uses.values())
     if weight <= 0:
@@ -496,7 +528,15 @@ def _built(number: str, name: str, found_by: str, note: str, lines: list[dict[st
         latest_approved=counted.latest[1], latest_approved_on=counted.latest[2],
         word_lines={w: dict(c) for w, c in counted.words.items()},
         word_weight={w: 1.0 / len(c) for w, c in counted.words.items() if len(c) > 1},
+        recent=_aged(counted.uses.values(), weight),
     )  # fmt: skip
+
+
+def _aged(uses: Any, weight: float) -> bool:
+    """Whether the lines' ages changed the accounts' shares (``Prior.recent``): not when every line is of the latest
+    year, nor when all of them went to one account."""
+    unaged = sum(u.unaged for u in uses)
+    return any(abs(u.weight / weight - u.unaged / unaged) > 1e-9 for u in uses)
 
 
 def _unit_words(uses: Mapping[tuple[str, str], _Count], offices: frozenset[str]) -> dict[str, str]:
@@ -533,9 +573,10 @@ def prior_for(store: Any, vendor: Any, always: bool = False) -> Prior:
             return EMPTY
         lines, found_by, note = _journal_lines(store, names, name, number) if names else ([], "", "")
         offices = _offices(store, stamp[0]) if names else frozenset()
+        latest = _kept(("latest", str(store.path)), stamp[0], store.journal_last_date) if names else ""
         return replace(_built(str(lines[-1]["supplier_number"]).strip() if lines else "",
                               str(lines[-1]["supplier_name"]) if lines else "", found_by, note, lines,
-                              store.approved_coding(key), offices), journal=bool(names))  # fmt: skip
+                              store.approved_coding(key), offices, latest), journal=bool(names))  # fmt: skip
 
     prior = _kept(("prior", str(store.path), key, number, "" if number else _plain(name), always), stamp, make)
     if prior.journal and not prior:  # a supplier the journal does not have: offered from the journal as a whole
@@ -852,7 +893,7 @@ def _why(prior: Prior, use: AccountUse, line: frozenset[str], remark: float, own
          name_keys: frozenset[str]) -> list[str]:  # fmt: skip
     """Why this account is offered, in plain words with the counts: its share of the supplier's lines, then the
     words of the line that go with it."""
-    said = [f"{use.lines} of this supplier's {prior.total_said()}"]
+    said = [f"{use.lines} of this supplier's {prior.total_said()}{prior.weighed}"]
     best: tuple[float, int, int, str] | None = None
     for word in sorted(line):  # (of two words that say as much, the first in the alphabet: the same every time)
         counts = prior.word_lines.get(word)
@@ -899,6 +940,6 @@ def rank(prior: Prior, line_text: str, reference: ReferenceData) -> list[Candida
     return [
         Candidate(account=use.account, business_unit=use.business_unit, code=use.code, score=score,
                   reason="; ".join(why), source="supplier", lines=use.lines, of=prior.lines, share=use.share,
-                  example=use.remarks[0].example if use.remarks else "", reasons=why)
+                  example=use.remarks[0].example if use.remarks else "", reasons=why, recent=prior.recent)
         for score, use, why in scored
     ]  # fmt: skip

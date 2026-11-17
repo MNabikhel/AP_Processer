@@ -3,7 +3,7 @@
 * **A role made here** (``roles``): its key (``role-<n>``, kept in ``users.role``), its name (unique, not one of the
   built-in ones, case aside) and its permissions (a JSON list of ``permissions.PERMISSIONS``' keys). Made from scratch
   or from another role's permissions, changed, and deleted only while no account has it (its row kept, marked
-  ``deleted_at``, so its key is never given to another role: old events and the finance hub feed name it). A
+  ``deleted_at``, so its key is never given to another role: old events name it). A
   built-in role is never stored: its permissions are fixed in the code.
 * **Who manages the people** is any active account whose role has ``users`` (``_active_admins``): there is always one
   (``LAST_ADMIN``); an Admin never takes it from themselves (``OWN_USERS``), by their own role nor by changing the
@@ -30,7 +30,8 @@ from .dialect import begin_write, in_list, nocase
 
 CUSTOM = "role-"  # the key of a role made here: role-1, role-2...
 MAX_ROLE_NAME = 40
-OWN_USERS = ("You can't take away your own Manage users and roles: another Admin changes your role, so AP Coder "
+OWN_USERS = ("You can't take away your own Manage users and roles: someone else who may manage users changes "
+             "your role, so AP Coder "
              "always has someone who can.")  # fmt: skip
 ROLE_IN_USE = "{name} is the role of {count}: give them another role first, then delete it."
 GIVES_MORE = "You can't give more than your own role may do ({missing}): someone whose role has that does it."
@@ -68,6 +69,7 @@ def _clean_permissions(chosen: Any) -> list[str]:
         raise ValueError(f"There is no permission {unknown[0]!r}.")
     if not picked:
         raise ValueError("Tick at least one thing this role may do.")
+    picked = perms.with_view(picked)  # whoever works on invoices sees them (B-2592)
     if {perms.CODE, perms.CONFIRM} <= picked:  # a manager's page shows their own requests only without code
         raise ValueError(BOTH)
     return [p for p in perms.PERMISSIONS if p in picked]
@@ -151,7 +153,7 @@ class RolesMixin:
             if row is None:
                 raise KeyError(key)
             before = perms.permissions_of(key, row["permissions"])
-            self._may_manage(conn, by_user, before, f"The role {row['name']}", "it")
+            self._may_manage(conn, by_user, before, f"The {row['name']}", "it")
             self._may_give(conn, by_user, kept)
             shown = self._check_name(conn, name, key)
             if perms.USERS in before and perms.USERS not in kept:
@@ -172,8 +174,9 @@ class RolesMixin:
                 change["was"] = row["name"]
             self._log(conn, "role_edited", None, actor or None, change)
 
-    def delete_role(self, key: str, *, actor: str = "") -> None:
-        """A role made here deleted, only while no account has it (turned off ones too: ``ROLE_IN_USE``)."""
+    def delete_role(self, key: str, *, actor: str = "", by_user: int | None = None) -> None:
+        """A role made here deleted, only while no account has it (turned off ones too: ``ROLE_IN_USE``), and never by
+        ``by_user`` when it may do more than theirs (``MANAGES_MORE``), as for changing it."""
         if key in perms.BUILT_IN:
             raise ValueError(f"{perms.ROLE_LABELS[key]} is a built-in role: it can't be deleted.")
         with self._conn() as conn:
@@ -181,6 +184,7 @@ class RolesMixin:
             row = conn.execute(f"SELECT * FROM roles WHERE key = ? AND {LIVE}", (key,)).fetchone()
             if row is None:
                 raise KeyError(key)
+            self._may_manage(conn, by_user, perms.permissions_of(key, row["permissions"]), f"The {row['name']}", "it")
             count = conn.execute("SELECT COUNT(*) FROM users WHERE role = ?", (key,)).fetchone()[0]
             if count:
                 people = f"{count} account{'s' if count != 1 else ''}"

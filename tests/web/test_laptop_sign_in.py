@@ -121,6 +121,22 @@ def test_without_sign_in_on_purpose_the_setting_is_left_and_the_laptop_opens(sto
     assert client.get("/review").status_code == 200 and store.get_setting(SIGN_IN) == LAPTOP
 
 
+def test_a_restore_on_a_teams_data_opened_without_sign_in_keeps_its_accounts(store, owner):
+    """A team's data folder opened in laptop mode on purpose (``--without-sign-in``): a restore on Settings brought the
+    backup's accounts back, an account turned off since on again and a password changed since the old one, as the
+    server's restore (and the console's) never does (D-101)."""
+    store.set_setting(SIGN_IN, "team")
+    store.add_user("boss", CHOSEN, role="admin", must_change=False)
+    gone = store.add_user("ann", CHOSEN, role="clerk", must_change=False)
+    backup = store.backup_now("before-ann-left")
+    store.deactivate_user(gone)
+    client = browser(laptop(store, sign_in=False))
+    store.set_setting(SIGN_IN, "team")  # (``laptop`` set it for the laptop's own: a team's is left as it is)
+    answer = client.post("/settings/data/restore", data={"name": backup.name, "confirm": "RESTORE"}, headers=PAGE)
+    assert answer.json()["ok"], answer.text
+    assert not store.user(gone)["active"] and store.get_setting(SIGN_IN) == "team"
+
+
 def test_a_new_name_in_settings_is_the_accounts_too(store, owner):
     """The account keeps the name on the approvals, so a later ``share`` still knows them for the owner's."""
     client = browser(laptop(store))
@@ -166,6 +182,18 @@ def test_a_restore_on_settings_keeps_the_laptops_admin_and_its_sign_in(store, ow
     assert store.get_setting(SIGN_IN) == LAPTOP and store.find_user("admin")["name"] == "Pat Lee"
 
 
+def test_a_restore_on_the_laptop_says_its_admin_is_logged_out(store, owner):
+    """The restore ends every session, the laptop Admin's too: the page went to Settings, which sent the owner to the
+    login page with no word why (the server's says so)."""
+    backup = store.backup_now()
+    client = browser(laptop(store))
+    first_sign_in(client)
+    answer = client.post("/settings/data/restore", data={"name": backup.name, "confirm": "RESTORE"}, headers=PAGE)
+    assert answer.json()["redirect"].startswith("/login?"), answer.text
+    page = client.get(answer.json()["redirect"])
+    assert page.status_code == 200 and "logged out" in page.text
+
+
 def test_the_who_are_you_page_shows_nothing_before_the_sign_in(store, owner):
     """Open to anyone (roles.OPEN), the "Who are you?" page showed the owner's name and the menu without a session."""
     client = browser(laptop(store))
@@ -188,12 +216,79 @@ def test_the_laptops_words_name_the_console_not_an_admin_to_ask(store, owner):
     first_sign_in(client)
     client.post("/logout", headers=PAGE)
     page = client.get("/login").text
-    assert "Ask an Admin" not in page and "users reset-2fa admin" in page
+    assert "Ask someone who may manage users" not in page and "users reset-2fa admin" in page
     answer = client.post("/login", data={"username": "admin", "password": CHOSEN, "next": "/review"}, headers=PAGE)
     code = client.get(answer.json()["redirect"]).text
-    assert "Ask an Admin" not in code and "users reset-2fa admin" in code
+    assert "Ask someone who may manage users" not in code and "users reset-2fa admin" in code
     refused = client.post("/login/code", data={"code": "000000", "next": "/review"}, headers=PAGE).json()["error"]
     assert "clock" in refused
+
+
+def test_a_pause_or_a_lost_key_on_the_laptop_names_the_console_not_an_admin_to_ask(store, owner):
+    """The laptop's Admin is its only one: five wrong passwords, or the codes' key gone, told them to ask an Admin."""
+    client = browser(laptop(store))
+    first_sign_in(client)
+    client.post("/logout", headers=PAGE)
+    for _ in range(5):
+        refused = client.post("/login", data={"username": "admin", "password": "not the one at all"}, headers=PAGE)
+    said = refused.json()["error"]
+    assert "paused" in said and "ask an Admin" not in said and "users reset-2fa admin" in said
+    store.reset_password(store.find_user("admin")["id"], password=CHOSEN)  # (lifts the pause)
+    with store._conn() as conn:
+        conn.execute("UPDATE users SET must_change = 0")
+    (store.path.parent / "authenticator.key").unlink()
+    answer = client.post("/login", data={"username": "admin", "password": CHOSEN, "next": "/review"}, headers=PAGE)
+    assert answer.json()["redirect"].startswith("/login/code"), answer.text
+    refused = client.post("/login/code", data={"code": "123456", "next": "/review"}, headers=PAGE).json()
+    said = client.get(refused["redirect"]).text
+    assert "authenticator.key" in said and "Ask an Admin" not in said and "on this server" not in said
+    assert "users reset-2fa admin" in refused["error"]
+
+
+@pytest.mark.parametrize("windows", [True, False])
+def test_the_console_named_is_this_computers_and_the_admin_its_own(store, owner, monkeypatch, windows):
+    """B-2570: a Mac's owner was told to double-click scripts\\terminal.bat, which only Windows has, and the laptop's
+    pages named ``users reset-2fa admin`` whatever its Admin's username (one added at the console)."""
+    from ap_coder.web.pages import login
+
+    monkeypatch.setattr(login, "WINDOWS", windows)
+    enrol(store, store.add_user("pat", CHOSEN, role="admin", must_change=False))
+    client = browser(laptop(store))
+    command = "python -m ap_coder users reset-2fa pat"
+    page = client.get("/login").text
+    answer = client.post("/login", data={"username": "pat", "password": CHOSEN, "next": "/review"}, headers=PAGE)
+    code = client.get(answer.json()["redirect"]).text
+    for _ in range(5):
+        paused = client.post("/login/code", data={"code": "000000", "next": "/review"}, headers=PAGE).json()["error"]
+    expired = login._refusal(store, users.TEMPORARY_EXPIRED, "pat", server=False)  # (the only Admin's)
+    assert "users reset pat" in expired
+    assert ("terminal.bat" in expired) is windows and (".venv/bin/python" in expired) is not windows
+    for said in (page, code, paused):
+        assert command in said and "reset-2fa admin" not in said, said
+        assert ("terminal.bat" in said) is windows and (".venv/bin/python" in said) is not windows, said
+
+
+def test_opened_at_its_own_address_the_first_sign_in_is_told_that_address():
+    """B-2570: a laptop listening on its own network address only (``AP_DASHBOARD_ADDRESS``), opened by a name it
+    allows (``AP_ALLOWED_HOSTS``), was told to open http://127.0.0.1, where nothing answers: it is told the address
+    the browser reached. The server's console stays 127.0.0.1."""
+    import types
+
+    from starlette.requests import Request
+
+    from ap_coder.web.pages.login import _here_only, first_sign_in_here
+
+    app = types.SimpleNamespace(state=types.SimpleNamespace(proxy=None, server_mode=False))
+    scope = {"type": "http", "method": "POST", "path": "/login", "app": app, "query_string": b"", "scheme": "http",
+             "headers": [(b"host", b"pat-laptop:8501")], "client": ("192.168.1.20", 50000),
+             "server": ("192.168.1.20", 8501)}  # fmt: skip
+    assert not first_sign_in_here(Request(scope))
+    said = _here_only(Request(scope))
+    assert "http://192.168.1.20:8501" in said and "127.0.0.1" not in said
+    scope["headers"] = [(b"host", b"192.168.1.20:8501")]
+    assert first_sign_in_here(Request(scope))  # (the address said opens the first sign-in)
+    app.state.server_mode = True
+    assert "http://127.0.0.1:8501" in _here_only(Request(scope))
 
 
 def test_the_own_address_is_compared_as_an_address_on_a_dual_stack_socket():

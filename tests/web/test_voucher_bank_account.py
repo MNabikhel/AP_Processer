@@ -83,7 +83,7 @@ def test_where_people_sign_in_an_approver_adds_and_removes_them_and_a_clerk_sees
     assert cy.post("/accounts/bank/save", headers=PAGE, data=typed).status_code == 200
     assert [a["code"] for a in store.bank_accounts()] == [ACCOUNT]
     seen = ann.get("/accounts?tab=bank").text  # a Clerk sees the list, with nothing to change it
-    assert ACCOUNT in seen and "An Approver or an Admin adds, changes and removes bank accounts." in seen
+    assert ACCOUNT in seen and "Someone who may keep the bank accounts adds, changes and removes them." in seen
     assert 'action="/accounts/bank/save"' not in seen and "/accounts/bank/remove" not in seen
     assert ann.post("/accounts/bank/remove", headers=PAGE, data={"remove": ACCOUNT}).status_code == 403
     assert cy.post("/accounts/bank/remove", headers=PAGE, data={"remove": ACCOUNT}).status_code == 200

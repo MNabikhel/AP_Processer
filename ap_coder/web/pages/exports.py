@@ -923,7 +923,8 @@ def jde_api_post(request: Request, batch: int, not_loaded: str = Form(""), why: 
     the batch's ZIP was downloaded, only with ``not_loaded`` ticked and ``why`` (what was checked) said (D-134)."""
     store = get_store(request)
     if not jde_ais.load(store).step2:
-        return refuse("Step 2 of the JD Edwards API (vouchers) is off: an Admin switches it on in Settings → JD "
+        return refuse("Step 2 of the JD Edwards API (vouchers) is off: someone who may change settings switches "
+                      "it on in Settings → JD "
                       "Edwards E1 → API connection.")  # fmt: skip
     if not any(p["status"] == jde_post.CHECKED for p in jde_post.postings(store, batch)):
         return refuse("Run the dry run first: only the vouchers that passed it are posted.")

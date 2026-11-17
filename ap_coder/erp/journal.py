@@ -25,6 +25,7 @@ from __future__ import annotations
 import calendar
 import codecs
 import csv
+import datetime as dt
 import io
 from collections import Counter
 from collections.abc import Iterable
@@ -274,6 +275,12 @@ def _voucher(draft: _Draft, intercompany: frozenset[str]) -> Voucher:
     )  # fmt: skip
 
 
+def _gl_date(text: str, day_first: bool | None = None) -> dt.date | None:
+    """A G/L date as the report prints it, as the user's profile in JD Edwards says: 3/7/2025, 2025-03-07, or with
+    a two-digit year (03/07/25)."""
+    return parse_date(text, day_first=day_first) or parse_date(text, printed=True, day_first=day_first)
+
+
 def _date_order(rows: list[list[str]], pos: dict[str, int]) -> tuple[bool, str]:
     """How the file prints its G/L dates, from the vouchers' ones that read one way only (25/03/2026: day first),
     month first when none tells (or they mix); and, when a date reads two ways, the note that says how it was read
@@ -285,8 +292,8 @@ def _date_order(rows: list[list[str]], pos: dict[str, int]) -> tuple[bool, str]:
     day_first = True in told and False not in told
     if False in told and True not in told:
         return False, ""
-    two_ways = next((text for text in dates if parse_date(text) is None and parse_date(text, day_first=True)), "")
-    read = parse_date(two_ways, day_first=day_first)
+    two_ways = next((text for text in dates if _gl_date(text) is None and _gl_date(text, day_first=True)), "")
+    read = _gl_date(two_ways, day_first=day_first)
     if read is None:
         return day_first, ""
     said = (f"Dates that read two ways were read {'day' if day_first else 'month'} first ({two_ways}: {read.day} "
@@ -322,7 +329,7 @@ def read_journal(data: bytes, *, payable_objects: PayableObjects, tax_objects: I
             continue
         doc_type, company, gl_date = (_cell(row, pos[name]) for name in _HEAD)
         if doc_type:
-            date = parse_date(gl_date, day_first=day_first)
+            date = _gl_date(gl_date, day_first=day_first)
             drafts.append(_Draft(n, doc_type, company, date.isoformat() if date else ""))
         read = _line(n, row, pos, kinds)
         if read is None or not drafts or not doc_type and (company or gl_date):

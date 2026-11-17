@@ -184,14 +184,14 @@ def test_a_reset_unlocks_the_user_and_a_deactivated_user_cannot_log_in(store, cl
 
 def test_the_last_active_admin_cannot_be_demoted_or_deactivated(store):
     boss = store.add_user("boss", GOOD, role="admin")
-    with pytest.raises(ValueError, match="Admin"):
+    with pytest.raises(ValueError, match="manage users"):
         store.set_role(boss, "clerk", actor="console")
-    with pytest.raises(ValueError, match="Admin"):
+    with pytest.raises(ValueError, match="manage users"):
         store.deactivate_user(boss, actor="console")
     other = store.add_user("other", GOOD, role="admin")
     store.set_role(boss, "clerk", actor="console")
     assert store.user(boss)["role"] == "clerk"
-    with pytest.raises(ValueError, match="Admin"):
+    with pytest.raises(ValueError, match="manage users"):
         store.deactivate_user(other, actor="console")
     with pytest.raises(ValueError, match="role"):
         store.set_role(other, "superuser", actor="console")

@@ -61,7 +61,7 @@ def test_list_reset_role_and_deactivate(db, monkeypatch, capsys):
     assert cli.main(["--db", db, "users", "deactivate", "ann"]) == 0
     assert not store.user(ann)["active"]
     assert cli.main(["--db", db, "users", "role", "boss", "clerk"]) == 1  # the last Admin
-    assert "at least one active Admin" in capsys.readouterr().err
+    assert "at least one active account that may manage users" in capsys.readouterr().err
     assert store.user(boss)["role"] == "admin"
     assert cli.main(["--db", db, "users", "deactivate", "nobody"]) == 1
 

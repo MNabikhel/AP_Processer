@@ -110,7 +110,7 @@ def upload_refusal(user: Any, count: int, size: int, now: float | None = None,
         return (f"Those files are {size / 1e6:,.0f} MB together: AP Coder on the server takes up to "
                 f"{MAX_REQUEST_BYTES // (1024 * 1024)} MB per upload. Send them in a few goes.", 413)  # fmt: skip
     busy = ("You have uploaded a lot in the last hour: AP Coder on the server takes more in a while. If this is a real "
-            "batch, ask an Admin to put the files in the invoices folder.", 429)  # fmt: skip
+            "batch, ask IT to put the files in the invoices folder.", 429)  # fmt: skip
     if store is not None:
         most = (MAX_UPLOADS_PER_WINDOW, MAX_BYTES_PER_WINDOW)
         return ("", 0) if store.take_upload_allowance(str(user), size, UPLOAD_WINDOW, *most) else busy
@@ -540,7 +540,7 @@ def shown_setup(request: Request, steps: list[tuple[str, str, str]], coming: dic
         coming = {**coming, "title": "LM Studio isn't ready on the server", "steps": (),
                   "text": f"{SERVER_LM_STUDIO}. Until it is ready, every invoice waits for a person."}  # fmt: skip
     elif coming and not can(request, coming["href"], "GET"):
-        coming = {**coming, "text": f"{coming['text']} An Admin does this step."}
+        coming = {**coming, "text": f"{coming['text']} Someone who may change the setup does this step."}
     return steps, coming, links
 
 

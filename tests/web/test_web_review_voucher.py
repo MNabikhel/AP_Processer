@@ -229,7 +229,7 @@ def test_a_clerk_cannot_approve_a_held_vendors_invoice_moved_to_another_vendor(h
     clients, invoice_id = held
     moved = form_of(store, invoice_id, vendor_name="Chinook Courier & Office Services Ltd.")
     answer = _anyway(clients["clerk"], invoice_id, moved)
-    assert answer.status_code == 403 and "only an Approver can approve it" in answer.json()["error"]
+    assert answer.status_code == 403 and "only someone who may lift holds can approve it" in answer.json()["error"]
     assert store.get_invoice(invoice_id)["status"] == REVIEW
 
 
@@ -377,14 +377,14 @@ def test_a_clerks_bulk_approval_leaves_out_an_invoice_paid_to_a_held_vendors_acc
     answer = clients["clerk"].post("/review/bulk-approve", data={"ids": [invoice_id]}, headers=PAGE)
     assert answer.json()["ok"] and store.get_invoice(invoice_id)["status"] == REVIEW
     said = clients["clerk"].get(answer.json()["redirect"]).text
-    assert "Pacific Office Supply" in said and "only an Approver can approve it" in said
+    assert "Pacific Office Supply" in said and "only someone who may lift holds can approve it" in said
 
 
 def test_a_clerk_is_not_offered_approve_anyway_for_a_held_vendors_invoice_coded_to_another_vendor(held, store):
     clients, invoice_id = held
     moved = form_of(store, invoice_id, vendor_name="Chinook Courier & Office Services Ltd.")
     bar = check(clients["clerk"], invoice_id, moved)["sections"]["bar"]
-    assert 'name="override"' not in bar and "Only an Approver can approve" in bar
+    assert 'name="override"' not in bar and "Only someone who may lift holds can approve" in bar
     assert 'name="override"' in check(clients["approver"], invoice_id, moved)["sections"]["bar"]
 
 

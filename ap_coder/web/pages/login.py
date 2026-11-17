@@ -28,6 +28,7 @@ review queue.
 from __future__ import annotations
 
 import hmac
+import os
 from typing import Any
 from urllib.parse import quote
 
@@ -76,8 +77,8 @@ NO_LOGINS = "There are no logins on this computer: AP Coder opens for whoever us
 TOO_LONG = "Your login took too long, or it ended: log in again."
 OUT_OF_STEP = "That isn't the next step of your login: reload the page."
 SIX_DIGITS = "Type the six digits your authenticator app shows (spaces don't matter)."
-ONLY_ADMIN = ("Your temporary password has expired (it lasts 3 days). You are the only Admin: for a new one, run "
-              "python -m ap_coder users reset {username} {where}.")  # fmt: skip
+ONLY_ADMIN = ("Your temporary password has expired (it lasts 3 days). You are the only one who may manage users: "
+              "for a new one, run python -m ap_coder users reset {username} {where}.")  # fmt: skip
 QUIET = 4  # modules of white around a QR code, as the standard asks
 # What a reverse proxy adds to the requests it passes on: one on this computer makes every browser arrive from 127.0.0.1
 # (D-243). IIS's ARR adds X-ARR-SSL, X-ARR-LOG-ID and the like too (``X_ARR``).
@@ -88,6 +89,41 @@ X_ARR = "x-arr-"
 LAPTOP_ADMIN_ONLY = ("On this laptop AP Coder opens for its Admin only. To let colleagues in with their own accounts, "
                      "its owner runs python -m ap_coder share (docs/SERVER.md, section 16).")  # fmt: skip
 NAME_FIRST = "Type your name, as it is written on your approvals: AP Coder shows it on each one."
+WINDOWS = os.name == "nt"
+# A laptop's Admin is its only one (D-243): what would send them to an Admin names the console's command instead
+# (``console_reset``), in their computer's words (``console``).
+LAPTOP_WORDS = {
+    LOCKED: ("Too many tries that didn't match: signing in on this laptop is paused for 15 minutes. Wait, then try "
+             "again. Forgot your password, or lost your phone? {reset}"),
+    ACCOUNT_PAUSED: ("Too many tries that didn't match: signing in on this laptop is paused for a few minutes. Wait, "
+                     "then try again. Forgot your password, or lost your phone? {reset}"),
+    KEY_MISSING: ("AP Coder can't check your authenticator codes on this laptop: its key file (authenticator.key in "
+                  "the data folder) is missing, damaged or not the one your app was set up with. {reset}"),
+}  # fmt: skip
+
+
+def console() -> dict[str, str]:
+    """Where a laptop's owner types a command of AP Coder's, in this computer's words (B-2570): ``where``, the steps
+    before it, and ``python``, how the command starts. Windows: scripts\\terminal.bat; a Mac (or Linux): Terminal, in
+    AP Coder's folder, with the Python of its .venv."""
+    if WINDOWS:
+        return {"where": "close AP Coder's black window, double-click scripts\\terminal.bat in AP Coder's folder and "
+                "type", "python": "python -m ap_coder"}  # fmt: skip
+    return {"where": "stop AP Coder (close its Terminal window), then in Terminal, in AP Coder's folder, type",
+            "python": ".venv/bin/python -m ap_coder"}  # fmt: skip
+
+
+def laptop_admin(store: Any) -> str:
+    """The username of a laptop's Admin: admin (the first sign-in's), or another one added at the console."""
+    admins = [u["username"] for u in store.list_users() if u["role"] == ADMIN and u["active"]]
+    return admins[0] if admins else FIRST_USERNAME
+
+
+def console_reset(store: Any) -> str:
+    """How a laptop's Admin gets a temporary password and sets the app up again, in a sentence."""
+    said = console()
+    return (f"{said['where'][0].upper()}{said['where'][1:]} {said['python']} users reset-2fa {laptop_admin(store)}: "
+            "it gives a temporary password and sets up the app again.")  # fmt: skip
 
 
 def _next(url: str | None) -> str:
@@ -134,7 +170,11 @@ def _here_only(request: Request) -> str:
         return (f"{FIRST_HERE_ONLY} Behind a proxy this way is off: add the first Admin in a command window on the "
                 "server with python -m ap_coder users add --admin <username>.")  # fmt: skip
     port = request.url.port or (443 if request.url.scheme == "https" else 80)
-    return f"{FIRST_HERE_ONLY} On that computer, open {request.url.scheme}://127.0.0.1:{port}."
+    # A laptop listening on its own network address only: 127.0.0.1 doesn't answer, the address reached does (B-2570).
+    own = identity._ip((request.scope.get("server") or ("", 0))[0] or "")
+    at = "127.0.0.1" if server_mode(request) or own is None or own.is_loopback else str(own)
+    at = f"[{at}]" if ":" in at else at
+    return f"{FIRST_HERE_ONLY} On that computer, open {request.url.scheme}://{at}:{port}."
 
 
 def first_sign_in_here(request: Request) -> bool:
@@ -199,7 +239,7 @@ def login_page(request: Request, next: str = HOME) -> Response:  # noqa: A002 - 
     store = get_store(request)
     first = store.user_count() == 0
     context = {"next": _next(next), "first_admin": first, "first_here": first and first_sign_in_here(request),
-               "server_mode": server_mode(request),
+               "server_mode": server_mode(request), "console": console(), "laptop_admin": laptop_admin(store),
                "flashes": take_flash(request.query_params.get("flash")), "title": "Log in"}  # fmt: skip
     response = templates.TemplateResponse(request, "login.html", context)
     response.headers["Cache-Control"] = "no-store"
@@ -230,8 +270,8 @@ def login_save(request: Request, username: str = Form(""), password: str = Form(
     pending = store.start_pending(user["id"])  # the password alone is no session (D-146)
     wanted = _next(next)
     have = user.get("permissions") or ()
-    if CONFIRM in have and VIEW not in have and wanted == HOME:  # a Manager's role (D-250)
-        wanted = "/manager"  # a Manager's own page: the review queue is not theirs (D-138)
+    if VIEW not in have and wanted == HOME:  # the review queue is not theirs (D-250)
+        wanted = "/manager" if CONFIRM in have else "/"  # a Manager's own page (D-138), else the first they may open
     if user["must_change"]:
         answer = done(request, _step_url(user, wanted),
                       flash_message("Choose your own password before you carry on: the one you were given is "
@@ -263,13 +303,21 @@ def _first_sign_in(request: Request, password: str, next: str) -> JSONResponse |
 
 def _refusal(store: Any, said: str, username: str, server: bool = True) -> str:
     """What a login refused says; to the only active Admin, whose temporary password expired, the command that gives
-    a new one: there is no other Admin to ask (B-2525). (Said only once the password matched.)"""
+    a new one: there is no other Admin to ask (B-2525). (Said only once the password matched.) On a laptop, whose Admin
+    is its only one, a pause or a missing key names the console's command (``LAPTOP_WORDS``)."""
+    if not server and said in LAPTOP_WORDS:
+        return LAPTOP_WORDS[said].format(reset=console_reset(store))
     if said != TEMPORARY_EXPIRED:
         return said
     account = store.find_user(username) or {}
     admins = [u["id"] for u in store.list_users() if USERS in u["permissions"] and u["active"]]
-    where = "on the server" if server else "in scripts\\terminal.bat on this computer"
-    return ONLY_ADMIN.format(username=account["username"], where=where) if admins == [account.get("id")] else said
+    if admins != [account.get("id")]:
+        return said
+    if server:
+        return ONLY_ADMIN.format(username=account["username"], where="on the server")
+    here = console()
+    return (f"{ONLY_ADMIN.split(' run ', 1)[0]} {here['where']} {here['python']} users reset {account['username']} "
+            "(you type a new password twice).")  # fmt: skip
 
 
 def qr_svg(text: str) -> str:
@@ -303,6 +351,7 @@ def _step_page(request: Request, step: str, next: str) -> Response:  # noqa: A00
                          "authenticator app"}.get(step, "Your code")}  # fmt: skip
     admins = [u["id"] for u in store.list_users() if USERS in u["permissions"] and u["active"]]
     context["only_admin"] = admins == [user["id"]]  # their lost phone: the console's command, no Admin to ask
+    context["console"] = None if server_mode(request) else console()  # (a laptop's, in its own words)
     if step == identity.SET_UP_PATH:
         try:
             secret = store.authenticator_secret(user["id"])
@@ -474,9 +523,10 @@ def _second_step(request: Request, step: str, code: str, next: str) -> Response:
     try:
         found = store.check_code(user["id"], typed, ip, console=from_console(request))
     except LoginRefused as exc:
+        said = _refusal(store, str(exc), user["username"], server_mode(request))
         if str(exc) in (LOCKED, ACCOUNT_PAUSED, KEY_MISSING):
-            return _back_to_login(request, str(exc), next)
-        return refuse(str(exc), 401)
+            return _back_to_login(request, said, next)
+        return refuse(said, 401)
     store.end_pending(_pending(request))
     token = store.start_session(found["id"], ip, request.headers.get("user-agent", ""))
     said = []

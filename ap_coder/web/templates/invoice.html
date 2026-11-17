@@ -171,7 +171,7 @@
               <label class="field">JD Edwards address number (AN8)<input type="text" data-new="an8" inputmode="numeric" maxlength="8" placeholder="e.g. 40123" autocomplete="off">
                 <small class="muted">JD Edwards needs it before this vendor's invoices can be approved. You can also add it later in Settings → JD Edwards E1 → Supplier address numbers.</small></label>
               {% elif live.jde %}
-              <p class="small muted">JD Edwards needs this vendor's address number (AN8) before its invoices can be approved: an Admin adds it in Settings → JD Edwards E1 → Supplier address numbers.</p>
+              <p class="small muted">JD Edwards needs this vendor's address number (AN8) before its invoices can be approved: someone who may change settings adds it in Settings → JD Edwards E1 → Supplier address numbers.</p>
               {% endif %}
               <button class="btn primary sm" type="button" data-new-go><span class="ms" aria-hidden="true">person_add</span>Add to the vendor list</button>
             </div>
@@ -600,7 +600,7 @@
   <div class="card-head"><div>
     <h4><span class="ms" aria-hidden="true">account_tree</span>Waiting for your GL accounts</h4>
     <p class="muted">Import your GL accounts (the chart of accounts from JD Edwards) to review it, or start with the sample accounts and switch to yours later.</p></div>
-    <div class="row end"><a class="btn" href="/accounts"><span class="ms" aria-hidden="true">account_tree</span>Load GL accounts</a>
+    <div class="row end">{% if can("/accounts", "GET") %}<a class="btn" href="/accounts"><span class="ms" aria-hidden="true">account_tree</span>Load GL accounts</a>{% endif %}
       {% if can("/review/sample-gl") %}<form method="post" action="/review/sample-gl"><button class="btn" type="submit"><span class="ms" aria-hidden="true">science</span>Use the sample GL accounts for now</button></form>{% endif %}</div>
   </div>
   {% endif %}
