@@ -34,13 +34,13 @@ from ap_coder.web.core import (
     data_dir,
     developer_tools,
     get_store,
+    page_meta,
     page_router,
     render,
     server_mode,
     short_path,
-    simple_screens,
 )
-from ap_coder.web.pages import BY_KEY, SIMPLE_MAIN
+from ap_coder.web.pages import BY_KEY
 from ap_coder.web.pages.settings_reading import azure_check_on, how_it_reads
 
 router = page_router()  # each plain handler: one connection a request
@@ -232,12 +232,20 @@ def link(key: str) -> dict[str, str] | None:
     return {"path": page.path, "title": page.title} if page else None
 
 
+# Help's texts name pages by their former titles; every menu now names them as the Simple menu did (D-252).
+FORMER_TITLES: dict[str, str] = {"Review queue": "review", "Import invoices": "process", "Invoice directory": "search",
+                                 "Learning & accuracy": "learning", "Coding rules": "rules", "Exports": "exports",
+                                 "Vendor statements": "statements"}  # fmt: skip
+
+
 def menu_names(store: Any) -> Any:
-    """What puts each page's name in Help's words as the menu shows it: in Simple screens, "Invoice directory" is
-    "Find an invoice", "Learning & accuracy" "What was learned" (``pages.SIMPLE_MAIN``, B-2598)."""
-    if not simple_screens(store):
+    """What puts each page's name in Help's words as the menu shows it: "Invoice directory" is "Find an invoice",
+    "Learning & accuracy" "What was learned" (``pages.PAGES``), and with JD Edwards' words "Exports" is "To key into
+    JDE" (``core.page_meta``, B-2598)."""
+    names = {old: page_meta(store, key).title for old, key in FORMER_TITLES.items()}
+    names = {old: title for old, title in names.items() if title != old}
+    if not names:
         return lambda text: text
-    names = {BY_KEY[key].title: title for key, title in SIMPLE_MAIN.items() if BY_KEY[key].title != title}
     pattern = re.compile(r"\b(" + "|".join(re.escape(name) for name in names) + r")\b")
     return lambda text: pattern.sub(lambda m: names[m.group(1)], text)
 
