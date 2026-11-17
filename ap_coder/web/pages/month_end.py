@@ -105,6 +105,7 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
     by_gl = [{"gl": gl_cell(chart, *parts.get(gl, (gl, ""))), "totals": totals} for gl, totals in by_account]
     half = (len(by_gl) + 1) // 2
     groups = []
+    said = accruals.said_cad(items)  # PO lines taken as CAD, beside other currencies (B-2760)
     for source in accruals.SOURCES:
         rows = [
             {
@@ -120,6 +121,7 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
                 "proposed": accruals.PROPOSED in a.note,
                 "exported_late": accruals.EXPORTED_LATE in a.note,
                 "old": a.old,
+                "cad_assumed": a.cad_assumed and said,
             }
             for a in items
             if a.source == source

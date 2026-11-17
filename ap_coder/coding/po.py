@@ -86,11 +86,13 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "gl_code": ("glcode", "gl", "glaccount", "account", "accountcode", "costcode", "expenseaccount"),
     "cost_center": ("costcenter", "costcentre", "cc", "department", "dept"),
     "status": ("status", "postatus", "state"),
+    # Optional: the PO's currency (JD Edwards' CRCD); a file without one: taken as CAD (B-2760).
+    "currency": ("currencycode", "currcode", "curcode", "crcd", "ccy", "devise"),
 }  # fmt: skip
 REQUIRED_COLUMNS = ("po_number", "description")
 TEMPLATE_COLUMNS = (
     "po_number", "vendor_name", "line_number", "description", "quantity", "unit_price", "amount", "open_amount",
-    "received_quantity", "gl_code", "cost_center", "status",
+    "received_quantity", "gl_code", "cost_center", "status", "currency",
 )  # fmt: skip
 
 
@@ -152,6 +154,7 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
                 "gl_code": _text(get("gl_code")),
                 "cost_center": _text(get("cost_center")),
                 "status": CLOSED if status in {"closed", "close", "complete", "completed", "fermé", "ferme"} else OPEN,
+                "currency": _text(get("currency")).upper(),
             }
         )
     return rows, skipped
@@ -290,6 +293,9 @@ class PoMatch:
     billed_before: float = 0.0  # subtotal of other invoices on this PO
     findings: list[Finding] = field(default_factory=list)
     left: dict[int, LineLeft] = field(default_factory=dict)  # every line of the PO, by its line number
+    # Why the invoice's prices and amounts are not compared with the PO's ("": they are, both in one currency, B-2760);
+    # then nothing is left to expense either (``left`` empty).
+    currencies: str = ""
 
     @property
     def coding_differs(self) -> list[LineMatch]:
@@ -328,6 +334,11 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
         return result
 
     result.findings.extend(_header_findings(coding, po))
+    result.currencies = _currencies(coding, po, number)
+    if result.currencies:
+        result.findings.append(
+            (WARNING, "PO_CURRENCY_DIFFERS", f"{result.currencies}: its prices and amounts are not compared", None)
+        )
     # A PO's cost centers mean nothing without a cost center list (the pilot's, D-53): never compared, never said,
     # never copied to a line (B-534).
     cost_centers = bool(store.list_accounts("cost_centers"))
@@ -368,11 +379,12 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
             _amount_findings(m, li, result, billed_now_amount)
         else:
             _line_findings(m, li, result, billed_now)
-    _left_to_expense(result, po, live, billed_before_amount, this_invoice, exclude_invoice_id)
+    if not result.currencies:
+        _left_to_expense(result, po, live, billed_before_amount, this_invoice, exclude_invoice_id)
 
     subtotal = float(coding.subtotal or 0)
     total = float(po.get("total") or 0)
-    if subtotal > 0 and total > 0:
+    if subtotal > 0 and total > 0 and not result.currencies:
         billed = result.billed_before + subtotal
         if billed > total * (1 + TOTAL_TOLERANCE) + 0.01:
             earlier = f" ({_money(result.billed_before)} on earlier invoices)" if result.billed_before else ""
@@ -417,6 +429,19 @@ def _left_to_expense(
             result.left[n] = LineLeft(n, pl["amount"], opened, not_exported.get(n, 0.0), now)
 
 
+def _currencies(coding: InvoiceCoding, po: dict[str, Any], number: str) -> str:
+    """Why the invoice's amounts can't be compared with the PO's: the two in other currencies (a PO whose file gave
+    none is taken as CAD, and said so); "" when they are in one."""
+    invoice = (coding.currency or "").strip().upper() or "CAD"
+    ordered = po.get("currency") or ""
+    if (ordered or "CAD") == invoice:
+        return ""
+    if ordered:
+        return f"{po_label(number)} is in {ordered}, the invoice in {invoice}"
+    return (f"{po_label(number)} has no currency in the purchase-order file, so it is taken as CAD; the invoice is in "
+            f"{invoice}")  # fmt: skip
+
+
 def _short(text: str, n: int = 50) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
@@ -443,7 +468,7 @@ def _amount_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_n
     assert m.po_line is not None and m.po_amount is not None
     billed_now[m.po_line] = billed_now.get(m.po_line, 0.0) + m.amount
     billed = m.billed_before_amount + billed_now[m.po_line]
-    if m.amount > 0 and billed > m.po_amount * (1 + TOTAL_TOLERANCE) + 0.01:
+    if m.amount > 0 and not result.currencies and billed > m.po_amount * (1 + TOTAL_TOLERANCE) + 0.01:
         earlier = f", {_money(m.billed_before_amount)} on earlier invoices" if m.billed_before_amount else ""
         m.problems.append("quantity")
         result.findings.append(
@@ -457,7 +482,9 @@ def _amount_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_n
 def _line_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_now: dict[int, float]) -> None:
     number = result.po_number
     assert m.po_line is not None and m.po_unit_price is not None and m.po_quantity is not None
-    if m.quantity > 0 and abs(m.unit_price) > abs(m.po_unit_price) and not _same_price(m.unit_price, m.po_unit_price):
+    priced = not result.currencies  # prices compared only in one currency (B-2760)
+    if (priced and m.quantity > 0 and abs(m.unit_price) > abs(m.po_unit_price)
+            and not _same_price(m.unit_price, m.po_unit_price)):  # fmt: skip
         over = (abs(m.unit_price) / abs(m.po_unit_price) - 1) if m.po_unit_price else 1.0
         m.problems.append("price")
         result.findings.append(
@@ -465,7 +492,7 @@ def _line_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_now
              f"unit price {_money(m.unit_price)} is above the PO price {_money(m.po_unit_price)} (+{over:.1%})",
              m.invoice_line)
         )  # fmt: skip
-    elif (extra := _amount_over(m)) is not None:  # the unit price within, the line's amount not (B-927)
+    elif priced and (extra := _amount_over(m)) is not None:  # the unit price within, the line's amount not (B-927)
         m.problems.append("price")
         at_po = round(m.quantity * abs(m.po_unit_price), 2)
         result.findings.append(
@@ -764,6 +791,6 @@ def _price_decides(
 def template_csv() -> bytes:
     example = [
         "PO-1001", "Example Supplier Ltd.", "1", "Example item or service", "10", "25.00", "250.00", "", "10",
-        "6000", "", "open",
+        "6000", "", "open", "CAD",
     ]  # fmt: skip
     return ("\ufeff" + ",".join(TEMPLATE_COLUMNS) + "\r\n" + ",".join(example) + "\r\n").encode("utf-8")

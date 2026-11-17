@@ -1542,6 +1542,7 @@ ALWAYS_A_PERSON: dict[str, str] = {
             "PO_QTY_OVER",
             "PO_NOT_RECEIVED",
             "PO_OVER_BILLED",
+            "PO_CURRENCY_DIFFERS",
         ),
         "it does not match its purchase order",
     ),  # fmt: skip

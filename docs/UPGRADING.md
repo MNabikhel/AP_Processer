@@ -128,6 +128,12 @@ connects to the internet (ONNX Runtime's own usage reports to Microsoft included
   of it once, `ap_coder-<date>-before-update-from-schema-28.db`: an older AP Coder refuses the database from then on
   (*made by a newer AP Coder*), as it knows the five built-in roles only. Go back as below, with that backup; the
   roles made since, and the people given them, are not in it.
+- **Going back to a version from before schema 30 (November 2026) needs the backup the update made.** This version
+  keeps each purchase order's currency (B-2760). The first start of this version on a database of schema 29 makes a
+  backup of it once, `ap_coder-<date>-before-update-from-schema-29.db`, then adds that to the database: an older AP
+  Coder refuses the database from then on (*made by a newer AP Coder*), so go back as below, with that backup. The
+  POs imported before the update have no currency and are taken as CAD, as before: import them again with a
+  currency column to give a USD order its own.
 
 ## Going back to the previous version
 

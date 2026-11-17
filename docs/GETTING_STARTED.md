@@ -232,7 +232,9 @@ AP Coder learns your coding from what you posted before, so the first invoices f
 - **Purchase orders:** import your open POs (one row per PO line, from the ERP; the *Template*
   button shows the columns). Include the quantity received to get three-way matching, and the
   open amount (optional, JD Edwards' AOPN) for what the review screen shows as left to expense on
-  each PO line. Re-import the export regularly; a PO in the file replaces its earlier lines.
+  each PO line, and the currency (optional; without it a PO is taken as CAD) for a PO in USD or another currency:
+  its month-end accrual is in it, and an invoice in another currency has its prices checked by you, not against the
+  PO. Re-import the export regularly; a PO in the file replaces its earlier lines.
 - **Exports → Custom layout for your ERP:** if your ERP's import needs its own columns.
 - **Exports → ERP invoice register:** the ERP's list of AP invoices (last 12 to 18 months), so a bill
   already entered there is caught, and the duplicate payment audit covers it.

@@ -69,10 +69,10 @@
           <td><a href="/purchase-orders?{{ list_query }}&po={{ p.po_key | urlencode }}#po"><b>{{ p.po_number }}</b></a></td>
           <td class="w">{{ p.vendor_name }}</td>
           <td class="r">{{ p.lines }}</td>
-          <td class="r">{{ p.total | money }}</td>
-          <td class="r">{{ p.billed | money }}</td>
+          <td class="r">{{ p.total | money(p.currency) }}</td>
+          <td class="r">{{ p.billed | money(p.currency) }}{% if p.other_currency %}<div class="muted small" title="An invoice in another currency than the PO's{% if not p.currency %} (taken as CAD: its file gave no currency){% endif %} is not added to its amounts">{{ p.other_currency | plural("invoice") }} in another currency, left out</div>{% endif %}</td>
           <td>{% if p.fraction is not none %}<div class="minibar{% if p.fraction > 1.02 %} over{% elif p.fraction >= 0.98 %} full{% endif %}" aria-hidden="true"><i style="width: {{ p.bar }}%"></i></div>{% endif %}</td>
-          <td class="r">{{ p.remaining | money }}</td>
+          <td class="r">{{ p.remaining | money(p.currency) }}</td>
           <td>{{ ui.pill(*p.pill) }}</td>
         </tr>
         {% endfor %}
@@ -93,7 +93,7 @@
     {{ ui.avatar(p.vendor_name or p.po_number) }}
     <div>
       <div><b>{{ p.po_number }}</b> {{ ui.pill(*detail.pill) }}</div>
-      <div class="muted">{{ p.vendor_name }} · updated {{ p.updated_at | time_ago }}</div>
+      <div class="muted">{{ p.vendor_name }} · {% if p.currency %}in {{ p.currency }}{% else %}no currency in its file: taken as CAD{% endif %} · updated {{ p.updated_at | time_ago }}</div>
     </div>
   </div>
   <div class="table-wrap">
@@ -108,7 +108,7 @@
         </tr>
         {% endfor %}
       </tbody>
-      <tfoot><tr><td></td><td>Total</td><td></td><td></td><td></td><td></td><td class="r">{{ detail.total | money }}</td><td></td><td></td></tr></tfoot>
+      <tfoot><tr><td></td><td>Total</td><td></td><td></td><td></td><td></td><td class="r">{{ detail.total | money(p.currency) }}</td><td></td><td></td></tr></tfoot>
     </table>
   </div>
   {% if detail.invoices %}

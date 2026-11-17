@@ -390,9 +390,10 @@ PURCHASE_ORDERS = ImportSpec(
         "amount": ("Line amount", "Amount"), "open_amount": ("Open amount", "Open Amount"),
         "received_quantity": ("Quantity received", "Received Quantity"), "gl_code": ("GL account", "GL Code"),
         "cost_center": ("Cost center", "Cost Center"), "status": ("Status", "Status"),
+        "currency": ("Currency", "Currency"),
     }, {"open_amount": "what is left to expense", "received_quantity": "what was received, for the match",
         "gl_code": "the account the line is coded to", "cost_center": "the cost center the line is coded to",
-        "status": "open or closed"}),
+        "status": "open or closed", "currency": "the PO's currency (without it, CAD)"}),
     find=_matcher(po.COLUMN_ALIASES),
 )  # fmt: skip
 
