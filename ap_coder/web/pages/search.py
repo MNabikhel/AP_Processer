@@ -266,7 +266,7 @@ def delete_preset(request: Request, name: str = Form("")) -> JSONResponse:
     store = get_store(request)
     if not directory.delete_preset(store, name, _owner(request)):
         if _owner(request) and any(p["name"] == name for p in directory.presets(store)):
-            return refuse("That layout is shared with everyone: an Admin deletes it.", 403)
+            return refuse("That layout is shared with everyone: someone who may change settings deletes it.", 403)
         return refuse("That layout is not saved any more.", 404)
     store.log_event("directory_preset_deleted", None, reviewer(), {"name": name})
     return done(request, "/search", f"Layout “{name}” deleted.")

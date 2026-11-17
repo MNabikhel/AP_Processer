@@ -56,7 +56,8 @@ CHECKS: dict[str, CheckHelp] = {
         "JD Edwards needs the supplier's address number (AN8): this vendor has none in the vendor list or in the "
         "JD Edwards settings.",
         "Pick the vendor from the vendor list, or add its AN8 in Settings → JD Edwards E1 → Supplier address numbers "
-        "(on the company server, an Admin does). A vendor added with “Add new vendor…” can take its AN8 there too.",
+        "(on the company server, someone who may change settings does). A vendor added with “Add new vendor…” "
+        "can take its AN8 there too.",
     ),
     "JDE_BAD_AN8": CheckHelp(
         ERP, "Supplier number is not an AN8",
@@ -268,10 +269,10 @@ CHECKS: dict[str, CheckHelp] = {
         "USE, DNU: the note says which), or JD Edwards' hold payment code is one that stops vouchers (Y or 1; the "
         "codes that hold are listed on the vendor master's import).",
         "It can't be approved while the vendor is on hold: lift the hold on the Vendors page (on the company server "
-        "an Approver or an Admin does that, not a Clerk; a hold set in JD Edwards is lifted in JD Edwards, then the "
+        "someone who may lift holds does that; a hold set in JD Edwards is lifted in JD Edwards, then the "
         "vendor list imported or synced again), or reject the invoice. A vendor held for a word in its name is held "
         "again at each import: rename it in JD Edwards, or take the word off the import's list. Coding it to "
-        "another vendor instead needs an Approver too (Moved off a vendor on hold).",
+        "another vendor instead needs someone who may lift holds too (Moved off a vendor on hold).",
     ),
     "VENDOR_PAYMENTS_HELD": CheckHelp(
         FRAUD, "Payments held in JD Edwards",
@@ -286,8 +287,8 @@ CHECKS: dict[str, CheckHelp] = {
         "it asks to be paid to (one the held vendor was paid on here, or JD Edwards pays it on), but it is coded to "
         "another vendor. Moving a held vendor's invoice onto another vendor "
         "would get around the hold. On the company server only.",
-        "If the invoice really is the other vendor's (it was read wrong), an Approver or an Admin approves it with "
-        "“Approve anyway” and says why: a Clerk can't. Otherwise put the held vendor back, and reject it or "
+        "If the invoice really is the other vendor's (it was read wrong), someone who may lift holds approves it with "
+        "“Approve anyway” and says why. Otherwise put the held vendor back, and reject it or "
         "wait for the hold to be lifted.",
     ),
     "VENDOR_TAX_NUMBER_CHANGED": CheckHelp(
@@ -298,7 +299,7 @@ CHECKS: dict[str, CheckHelp] = {
         "Call the vendor on a number you already have (not the one on this invoice) to confirm before paying."
         " If it checks out, tick “Approve anyway” and say how you confirmed it: the reason is kept in the audit trail."
         " When the number differs from the vendor list's, someone else then confirms it: where people sign in, the"
-        " voucher waits for a second approval by an Approver or an Admin; on one person's laptop the keying sheet"
+        " voucher waits for a second approval by someone who may give it; on one person's laptop the keying sheet"
         " says on the voucher to confirm before paying.",
     ),
     "VENDOR_TAX_ACCOUNT_DIFFERS": CheckHelp(
@@ -364,7 +365,7 @@ CHECKS: dict[str, CheckHelp] = {
         PAYMENT, "No bank account in this currency",
         "Your bank accounts are entered, but none of them is in the invoice's currency, so the voucher has no bank "
         "account. The invoice is not held for it: JD Edwards then pays it from its own default bank.",
-        "Add a bank account in that currency on GL accounts & tax → Bank accounts (an Approver or an Admin), or "
+        "Add a bank account in that currency on GL accounts & tax → Bank accounts (someone who may keep them), or "
         "pick one of the other accounts under Bank account (Pay from) if that is the one that pays.",
     ),
     "PAY_FROM_UNKNOWN": CheckHelp(
@@ -925,7 +926,8 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "AZURE_DI_DISAGREES": CheckHelp(
         READING, "Azure reads it differently",
-        "Your company's Azure Document Intelligence, the optional reader an Admin switched on (Settings → Reading), "
+        "Your company's Azure Document Intelligence, the optional reader someone who may change settings "
+        "switched on (Settings → Reading), "
         "read a field differently from AP Coder's own readers. AP Coder keeps its own reading: the fields they "
         "disagree on are named in the warning and marked Check, with both readings in the reasons.",
         "Look at the page: correct the field if Azure is right (the warning goes once it matches), or approve as "
@@ -1172,13 +1174,13 @@ QUICK_START: list[tuple[str, str, str]] = [  # numbered 0 to 6, as docs/QUICK_ST
 ]  # fmt: skip
 
 # On the company server (D-97, D-102) the first steps are IT's and an Admin's: what Help says instead for those.
-SERVER_LM_STUDIO = "LM Studio runs on the server; ask IT or an Admin"
+SERVER_LM_STUDIO = "LM Studio runs on the server; ask IT or someone who may change settings"
 SERVER_QUICK_START: dict[str, str] = {
     "Start LM Studio": f"{SERVER_LM_STUDIO} if invoices wait for a person because it isn't running.",
     "Your name and province": "Your name comes from your account: each approval is recorded under it. The "
-    "company's province is set once, by an Admin.",
-    "Your GL accounts and sales tax": "An Admin imports the GL accounts, the sales tax accounts, the vendor master and "
-    "the past coding.",
+    "company's province is set once, by someone who may change settings.",
+    "Your GL accounts and sales tax": "Someone who may change the setup imports the GL accounts, the sales tax "
+    "accounts, the vendor master and the past coding.",
 }
 
 
@@ -1188,7 +1190,8 @@ SERVER_FAQ: dict[str, tuple[str, str]] = {  # question -> (question, answer) on 
         "No. Every invoice is read and coded on the company's server: the PDF's own text or OCR, OvisOCR2 in LM "
         "Studio and the checks all run there. The database, the invoices, what the AI learns and the exports stay in "
         "its data folder on the server; your browser shows them over the company network, over HTTPS. The only "
-        "exceptions are ones an Admin switches on, each off by default: the Azure check (Settings → Reading), the "
+        "exceptions are ones someone who may change settings switches on, each off by default: the Azure check "
+        "(Settings → Reading), the "
         "finance hub feed (Settings → Finance hub) and the JD Edwards connection (your company's own JD Edwards "
         "server).",
     ),
@@ -1197,7 +1200,7 @@ SERVER_FAQ: dict[str, tuple[str, str]] = {  # question -> (question, answer) on 
         "If an approval limit is set (Settings → Review), an invoice above it is not ready to export after the "
         "first approval: it waits in the Second approval tab until someone else approves it, or sends it back to "
         "the queue. On the server each person logs in with their own account, so the second approval is always "
-        "another person's; an Approver or an Admin can give it. The two names are recorded in the Activity log.",
+        "another person's, one that may give it. The two names are recorded in the Activity log.",
     ),
     "OvisOCR2 isn't reading invoices.": (
         "OvisOCR2 isn't reading invoices.",

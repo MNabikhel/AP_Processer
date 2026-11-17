@@ -387,7 +387,8 @@ def second_folder(store: Any, wait: float = FOLDER_WAIT) -> dict[str, Any]:
     folder = store.get_setting("backup_copy_dir").strip()
     if not folder:
         return {"set": False, "status": WARN, "problem": "There is no second backup folder: the backups are on the "
-                "data folder's disk, so a failure of that disk loses them with the database. An Admin sets one in "
+                "data folder's disk, so a failure of that disk loses them with the database. Someone who may "
+                "change settings sets one in "
                 "Settings → Data & backups."}  # fmt: skip
     found = {"set": True, **look_at_folder(folder, store.path.parent, wait)}
     if found["reachable"] is None:

@@ -129,6 +129,18 @@ ROLE_NOTES = {  # what each built-in role is for, in a line
 }
 
 
+# What works on invoices, or on what they are coded with, and so comes with **view** (D-250): a role that may do one
+# of these sees the invoices and the reports too, or its pages would lead it to ones it may not open. Not users,
+# settings and confirm: a role that only manages people, changes settings or confirms as a manager.
+NEEDS_VIEW = frozenset({ACTIVITY, IMPORT, CODE, APPROVE, FINAL, EXPORT, POST, CONTROLS, SETUP, UNDO})
+
+
+def with_view(found: Any) -> set[str]:
+    """``found`` (permissions), with **view** when one of them needs it (``NEEDS_VIEW``)."""
+    found = {str(p) for p in found}
+    return found | {VIEW} if found & NEEDS_VIEW else found
+
+
 def built_in(role: str | None) -> frozenset[str]:
     """The permissions of a built-in role (none for any other key)."""
     return BUILT_IN.get(str(role or ""), frozenset())
@@ -136,7 +148,8 @@ def built_in(role: str | None) -> frozenset[str]:
 
 def permissions_of(role: str | None, stored: str | None = None) -> list[str]:
     """A role's permissions in the order of ``PERMISSIONS``: a built-in role's, else those of ``stored`` (a role made
-    by an Admin: its JSON list; a key AP Coder doesn't know is left out, and so is a list that can't be read)."""
+    by an Admin: its JSON list; a key AP Coder doesn't know is left out, and so is a list that can't be read; **view**
+    added when one of them needs it, ``with_view``: a role saved before that rule)."""
     if role in BUILT_IN:
         found: Any = BUILT_IN[str(role)]
     else:
@@ -144,7 +157,7 @@ def permissions_of(role: str | None, stored: str | None = None) -> list[str]:
             found = json.loads(stored or "[]")
         except ValueError:
             found = []
-        found = {str(p) for p in found} if isinstance(found, list) else set()
+        found = with_view(found) if isinstance(found, list) else set()
     return [p for p in PERMISSIONS if p in found]
 
 

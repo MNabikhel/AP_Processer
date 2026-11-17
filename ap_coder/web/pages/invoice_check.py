@@ -49,7 +49,7 @@ def _shown_live(request: Request, live: dict[str, Any], may_edit: bool = True, d
     first = (live.get("bar") or {}).get("first") if live.get("account") else None
     return {**live, "read_only": not may_edit, "jde_settings": can(request, "/settings/jde", "GET"),
             **({"bar_fix": first["said"]} if first and first.get("said") else {}),
-            "setup_contact": "an Admin" if server_mode(request) else "the pilot tester",
+            "setup_contact": "someone who may change settings" if server_mode(request) else "the pilot tester",
             "draft_rev": draft_rev}  # fmt: skip
 
 

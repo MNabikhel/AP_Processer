@@ -12,7 +12,8 @@ from typing import Any
 from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from ap_coder.core.permissions import PERMISSIONS
+from ap_coder.core.permissions import NEEDS_VIEW, PERMISSIONS
+from ap_coder.core.store.roles import MAX_ROLE_NAME
 from ap_coder.web import identity
 from ap_coder.web.core import done, get_store, page_router, refuse, render, reviewer
 from ap_coder.web.pages import admin, users
@@ -20,6 +21,7 @@ from ap_coder.web.pages import admin, users
 router = page_router()  # each plain handler: one connection a request
 
 PATH = "/admin/roles"
+IMPLIED = [p for p in PERMISSIONS if p in NEEDS_VIEW]  # what ticks See invoices and reports on the form (B-2592)
 
 
 def _role(request: Request, key: str) -> dict[str, Any]:
@@ -41,10 +43,11 @@ def new_role(request: Request, copy: str = "") -> HTMLResponse:
     """A new role's form, its boxes ticked as the role ``copy`` has them (a starting point), else none."""
     users.server_only(request)
     start = get_store(request).role_info(copy) if copy else None
-    role = {"key": "", "name": f"{start['name']} (copy)" if start else "", "built_in": False, "people": 0,
+    copied = f"{start['name'][: MAX_ROLE_NAME - len(' (copy)')].rstrip()} (copy)" if start else ""  # fits a name
+    role = {"key": "", "name": copied, "built_in": False, "people": 0,
             "permissions": start["permissions"] if start else []}  # fmt: skip
     return render(request, "admin_role.html", "admin", title="New role", **admin.common(request), role=role,
-                  permissions=PERMISSIONS, copied=start["name"] if start else "")  # fmt: skip
+                  permissions=PERMISSIONS, implied=IMPLIED, copied=start["name"] if start else "")  # fmt: skip
 
 
 @router.get(PATH + "/{key}", response_class=HTMLResponse)
@@ -53,7 +56,7 @@ def role_page(request: Request, key: str) -> HTMLResponse:
     role = _role(request, key)
     holders = [u for u in get_store(request).list_users() if u["role"] == key]
     return render(request, "admin_role.html", "admin", title=role["name"], **admin.common(request), role=role,
-                  permissions=PERMISSIONS, holders=holders, copied="")  # fmt: skip
+                  permissions=PERMISSIONS, implied=IMPLIED, holders=holders, copied="")  # fmt: skip
 
 
 @router.post(PATH + "/add")
@@ -84,8 +87,9 @@ def save_role(request: Request, key: str, name: str = Form(""),
 def delete_role(request: Request, key: str) -> JSONResponse:
     users.server_only(request)
     role = _role(request, key)
+    me = identity.person()
     try:
-        get_store(request).delete_role(key, actor=reviewer())
+        get_store(request).delete_role(key, actor=reviewer(), by_user=me.user_id if me else None)
     except ValueError as exc:
         return refuse(str(exc))
     return done(request, PATH, f"Role {role['name']} deleted.")

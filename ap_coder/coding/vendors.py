@@ -663,7 +663,7 @@ def moved_off_hold(store: Store, read: dict[str, Any], coding: InvoiceCoding) ->
             why = {"name": f"was read as {name}", "gst": f"shows the GST/HST number of {name}",
                    "bank": f"shows the bank account {name} is paid to"}[tie]  # fmt: skip
             return [(ERROR, MOVED_OFF_HOLD, f"this invoice {why}, a vendor on hold, but is coded to "
-                     "another vendor: only an Approver can approve it")]  # fmt: skip
+                     "another vendor: only someone who may lift holds can approve it")]  # fmt: skip
     return []
 
 

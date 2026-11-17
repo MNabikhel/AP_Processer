@@ -507,7 +507,7 @@ def _account_person(user: dict[str, Any], client: str) -> Person:
 
 def not_allowed_text(role_label: str, page: bool) -> str:
     what = "open this page" if page else "do this"
-    return f"Your role ({role_label}) can't {what}. Ask an Admin if you need it."
+    return f"Your role ({role_label}) can't {what}. Ask someone who may manage users if you need it."
 
 
 def _not_allowed(scope: dict[str, Any], receive: Any, user: dict[str, Any], page: bool) -> Any:

@@ -21,6 +21,7 @@
                                       in a message that goes ("apc:refused" on the form: a file box, imports.js)
      select[data-autosubmit]          submit its (GET) form on change
      input[type=checkbox][data-enables]  enables the submit button of its form while ticked
+     input[type=checkbox][data-implied-by="a b"]  ticked and locked while a box of its name with value a or b is
      [data-dismiss]                   removes its message
      [data-job-status="/jobs/name"]   background work under way: says how far it got, reloads the page when done
      a[data-download-job]             on the company server, a download its background process makes: asked for, its
@@ -386,6 +387,15 @@ document.addEventListener("change", (event) => {
   if (el.matches("select[data-autosubmit]") && el.form) el.form.requestSubmit();
   if (el.matches("input[type=checkbox][data-enables]") && el.form) {
     el.form.querySelectorAll('button[type="submit"]').forEach((b) => (b.disabled = !el.checked));
+  }
+  if (el.matches("input[type=checkbox]") && el.form) {
+    // A box that comes with others (Roles: See invoices and reports, B-2592): ticked and locked while one of them is.
+    el.form.querySelectorAll("input[type=checkbox][data-implied-by]").forEach((box) => {
+      const by = box.dataset.impliedBy.split(" ");
+      const on = [...el.form.querySelectorAll(`input[type=checkbox][name="${box.name}"]`)].some((b) => b.checked && by.includes(b.value));
+      if (on) box.checked = true;
+      box.disabled = on;
+    });
   }
 });
 

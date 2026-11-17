@@ -77,8 +77,8 @@ NO_LOGINS = "There are no logins on this computer: AP Coder opens for whoever us
 TOO_LONG = "Your login took too long, or it ended: log in again."
 OUT_OF_STEP = "That isn't the next step of your login: reload the page."
 SIX_DIGITS = "Type the six digits your authenticator app shows (spaces don't matter)."
-ONLY_ADMIN = ("Your temporary password has expired (it lasts 3 days). You are the only Admin: for a new one, run "
-              "python -m ap_coder users reset {username} {where}.")  # fmt: skip
+ONLY_ADMIN = ("Your temporary password has expired (it lasts 3 days). You are the only one who may manage users: "
+              "for a new one, run python -m ap_coder users reset {username} {where}.")  # fmt: skip
 QUIET = 4  # modules of white around a QR code, as the standard asks
 # What a reverse proxy adds to the requests it passes on: one on this computer makes every browser arrive from 127.0.0.1
 # (D-243). IIS's ARR adds X-ARR-SSL, X-ARR-LOG-ID and the like too (``X_ARR``).
@@ -270,8 +270,8 @@ def login_save(request: Request, username: str = Form(""), password: str = Form(
     pending = store.start_pending(user["id"])  # the password alone is no session (D-146)
     wanted = _next(next)
     have = user.get("permissions") or ()
-    if CONFIRM in have and VIEW not in have and wanted == HOME:  # a Manager's role (D-250)
-        wanted = "/manager"  # a Manager's own page: the review queue is not theirs (D-138)
+    if VIEW not in have and wanted == HOME:  # the review queue is not theirs (D-250)
+        wanted = "/manager" if CONFIRM in have else "/"  # a Manager's own page (D-138), else the first they may open
     if user["must_change"]:
         answer = done(request, _step_url(user, wanted),
                       flash_message("Choose your own password before you carry on: the one you were given is "

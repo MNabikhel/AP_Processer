@@ -267,9 +267,8 @@ def override_key(errors: list[Any]) -> str:
 
 def _short_reason(text: str) -> str:
     # the first sentence ("e.g. CAD" is no sentence's end)
-    return re.split(r"(?<=[a-z0-9)])(?<!e\.g)\. (?=[A-Z])|: (?=ask (?:the pilot tester|an Admin))", text, maxsplit=1)[
-        0
-    ].rstrip(".")
+    ends = r"(?<=[a-z0-9)])(?<!e\.g)\. (?=[A-Z])|: (?=ask (?:the pilot tester|someone who may))"
+    return re.split(ends, text, maxsplit=1)[0].rstrip(".")
 
 
 def hard_reasons(hard: list[Any]) -> list[str]:

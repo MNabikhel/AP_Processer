@@ -68,7 +68,7 @@ def push_allowed(opted_in: bool) -> str:
         return ("This computer is offline (AP_ALLOW_INTERNET is not 1): AP Coder pushes nothing to OneLake. Use "
                 "“Fabric pulls” with a shared folder, or ask IT to allow the internet for AP Coder.")  # fmt: skip
     if not opted_in:
-        return "The push to OneLake is off: an Admin ticks “Send the files to OneLake” first."
+        return "The push to OneLake is off: someone who may change settings ticks “Send the files to OneLake” first."
     return ""
 
 

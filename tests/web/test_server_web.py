@@ -388,9 +388,9 @@ def test_the_last_admin_cannot_be_demoted_or_turned_off_from_the_page(store):
     client = server_client(store)
     log_in(client, "boss")
     refused = client.post(f"/admin/users/{uid}/role", data={"role": "clerk"}, headers=PAGE)
-    assert refused.status_code == 400 and "at least one active Admin" in refused.json()["error"]
+    assert refused.status_code == 400 and "at least one active account that may manage users" in refused.json()["error"]
     refused = client.post(f"/admin/users/{uid}/deactivate", headers=PAGE)
-    assert "at least one active Admin" in refused.json()["error"]
+    assert "at least one active account that may manage users" in refused.json()["error"]
     assert store.user(uid)["role"] == "admin" and store.user(uid)["active"]
 
 

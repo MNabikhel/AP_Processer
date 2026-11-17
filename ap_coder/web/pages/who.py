@@ -30,7 +30,7 @@ def who(request: Request, next: str = "/review") -> Response:  # noqa: A002 - th
 @router.post(identity.WHO_PATH)
 def who_save(request: Request, name: str = Form(""), next: str = Form("/review")) -> JSONResponse:  # noqa: A002
     if server_mode(request):
-        return refuse("Your name is your account's: an Admin changes it on the Users page.", 403)
+        return refuse("Your name is your account's: someone who may manage users changes it on the Users page.", 403)
     if signs_in(request):  # a laptop's Admin signs in (D-243): no names given
         return refuse("On this computer, your name is set in Settings → Review.", 403)
     if request.client is None or identity.from_this_computer(request.scope):

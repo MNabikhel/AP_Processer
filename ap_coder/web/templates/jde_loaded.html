@@ -103,7 +103,7 @@
   {% endif %}
   {% endif %}
   {% if what in ("chart", "units", "suppliers") %}
-  <p class="muted">{% if may_edit %}{{ kept }}{% else %}An Admin changes a row here; a change made by hand is kept when a newer file is loaded.{% endif %}</p>
+  <p class="muted">{% if may_edit %}{{ kept }}{% else %}Someone who may change the setup changes a row here; a change made by hand is kept when a newer file is loaded.{% endif %}</p>
   {% endif %}
   {% endif %}
 </section>

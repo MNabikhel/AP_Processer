@@ -23,8 +23,8 @@
       <tbody>
         {% for r in roles %}
         <tr data-role="{{ r.key }}">
-          <td><a href="/admin/roles/{{ r.key }}"><b>{{ r.name }}</b></a><br>{% if r.built_in %}{{ ui.pill("Built in", "gray") }}{% else %}{{ ui.pill("Made here", "info") }}{% endif %}</td>
-          <td class="w">{% if r.built_in %}<div class="muted">{{ r.note }}</div>{% endif %}
+          <td class="w name"><a href="/admin/roles/{{ r.key }}"><b>{{ r.name }}</b></a><br>{% if r.built_in %}{{ ui.pill("Built in", "gray") }}{% else %}{{ ui.pill("Made here", "info") }}{% endif %}</td>
+          <td class="w may">{% if r.built_in %}<div class="muted">{{ r.note }}</div>{% endif %}
             <div>{% for p in r.permissions %}{{ permissions[p][0] }}{{ "" if loop.last else " · " }}{% endfor %}</div></td>
           <td>{{ r.people }}</td>
           <td class="r"><div class="row end">
@@ -47,7 +47,7 @@
     made, changed or given with more, and no account changed, reset, turned off or signed out that may do more than
     theirs.</p>
   <p class="muted">Whatever the role, the second approval is always another person's than the first, and an account
-    added or reset by an Admin can't give the second approval of that Admin's invoices for 7 days.</p>
+    added or reset by someone who may manage users can't give the second approval of that person's invoices for 7 days.</p>
 </section>
 </div>
 {% endblock %}
