@@ -334,15 +334,17 @@ def test_a_colleague_is_told_the_setup_is_changed_on_the_computer_running_ap_cod
     for page, said in pages.items():
         text = html.unescape(re.sub(r"\s+", " ", ana.get(page).text))
         assert f"{said} on the computer running AP Coder." in text, page
-        assert "An Admin" not in text and "an Admin" not in text and "An Approver" not in text, page
+        assert "omeone who may" not in text, page
     from tests.web.test_server_web import account, log_in, server_client
 
     account(store, "clerk", "clerk")
     clerk = server_client(store)
     log_in(clerk, "clerk")
-    pages = {"/jde-files": "An Admin loads these files.", "/purchase-orders": "An Admin loads the purchase orders.",
-             "/accounts?tab=gl": "An Admin loads and changes the GL accounts.",
-             "/exports": "An Admin sets the ERP layout and loads the ERP's invoice list."}  # fmt: skip
+    pages = {"/jde-files": "Someone who may change the setup loads these files.",
+             "/purchase-orders": "Someone who may change the setup loads the purchase orders.",
+             "/accounts?tab=gl": "Someone who may change the setup loads and changes the GL accounts.",
+             "/exports": "Someone who may change settings sets the ERP layout, and someone who may change the "
+             "setup loads the ERP's invoice list."}  # fmt: skip
     for page, said in pages.items():
         text = html.unescape(re.sub(r"\s+", " ", clerk.get(page).text))
         assert said in text and "computer running AP Coder" not in text, page

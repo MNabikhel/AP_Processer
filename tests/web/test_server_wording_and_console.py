@@ -143,11 +143,11 @@ def test_on_the_server_the_setup_findings_say_an_admin(store, monkeypatch):
     laptop = [f[2] for f in jde_review.voucher_findings(output, settings, "")]  # no settings yet, no AN8
     monkeypatch.setenv(offline.SERVER_ENV, "1")
     server = [f[2] for f in jde_review.voucher_findings(output, settings, "")]
-    assert any("someone who may change settings" in t for t in server) and not any("pilot tester" in t for t in server)
+    assert any("who may change settings" in t for t in server) and not any("pilot tester" in t for t in server)
     assert any("Settings → JD Edwards E1 → Supplier address numbers" in t for t in laptop)  # where, since B-1297
     assert offline.setup_contact("Ask the pilot tester to map it") == "Ask someone who may change settings to map it"
     help_page = client_as(store, "clerk").get("/help").text
-    assert "ask the pilot tester" not in help_page.lower() and "ask an admin" in help_page.lower()
+    assert "ask the pilot tester" not in help_page.lower() and "ask someone who may" in help_page.lower()
 
 
 # --- The second approval by the same account (B-1113) -----------------------------------------------------------------

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2] / "ap_coder"
 # "an Admin", "another Admin", "an Approver", "Approver or Admin": a built-in role named as who does something.
 NAMED = re.compile(r"\b[Aa]n(?:other)? (?:Admin|Approver)\b|\bApprover or (?:an )?Admin\b")
 COMMENT = re.compile(r"\{#.*?#\}", re.S)
-PYTHON = ("web", "core/store", "ops/help.py", "ops/health.py", "ops/offline.py")
+SKIPPED = ("bench",)  # the accuracy benchmark: words for developers
 
 
 def _strings(path: Path) -> list[tuple[int, str]]:
@@ -33,8 +33,8 @@ def test_no_page_or_message_names_a_built_in_role_as_who_does_something():
     for template in sorted((ROOT / "web" / "templates").glob("*.html")):
         text = COMMENT.sub("", template.read_text(encoding="utf-8"))
         found += [f"{template.name}: {m.group(0)}" for m in NAMED.finditer(text)]
-    for part in PYTHON:
-        for module in sorted((ROOT / part).rglob("*.py")) if (ROOT / part).is_dir() else [ROOT / part]:
+    for module in sorted(ROOT.rglob("*.py")):
+        if module.relative_to(ROOT).parts[0] not in SKIPPED:
             found += [f"{module.relative_to(ROOT)}:{line}: {NAMED.search(s).group(0)}" for line, s in _strings(module)
                       if NAMED.search(s)]  # fmt: skip
     assert found == []

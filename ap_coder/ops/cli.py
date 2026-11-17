@@ -1422,8 +1422,8 @@ def cmd_hub(args: argparse.Namespace) -> int:
         print(f"Last run: {last['at']} by {last.get('by')}: {last.get('summary')}" if last else "Last run: never")
         return 0
     if not config.enabled and not args.dry_run:
-        print("The finance hub feed is off: an Admin turns it on in Settings → Finance hub (a dry run works "
-              "anyway: hub export --dry-run).", file=sys.stderr)  # fmt: skip
+        print("The finance hub feed is off: someone who may change settings turns it on in Settings → Finance hub "
+              "(a dry run works anyway: hub export --dry-run).", file=sys.stderr)  # fmt: skip
         return 1
     result = export(store, config, full=args.full, dry_run=args.dry_run, actor=login_name())
     print(result.summary(), file=sys.stdout if result.ok else sys.stderr)

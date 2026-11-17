@@ -56,6 +56,7 @@ from .. import authenticator
 from ..permissions import ADMIN, APPROVER, CLERK, MANAGER, READONLY, ROLE_LABELS, ROLES, permissions_of  # noqa: F401
 from ._base import _now
 from .dialect import begin_write, json_get
+from .roles import role_name_of
 
 MIN_PASSWORD = 12
 SCRYPT_N, SCRYPT_R, SCRYPT_P = 2**14, 8, 1
@@ -68,9 +69,8 @@ TOKEN_BYTES = 32
 IDLE_SECONDS = 30 * 60
 ABSOLUTE_SECONDS = 12 * 3600
 TEMPORARY_SECONDS = 72 * 3600  # a temporary password (a new account, a reset) not changed by then no longer logs in
-TEMPORARY_EXPIRED = ("Your temporary password has expired (it lasts 3 days): ask someone who may manage users "
-                     "for a new one (Users → "
-                     "Reset password).")  # fmt: skip
+TEMPORARY_EXPIRED = ("Your temporary password has expired (it lasts 3 days): ask someone who may manage users for a "
+                     "new one (Users → Reset password).")  # fmt: skip
 SEEN_EVERY = 60  # seconds between two writes of a session's last use
 SEEN_WAIT_MS = 200  # how long that write may wait for another writer before it is left to the next request
 MAX_FAILURES = 5  # tries that don't match within FAILURE_WINDOW for one username from one address...
@@ -100,23 +100,16 @@ ACCOUNT_PAUSED = (
     "it logged in lately. Wait, then try again, or ask someone who may manage users."
 )
 LAST_ADMIN = "AP Coder needs at least one active account that may manage users: give that to another person first."
-OWN_OFF = (
-    "This is your own account: someone else who may manage users turns it off, so AP Coder always has "
-    "someone who manages the people."
-)
+OWN_OFF = "This is your own account: someone else who may manage users turns it off, so one is always left."
 WRONG_CODE = ("That code doesn't match, or it was used already. Type the 6 digits your authenticator app shows now "
               "(a new code every 30 seconds). Refused again? Check that this computer's clock and your phone's show "
               "the right time: a minute off and the codes don't match.")  # fmt: skip
 CODE_WHY = "authenticator code"  # login_failed's why: the code didn't match (D-146)
 KEY_WHY = "authenticator key missing"
-KEY_MISSING = (
-    "AP Coder can't check your authenticator codes on this server: its key file (authenticator.key in the data "
-    "folder) is missing, damaged or not the one your app was set up with. Ask someone who may manage users to "
-    "reset your authenticator (Users)."
-)
-ALREADY_SET_UP = (
-    "This account's authenticator app is set up already: someone who may manage users resets it to set it up again."
-)
+KEY_MISSING = ("AP Coder can't check your authenticator codes on this server: its key file (authenticator.key in "
+               "the data folder) is missing, damaged or not the one your app was set up with. Ask someone who may "
+               "manage users to reset your authenticator (Users).")  # fmt: skip
+ALREADY_SET_UP = "This authenticator app is set up already: someone who may manage users resets it to set it up again."
 PENDING_KIND = "login-pending"  # a login half way, in the short-lived table (D-146)
 PENDING_SECONDS = 15 * 60  # time to change a password and set an app up; the code's step takes seconds
 # The first sign-in (D-243): while the database has no account at all, admin / admin, typed in a browser on the computer
@@ -429,8 +422,6 @@ class UsersMixin:
             )
             by = {"by_user": int(by_user)} if by_user is not None else {}
             if role not in ROLE_LABELS:  # a role made here: its name then, as role_changed keeps it (D-250)
-                from .roles import role_name_of
-
                 by["role_name"] = role_name_of(conn, role)
             self._log(conn, "user_added", None, actor or None, {"username": name, "name": shown, "role": role, **by})
             return int(cur.lastrowid)
