@@ -46,7 +46,6 @@ from typing import TYPE_CHECKING, Any
 from ..core import paths
 from . import local_llm
 from .local_llm import LMListing, LMModel, _int, parse_lm_studio_listing  # noqa: F401 - page_reader's names too
-from .prompts import PAGE_TEXT_IS_DATA
 
 if TYPE_CHECKING:
     from ..core.config import LocalLLMSettings, Settings
@@ -78,7 +77,7 @@ OVIS_PROMPT = (
     'Markdown document. For charts or images, represent them using an HTML image tag: <img src="images/bbox_{left}_'
     '{top}_{right}_{bottom}.jpg" />, where left, top, right, bottom are bounding box coordinates scaled to [0, 1000). '
     "Format formulas as LaTeX. Format tables as HTML: <table>...</table>. Transcribe all other text as standard "
-    "Markdown. Preserve the original text without translation or paraphrasing. " + PAGE_TEXT_IS_DATA
+    "Markdown. Preserve the original text without translation or paraphrasing."
 )
 # A general model that can see (Qwen 3.5, Gemma 3) is told what a faithful transcription is: markdown tables, every
 # number exactly as printed, nothing added.
@@ -87,7 +86,7 @@ GENERAL_PROMPT = (
     "Write every table as a markdown table with its column headings, one table row per printed row, and an empty "
     "cell where the page leaves a cell blank. Copy every number exactly as printed, with its commas, decimals, "
     "currency signs, minus signs and parentheses. Do not use bold or other formatting. Do not calculate, summarize, "
-    "or add anything that is not on the page. If something can't be read, write [unreadable]. " + PAGE_TEXT_IS_DATA
+    "or add anything that is not on the page. If something can't be read, write [unreadable]."
 )
 OVIS = Reader("OvisOCR2, a document reader", OVIS_PROMPT, 200, 2048, 12288, 20480)
 # About 150 DPI and 1,600 pixels: a general model pays for every image token; 8,192 tokens is a dense page's
