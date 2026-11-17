@@ -405,7 +405,7 @@ def test_in_a_browser_the_review_screen_stops_following_the_reading_once_the_ses
 
 
 def test_in_a_browser_the_role_form_ticks_and_locks_see_invoices(browser, store):
-    """B-2585: ticking what works on invoices ticks See invoices and reports and locks it; unticked, it is free."""
+    """B-2592: ticking what works on invoices ticks See invoices and reports and locks it; unticked, it is free."""
     page, errors = _log_in(browser, store, "boss")
     page.goto(f"{browser[1]}/admin/roles/new")
     view = page.locator("input[name=permissions][value=view]")

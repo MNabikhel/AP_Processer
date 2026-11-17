@@ -182,7 +182,7 @@ def test_the_plain_refusal_page_shows_a_roles_name_as_text(store, monkeypatch):
 
 
 def test_a_role_that_sees_no_invoices_lands_on_a_page_it_may_open(store):
-    """B-2578: a role without See invoices and reports (people's accounts only, or settings only) signed in to
+    """B-2585: a role without See invoices and reports (people's accounts only, or settings only) signed in to
     the review queue and "Not allowed", and the menu's AP Coder and the refusal's button led back there."""
     account(store, "boss", "admin", "Pat Boss")
     app = app_for(store)
@@ -207,7 +207,7 @@ def test_a_role_that_sees_no_invoices_lands_on_a_page_it_may_open(store):
 
 
 def test_a_copy_of_a_role_with_a_long_name_is_named_in_full(store):
-    """B-2580: "(copy)" put after a long name went past the 40 characters a name keeps: saved as it was offered, the
+    """B-2587: "(copy)" put after a long name went past the 40 characters a name keeps: saved as it was offered, the
     copy of "Accounts payable team lead for Ontario" was named "Accounts payable team lead for Ontario (", and the
     copy of a 40-character name was refused as a role there already is."""
     account(store, "boss", "admin", "Pat Boss")
@@ -222,7 +222,7 @@ def test_a_copy_of_a_role_with_a_long_name_is_named_in_full(store):
 
 
 def test_an_invoice_waiting_for_gl_accounts_links_to_them_only_for_whoever_may_open_them(store):
-    """B-2582: with no GL accounts loaded, an invoice's "Load GL accounts" led a Read-only person (or a role made
+    """B-2589: with no GL accounts loaded, an invoice's "Load GL accounts" led a Read-only person (or a role made
     without Review and code invoices) to GL accounts & tax, which refused them."""
     account(store, "boss", "admin", "Pat Boss")
     account(store, "reader", "readonly", "Rea Der")
@@ -239,7 +239,7 @@ def test_an_invoice_waiting_for_gl_accounts_links_to_them_only_for_whoever_may_o
 
 
 def test_a_persons_page_links_their_invoices_only_for_whoever_may_open_them(store):
-    """B-2584: a person's page (What they did) linked each invoice to its review screen, which refused a role made
+    """B-2591: a person's page (What they did) linked each invoice to its review screen, which refused a role made
     to manage people's accounts without See invoices and reports."""
     account(store, "boss", "admin", "Pat Boss")
     ann = account(store, "ann", "clerk", "Ann Lee")
@@ -257,7 +257,7 @@ def test_a_persons_page_links_their_invoices_only_for_whoever_may_open_them(stor
 
 
 def test_the_role_form_ticks_and_locks_see_invoices_with_what_works_on_them(store):
-    """B-2585: See invoices and reports comes with anything that works on invoices; the Roles form says so, and
+    """B-2592: See invoices and reports comes with anything that works on invoices; the Roles form says so, and
     shows it ticked and locked on a role that has one of those."""
     account(store, "boss", "admin", "Pat Boss")
     boss = client_of(app_for(store), "10.0.0.7")

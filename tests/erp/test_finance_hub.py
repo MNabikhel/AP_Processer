@@ -169,7 +169,7 @@ def test_a_reopened_approval_is_marked_withdrawn(store, tmp_path):
 
 
 def test_an_approvers_role_made_here_is_sent_by_its_name(store):
-    """B-2586: ``approver_role`` sent "role-1" for a role made on the Admin panel (D-250), a key nobody reading the
+    """B-2593: ``approver_role`` sent "role-1" for a role made on the Admin panel (D-250), a key nobody reading the
     hub could tell; a built-in role is sent as before (clerk, approver, admin...)."""
     lead = store.add_role("AP lead", ["view", "approve"])
     ann = store.add_user("ann", "correct horse battery", role="clerk", must_change=False)
@@ -647,7 +647,7 @@ def test_account_and_settings_events_stay_out_of_activity(store):
 
 
 def test_the_roles_and_the_sign_outs_stay_out_of_activity_too(store):
-    """B-2579: the roles made, changed and deleted on the Admin panel (D-250), an account signed out everywhere
+    """B-2586: the roles made, changed and deleted on the Admin panel (D-250), an account signed out everywhere
     (D-249) and a Manager's cost centers were sent to the hub's activity, which leaves the accounts out."""
     boss = store.add_user("boss", "correct horse battery", role="admin", must_change=False)
     key = store.add_role("AP lead", ["view", "code"], actor="Pat Boss")

@@ -21,7 +21,7 @@ from ap_coder.web.pages import admin, users
 router = page_router()  # each plain handler: one connection a request
 
 PATH = "/admin/roles"
-IMPLIED = [p for p in PERMISSIONS if p in NEEDS_VIEW]  # what ticks See invoices and reports on the form (B-2585)
+IMPLIED = [p for p in PERMISSIONS if p in NEEDS_VIEW]  # what ticks See invoices and reports on the form (B-2592)
 
 
 def _role(request: Request, key: str) -> dict[str, Any]:

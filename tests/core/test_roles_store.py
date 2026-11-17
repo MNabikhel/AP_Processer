@@ -211,7 +211,7 @@ def test_a_role_either_reviews_invoices_or_confirms_as_a_manager(people):
 
 
 def test_an_account_added_with_a_role_made_here_is_named_by_that_roles_name_in_the_activity_log(people):
-    """B-2576: "ann.lee (Ann Lee) can log in as role-1": the role's key, not its name."""
+    """B-2583: "ann.lee (Ann Lee) can log in as role-1": the role's key, not its name."""
     store, boss, _ = people
     key = store.add_role("AP lead", LEAD, by_user=boss)
     store.add_user("cy", GOOD, role=key, display_name="Cy Tan", by_user=boss)
@@ -224,7 +224,7 @@ def test_an_account_added_with_a_role_made_here_is_named_by_that_roles_name_in_t
 
 
 def test_nobody_deletes_a_role_that_may_do_more_than_theirs_and_the_refusal_reads_well(people):
-    """B-2577: a role with Manage users and roles alone could delete a role it could not change, and the refusal to
+    """B-2584: a role with Manage users and roles alone could delete a role it could not change, and the refusal to
     change one said "The role AP lead role may do more than yours"."""
     store, boss, ann = people
     hr = store.add_role("HR", ["users"], by_user=boss)
@@ -242,7 +242,7 @@ def test_nobody_deletes_a_role_that_may_do_more_than_theirs_and_the_refusal_read
 
 
 def test_a_role_that_works_on_invoices_sees_them_too(people):
-    """B-2585: a role made without See invoices and reports, but to bring invoices in, code, approve or read the
+    """B-2592: a role made without See invoices and reports, but to bring invoices in, code, approve or read the
     activity log, was led by its pages to invoices and reports it could not open. Such a role sees them: given when it
     is saved, and on reading one saved before; a role that only manages people, changes settings or confirms as a
     manager is left as it is, and so are the built-in ones."""

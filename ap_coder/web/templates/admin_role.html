@@ -19,7 +19,7 @@
     <fieldset class="stack">
       <legend>May</legend>
       {% for key, (label, what) in permissions.items() %}
-      {# See invoices and reports comes with what works on invoices: ticked and locked then (app.js, B-2585) #}
+      {# See invoices and reports comes with what works on invoices: ticked and locked then (app.js, B-2592) #}
       {% set locked = key == "view" and role.permissions | select("in", implied) | list %}
       <label class="check"><input type="checkbox" name="permissions" value="{{ key }}"{% if key == "view" %} data-implied-by="{{ implied | join(' ') }}"{% endif %}{% if key in role.permissions %} checked{% endif %}{% if fixed or locked %} disabled{% endif %}>
         <span><b>{{ label }}</b> <span class="muted">· {{ what }}{% if key == "view" %} It comes with anything that works on invoices (all but Manage users and roles, Change settings and Confirm coding as a manager): whoever does that sees them too.{% endif %}</span></span></label>

@@ -28,7 +28,7 @@ def _strings(path: Path) -> list[tuple[int, str]]:
 
 
 def test_no_page_or_message_names_a_built_in_role_as_who_does_something():
-    """B-2588."""
+    """B-2595."""
     found = []
     for template in sorted((ROOT / "web" / "templates").glob("*.html")):
         text = COMMENT.sub("", template.read_text(encoding="utf-8"))

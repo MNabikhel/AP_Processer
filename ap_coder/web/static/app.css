@@ -216,9 +216,9 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
 .apc-table.fit td.r {white-space: normal;}
 .apc-table.fit td.r .link {white-space: nowrap;}
 .apc-table.fit td .row input[type="text"] {flex: 1 1 9rem; width: 9rem; min-width: 0;}
-/* A role's long name (D-250) never widens the Users table's Role boxes past the card (B-2583) */
+/* A role's long name (D-250) never widens the Users table's Role boxes past the card (B-2590) */
 .apc-table.fit td select {max-width: 11rem;}
-/* Roles (admin_roles.html): what a role may do keeps lines of words on a phone, its name wraps (B-2581) */
+/* Roles (admin_roles.html): what a role may do keeps lines of words on a phone, its name wraps (B-2588) */
 .apc-table.fit td.w.may {min-width: 11rem;}
 .apc-table tbody tr:hover td {background: var(--lg-hover);}
 .apc-table .r {text-align: right; font-variant-numeric: tabular-nums; font-feature-settings: var(--lg-num); white-space: nowrap;}

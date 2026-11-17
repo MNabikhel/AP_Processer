@@ -225,7 +225,7 @@ def server_roles(chromium, tmp_path):
 
 
 def test_in_a_browser_the_roles_say_what_each_may_do_in_lines_on_a_phone(server_roles):
-    """B-2581: at 390 px the Roles table gave what each role may do a column one word wide (the page 4,400 px long,
+    """B-2588: at 390 px the Roles table gave what each role may do a column one word wide (the page 4,400 px long,
     a role's permissions a word a line): the role's name and the buttons beside it took the rest."""
     browser, base, sign_in = server_roles
     page = browser.new_page(viewport={"width": 390, "height": 800})
@@ -238,7 +238,7 @@ def test_in_a_browser_the_roles_say_what_each_may_do_in_lines_on_a_phone(server_
 
 
 def test_in_a_browser_a_long_role_name_leaves_the_users_buttons_in_the_card(server_roles):
-    """B-2583: a role named "Accounts payable team lead for Ontario" widened every person's Role box on Users, so on
+    """B-2590: a role named "Accounts payable team lead for Ontario" widened every person's Role box on Users, so on
     a laptop at 150 % (911 px) their Reset password and Turn off went past the card's edge (B-2110 again)."""
     browser, base, sign_in = server_roles
     page = browser.new_page(viewport={"width": 911, "height": 800})
@@ -250,7 +250,7 @@ def test_in_a_browser_a_long_role_name_leaves_the_users_buttons_in_the_card(serv
 
 
 def test_in_a_browser_the_sign_in_pages_buttons_stay_in_view_at_683(server_roles):
-    """B-2587: on a laptop at 200 % (683 px) the Admin panel's Sign-in table was some 120 px wider than its card: each
+    """B-2594: on a laptop at 200 % (683 px) the Admin panel's Sign-in table was some 120 px wider than its card: each
     session's Sign out everywhere was past the edge, seen only by scrolling the table sideways."""
     browser, base, sign_in = server_roles
     page = browser.new_page(viewport={"width": 683, "height": 800})

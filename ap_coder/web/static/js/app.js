@@ -389,7 +389,7 @@ document.addEventListener("change", (event) => {
     el.form.querySelectorAll('button[type="submit"]').forEach((b) => (b.disabled = !el.checked));
   }
   if (el.matches("input[type=checkbox]") && el.form) {
-    // A box that comes with others (Roles: See invoices and reports, B-2585): ticked and locked while one of them is.
+    // A box that comes with others (Roles: See invoices and reports, B-2592): ticked and locked while one of them is.
     el.form.querySelectorAll("input[type=checkbox][data-implied-by]").forEach((box) => {
       const by = box.dataset.impliedBy.split(" ");
       const on = [...el.form.querySelectorAll(`input[type=checkbox][name="${box.name}"]`)].some((b) => b.checked && by.includes(b.value));

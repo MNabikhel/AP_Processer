@@ -69,7 +69,7 @@ def _clean_permissions(chosen: Any) -> list[str]:
         raise ValueError(f"There is no permission {unknown[0]!r}.")
     if not picked:
         raise ValueError("Tick at least one thing this role may do.")
-    picked = perms.with_view(picked)  # whoever works on invoices sees them (B-2585)
+    picked = perms.with_view(picked)  # whoever works on invoices sees them (B-2592)
     if {perms.CODE, perms.CONFIRM} <= picked:  # a manager's page shows their own requests only without code
         raise ValueError(BOTH)
     return [p for p in perms.PERMISSIONS if p in picked]
