@@ -574,6 +574,20 @@ def test_the_notes_say_which_way_the_dates_that_read_two_ways_were_read(dates, s
     assert f"Dates that read two ways were {said}" in _dated(*dates).notes
 
 
+@pytest.mark.parametrize(("dates", "read_as"), [
+    (("3/7/25", "11/30/25"), ["2025-03-07", "2025-11-30"]),
+    (("25/03/26", "03/04/26"), ["2026-03-25", "2026-04-03"]),
+    (("03/04/26",), ["2026-03-04"]),
+])  # fmt: skip
+def test_a_journal_printed_with_two_digit_years_reads_its_dates(dates, read_as):
+    """JD Edwards prints a date as the user's profile says, MM/DD/YY too: every G/L date was blank (the period, the
+    latest coding, a voucher in two overlapping files told by its date)."""
+    found = _dated(*dates)
+    assert [v.gl_date for v in found.vouchers] == read_as
+    assert not any("no G/L date" in note for note in found.notes)
+    assert any("two ways" in note for note in found.notes) is ("03/04/26" in dates)
+
+
 def test_no_note_on_the_order_when_no_date_reads_two_ways(journal):
     """B-2543: nor when the file says it prints month first, as AP Coder always read a journal: 3/7/2025 reads one
     way only beside 11/30/2025, and an ordinary journal is not given a note of it."""
