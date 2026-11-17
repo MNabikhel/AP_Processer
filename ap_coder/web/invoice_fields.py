@@ -30,7 +30,7 @@ from ap_coder.web.invoice_form import FIELD_LABELS, TEACHABLE, Draft, supplier_b
 
 # --- The note under a detail --------------------------------------------------------------------------------------
 
-FROM_VENDOR_NOTE = "From the vendor list — not printed on the invoice"
+FROM_VENDOR_NOTE = "From the vendor list or its approved invoices — not printed on the invoice"
 
 
 def field_flags(

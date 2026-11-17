@@ -254,6 +254,18 @@ def tax_number_findings(
     return out
 
 
+def usual_tax_numbers(history: list[dict[str, Any]]) -> dict[str, str]:
+    """{invoice field: number} of each tax number (GST/HST, QST, PST) the vendor's approved invoices (``history``,
+    ``Store.vendor_invoices``, newest first) all carried, as the newest printed it; none where they carried none or
+    several (B-2638)."""
+    out = {}
+    for _severity, _code, field, _column, past, _name, norm, _same in _TAX_NUMBERS:
+        numbers = [str(h.get(past) or "") for h in history if h["status"] == "approved" and norm(h.get(past))]
+        if numbers and len({norm(n) for n in numbers}) == 1:
+            out[field] = numbers[0].strip()
+    return out
+
+
 def vendor_number_problems(vendor: dict[str, Any]) -> list[str]:
     """What is wrong with the tax numbers the vendor list holds for a vendor (the Vendors page warns, D-65): a GST/HST
     number not in the format 123456789 RT0001 (a 9-digit Business Number alone is fine) or failing the CRA's check
