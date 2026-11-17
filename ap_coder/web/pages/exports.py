@@ -6,8 +6,9 @@ duplicate payment audit.
   ``POST /exports/jde-api/retry`` (the queue), each a background job; the batch's vouchers and their results are on
   the batch's panel (``jde_post.status_rows``).
 * ``GET /exports``: the ready list (``?fmt=`` picks the format; JD Edwards E1 checks every invoice first), the batch
-  just made (``?made=<batch>``), the custom CSV layout, the ERP's invoice register, past batches (``?batch=&bfmt=``
-  picks one to download again, stamp or undo) and the duplicate audit (``?audit=1``).
+  just made (``?made=<batch>``; ``&get=1``: downloaded as the page opens, ``downloads_at_once``), the custom CSV
+  layout, the ERP's invoice register, past batches (``?batch=&bfmt=`` picks one to download again, stamp or undo) and
+  the duplicate audit (``?audit=1``); in the Simple screens the other formats and these tools are folded.
 * Downloads (GET; a batch's JD Edwards ZIP by POST, D-135): ``/exports/batches/<n>/download?fmt=``,
   ``/exports/batches/<n>/approved-pdfs.zip``, ``/exports/duplicates.csv``, ``/exports/jde/dry-run.txt`` (what a JD
   Edwards batch of the ready invoices would load). The files are the ones ``exports.build`` / ``jde.build_zip`` /
@@ -61,6 +62,7 @@ from ap_coder.web.core import (
     refuse,
     render,
     run_heavy,
+    simple_screens,
 )
 from ap_coder.web.core import reviewer as current_reviewer
 from ap_coder.web.files import (
@@ -112,6 +114,20 @@ def last_format(store: Store) -> str:
     """The format the page opens on: the last one a batch was made in (M4), else the Excel workbook."""
     fmt = store.get_setting(FORMAT_SETTING) or "xlsx"
     return fmt if fmt in shown_formats(store) else "xlsx"
+
+
+def opening_format(store: Store) -> str:
+    """The format the page opens on: in the Simple screens the keying sheet while JD Edwards is shown (the other
+    formats are folded under "Other formats and tools"), else ``last_format``."""
+    if simple_screens(store) and jde_keying.FORMAT in shown_formats(store):
+        return jde_keying.FORMAT
+    return last_format(store)
+
+
+def downloads_at_once(store: Store, fmt: str) -> bool:
+    """Whether Export downloads the new batch's file in the same click: in the Simple screens, any file but the JD
+    Edwards ZIP (downloaded by its own button, which records it: D-134)."""
+    return simple_screens(store) and fmt != jde_settings.FORMAT
 
 
 BLANK_LAYOUT_ROWS = 3  # empty rows under the layout's columns, to add more
@@ -343,9 +359,11 @@ def exports_page(
     audit: int = 0,
     register: str = "",
     sheet: str = "",
+    get: int = 0,
 ) -> HTMLResponse:
     store = get_store(request)
-    fmt = fmt if fmt in exports.FORMATS else last_format(store)
+    opening = opening_format(store)
+    fmt = fmt if fmt in exports.FORMATS else opening
     ready = store.unexported_approved()
     batches = store.export_batches()
     live = [b for b in batches if not b["undone_at"]]
@@ -416,6 +434,10 @@ def exports_page(
         blocking=blocking,
         selectable=sum(1 for r in rows if not r["blocked"]),
         just=just,
+        # the batch just made, downloaded as the page opens (``downloads_at_once``)
+        auto_download=bool(get and just and downloads_at_once(store, just["format"])),
+        # Simple screens: the other formats and the tools folded, open while one of them is in use
+        tools_open=bool(fmt != opening or audit or register),
         chosen=chosen,
         again_fmt=again_fmt,
         again_formats={f: AGAIN_FORMATS.get(f, f.upper()) for f in shown_formats(store, again_fmt)},
@@ -502,12 +524,19 @@ def _create_batch(request: Request, form: Any) -> JSONResponse:
             tone="warn",
         )
     count = len(store.batch_invoice_ids(batch))
-    said = f"Batch {batch} created with {ui.plural(count, 'invoice')}. Download it below."
+    at_once = downloads_at_once(store, fmt)
+    said = f"Batch {batch} created with {ui.plural(count, 'invoice')}. " + (
+        "Its file is downloading." if at_once else "Download it below."
+    )
     if fmt in JDE_FORMATS and ticked > len(chosen):  # ticked on a page drawn before one stopped being ready
         left = ticked - len(chosen)
         said += (f" {ui.plural(left, 'ticked invoice')} {'is' if left == 1 else 'are'} not ready for JD Edwards and "
                  f"{'stays' if left == 1 else 'stay'} in Ready to export: the list says why.")  # fmt: skip
-    return done(request, f"/exports?made={batch}&fmt={fmt}&batch={batch}", flash_message(said, "ok", icon="ios_share"))
+    return done(
+        request,
+        f"/exports?made={batch}&fmt={fmt}&batch={batch}{'&get=1' if at_once else ''}",
+        flash_message(said, "ok", icon="ios_share"),
+    )
 
 
 @router.get("/exports/jde/dry-run.txt")

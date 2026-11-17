@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ap_coder.core.store import REVIEW, Store
-from ap_coder.erp import jde_prototype, jde_settings
+from ap_coder.erp import jde_keying, jde_prototype, jde_settings
 from ap_coder.web import core
 from ap_coder.web.app import create_app
 from ap_coder.web.identity import SESSION_COOKIE
@@ -107,6 +107,31 @@ def test_settings_about_names_the_short_menus_pages_as_the_menu_shows_them(clien
     everything = everything.split("</label>", 1)[0].lower()
     assert all(name in simple for name in SIMPLE_MENU[:6]), simple
     assert not any(name.lower() in everything for name in SIMPLE_MENU if name not in ("Settings", "Help")), everything
+
+
+def test_in_simple_screens_export_downloads_its_file_in_the_same_click_and_folds_the_other_formats(demo_db, tmp_path):
+    """D1: the page to key into JD Edwards showed five format tabs, the custom layout and the duplicate audit, and
+    Export made a batch to download with a second click. In the Simple screens it opens on the keying sheet, Export
+    downloads the file as the page comes back, and the rest is folded under "Other formats and tools"."""
+    store = Store(_copy_of(demo_db, tmp_path / "keying"))
+    client = client_for(store)
+    page = client.get("/exports").text
+    assert 'id="tools"' not in page and 'aria-label="ERP format"' in page.split('id="batches"', 1)[0]  # as before
+    _simple(store)
+    jde_prototype.use_prototype(store)
+    page = client.get("/exports").text
+    assert f'name="fmt" value="{jde_keying.FORMAT}"' in page  # the keying sheet, whatever was used before
+    before, tools = page.split('<details class="card expander" id="tools">', 1)
+    assert 'aria-label="ERP format"' not in before and 'id="layout"' not in before and 'id="audit"' not in before
+    assert 'aria-label="ERP format"' in tools and 'id="layout"' in tools and 'id="audit"' in tools
+    assert 'id="batches"' in before  # past batches stay in sight: download again, undo
+    ids = [str(r["id"]) for r in store.unexported_approved()]
+    answer = client.post("/exports/create", data={"fmt": "xlsx", "ids": ids}, headers=PAGE).json()
+    assert answer["ok"] and "&get=1" in answer["redirect"]
+    made = client.get(answer["redirect"]).text
+    assert "data-auto-download" in made and "Its file is downloading." in made and "Download it again" in made
+    assert '<details class="card expander" id="tools" open>' in made  # another format than the keying sheet: in sight
+    assert "data-auto-download" not in client.get(answer["redirect"].replace("&get=1", "")).text  # once
 
 
 def test_simple_screens_leave_the_manager_out_of_park(demo_db, tmp_path):
