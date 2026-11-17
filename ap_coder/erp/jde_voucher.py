@@ -24,6 +24,10 @@ from .jde_settings import AMOUNT_GROSS, PST_PROVINCES, JdeSettings, TaxArea, gl_
 # The two reasons an invoice is held back for its supplier number: the Exports page links them to Settings → JD
 # Edwards E1 → Supplier address numbers (``an8_problem``).
 NO_AN8 = "no JDE supplier number (AN8)"
+# What to do about it, in the words of the pages that do it (B-2606)
+NO_AN8_FIX = (
+    "pick the vendor from the vendor list, or add its number in Settings → JD Edwards E1 → Supplier address numbers"
+)
 BAD_AN8 = "is not a JDE address number"
 
 EXEMPT_STATUSES = ("exempt", "zero_rated")  # a line's tax_status that E1 takes as exempt (D-64)
@@ -447,7 +451,7 @@ def _check_header(v: _Voucher, final: dict[str, Any], settings: JdeSettings, an8
     """The supplier number, invoice number, PO number, dates and currency; the PO number."""
     add = v.add
     if not an8:
-        add(f"{NO_AN8}: set the vendor's ERP ID in the vendor master, or in Settings → JD Edwards", "JDE_NO_AN8")
+        add(f"{NO_AN8}: {NO_AN8_FIX}", "JDE_NO_AN8")
     elif not an8.isdigit() or len(an8) > 8:
         add(f"supplier number {an8!r} {BAD_AN8} (digits only, up to 8)", "JDE_BAD_AN8")
     number = str(final.get("invoice_number") or "").strip()

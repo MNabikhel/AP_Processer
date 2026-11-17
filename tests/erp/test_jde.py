@@ -615,7 +615,8 @@ def test_duplicates_in_the_batch_and_against_earlier_exports():
     assert problems[1] == ["already exported: AP Coder #9 in batch 3"]
     assert problems[5] == ["already in the ERP (invoice CCO-26-10418, dated 2026-09-30)"]  # same AN8, another name
     assert jde.validate([_invoice(AB, 5)], settings, {}, prior)[5] == [
-        "no JDE supplier number (AN8): set the vendor's ERP ID in the vendor master, or in Settings → JD Edwards"
+        "no JDE supplier number (AN8): pick the vendor from the vendor list, or add its number in Settings → JD "
+        "Edwards E1 → Supplier address numbers"
     ]  # without an AN8 the register row (another vendor name) is not the same supplier
 
 
