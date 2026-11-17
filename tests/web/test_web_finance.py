@@ -784,6 +784,27 @@ def test_a_statement_is_compared_with_the_vouchers_loaded_from_jd_edwards_too(ch
     assert data.count("In JD Edwards") == 2
 
 
+def test_a_statement_finds_the_vouchers_of_a_supplier_number_typed_with_a_leading_zero(chart_company):
+    """B-2740: the vouchers loaded from JD Edwards under another name were found by the supplier number compared as
+    text, so a number typed with a leading zero in Settings → JD Edwards ("0886135" for 886135, as B-2487's) missed
+    them and the statement's invoices already in JD Edwards showed "Not received"."""
+    from ap_coder.erp import jde_settings
+    from ap_coder.web.pages import statements as statements_page
+
+    store = chart_company.store
+    key = next(v["vendor_key"] for v in store.vendor_summaries() if v["vendor_name"].startswith("Quill"))
+    an8 = store.vendor_ids()[key]
+    (first, *_) = [r for r in store.erp_register() if r["an8"] == an8]
+    settings = jde_settings.load(store)
+    settings.an8_overrides["quill courier services"] = f"0{an8}"  # AP Coder's own name for it, and its number
+    jde_settings.save(store, settings)
+    records = [{"Invoice No": first["invoice_number"], "Date": first["invoice_date"], "Amount": f"{first['total']:.2f}"}]
+    rec = statements_page.reconciliation(store, "quill courier services", records,
+                                         {"number": "Invoice No", "date": "Date", "amount": "Amount"})  # fmt: skip
+    (line,) = rec.lines
+    assert (line.status, line.note.split(",")[0]) == (stm.MATCHED, stm.IN_JDE)
+
+
 def test_month_end_with_a_chart_shows_each_account_as_its_one_string(chart_company, chart_company_client):
     """B-2606: in a chart company Month-end showed an account as "7420.4213" with its business unit under it, and the
     By GL account table added up the lines of one object and subsidiary on every business unit as one account: a
