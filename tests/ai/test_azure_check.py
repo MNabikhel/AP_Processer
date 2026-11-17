@@ -315,6 +315,50 @@ def test_an_invoice_the_page_reader_read_goes_back_in_its_line(store, monkeypatc
     assert store.next_page_read()["invoice_id"] == result.invoice_id
 
 
+def test_a_scans_page_ocr_cant_read_is_read_again_with_azures_words(store, monkeypatch, tmp_path):
+    """D-245: Azure's words stand in for a page this computer's OCR can't read, when the invoice is read again with
+    Azure's kept reading: page 2 of this scan was left unread, Azure read it."""
+    import io
+
+    import pymupdf
+    from PIL import Image
+
+    from ap_coder.capture import layout
+    from ap_coder.capture.types import PageLayout, Word
+
+    png = io.BytesIO()
+    Image.new("RGB", (612, 792), "white").save(png, "PNG")
+    doc = pymupdf.open()
+    for _ in range(2):
+        doc.new_page(width=612, height=792).insert_image(pymupdf.Rect(0, 0, 612, 792), stream=png.getvalue())
+    scan = tmp_path / "scan.pdf"
+    doc.save(scan)
+
+    def ocr(image, number, engine=None):
+        if number == 2:
+            raise RuntimeError("OCR can't read this page")
+        words = [Word(text, layout.Box(number, x, 0.1, x + 0.1, 0.12), 0.95, "ocr")
+                 for text, x in (("Invoice", 0.1), ("No.", 0.21), ("INV-7", 0.32))]  # fmt: skip
+        return PageLayout(number, 612, 792, words, layout.group_lines(words, number))
+
+    monkeypatch.setattr(layout, "ocr_available", lambda: True)
+    monkeypatch.setattr(layout, "ocr_image", ocr)
+    monkeypatch.setattr(layout, "second_read_layout", lambda path: None)
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    result = _process(store, scan)
+    assert result.capture.pages_not_read == [2] and result.capture.fields["invoice_number"].value == "INV-7"
+    words = [{"content": text, "polygon": [1, y, 3, y, 3, y + 0.2, 1, y + 0.2], "confidence": 0.99}
+             for text, y in (("Total", 9.0), ("113.00", 9.3))]  # fmt: skip
+    raw = _raw_from(result.capture, invoice_number="INV-7", grand_total=113.0)
+    raw["pages"] = [{"pageNumber": 1, "width": 8.5, "height": 11, "unit": "inch", "words": []},
+                    {"pageNumber": 2, "width": 8.5, "height": 11, "unit": "inch", "words": words}]
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(raw))
+    assert outcome.status == "done" and outcome.read_again == "now"
+    again = CaptureResult.from_dict(store.get_capture(result.invoice_id))
+    assert again.pages_not_read == [] and again.layout_source == "mixed"
+
+
 def test_an_invoice_a_person_worked_on_is_not_read_again(store, monkeypatch):
     _turn_on(store, monkeypatch)
     monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
