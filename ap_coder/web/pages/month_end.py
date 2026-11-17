@@ -6,14 +6,17 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+from dataclasses import replace
 from typing import Any, BinaryIO
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse, Response
 
+from ap_coder.core import chart as accounts
 from ap_coder.core import ui
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.erp import accruals
+from ap_coder.web import account_lines
 from ap_coder.web.core import address_day, get_store, money, page_router, reference_or_none, render
 from ap_coder.web.files import download
 from ap_coder.web.invoice_grid import NEEDS_CC, NEEDS_GL
@@ -40,15 +43,22 @@ def chart_by_code(reference: ReferenceData | None) -> dict[str, dict[str, str]]:
     return found
 
 
-def gl_cell(chart: dict[str, dict[str, str]], code: str) -> dict[str, Any]:
-    """A GL account for display: its code (UNASSIGNED reads as "Needs an account"), its short name (``chart``:
-    ``chart_by_code``)."""
+def gl_cell(chart: dict[str, dict[str, str]], code: str, unit: str = "") -> dict[str, Any]:
+    """A GL account for display: its code (UNASSIGNED reads as "Needs an account"; with its business unit ``unit``,
+    the one account string, ``chart.join_account``), its short name (``chart``: ``chart_by_code``)."""
     row = chart.get(code) if code else None
     return {
-        "code": NEEDS_GL if code == UNASSIGNED else (code or "—"),
+        "code": NEEDS_GL if code == UNASSIGNED else (accounts.join_account(unit, code) if unit else code or "—"),
         "name": short_name((row or {}).get("description", "")),
         "todo": code == UNASSIGNED,
     }
+
+
+def unit_of(a: accruals.Accrual, joined: bool) -> str:
+    """The business unit a row's account string is joined with: with a chart of accounts (``joined``, D-209) and both
+    parts coded, its cost center; else "" (the GL code alone, the cost center beside it)."""
+    coded = a.gl_code not in ("", UNASSIGNED) and a.cost_center not in ("", UNASSIGNED)
+    return a.cost_center if joined and coded else ""
 
 
 def tile_text(n: int, by_currency: dict[str, float], rates: dict[str, float]) -> tuple[str, str]:
@@ -80,14 +90,19 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
     for source, (n, by_currency) in accruals.summary(items).items():
         value, hint = tile_text(n, by_currency, rates)
         tiles.append((TITLES[source], value, hint))
-    chart = chart_by_code(reference_or_none(store) if items or no_date else None)
+    reference = reference_or_none(store) if items or no_date else None
+    chart = chart_by_code(reference)
+    joined = account_lines.in_use(reference)  # each account one string, totalled as one (B-2610)
     flagged: dict[str, float] = {}  # dated over a year before the period end: accrued, flagged (B-474)
     for a in items:
         if a.old:
             flagged[a.currency or "CAD"] = round(flagged.get(a.currency or "CAD", 0.0) + a.amount, 2)
     old_invoices = len({a.reference for a in items if a.old})
-    currencies, by_account = accruals.by_gl_columns(items)
-    by_gl = [{"gl": gl_cell(chart, gl), "totals": totals} for gl, totals in by_account]
+    whole = {id(a): accounts.join_account(unit, a.gl_code) if (unit := unit_of(a, joined)) else a.gl_code
+             for a in items}  # fmt: skip
+    parts = {whole[id(a)]: (a.gl_code, unit_of(a, joined)) for a in items}
+    currencies, by_account = accruals.by_gl_columns([replace(a, gl_code=whole[id(a)]) for a in items])
+    by_gl = [{"gl": gl_cell(chart, *parts.get(gl, (gl, ""))), "totals": totals} for gl, totals in by_account]
     half = (len(by_gl) + 1) // 2
     groups = []
     for source in accruals.SOURCES:
@@ -96,8 +111,10 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
                 "vendor": a.vendor,
                 "reference": _ROW_ID.sub("", a.reference),
                 "description": a.description,
-                "gl": gl_cell(chart, a.gl_code),
-                "cost_center": (NEEDS_CC if a.cost_center == UNASSIGNED else a.cost_center) if a.cost_center else "",
+                "gl": gl_cell(chart, a.gl_code, unit_of(a, joined)),
+                "cost_center": ""
+                if unit_of(a, joined) or not a.cost_center
+                else (NEEDS_CC if a.cost_center == UNASSIGNED else a.cost_center),
                 "amount": a.amount,
                 "currency": a.currency,
                 "proposed": accruals.PROPOSED in a.note,

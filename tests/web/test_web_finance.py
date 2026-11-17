@@ -782,3 +782,21 @@ def test_a_statement_is_compared_with_the_vouchers_loaded_from_jd_edwards_too(ch
     query = page.url.query.decode()
     data = client.get(f"/statements/reconciliation.csv?{query}").content.decode("utf-8-sig")
     assert data.count("In JD Edwards") == 2
+
+
+def test_month_end_with_a_chart_shows_each_account_as_its_one_string(chart_company, chart_company_client):
+    """B-2610: in a chart company Month-end showed an account as "7420.4213" with its business unit under it, and the
+    By GL account table added up the lines of one object and subsidiary on every business unit as one account: a
+    line's account is one string, business unit.object.subsidiary (``chart.join_account``), shown and totalled so."""
+    from ap_coder.core import chart
+
+    end = dt.date.today() + dt.timedelta(days=60)
+    items = [a for a in accruals.build(chart_company.store, end) if a.gl_code not in ("", "UNASSIGNED")]
+    assert items
+    text = re.sub(r"\s+", " ", chart_company_client.get(f"/month-end?end={end}").text)
+    by_gl = text.split("By GL account", 1)[1].split("Accruals schedule", 1)[0]
+    schedule = text.split("Accruals schedule", 1)[1]
+    for a in items:
+        whole = chart.join_account(a.cost_center, a.gl_code)
+        assert f'<div class="gl">{whole}<small>' in by_gl and f'<div class="gl">{whole}<small>' in schedule, whole
+        assert f'<small class="muted">{a.cost_center}</small>' not in schedule
