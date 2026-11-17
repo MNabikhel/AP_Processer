@@ -25,6 +25,7 @@ import re
 import shutil
 import stat
 import threading
+import time
 import urllib.parse
 import urllib.request
 import zipfile
@@ -46,6 +47,7 @@ TAG = re.compile(r"^v(\d+(?:\.\d+)*)-build\.([0-9a-f]{7,40})$")
 BUILT = re.compile(r"Build ([0-9a-f]{7,40}), committed (\S+)")
 SUMS = "SHA256SUMS"
 NOTES_LINES = 12  # what's new, as said in the window: the first lines of the notes
+RENAME_SECONDS = 5.0  # how long the unzipped folder's rename is tried: Windows' antivirus may still be reading it
 UPDATE_FROM_ENV = "AP_UPDATE_FROM"  # the folder that downloaded the new one: its launcher's takeover is not asked again
 
 
@@ -237,7 +239,7 @@ def take(release: Release, beside: Path, data: Path, say: Callable[[str], None] 
             raise UpdateError("the ZIP holds no AP Coder")
         if paths.project_version(found) != release.version:
             raise UpdateError(f"the ZIP holds AP Coder {paths.project_version(found) or '?'}, not {release.version}")
-        found.rename(folder)
+        _rename(found, folder)
         return folder
     except (OSError, zipfile.BadZipFile) as exc:
         raise UpdateError(f"it could not be unzipped beside this AP Coder ({exc})") from exc
@@ -246,6 +248,20 @@ def take(release: Release, beside: Path, data: Path, say: Callable[[str], None] 
             download.unlink()
         if unpacking.exists():
             shutil.rmtree(unpacking, ignore_errors=True)
+
+
+def _rename(found: Path, folder: Path) -> None:
+    """``found`` renamed ``folder``, tried again for RENAME_SECONDS while it fails (an antivirus reading the files just
+    unzipped holds them, and Windows refuses to rename their folder meanwhile); the last OSError once that passed."""
+    deadline = time.monotonic() + RENAME_SECONDS
+    while True:
+        try:
+            found.rename(folder)
+            return
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.25)
 
 
 def _read_text(url: str) -> str:

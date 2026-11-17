@@ -6012,14 +6012,21 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     whose build time can't be told is never offered one.
   - **Asking:** the version, its day and up to 12 lines of notes, then "Update now? [Y/n]". `--yes` takes it; nobody
     at the window (`AP_NO_PAUSE`, no terminal) is said and not taken. No: that release is not asked about again
-    (`update_skipped` in `~/.ap_coder/settings.json`; `--update` asks again), and this version starts.
+    (`update_skipped` in `~/.ap_coder/settings.json`; `--update` asks again, typed in scripts\terminal.bat or a Mac's
+    Terminal, as the next start says), and this version starts; for the rest of that day GitHub is not asked at all
+    (`update_asked`, the day of the no: a build is released at each merge, so at most one question a day, B-2588). A
+    yes that could not be installed is asked again at the next start.
   - **Taking it:** the ZIP and `SHA256SUMS` from GitHub's hosts only (api.github.com, github.com,
     objects/release-assets.githubusercontent.com), every redirect checked, over HTTPS; the SHA-256 must match; the ZIP
     must be one folder named after it, with no name outside it (absolute, `..`, a drive, a backslash) and no link,
     holding AP Coder of the release's version; unzipped beside this folder (never over it, never in the data folder),
-    then renamed into place. Its own `APProcessor` then runs in this window as a double-click would (`handover`: this
+    then renamed into place (tried again for 5 seconds while it fails: an antivirus may still be reading the new
+    files, B-2590). Its own `APProcessor` then runs in this window as a double-click would (`handover`: this
     start's lock let go, `AP_UPDATE_FROM` so D-231's question is not asked twice), and takes over: stops nothing that
-    runs (nothing does yet), backs the database up, records itself, repoints the shortcut, cleans this folder up after
+    runs (nothing does yet), backs the database and the data folder's files up before it opens them, whether or not
+    its version changes the database (`backup_before_update`, D-143's `safety_copy`, B-2592; one that can't be made
+    stops it, nothing changed), copies the OCR models from this folder's .venv rather than downloading them again
+    (each checked as a download is, B-2589), records itself, repoints the shortcut, cleans this folder up after
     its self-check (what this window still holds open: on a later start). A failure is said, the download and a half
     unzipped folder deleted, and this version starts. A folder an earlier yes unzipped, the same build, is started
     again, not downloaded again.

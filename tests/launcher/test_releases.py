@@ -194,6 +194,7 @@ def test_no_starts_this_version_and_that_release_is_not_asked_about_again(launch
     assert _offer(launch) is None and len(asked) == 1 and launch.handed == []
     assert github.asked == [f"/repos/{launch.releases.REPO}/releases?per_page=20"] and _left_beside(launch) == []
     assert "Starting this version" in capsys.readouterr().out
+    paths.write_user_settings(update_asked="2020-01-01")  # (a start of another day: GitHub is asked once a day)
     assert _offer(launch) is None and len(asked) == 1  # the next start: said in one line, not asked
     out = capsys.readouterr().out
     assert "AP Coder 0.3.1 (build b2b2b2b, 2026-11-20) is available" in out and "--update" in out
@@ -382,3 +383,118 @@ def test_the_new_folders_launchers_stay_executable(launch, github, monkeypatch):
     folder = launch.ROOT.parent / TOP
     assert os.access(folder / "APProcessor.command", os.X_OK)
     assert not os.access(folder / "scripts" / "launch.py", os.X_OK)
+
+
+@pytest.mark.parametrize("held", [2, 1000])
+def test_a_new_folder_antivirus_still_holds_is_renamed_once_it_lets_go(launch, github, monkeypatch, capsys, held):
+    """Windows' antivirus reads the files just unzipped, and renaming their folder fails meanwhile: tried again for a
+    few seconds; still held after that, said as before (and nothing left beside this folder)."""
+    _answer(launch, monkeypatch, "")
+    monkeypatch.setattr(launch.releases, "RENAME_SECONDS", 0.5)
+    real_rename, tries = launch.releases.Path.rename, []
+
+    def rename(self, target):
+        if self.name == TOP and len(tries) < held:
+            tries.append(self)
+            raise PermissionError(13, "Access is denied")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(launch.releases.Path, "rename", rename)
+    if held == 2:
+        assert _offer(launch) == 0 and len(tries) == 2 and (launch.ROOT.parent / TOP / "scripts").is_dir()
+    else:
+        assert _offer(launch) is None and 2 < len(tries) < 50 and _left_beside(launch) == []
+        assert "Access is denied" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("windows", [True, False])
+def test_said_no_says_how_to_be_asked_again(launch, github, monkeypatch, capsys, windows):
+    _answer(launch, monkeypatch, "n")
+    monkeypatch.setattr(launch, "WINDOWS", windows)
+    assert _offer(launch) is None
+    paths.write_user_settings(update_asked="")  # (the next day)
+    assert _offer(launch) is None
+    out = capsys.readouterr().out
+    if windows:
+        assert r"open scripts\terminal.bat in AP Coder's folder and type APProcessor.bat --update" in out
+    else:
+        assert "in Terminal, in AP Coder's folder, type ./APProcessor.command --update" in out
+    assert "a newer one is asked about by itself" in out
+
+
+def test_after_a_no_nothing_is_asked_again_that_day(launch, github, monkeypatch, capsys):
+    """A build is released at each merge: after a no, the rest of the day's starts ask GitHub nothing (not even about a
+    newer build); the next day it is asked again. ``--update`` asks at once."""
+    asked = _answer(launch, monkeypatch, "n")
+    assert _offer(launch) is None and len(asked) == 1 and len(github.requests) == 1
+    capsys.readouterr()
+    github.publish(release_zip())
+    github.releases[1]["tag_name"] = "v0.3.1-build.c3c3c3c"  # a newer build, the same day
+    assert _offer(launch) is None and len(asked) == 1 and len(github.requests) == 1
+    assert capsys.readouterr().out == ""
+    assert _offer(launch, ["--update"]) is None and len(asked) == 2 and len(github.requests) == 2
+    capsys.readouterr()
+    paths.write_user_settings(update_asked="2020-01-01")  # the next day: GitHub asked, the build said no to said
+    assert _offer(launch) is None and len(asked) == 2 and len(github.requests) == 3
+    assert "(you said no to it)" in capsys.readouterr().out
+
+
+def test_a_yes_that_could_not_be_installed_is_asked_again_at_the_next_start(launch, github, monkeypatch):
+    asked = _answer(launch, monkeypatch, "")
+    github.publish(release_zip(), listed=b"another file")
+    assert _offer(launch) is None and _offer(launch) is None and len(asked) == 2
+
+
+def test_the_new_folder_backs_the_database_up_before_anything_opens_it(launch, tmp_path, monkeypatch, capsys):
+    """The question says "Your invoices and settings are kept (a backup is made first)": on the takeover an update
+    hands over to, the database and the data folder's files are backed up (D-143), whether or not this version changes
+    the database, before it is opened; never on another start."""
+    from ap_coder.core.store import Store
+
+    data = tmp_path / "data"
+    data.mkdir()
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    monkeypatch.delenv("AP_DB_PATH", raising=False)
+    Store(data / "ap_coder.db")
+    monkeypatch.setattr(launch, "ensure_data_folder", lambda: data)
+    monkeypatch.setattr(launch, "settle_settings", lambda data, version: [])
+    monkeypatch.setattr(launch, "database_too_new", lambda data, version: None)
+    made: list[list[str]] = []
+
+    def next_step(first, state):  # (what follows the backup: stops the test there)
+        made.append(sorted(p.name for p in (data / "backups").glob("ap_coder-*.db")) if (data / "backups").is_dir()
+                    else [])  # fmt: skip
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(launch, "ensure_models", next_step)
+
+    def settle():
+        args = launch.parse([])[0]
+        with pytest.raises(KeyboardInterrupt):
+            launch.settle_and_check(args, {}, launch.identity(), False, None, [], ("ok", "", False), launch.Step())
+
+    settle()  # a start that is not an update's takeover: no backup
+    monkeypatch.setenv(launch.releases.UPDATE_FROM_ENV, str(tmp_path / "AP_Processer-main"))
+    settle()
+    assert made[0] == [] and len(made[1]) == 1 and made[1][0].endswith("-before-update-0.3.0.db")
+    assert "Backed up the database and its files before the update" in capsys.readouterr().out
+
+
+def test_a_backup_that_cant_be_made_stops_the_takeover_before_the_database_is_opened(launch, tmp_path, monkeypatch,
+                                                                                      capsys):  # fmt: skip
+    from ap_coder.core.store import Store
+    from ap_coder.ops import server_update
+
+    data = tmp_path / "data"
+    data.mkdir()
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    monkeypatch.delenv("AP_DB_PATH", raising=False)
+    Store(data / "ap_coder.db")
+    monkeypatch.setenv(launch.releases.UPDATE_FROM_ENV, str(tmp_path / "AP_Processer-main"))
+
+    def full(db, label):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(server_update, "safety_copy", full)
+    blocked = launch.backup_before_update()
+    assert blocked is not None and "No space left on device" in str(blocked) and "nothing was changed" in str(blocked)
