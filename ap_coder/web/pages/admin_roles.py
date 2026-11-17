@@ -60,7 +60,8 @@ def role_page(request: Request, key: str) -> HTMLResponse:
 def add_role(request: Request, name: str = Form(""), permissions: list[str] = Form([])) -> JSONResponse:  # noqa: B008
     users.server_only(request)
     try:
-        key = get_store(request).add_role(name, permissions, actor=reviewer())
+        me = identity.person()
+        key = get_store(request).add_role(name, permissions, actor=reviewer(), by_user=me.user_id if me else None)
     except ValueError as exc:
         return refuse(str(exc))
     return done(request, f"{PATH}/{key}", "Role made: give it to people on Users, or on their own page.")

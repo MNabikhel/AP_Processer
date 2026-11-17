@@ -40,6 +40,7 @@ import contextlib
 import contextvars
 import hashlib
 import hmac
+import html
 import ipaddress
 import re
 import secrets
@@ -522,5 +523,5 @@ def _not_allowed(scope: dict[str, Any], receive: Any, user: dict[str, Any], page
 
         return core.render(request, "error.html", "", status_code=403, title="Not allowed", code=403, detail=text)
     except Exception:  # noqa: BLE001 - the page frame reads the database: a plain page then
-        return HTMLResponse(f"<!doctype html><meta charset=utf-8><title>Not allowed</title><p>{text}</p>"
+        return HTMLResponse(f"<!doctype html><meta charset=utf-8><title>Not allowed</title><p>{html.escape(text)}</p>"
                             '<p><a href="/">Back</a></p>', 403)  # fmt: skip

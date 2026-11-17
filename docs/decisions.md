@@ -6093,6 +6093,20 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     role with users). Segregation is unchanged: the second approval is another account's, `vouched_for`, the poster
     who approved. Every role made, changed, deleted or given is in the Activity log with who and what changed, the
     names kept in it. A restore keeps the roles with the accounts (`KEPT_TABLES`).
+  - **Nobody gives, or manages, more than their own role may do** (after a security review: B-2581): a role made,
+    changed or given (also to a new account) holds only permissions the person's own role has, and the accounts they
+    change, reset, turn off or on or sign out everywhere may do nothing more than theirs (`permissions.beyond`; code
+    covers confirm, as it opens every manager's request, so an Admin makes and manages Managers). Checked by the store
+    in the transaction that writes, not only by the pages. The server's console (`python -m ap_coder users ...`) is the
+    server's owner and is not held back, as it adds the first Admin and is the way back in.
+  - **A role's name** is NFKC-normalised before it is compared with the built-in ones (full-width look-alikes), and
+    never `role-<n>` (the console takes a key or a name). Look-alikes from other alphabets are not caught: an Admin
+    names the roles, and a name only labels the permissions shown beside it.
+  - **A deleted role's key is never reused:** its row is kept, marked `deleted_at`, so old events and the finance hub
+    feed (which sends the key) never name another role by it; its name is free again.
+  - **A role either reviews invoices (code) or confirms as a manager (confirm), not both:** the manager's page shows
+    only their own requests to a role without code, so a role with both would be offered as a manager and refused
+    its answer; with code it opens every request anyway.
   - **No approval limit per role:** the code has one limit, the company's (Settings → Automation), over which a
     second approval is needed; a limit per person would be a new control, not part of this.
   - **Schema 29:** the table comes from `_SCHEMA`; the version is its own so an older AP Coder, which knows the five

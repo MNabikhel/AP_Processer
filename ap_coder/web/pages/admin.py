@@ -154,7 +154,10 @@ def sign_out(request: Request, user_id: int, back: str = Form("")) -> JSONRespon
     if me is not None and me.user_id == found["id"]:
         return refuse("This is your own account: use Log out everywhere else on the Your password page "
                       "(/account/password), which keeps this browser signed in.")  # fmt: skip
-    ended = get_store(request).sign_out_everywhere(user_id, actor=reviewer())
+    try:
+        ended = get_store(request).sign_out_everywhere(user_id, actor=reviewer(), by_user=me.user_id if me else None)
+    except ValueError as exc:
+        return refuse(str(exc))
     said = (
         f"{found['username']} is signed out on {ended} computer{'s' if ended != 1 else ''} or "
         f"browser{'s' if ended != 1 else ''}."

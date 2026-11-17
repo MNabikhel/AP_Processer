@@ -43,6 +43,9 @@
   <dl class="stack">
     {% for key, (label, what) in permissions.items() %}<div><dt><b>{{ label }}</b></dt><dd class="muted">{{ what }}</dd></div>{% endfor %}
   </dl>
+  <p class="muted">Someone whose role may Manage users and roles never gives more than their own role may do: no role
+    made, changed or given with more, and no account changed, reset, turned off or signed out that may do more than
+    theirs.</p>
   <p class="muted">Whatever the role, the second approval is always another person's than the first, and an account
     added or reset by an Admin can't give the second approval of that Admin's invoices for 7 days.</p>
 </section>

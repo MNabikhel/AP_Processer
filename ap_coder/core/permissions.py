@@ -24,7 +24,8 @@ ladder (``tests/web/test_role_permissions.py`` compares every route with the tab
 * **undo**: delete invoices, undo export batches and anyone's approval, release a voucher held in JD Edwards (D-107).
 * **settings**: Settings (connections, backups and restore, the review, reading and automation settings), the demo,
   the export layout; see the server's own folders and versions (``access.is_admin``).
-* **users**: the people who sign in and their roles, their sign-ins (the Admin panel, D-249).
+* **users**: the people who sign in and their roles, their sign-ins (the Admin panel, D-249); never more than one's
+  own role may do (``beyond``: no role made or given with more, no account changed that may do more).
 * **confirm**: confirm, or send back, the coding of the invoices sent to them, as a manager (D-138): their own
   requests only, unless the role also has **code** (AP's view: every request).
 
@@ -94,7 +95,8 @@ PERMISSIONS: dict[str, tuple[str, str]] = {
     ),
     USERS: (
         "Manage users and roles",
-        "Add people, change their role, reset passwords, turn accounts off; make and edit roles; see sign-ins.",
+        "Add people, change their role, reset passwords, turn accounts off; make and edit roles; see sign-ins. Never "
+        "more than one's own role may do.",
     ),
     CONFIRM: (
         "Confirm coding as a manager",
@@ -144,3 +146,11 @@ def permissions_of(role: str | None, stored: str | None = None) -> list[str]:
             found = []
         found = {str(p) for p in found} if isinstance(found, list) else set()
     return [p for p in PERMISSIONS if p in found]
+
+
+def beyond(have: frozenset[str] | set[str], wanted: Any) -> list[str]:
+    """What of ``wanted`` (permissions) ``have`` doesn't cover, in the order of ``PERMISSIONS`` (D-250): nobody gives,
+    or manages an account with, more than their own role may do. **code** covers **confirm**: whoever reviews invoices
+    opens every manager's request (``web/roles.py`` ``MANAGE``), so an Admin makes and manages Managers."""
+    covered = set(have) | ({CONFIRM} if CODE in have else set())
+    return [p for p in PERMISSIONS if p in set(wanted) and p not in covered]

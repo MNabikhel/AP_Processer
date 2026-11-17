@@ -88,7 +88,9 @@ def test_an_admin_never_takes_manage_users_from_themselves(people):
     with pytest.raises(ValueError, match=OWN_USERS):
         store.edit_role(keeper, "People keeper", ["view"], by_user=boss)  # their own role, through the role
     assert store.role_info(keeper)["permissions"] == ["view", "users"]
-    store.set_role(boss, "admin", by_user=boss)
+    with pytest.raises(ValueError, match="more than your own role"):
+        store.set_role(boss, "admin", by_user=boss)  # nor gives themselves more (B-2581)
+    store.set_role(boss, "admin")  # the console
     store.set_role(ann, "clerk", by_user=boss)  # someone else's: fine while another manages the people
 
 
@@ -137,3 +139,72 @@ def test_a_database_of_schema_28_without_the_roles_is_brought_up_to_date(tmp_pat
     assert store.add_role("AP lead", ["view"]) == "role-1"
     assert shape(db) == shape(Store(tmp_path / "new" / "ap_coder.db").path)
     assert any(p.name.endswith("before-update-from-schema-28.db") for p in (db.parent / "backups").iterdir())
+
+
+def test_nobody_gives_or_manages_more_than_their_own_role_may_do(people):
+    """A role with Manage users and roles alone (an HR role) can't widen itself, make or give a role with more, nor
+    touch an account that may do more than it (B-2581); the console, the server's owner, is not held back."""
+    store, boss, ann = people
+    hr = store.add_role("HR", ["users"], by_user=boss)
+    store.set_role(ann, hr, by_user=boss)
+    old = store.add_user("old.boss", GOOD, role="admin", must_change=False)
+    store.deactivate_user(old, by_user=boss)
+    more = "more than your own role may do"
+    for refused in (
+        lambda: store.edit_role(hr, "HR", ["users", "settings"], by_user=ann),
+        lambda: store.add_role("Boss", ["users", "settings"], by_user=ann),
+        lambda: store.set_role(ann, "admin", by_user=ann),
+        lambda: store.add_user("cy", GOOD, role="clerk", by_user=ann),
+    ):
+        with pytest.raises(ValueError, match=more):
+            refused()
+    theirs = "may do more than yours"
+    for refused in (
+        lambda: store.set_role(boss, "readonly", by_user=ann),
+        lambda: store.deactivate_user(boss, by_user=ann),
+        lambda: store.activate_user(old, by_user=ann),
+        lambda: store.reset_password(boss, by_user=ann),
+        lambda: store.reset_authenticator(boss, by_user=ann),
+        lambda: store.sign_out_everywhere(boss, by_user=ann),
+    ):
+        with pytest.raises(ValueError, match=theirs):
+            refused()
+    assert store.role_info(hr)["permissions"] == ["users"] and [r["name"] for r in store.custom_roles()] == ["HR"]
+    assert store.user(ann)["role"] == hr and store.user(boss)["role"] == "admin" and store.find_user("cy") is None
+    assert store.user(boss)["active"] and not store.user(old)["active"]
+    # What is within their own: fine.
+    helper = store.add_role("HR helper", ["users"], by_user=ann)
+    cy = store.add_user("cy", GOOD, role=helper, by_user=ann)
+    store.reset_password(cy, by_user=ann)
+    store.deactivate_user(cy, by_user=ann)
+    # An Admin manages a Manager (reviewing invoices opens every manager's request: more than confirming them).
+    store.set_role(cy, "manager", by_user=boss)
+    store.reset_password(cy, by_user=boss)
+    store.add_role("Confirms", ["confirm"], by_user=boss)
+    store.set_role(ann, "admin")  # the server console: as it always was
+
+
+def test_a_role_name_is_never_a_built_in_ones_look_alike_nor_a_roles_key(people):
+    store, _, _ = people
+    for name in ("Ａｄｍｉｎ", "ＣＬＥＲＫ", "role-7", "ROLE-2", "Role-12"):
+        with pytest.raises(ValueError):
+            store.add_role(name, ["view"])
+    assert store.custom_roles() == []
+
+
+def test_a_deleted_roles_key_is_never_given_to_another(people):
+    store, _, _ = people
+    first = store.add_role("Temp", ["view"])
+    store.delete_role(first)
+    second = store.add_role("Other", ["view"])
+    assert (first, second) == ("role-1", "role-2") and store.role_info(first) is None
+    assert store.add_role("Temp", ["code"]) == "role-3"  # its name is free again, its key never
+
+
+def test_a_role_either_reviews_invoices_or_confirms_as_a_manager(people):
+    store, boss, _ = people
+    with pytest.raises(ValueError, match="Confirm coding as a manager"):
+        store.add_role("Both", ["view", "code", "confirm"])
+    key = store.add_role("Coder", ["view", "code"])
+    with pytest.raises(ValueError, match="Confirm coding as a manager"):
+        store.edit_role(key, "Coder", ["view", "code", "confirm"], by_user=boss)

@@ -170,12 +170,14 @@ class SignInMixin:
 
     # --- What the Admin panel shows (D-249) --------------------------------------------------------------------------
 
-    def sign_out_everywhere(self, user_id: int, *, actor: str = "") -> int:
+    def sign_out_everywhere(self, user_id: int, *, actor: str = "", by_user: int | None = None) -> int:
         """An Admin ends every session of someone else's account (a computer left signed in, D-249): how many ended,
-        recorded as ``sessions_ended``. Their password and their authenticator app stay as they are."""
+        recorded as ``sessions_ended``. Their password and their authenticator app stay as they are. Never by
+        ``by_user`` for an account that may do more than they (``roles.MANAGES_MORE``, D-250)."""
         with self._conn() as conn:
             begin_write(conn)
             row = self._account(conn, user_id)
+            self._may_manage_account(conn, by_user, row)
             ended = conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],)).rowcount
             self._end_pending(conn, row["id"])
             self._log(conn, "sessions_ended", None, actor or None, {"username": row["username"], "count": ended})

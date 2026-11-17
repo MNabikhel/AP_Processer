@@ -786,7 +786,9 @@ the second approval, make export batches, post to JD Edwards, lift holds and kee
 delete and undo, change settings, manage users and roles, confirm coding as a manager), from scratch or from a copy of
 another role; then gives it to people on *Users* or their own page. A role is changed for everyone who has it from
 their next click, and deleted only once no account has it. An Admin can't take *Manage users and roles* from
-themselves, and the last active account that has it keeps it. Every role made, changed, deleted or given is in the
+themselves, and the last active account that has it keeps it. Nobody gives a role more than their own role may
+do, nor changes, resets, turns off or signs out the account of someone who may do more (the server's console is
+not held back). Every role made, changed, deleted or given is in the
 Activity log.
 
 Pages show each person only what their role may use; the server refuses the rest anyway. The JD Edwards settings

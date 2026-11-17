@@ -129,3 +129,53 @@ def test_a_laptops_own_sign_in_has_no_roles_page(store, monkeypatch):
     client = browser(laptop(store))
     first_sign_in(client)
     assert client.get("/admin/roles").status_code == 404
+
+
+def test_a_role_that_only_manages_people_never_makes_itself_admin(store):
+    """An HR role (Manage users and roles alone) through the pages: it can't tick more for itself, make a role with
+    more, give more, nor demote or turn off the Admin (B-2581). The Roles page says so."""
+    boss = account(store, "boss", "admin", "Pat Boss")
+    ann = account(store, "ann", "clerk", "Ann Lee")
+    app = app_for(store)
+    admin, hr = client_of(app, "10.0.0.7"), client_of(app, "10.0.0.8")
+    log_in(admin, "boss")
+    key = _made(admin, "HR", ["users"])
+    assert admin.post(f"/admin/users/{ann}/role", data={"role": key}, headers=PAGE).status_code == 200
+    log_in(hr, "ann", next="/admin")
+    everything = ["view", "activity", "import", "code", "approve", "final_approve", "export", "post", "controls",
+                  "setup", "undo", "settings", "users"]  # fmt: skip
+    for url, data in (
+        (f"/admin/roles/{key}/save", {"name": "HR", "permissions": everything}),
+        ("/admin/roles/add", {"name": "Mine", "permissions": everything}),
+        (f"/admin/users/{ann}/role", {"role": "admin"}),
+        (f"/admin/users/{boss}/role", {"role": "readonly"}),
+        (f"/admin/users/{boss}/deactivate", {}),
+        (f"/admin/users/{boss}/reset", {}),
+        (f"/admin/users/{boss}/sign-out", {}),
+    ):
+        refused = hr.post(url, data=data, headers=PAGE)
+        assert refused.status_code == 400, (url, refused.text)
+        assert "more than" in refused.json()["error"], url
+    assert store.role_info(key)["permissions"] == ["users"] and store.user(ann)["role"] == key
+    assert store.user(boss)["role"] == "admin" and store.user(boss)["active"]
+    assert "never gives more than their own role may do" in admin.get("/admin/roles").text
+
+
+def test_the_plain_refusal_page_shows_a_roles_name_as_text(store, monkeypatch):
+    from ap_coder.web import core
+
+    account(store, "boss", "admin", "Pat Boss")
+    ann = account(store, "ann", "clerk", "Ann Lee")
+    admin = client_of(app_for(store), "10.0.0.7")
+    log_in(admin, "boss")
+    key = _made(admin, "AP <i>lead</i>", ["view"])
+    store.set_role(ann, key)
+    lead = client_of(app_for(store), "10.0.0.8")
+    log_in(lead, "ann")
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("the page frame can't be drawn")
+
+    monkeypatch.setattr(core, "render", broken)
+    page = lead.get("/settings", headers=HTML)
+    assert page.status_code == 403 and "AP &lt;i&gt;lead&lt;/i&gt;" in page.text and "<i>" not in page.text

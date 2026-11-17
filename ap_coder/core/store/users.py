@@ -393,8 +393,9 @@ class UsersMixin:
                  only_first: bool = False) -> int:  # fmt: skip
         """A new account; ValueError (in words) for a username taken or not allowed, a role that is not one of
         ``ROLES`` or a password the policy refuses. ``by_user``: the account of the Admin adding it (recorded, for
-        ``vouched_for``). ``only_first``: only while the database has no account (``FIRST_DONE``), checked in the
-        transaction that adds it, so two browsers can't both make the first one."""
+        ``vouched_for``), whose role may do all the new account's may (``roles.GIVES_MORE``, D-250). ``only_first``:
+        only while the database has no account (``FIRST_DONE``), checked in the transaction that adds it, so two
+        browsers can't both make the first one."""
         name = fold_username(username)
         if not USERNAME.fullmatch(name):
             raise ValueError(
@@ -412,6 +413,7 @@ class UsersMixin:
                 raise ValueError(FIRST_DONE)
             if not self._role_known(conn, role):
                 raise ValueError(unknown_role(role))
+            self._may_give(conn, by_user, self._role_permissions(conn, role))
             if conn.execute("SELECT 1 FROM users WHERE username = ?", (name,)).fetchone():
                 raise ValueError(f"There is already an account {name}.")
             cur = conn.execute(
@@ -462,12 +464,13 @@ class UsersMixin:
 
     def deactivate_user(self, user_id: int, *, actor: str = "", by_user: int | None = None) -> None:
         """The account can no longer log in, and its sessions end; the last active Admin stays (``LAST_ADMIN``), and an
-        Admin never turns their own account off (``by_user``: ``OWN_OFF``, D-250)."""
+        Admin never turns their own account off (``by_user``: ``OWN_OFF``, D-250), nor one that may do more."""
         with self._conn() as conn:
             begin_write(conn)
             row = self._account(conn, user_id)
             if not row["active"]:
                 return
+            self._may_manage_account(conn, by_user, row)
             if self._manages(conn, row["role"]) and self._active_admins(conn) <= 1:
                 raise ValueError(LAST_ADMIN)
             if by_user is not None and int(by_user) == row["id"]:
@@ -476,12 +479,14 @@ class UsersMixin:
             conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
             self._log(conn, "user_deactivated", None, actor or None, {"username": row["username"]})
 
-    def activate_user(self, user_id: int, *, actor: str = "") -> None:
+    def activate_user(self, user_id: int, *, actor: str = "", by_user: int | None = None) -> None:
+        """A turned-off account can log in again; not by ``by_user`` if it may do more (``MANAGES_MORE``, D-250)."""
         with self._conn() as conn:
             begin_write(conn)
             row = self._account(conn, user_id)
             if row["active"]:
                 return
+            self._may_manage_account(conn, by_user, row)
             conn.execute("UPDATE users SET active = 1 WHERE id = ?", (row["id"],))
             self._log(conn, "user_activated", None, actor or None, {"username": row["username"]})
 
@@ -549,7 +554,8 @@ class UsersMixin:
         """A new password for someone who forgot theirs (``password``, else a temporary one made here, returned to
         be given to them once): they choose their own at the next login, every session of theirs ends, and what
         would refuse them is lifted: their username's pauses, and the pause of every address they logged in or tried
-        from (a shared address paused by others' tries, D-101)."""
+        from (a shared address paused by others' tries, D-101). Never by ``by_user`` for an account that may do more
+        than they (``roles.MANAGES_MORE``, D-250)."""
         with self._conn() as conn:
             row = self._account(conn, user_id)
         chosen = temporary_password() if password is None else password
@@ -559,6 +565,7 @@ class UsersMixin:
         hashed = hash_password(chosen)
         with self._conn() as conn:
             begin_write(conn)
+            self._may_manage_account(conn, by_user, self._account(conn, row["id"]))
             conn.execute("UPDATE users SET pw_hash = ?, must_change = 1 WHERE id = ?", (hashed, row["id"]))
             conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
             self._end_pending(conn, row["id"])
