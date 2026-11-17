@@ -284,7 +284,8 @@ def test_the_import_page_says_demo_invoices_are_loaded_and_never_asks_to_remove_
     ann = server_client(store)
     log_in(ann, "ann")
     notice = _demo_notice(ann)
-    assert "<b>10 demo invoices loaded.</b>" in notice and "Someone who may change settings can remove them in Settings" in notice
+    assert "<b>10 demo invoices loaded.</b>" in notice
+    assert "Someone who may change settings can remove them in Settings" in notice
     assert "href=" not in notice
     remove_demo(store)
     assert _demo_notice(client) == ""  # none loaded: nothing to say
