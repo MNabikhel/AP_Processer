@@ -633,6 +633,19 @@ def test_a_french_deposit_under_a_printed_total_holds_the_total_for_a_person_to_
     assert (f["grand_total"].value, f["grand_total"].status) == (621.5, VERIFIED)
 
 
+def test_a_credit_applied_under_a_printed_total_holds_the_total_for_a_person_to_check(tmp_path):
+    """B-2704: "Total 1,149.75 | Credit applied -149.75 | Balance due 1,000.00" (a credit memo the supplier took off
+    this invoice) had its total verified, the credit never said: posted at 1,149.75 with the credit memo posted as
+    well, the credit was taken twice, or the invoice overpaid. Held for a person to check, as a deposit is."""
+    labels = [("Credit applied", "Balance due"), ("Less credit memo CM-55", "Amount due"),
+              ("Crédit appliqué", "Solde dû"), ("Moins note de crédit NC-55", "Montant dû")]  # fmt: skip
+    for i, (label, due) in enumerate(labels):
+        f = _totals(tmp_path, [("Subtotal", "1,000.00"), ("GST", "50.00"), ("QST", "99.75"), ("Total", "1,149.75"),
+                               (label, "-149.75"), (due, "1,000.00")], name=f"cr{i}.pdf")  # fmt: skip
+        assert f["grand_total"].value == 1149.75, label
+        assert f["grand_total"].status == "check", label
+
+
 def test_a_line_item_named_for_a_deposit_or_holdback_or_a_holdback_of_nothing_leaves_the_total_as_it_is(tmp_path):
     """B-2492 held every total of a document printing a deposit or holdback with an amount: a line item's own words
     ("Holdback release - Phase 1 550.00") and a totals row of nothing ("Holdback 0.00") held ordinary invoices too."""

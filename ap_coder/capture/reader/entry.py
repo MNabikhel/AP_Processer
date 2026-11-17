@@ -280,13 +280,15 @@ def _date_fit(cands: dict[str, list[Reading]]) -> int:
 
 _PREPAYMENT = re.compile(
     r".*(pre\s*-?\s*payment|deposit|payments?\s*(?:applied|received)|holdback|retainage|retenue|depot|acompte|"
-    r"(?:paiements?|versements?)\s*(?:recus?|appliques?))"
+    r"(?:paiements?|versements?)\s*(?:recus?|appliques?)|credits?\s*(?:memo\s*|note\s*)?(?:applied|appliques?)|"
+    r"(?:less|moins)\s*:?\s*(?:la\s*|le\s*)?(?:(?:note|avis)\s*de\s*)?credit)"
 )
 
 _DISCOUNT = re.compile(
     r".*(discount|escompte|rabais|remise|abschlag|rabatt|abzgl|abzuglich|nachlass|pre\s*-?\s*payment|deposit|"
     r"payments?\s*(?:applied|received)|holdback|retainage|retenue|depot|acompte|"
-    r"(?:paiements?|versements?)\s*(?:recus?|appliques?))"
+    r"(?:paiements?|versements?)\s*(?:recus?|appliques?)|credits?\s*(?:memo\s*|note\s*)?(?:applied|appliques?)|"
+    r"(?:less|moins)\s*:?\s*(?:la\s*|le\s*)?(?:(?:note|avis)\s*de\s*)?credit)"
 )
 
 _GLUED_TITLE = re.compile(
