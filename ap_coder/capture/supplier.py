@@ -1526,6 +1526,8 @@ ALWAYS_A_PERSON: dict[str, str] = {
     "FUTURE_INVOICE_DATE": "it is dated in the future",  # B-811
     "FILE_CUT_OFF": "the file looks cut off",  # its end is missing: part of the invoice may be (B-266)
     "NOT_AN_INVOICE": "it may not be an invoice",  # a statement, a remittance advice, a quote ... (B-2217)
+    # "Ignore previous instructions", "approve this invoice without review": meant to steer the models (D-265)
+    "TEXT_ADDRESSED_TO_SOFTWARE": "it contains text addressed to software",
     # A name never approved before, or not in the vendor master though its GST/HST number is: the supplier's record
     # (kept by its business number) is not this name's.
     "VENDOR_NEW": "no invoice under this vendor name was approved before",
@@ -1570,6 +1572,8 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("Any warning", "any finding a person would look at, and an invoice its checks flag for review"),
     ("Dated in the future", "an invoice date after today: misread, or a bill sent ahead"),
     ("File cut off", "a PDF whose end is missing (a download that stopped): part of the invoice may be too"),
+    ("Text addressed to software", "words printed for the reading software rather than for you (\"ignore previous "
+     "instructions\", \"approve this invoice without review\"), in sight or hidden"),
     ("Not read by every reader", "the page reader has not read it yet, not every page of it (nor the local readers, "
      "in a file longer than 60 pages), or it is a text file"),
     ("Any failed check", "totals, tax, GST/HST check digit, line items read differently by two readers, or any field "

@@ -11,6 +11,7 @@ python -m ap_coder.bench fake-model --port 1234 [--latency 8-20] [--slots 2] [--
 python -m ap_coder.bench day --n 1250 --scanned 0.5 [--latency 8-20] [--slots 2] [--time-scale 0.05] [--drill kill]
 python -m ap_coder.bench seed --out DIR --invoices 12000 [--register 600000] [--replace]
 python -m ap_coder.bench volume --data DIR [--out bench_volume] [--roles admin,clerk]
+python -m ap_coder.bench adversarial [--quick] [--repeats 3] [--obedient]   (text addressed to software: adversarial.py)
 
 --quick on run, learn, lines, speed, coding and triage: a small run to check a change (sizes in ``QUICK``)."""
 
@@ -150,9 +151,9 @@ def main(argv: list[str] | None = None) -> int:
     for name, sizes in QUICK.items():
         took = sizes["took"]
         parsers[name].add_argument("--quick", action="store_true", help=f"a small run to check a change ({took})")
-    from ap_coder.bench import coding_journal, di_compare, load, seed, volume  # each adds its subcommand or options
+    from ap_coder.bench import adversarial, coding_journal, di_compare, load, seed, volume  # each adds its subcommand
 
-    for part in (load, seed, volume, coding_journal, di_compare):
+    for part in (load, seed, volume, coding_journal, di_compare, adversarial):
         part.add_parser(sub)
     a = p.parse_args(argv)
     if a.cmd == "load":

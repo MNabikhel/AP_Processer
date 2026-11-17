@@ -100,6 +100,11 @@
     <button type="submit" class="inv-linkbtn" title="Drop the edits not approved yet: the fields show the invoice as read">Discard</button></form></div>
 {% endif %}
 
+{% if addressed %}{# text on the invoice addressed to software, quoted (D-265): autoescaped, never |safe #}
+<div class="rvw-status err" role="alert" data-addressed-to-software><div class="rvw-status-title"><span class="ms" aria-hidden="true">report</span>
+  <span>This invoice contains text addressed to software</span></div>
+  <div class="rvw-status-sub">{{ addressed | join("; ") }}: someone may be trying to steer what AP Coder reads and codes. Don't trust the proposal: check every field and account against the page yourself.</div></div>
+{% endif %}
 {% if sent_back %}
 <div class="rvw-status warn" role="status"><div class="rvw-status-title"><span class="ms" aria-hidden="true">undo</span>
   <span>{{ sent_back.verb }} by {{ sent_back.actor }}{% if sent_back.reopened_by %}, reopened by {{ sent_back.reopened_by }}{% endif %}</span></div>

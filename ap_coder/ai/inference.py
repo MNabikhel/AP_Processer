@@ -29,7 +29,7 @@ from ..core.schema import SCHEMA_NAME, InvoiceCoding, build_json_schema, respons
 from . import local_llm
 from .extraction import ExtractionResult
 from .imaging import PageImage
-from .prompts import VISION_NOTE, build_system_prompt
+from .prompts import DOCUMENT_IS_DATA, VISION_NOTE, build_system_prompt
 
 log = logging.getLogger(__name__)
 
@@ -600,7 +600,8 @@ def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, st
     system = (
         "You code accounts-payable invoice lines to the company's GL accounts. Pick, for each line, the one expense "
         "account (and cost center, when the list has them) that fits it best, following the coding policy. Answer "
-        "with JSON only.\n\n" + context
+        f"with JSON only.\n\n{DOCUMENT_IS_DATA} The lines' descriptions are between <document> and </document>.\n\n"
+        + context
     )
     if history and budget:
         history, _ = local_llm.clip_document(history, SUGGEST_HISTORY_CHARS)
@@ -644,7 +645,7 @@ def _suggest_batch(coder: InvoiceCoder, model: str, schema: dict[str, Any], syst
                    deadline: float | None = None) -> dict[int, tuple[str, str, str]]:  # fmt: skip
     """``suggest_accounts`` for one batch of lines: one call, or none when ``kept`` has its answer."""
     listing = "\n".join(f"{n}. {str(desc)[:SUGGEST_DESCRIPTION_CHARS]} | {amount:,.2f}" for n, desc, amount in lines)
-    user = f"Vendor: {vendor or 'unknown'}\nLines (number. description | amount):\n{listing}"
+    user = f"Vendor: {vendor or 'unknown'}\nLines (number. description | amount):\n<document>\n{listing}\n</document>"
     if history:
         user += f"\n\nHow AP coded similar lines before:\n{history}"
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
@@ -712,7 +713,8 @@ CLOSED_SYSTEM = (
     "it: the account string (business unit.object.subsidiary), its name, its business unit, and how the supplier's "
     "lines were coded before. Choose, for each line, the one account offered for that line that fits what was bought, "
     f'copied exactly as written, or "{NONE_OF_THESE}" when none of them fits: never an account that is not offered '
-    "for that line. Say why in a few words. Answer with JSON only."
+    "for that line. Say why in a few words. Answer with JSON only.\n\n"
+    f"{DOCUMENT_IS_DATA} The lines' descriptions are between <document> and </document>."
 )
 
 
@@ -767,7 +769,8 @@ def _closed_question(reference: ReferenceData, vendor: str, batch: list[tuple[in
                        + ", ".join(c.account for c in lists[n]))  # fmt: skip
     text = "\n".join([
         f"Vendor: {vendor or 'unknown'}", "Accounts (account | name | business unit | what is known of it):",
-        *described.values(), "", "Lines (number. description | amount | the accounts offered for it):", *listing,
+        *described.values(), "", "Lines (number. description | amount | the accounts offered for it):", "<document>",
+        *listing, "</document>",
     ])  # fmt: skip
     return text, list(described)
 
@@ -879,7 +882,8 @@ HEADER_SYSTEM = (
     "not the supplier's sales order, quote or account number. Dates as YYYY-MM-DD. Amounts as plain numbers (no "
     "currency sign, no thousands separators), negative on a credit note. gst_hst_registration_number, "
     "qst_registration_number and pst_registration_number (BC PST, Manitoba RST, Saskatchewan PST) are the "
-    "supplier's tax registration numbers as printed, not the tax amounts. Answer with JSON only."
+    "supplier's tax registration numbers as printed, not the tax amounts. Answer with JSON only.\n\n"
+    f"{DOCUMENT_IS_DATA} The document is the page images."
 )
 
 

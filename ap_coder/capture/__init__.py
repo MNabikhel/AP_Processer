@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .confidence import LABELS, TAX_FIELDS, fuse
+from .instructions import addressed_to_software
 from .layout import IMAGE_EXTENSIONS, CannotRead, build_layout, ocr_available, read_pages
 from .locate import locate
 from .normalize import find_amounts
@@ -775,4 +776,5 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
                          page_count=len(layout.pages) + layout.pages_left_out,
                          pages_left_out=layout.pages_left_out + layout.pages_unread_locally,
                          credit_note=credit, pages_not_read=list(layout.not_read),
-                         not_invoice="" if credit else not_an_invoice(layout, fields, items))  # fmt: skip
+                         not_invoice="" if credit else not_an_invoice(layout, fields, items),
+                         instructions=addressed_to_software(layout, page_text, di_raw, path))  # fmt: skip

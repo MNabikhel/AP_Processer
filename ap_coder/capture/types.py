@@ -270,6 +270,8 @@ class CaptureResult:
     credit_note: bool = False  # titled as a credit note: a person applies it, whatever the sign of its total
     pages_not_read: list[int] = field(default_factory=list)
     not_invoice: str = ""  # why this may not be an invoice, in words (``not_invoice.not_an_invoice``); "": it is one
+    # Text on it addressed to software, quoted (``instructions.addressed_to_software``, D-265); []: none
+    instructions: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -282,6 +284,7 @@ class CaptureResult:
             "credit_note": self.credit_note,
             **({"pages_not_read": list(self.pages_not_read)} if self.pages_not_read else {}),
             **({"not_invoice": self.not_invoice} if self.not_invoice else {}),
+            **({"instructions": list(self.instructions)} if self.instructions else {}),
         }
 
     @classmethod
@@ -292,7 +295,7 @@ class CaptureResult:
             checks=list(d.get("checks") or []), layout_source=d.get("layout_source") or "",
             page_count=int(d.get("page_count") or 0), pages_left_out=int(d.get("pages_left_out") or 0),
             credit_note=bool(d.get("credit_note")), pages_not_read=[int(n) for n in d.get("pages_not_read") or []],
-            not_invoice=str(d.get("not_invoice") or ""),
+            not_invoice=str(d.get("not_invoice") or ""), instructions=[str(s) for s in d.get("instructions") or []],
         )  # fmt: skip
 
     def status_counts(self) -> dict[str, int]:
