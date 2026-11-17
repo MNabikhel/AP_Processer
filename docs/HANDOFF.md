@@ -149,7 +149,7 @@ ruff check ap_coder tests scripts && ruff format --check ap_coder tests scripts
 tests on Linux (Python 3.11–3.14) and Windows (3.11–3.14, the slow ones in 3 shards), lint and `pip-audit`, browser
 tests (Chromium), the installer and the double-click launcher on Windows, GitHub's ZIP on Windows, the offline
 bundle on Windows and macOS with the internet cut off (installed with an LM Studio stand-in, then the demo story),
-updates from three older versions on Linux, macOS and Windows. A second file, `.github/workflows/release.yml`, runs
+updates from three older versions on Linux, macOS and Windows. A pull request runs a lean set (D-260): the suite on Linux 3.12 and Windows 3.14, the Windows launcher jobs on 3.14, no Mac; main runs everything after each merge and nightly, and a build is released only once it passed. A second file, `.github/workflows/release.yml`, runs
 only when it or `.github/release-tags.txt` changes: the release's offline zip on Windows with the real LM Studio
 (models on the CPU: 60 to 90 minutes, once per pilot release: a later run reuses a passed check, D-130), then the
 release tags (D-129). On another CI system (Azure DevOps, GitLab...), port at

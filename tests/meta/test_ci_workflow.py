@@ -42,6 +42,17 @@ CI = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
 RETIRED_RUN = re.compile(r"^(?!.*\[ ! -e ).*(/(install|start|terminal)\.(sh|bat)\b|(cmd\s+/c\s+\"|run:\s*|^\s*)"
                          r"(install|start|terminal)\.(sh|bat)\b)", re.MULTILINE)  # fmt: skip
 # The offline bundle leaves .github out (scripts/build_offline_bundle.py): there these tests have nothing to read.
+CELLS = CI.parent.parent / "ci-tests.json"  # the test matrix's cells (the plan job picks them, D-260)
+
+
+def test_cells() -> list[dict]:
+    """Every cell of the test matrix, as main runs them."""
+    return json.loads(CELLS.read_text(encoding="utf-8"))
+
+
+test_cells.__test__ = False  # (a helper, not a test)
+
+
 needs_ci = pytest.mark.skipif(not CI.is_file(), reason="no .github/workflows/ci.yml here (an offline bundle)")
 
 
@@ -107,7 +118,7 @@ def test_ci_runs_the_pilot_laptops_python_on_windows_with_ocr_and_the_launcher()
     The Windows 3.14 test shards install the OCR extra as the 3.12 ones do, and the pilot launcher job runs
     APProcessor.bat on 3.12 and on 3.14, where 3.14 is the only Python the launcher finds."""
     jobs = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
-    cells = [c for c in jobs["tests"]["strategy"]["matrix"]["include"] if c["os"] == "windows-latest"]
+    cells = [c for c in test_cells() if c["os"] == "windows-latest"]
     whole = [c for c in cells if c.get("tier") != "fast"]  # (the fast tier is split into parts too, D-233)
     assert {(c["python"], c.get("extras")) for c in whole} == {("3.12", "ocr,dev"), ("3.14", "ocr,dev")}
     job = jobs["windows-pilot-launcher"]
@@ -217,7 +228,7 @@ def test_every_cells_parts_are_all_there_and_the_test_windows_leaves_out_runs_on
     workflow = yaml.safe_load(CI.read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
     parts: dict[tuple, list[str]] = {}
-    for cell in jobs["tests"]["strategy"]["matrix"]["include"]:
+    for cell in test_cells():
         parts.setdefault((cell["os"], cell["python"], cell.get("tier")), []).append(cell["shard"])
     assert len(parts) == 8
     for cell, shards in parts.items():
@@ -332,3 +343,34 @@ def test_the_release_zip_covers_every_python_the_guides_promise():
     built = re.search(r"build_offline_bundle\.py[^\n]*--python ((?:3\.\d+ ?)+)", text)
     assert built and built.group(1).split() == DEFAULT_PYTHONS
     assert DEFAULT_PYTHONS[0] == "3.11"
+
+
+@needs_ci
+def test_a_pull_request_runs_the_suite_on_ubuntu_and_the_pilot_laptops_windows_and_main_runs_everything():
+    """D-260: a pull request runs the whole suite twice (Ubuntu 3.12, and Windows 3.14 with OCR: the pilot laptop's),
+    every part of each, and the Windows launcher jobs on 3.14 alone; Mac jobs and the other Pythons run on main
+    (each merge, nightly), where a build is released only once all of them passed (.github/workflows/builds.yml)."""
+    workflow = yaml.safe_load(CI.read_text(encoding="utf-8"))
+    jobs, on = workflow["jobs"], workflow.get("on") or workflow.get(True)
+    assert on["push"] == {"branches": ["main"]} and on["schedule"] and "pull_request" in on
+    assert jobs["tests"]["needs"] == "plan"
+    assert jobs["tests"]["strategy"]["matrix"]["include"] == "${{ fromJSON(needs.plan.outputs.tests) }}"
+    pick = jobs["plan"]["steps"][-1]["run"]
+    assert "select(.pull_request)" in pick and 'github.event_name }}" = pull_request' in pick
+    picked = [c for c in test_cells() if c.get("pull_request")]
+    shards: dict[tuple, list[str]] = {}
+    for cell in picked:
+        shards.setdefault((cell["os"], cell["python"], cell.get("extras")), []).append(cell["shard"])
+    assert set(shards) == {("ubuntu-latest", "3.12", None), ("windows-latest", "3.14", "ocr,dev")}
+    for key, parts in shards.items():  # every part of the cell, or tests would run nowhere on a pull request
+        n = int(parts[0].split("/")[1])
+        assert sorted(parts) == [f"{k}/{n}" for k in range(1, n + 1)], key
+    assert all(c.get("tier") != "fast" for c in picked)
+    for name, job in jobs.items():
+        if "macos" in str(job.get("runs-on")):
+            assert job["if"] == "github.event_name != 'pull_request'", name
+    trimmed = "${{ fromJSON(github.event_name == 'pull_request' && '[{\"python\":\"3.12\"}]' || '[]') }}"
+    for name in ("windows-pilot-launcher", "windows-github-zip", "windows-share", "windows-first-day"):
+        assert jobs[name]["strategy"]["matrix"]["exclude"] == trimmed, name
+    no_mac = "${{ fromJSON(github.event_name == 'pull_request' && '[{\"os\":\"macos-latest\"}]' || '[]') }}"
+    assert jobs["update-over-older-install"]["strategy"]["matrix"]["exclude"] == no_mac
