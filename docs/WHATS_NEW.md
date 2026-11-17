@@ -10,6 +10,16 @@ Your existing data is safe. On first start the database upgrades itself (schema 
 backup of AP Coder (the database and the invoice files) is made automatically once a day (the newest 14 are
 kept).
 
+## The second approval checks again; voided vouchers cancel out (D-260, D-261)
+
+- **The second approval checks the invoice again.** What changed since the first approval (the supplier put on
+  hold, the same invoice found in JD Edwards or the ERP register, a duplicate approved, the period closed) stops the
+  *Final approval* and says what to fix: send the invoice back to the review queue to fix it there. Warnings, and
+  errors the first approver approved anyway with a reason, don't stop it.
+- **A voided voucher no longer counts twice in the past invoice coding.** A voucher voided in JD Edwards and its
+  void (the same lines, negative) cancel out, in one file or across files, so a miscoded voucher that was voided
+  says nothing of the supplier's accounts. A credit that reverses no earlier line counts as before.
+
 ## Purchase orders keep their currency (B-2612)
 
 - **A USD purchase order is accrued in USD.** The PO import reads an optional *Currency* column: month-end's
