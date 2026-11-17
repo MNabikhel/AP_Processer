@@ -280,6 +280,7 @@
 .inv-actionbar {position: sticky; bottom: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between;
   gap: 16px; flex-wrap: wrap; margin: 16px -40px -96px; padding: 10px 40px; background: var(--lg-surface);
   border-top: 1px solid var(--lg-border);}
+@media (max-width: 1199px) {.inv-actionbar {margin: 16px -24px -96px; padding: 10px 24px;}}  /* the page's own sides (app.css) */
 @media (max-width: 900px) {.inv-actionbar {margin: 16px -16px -64px; padding: 10px 16px;}}
 .inv-actionbar-left {display: flex; align-items: center; gap: 16px; flex-wrap: wrap; min-width: 0;}
 /* "Pick a GL account for lines 1, 3 and a cost center for…" wraps instead of widening the page on a phone */
@@ -775,7 +776,7 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 
 /* ---- The frame (D-214), from the window itself: the page never scrolls sideways; from 1200 px two panes (the
    invoice, the form: their minimums add up with a scrollbar), under it one above the other; the menu behind its
-   button below 1820 px; the strip and the bar give way under 720 px of height. ---- */
+   button below 1820 px (folded to its icons, D8: shown from 901 px); the strip and the bar give way under 720 px of height. ---- */
 html:has(.inv-acct) {scrollbar-gutter: stable; scroll-padding-top: 84px; scroll-padding-bottom: 72px;}
 html:has(.inv-acct) .main {max-width: none; padding: 0 12px 64px;}
 html:has(.inv-acct) .main > * + * {margin-top: 8px;}
@@ -795,6 +796,12 @@ html:has(.inv-acct) .rvw-nav > .spacer {flex-grow: 0;}
   html.menu-open:has(.inv-acct) .rail {display: flex; position: fixed; inset: 0 auto 0 0; width: 256px; z-index: 60;
     overflow: hidden; border-right: 1px solid var(--lg-border); border-bottom: 0; box-shadow: var(--lg-shadow-pop);}
   html.menu-open:has(.inv-acct) .rail > .nav:not(.nav-pinned) {overflow-y: auto;}
+}
+/* the menu folded to its icons (D8): shown, as on every page, from 901 px; its Menu button not needed */
+@media (min-width: 901px) and (max-width: 1819px) {
+  html.menu-folded:has(.inv-acct) .rail {display: flex;}
+  html.menu-folded:has(.inv-acct) .main {margin-left: 64px;}
+  html.menu-folded:has(.inv-acct) .inv-menu-btn {display: none;}
 }
 @media (max-width: 1100px) {html:has(.inv-acct) .rvw-pos-bar, html:has(.inv-acct) .rvw-nav .pop {display: none;}}
 html:has(.inv-acct) .topbar {display: none;}  /* the screen's own Menu button in its place */

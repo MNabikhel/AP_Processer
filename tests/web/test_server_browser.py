@@ -12,6 +12,7 @@ import pytest
 from ap_coder.core import authenticator
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.app import create_app
+from ap_coder.web.core import page_meta
 from tests.browser import browser_on, wait_until
 from tests.conftest import SAMPLE_STEM
 from tests.webclient import add_clean, authenticator_code, enrol, known_vendors, web_settings
@@ -72,7 +73,8 @@ def test_in_a_browser_each_role_logs_in_sees_what_it_may_and_logs_out(browser, s
     foot = page.locator(".rail-foot").inner_text()
     assert username.title() in foot and {"readonly": "Read-only"}.get(role, role.title()) in foot
     menu = _menu(page)
-    assert {"To review", "Find an invoice", "To key into JDE", "Help"} <= menu  # (JD Edwards: the server)
+    exports = page_meta(store, "exports").title  # "To key into JDE" with JD Edwards shown (D-252)
+    assert {"To review", "Find an invoice", exports, "Help"} <= menu
     assert ("Settings" in menu) == (role == "admin")
     assert ("Add invoices" in menu) == (role != "readonly")
     assert ("GL accounts & tax" in menu) == (role != "readonly")
