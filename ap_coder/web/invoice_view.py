@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ap_coder.ai import verifier
-from ap_coder.ai.extraction import ExtractionResult
+from ap_coder.ai.extraction import kept_extraction
 from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.capture.bridge import review_issues
 from ap_coder.capture.types import DATE_FIELDS, CaptureResult
@@ -291,14 +291,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     auto = {"pay_from_account"} if not draft.pay_from_for else set()
     auto |= {n for n, v in (draft.from_vendor.get("fields") or {}).items() if draft.header.get(n) == v}
     meta = inv.get("meta") or {}
-    extraction = ExtractionResult(
-        source=inv["source_path"],
-        model_id=(meta.get("extraction") or {}).get("model_id", ""),
-        content="",
-        mean_word_confidence=(meta.get("extraction") or {}).get("mean_word_confidence"),
-        invoice_fields=(meta.get("extraction") or {}).get("invoice_fields") or {},
-    )
-    output, report = finalise_coding(coding, reference, settings, extraction, store=store,
+    output, report = finalise_coding(coding, reference, settings, kept_extraction(inv), store=store,
                                      exclude_invoice_id=inv["id"], received=received_on(inv))  # fmt: skip
     if capture is _UNREAD:
         capture = capture_of(store, inv["id"])

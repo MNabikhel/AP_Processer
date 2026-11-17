@@ -27,6 +27,7 @@ from collections.abc import Callable
 from types import MappingProxyType
 from typing import Any
 
+from ..ai.extraction import kept_extraction
 from ..ai.pipeline import finalise_coding
 from ..capture.supplier import ALWAYS_A_PERSON, others_coded, others_reason, touchless_gates
 from ..capture.workflow import learn_from_approval
@@ -115,8 +116,8 @@ def _recheck(
         coding = InvoiceCoding.model_validate(coded)
     except ValueError:
         return None
-    _, report = finalise_coding(coding, reference, settings, store=store, exclude_invoice_id=row["id"],
-                                received=_received_on(row))  # fmt: skip
+    _, report = finalise_coding(coding, reference, settings, kept_extraction(row), store=store,
+                                exclude_invoice_id=row["id"], received=_received_on(row))  # fmt: skip
     return [{"severity": i.severity, "code": i.code, "message": i.message, "line_number": i.line_number}
             for i in report.issues]  # fmt: skip
 
@@ -143,8 +144,8 @@ def _issues_today(
     stale = [i for i in ids if i in stamps and stamps[i][0] != stamp]
     if not stale:
         return {}
-    rows = store.invoice_columns(("id", "validation", "ai_output", "final_output", "created_at"), ids=stale,
-                                 decode=False)  # fmt: skip
+    rows = store.invoice_columns(("id", "validation", "ai_output", "final_output", "created_at", "meta"),
+                                 ids=stale, decode=False)  # fmt: skip
     out: dict[int, list[dict[str, Any]]] = {}
     found = []  # the re-checks made here, kept in one write
     for row in rows:
@@ -169,9 +170,9 @@ def _issues_today(
 
 
 def _decoded(row: dict[str, Any]) -> dict[str, Any]:
-    """An invoice's columns as read (``invoice_columns(..., decode=False)``), its coding decoded."""
-    return {**row, "ai_output": json.loads(row["ai_output"]) if row["ai_output"] else None,
-            "final_output": json.loads(row["final_output"]) if row["final_output"] else None}  # fmt: skip
+    """An invoice's columns as read (``invoice_columns(..., decode=False)``), its coding and what was read of it
+    (``meta``) decoded."""
+    return {**row, **{k: json.loads(row[k]) if row[k] else None for k in ("ai_output", "final_output", "meta")}}
 
 
 # --- The queue's checks, from the invoices' summary (D-155) ----------------------------------------------------------
@@ -327,8 +328,8 @@ def _recheck_batch(store: Store, ids: list[int], stamp: str, reference: Referenc
     """Check the invoices ``ids`` again, those still in review and not checked against ``stamp`` meanwhile, and keep
     what was found in one write: how many."""
     found = []
-    for row in store.invoice_columns(("id", "status", "validation", "ai_output", "final_output", "created_at"),
-                                     ids=ids, decode=False):  # fmt: skip
+    for row in store.invoice_columns(("id", "status", "validation", "ai_output", "final_output", "created_at",
+                                      "meta"), ids=ids, decode=False):  # fmt: skip
         seen = row["validation"]
         try:
             validation = json.loads(seen) if seen and row["status"] == REVIEW else None
@@ -513,8 +514,8 @@ def _still_clean(store: Store, reference: ReferenceData, settings: Settings, inv
     moved = moved_off_hold(store, inv["ai_output"], coding) if server else []
     if moved:  # a held vendor's, by the GST/HST number or bank account it shows (B-1551)
         return None, _plain(moved[0][2], moved[0][1])
-    output, report = finalise_coding(coding, reference, settings, store=store, exclude_invoice_id=invoice_id,
-                                     received=_received_on(inv))  # fmt: skip
+    output, report = finalise_coding(coding, reference, settings, kept_extraction(inv), store=store,
+                                     exclude_invoice_id=invoice_id, received=_received_on(inv))  # fmt: skip
     blocking = [i for i in report.issues if needs_a_person(i.severity, i.code)]
     if blocking:
         return None, _plain(blocking[0].message, blocking[0].code)

@@ -728,8 +728,8 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "ITC_AT_RISK": CheckHelp(
         TAX, "Input tax credit at risk",
-        "HST charged on a supply where only GST applies. Only the tax properly payable can be claimed as an input tax "
-        "credit (ETA s.169).",
+        "HST charged on a supply where only GST applies, or GST charged beside the HST (which already holds the "
+        "federal part). Only the tax properly payable can be claimed as an input tax credit (ETA s.169).",
         "Ask the vendor for a corrected invoice; until then, check with your tax team what can be claimed.",
     ),
     "LINE_TAX_NOT_CHARGED": CheckHelp(
