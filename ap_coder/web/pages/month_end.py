@@ -186,4 +186,10 @@ def accruals_params(request: Request) -> tuple[dict[str, Any], str]:
 def write_accruals(store: Any, params: dict[str, Any], out: BinaryIO, step: Any) -> None:
     step(0, 0, "Working out the accruals…")
     period_end = dt.date.fromisoformat(params["end"])
-    out.write(accruals.to_csv(accruals.build(store, period_end), period_end))  # (never settled: booked from)
+    items = accruals.build(store, period_end)  # (never settled: booked from)
+    # With a chart of accounts each account is its one string, as the page shows it (B-2606): its object and
+    # subsidiary alone, opened in Excel, lose the business unit's leading zeros and a subsidiary's last 0 (B-2741).
+    joined = account_lines.in_use(reference_or_none(store)) if items else False
+    items = [replace(a, gl_code=accounts.join_account(unit, a.gl_code)) if (unit := unit_of(a, joined)) else a
+             for a in items]  # fmt: skip
+    out.write(accruals.to_csv(items, period_end))

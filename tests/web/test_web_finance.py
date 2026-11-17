@@ -821,3 +821,19 @@ def test_month_end_with_a_chart_shows_each_account_as_its_one_string(chart_compa
         whole = chart.join_account(a.cost_center, a.gl_code)
         assert f'<div class="gl">{whole}<small>' in by_gl and f'<div class="gl">{whole}<small>' in schedule, whole
         assert f'<small class="muted">{a.cost_center}</small>' not in schedule
+
+
+def test_the_accruals_csv_of_a_chart_company_gives_each_account_as_its_one_string(chart_company, chart_company_client):
+    """B-2741: the accruals CSV (booked from) gave a chart company's account as its object and subsidiary
+    ("1620.130") with the business unit beside it ("0021061010"), as the page did before B-2606: opened in Excel they
+    are the numbers 1620.13 and 21061010, an account JD Edwards does not have. The GL account column is the one
+    string, business unit.object.subsidiary, as the page shows it (text in Excel: it is no number)."""
+    from ap_coder.core import chart
+
+    end = dt.date.today() + dt.timedelta(days=60)
+    items = [a for a in accruals.build(chart_company.store, end) if a.gl_code not in ("", "UNASSIGNED")]
+    assert items and all(a.cost_center for a in items)
+    data = attachment(chart_company_client.get(f"/month-end/accruals.csv?end={end}"), f"accruals_{end}.csv", "text/csv")
+    rows = list(csv.DictReader(io.StringIO(data.decode("utf-8-sig").split("\n", 1)[1])))
+    coded = [r for r in rows if r["GL account"] not in ("", "UNASSIGNED")]
+    assert sorted(r["GL account"] for r in coded) == sorted(chart.join_account(a.cost_center, a.gl_code) for a in items)
