@@ -86,7 +86,7 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "gl_code": ("glcode", "gl", "glaccount", "account", "accountcode", "costcode", "expenseaccount"),
     "cost_center": ("costcenter", "costcentre", "cc", "department", "dept"),
     "status": ("status", "postatus", "state"),
-    # Optional: the PO's currency (JD Edwards' CRCD); a file without one: taken as CAD (B-2760).
+    # Optional: the PO's currency (JD Edwards' CRCD); a file without one: taken as CAD (B-2612).
     "currency": ("currencycode", "currcode", "curcode", "crcd", "ccy", "devise"),
 }  # fmt: skip
 REQUIRED_COLUMNS = ("po_number", "description")
@@ -293,7 +293,7 @@ class PoMatch:
     billed_before: float = 0.0  # subtotal of other invoices on this PO
     findings: list[Finding] = field(default_factory=list)
     left: dict[int, LineLeft] = field(default_factory=dict)  # every line of the PO, by its line number
-    # Why the invoice's prices and amounts are not compared with the PO's ("": they are, both in one currency, B-2760);
+    # Why the invoice's prices and amounts are not compared with the PO's ("": they are, both in one currency, B-2612);
     # then nothing is left to expense either (``left`` empty).
     currencies: str = ""
 
@@ -482,7 +482,7 @@ def _amount_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_n
 def _line_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_now: dict[int, float]) -> None:
     number = result.po_number
     assert m.po_line is not None and m.po_unit_price is not None and m.po_quantity is not None
-    priced = not result.currencies  # prices compared only in one currency (B-2760)
+    priced = not result.currencies  # prices compared only in one currency (B-2612)
     if (priced and m.quantity > 0 and abs(m.unit_price) > abs(m.po_unit_price)
             and not _same_price(m.unit_price, m.po_unit_price)):  # fmt: skip
         over = (abs(m.unit_price) / abs(m.po_unit_price) - 1) if m.po_unit_price else 1.0

@@ -105,7 +105,7 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
     by_gl = [{"gl": gl_cell(chart, *parts.get(gl, (gl, ""))), "totals": totals} for gl, totals in by_account]
     half = (len(by_gl) + 1) // 2
     groups = []
-    said = accruals.said_cad(items)  # PO lines taken as CAD, beside other currencies (B-2760)
+    said = accruals.said_cad(items)  # PO lines taken as CAD, beside other currencies (B-2612)
     for source in accruals.SOURCES:
         rows = [
             {
@@ -190,7 +190,7 @@ def write_accruals(store: Any, params: dict[str, Any], out: BinaryIO, step: Any)
     period_end = dt.date.fromisoformat(params["end"])
     items = accruals.build(store, period_end)  # (never settled: booked from)
     # With a chart of accounts each account is its one string, as the page shows it (B-2606): its object and
-    # subsidiary alone, opened in Excel, lose the business unit's leading zeros and a subsidiary's last 0 (B-2741).
+    # subsidiary alone, opened in Excel, lose the business unit's leading zeros and a subsidiary's last 0 (B-2615).
     joined = account_lines.in_use(reference_or_none(store)) if items else False
     items = [replace(a, gl_code=accounts.join_account(unit, a.gl_code)) if (unit := unit_of(a, joined)) else a
              for a in items]  # fmt: skip

@@ -618,7 +618,7 @@ def test_a_deposit_or_holdback_under_a_printed_total_holds_the_total_for_a_perso
 
 
 def test_a_french_deposit_under_a_printed_total_holds_the_total_for_a_person_to_check(tmp_path):
-    """B-2703: "Total 1 149,75 | Dépôt reçu -500,00 | Solde à payer 649,75" had its total verified, the deposit never
+    """B-2625: "Total 1 149,75 | Dépôt reçu -500,00 | Solde à payer 649,75" had its total verified, the deposit never
     said: a person, or an invoice approved without one, took 1 149,75 for what is owed, 500,00 more than the balance.
     As "Deposit received" and "Less payment received" are, the French words for what was paid before are held."""
     for i, label in enumerate(["Dépôt reçu", "Moins dépôt", "Acompte reçu", "Moins acompte", "Acompte versé",
@@ -634,7 +634,7 @@ def test_a_french_deposit_under_a_printed_total_holds_the_total_for_a_person_to_
 
 
 def test_a_credit_applied_under_a_printed_total_holds_the_total_for_a_person_to_check(tmp_path):
-    """B-2704: "Total 1,149.75 | Credit applied -149.75 | Balance due 1,000.00" (a credit memo the supplier took off
+    """B-2626: "Total 1,149.75 | Credit applied -149.75 | Balance due 1,000.00" (a credit memo the supplier took off
     this invoice) had its total verified, the credit never said: posted at 1,149.75 with the credit memo posted as
     well, the credit was taken twice, or the invoice overpaid. Held for a person to check, as a deposit is."""
     labels = [("Credit applied", "Balance due"), ("Less credit memo CM-55", "Amount due"),
@@ -696,7 +696,7 @@ def test_a_customer_block_level_with_a_right_aligned_supplier_is_not_the_supplie
 
 
 def test_a_bare_payment_or_deposit_line_under_a_printed_total_holds_the_total_for_a_person_to_check(tmp_path):
-    """B-2706: "Payment received", "Paiement reçu", "Acompte" or "Deposit" with its amount under the total (no "Less")
+    """B-2628: "Payment received", "Paiement reçu", "Acompte" or "Deposit" with its amount under the total (no "Less")
     left the total verified at the gross amount, more than what is owed. Held for a person to check, as "Less
     payment received" is."""
     for i, label in enumerate(["Payment received", "Paiement reçu", "Acompte", "Deposit", "Payments received"]):
@@ -707,7 +707,7 @@ def test_a_bare_payment_or_deposit_line_under_a_printed_total_holds_the_total_fo
 
 
 def test_a_deposit_or_credit_line_with_its_reference_number_holds_the_total_for_a_person_to_check(tmp_path):
-    """B-2707: "Less credit memo #55", "Deposit no 1234", "Acompte n° 12", "Moins note de crédit 2026-55": the number
+    """B-2629: "Less credit memo #55", "Deposit no 1234", "Acompte n° 12", "Moins note de crédit 2026-55": the number
     after the label made the line a registration number's ("No.", "#", a PST number's shape), so what was taken off
     was never read and the total stayed verified. A real GST/HST number's line is still no amount."""
     labels = ["Less credit memo #55", "Deposit no 1234", "Acompte n° 12", "Moins note de crédit 2026-55",

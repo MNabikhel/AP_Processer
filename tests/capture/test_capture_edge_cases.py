@@ -620,7 +620,7 @@ def test_terms_that_differ_by_end_of_month_months_or_prox_are_other_terms():
 
 
 def test_a_total_in_another_currency_for_reference_never_makes_it_that_currency():
-    """B-2708: "Total in USD: 98.21 (for reference only)" on an invoice otherwise in Canadian dollars (no code printed
+    """B-2630: "Total in USD: 98.21 (for reference only)" on an invoice otherwise in Canadian dollars (no code printed
     elsewhere) was read as US dollars, likely, from the code on that total's line. A total given for reference or
     information ("à titre indicatif") is not the invoice's: Canadian dollars, or not sure (the reviewer checks it)."""
     from ap_coder.capture.normalize import currency_evidence

@@ -45,7 +45,7 @@ SHEET, NOT_READY = "Keying sheet", "Not ready"
 LINE_COLUMNS = ["Account number", "Account description", "Amount", "Explanation -Remark-"]
 WIDTHS = [26, 36, 16, 36]
 NOTE_WIDTH = 84  # characters of a note's row: the three columns beside its label
-STANDARD_TYPE = "PV"  # Standard Voucher Entry's own document type: any other is said (B-2747)
+STANDARD_TYPE = "PV"  # Standard Voucher Entry's own document type: any other is said (B-2621)
 CREDIT_TERMS = "none (a credit)"  # a credit memo's Payment terms: none is typed, as the files send none (B-896)
 # Rows of a printed page under the column names (upright Letter or A4 at full size; fewer than fit, to be safe): a
 # voucher that would run over the page starts on the next one.
@@ -82,7 +82,7 @@ class Voucher:
     gl_date: dt.date
     currency: str
     gross: float
-    terms: str  # the JD Edwards terms code; "" when there is none (the printed terms are in a note, B-2744)
+    terms: str  # the JD Edwards terms code; "" when there is none (the printed terms are in a note, B-2618)
     remark: str
     due: dt.date | None  # None: JD Edwards works it out from the terms
     po_number: str
@@ -93,7 +93,7 @@ class Voucher:
     recovered: float  # the tax JD Edwards posts itself: not in the lines
     po_matched: bool = False  # no G/L lines: JD Edwards distributes it from the receipts
     bank: tuple[str, str] | None = None  # (the G/L bank account as typed, its name); None: no bank account entered
-    doc_type: str = STANDARD_TYPE  # the document type (VLDCT): said on the sheet when it is not PV (B-2747)
+    doc_type: str = STANDARD_TYPE  # the document type (VLDCT): said on the sheet when it is not PV (B-2621)
     lines: list[Line] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -158,7 +158,7 @@ def vouchers(
         warnings, notes = _said(v, settings, tax is not None, fx_rates)
         warnings = [*((warned or {}).get(v.inv_id) or []), *warnings]
         printed = str(final.get("payment_terms") or "").strip()
-        if not terms and printed:  # never the printed terms in JD Edwards' 3-character code (B-2744)
+        if not terms and printed:  # never the printed terms in JD Edwards' 3-character code (B-2618)
             notes.insert(0, f"Payment terms “{printed}” are printed and have no JD Edwards code (Settings → JD Edwards "
                          "E1): Payment terms is left blank, as the batch files send it, so JD Edwards takes the "
                          "supplier's own terms. Type their code if they differ.")  # fmt: skip

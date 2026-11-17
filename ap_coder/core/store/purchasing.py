@@ -179,7 +179,7 @@ class PurchasingMixin:
             for key, order in orders.items():
                 head = order["row"]
                 status = "closed" if all(r.get("status") == "closed" for r in order["lines"]) else OPEN
-                # The PO's currency: its lines' first ('' when the file gives none: taken as CAD, B-2760).
+                # The PO's currency: its lines' first ('' when the file gives none: taken as CAD, B-2612).
                 currency = next((r["currency"] for r in order["lines"] if r.get("currency")), "")
                 conn.execute(
                     """INSERT INTO purchase_orders (po_key, po_number, vendor_name, vendor_key, status, updated_at,
@@ -422,7 +422,7 @@ class PurchasingMixin:
     def purchase_orders(self) -> list[dict[str, Any]]:
         """Every PO with its total and how much has been invoiced against it (invoices in review included), in its
         currency: an invoice in another (a PO with none taken as CAD) is counted in ``invoices`` and
-        ``other_currency``, never added to ``billed`` (B-2761)."""
+        ``other_currency``, never added to ``billed`` (B-2613)."""
         with self._conn() as conn:
             rows = [
                 dict(r)
@@ -448,7 +448,7 @@ class PurchasingMixin:
                 entry["invoices"] += 1
                 entry["in_review"] += r["status"] == REVIEW
                 if ((r["currency"] or "").strip().upper() or "CAD") != ordered[r["po_key"]]:
-                    entry["other_currency"] += 1  # in another currency: never added to this one (B-2761)
+                    entry["other_currency"] += 1  # in another currency: never added to this one (B-2613)
                     continue
                 amount = r["po_billed"]
                 if r["broken"] & BIT["po"]:  # what the summary could not read: read again, failing as it did before

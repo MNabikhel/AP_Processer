@@ -764,7 +764,7 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
     credit = credit_titled(layout)
     if credit:
         # A credit's amounts are negative: one read positive agrees with the other readings in size, not in sign (a
-        # "CR" lost on a scan, a reader that missed the title). A person checks it (B-2705).
+        # "CR" lost on a scan, a reader that missed the title). A person checks it (B-2627).
         for name in TOTAL_FIELDS:
             fr = fields.get(name)
             positive = fr is not None and isinstance(fr.value, (int, float)) and fr.value > 0

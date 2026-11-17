@@ -185,7 +185,7 @@ def test_a_usd_vendor_shows_its_usd_spend_not_zero_cad(db):
 
 def test_download_again_defaults_to_the_batchs_format_and_offers_no_jde_file_of_another_batch(db):
     """A CSV batch is downloaded again as CSV (or the Excel workbook): never as JD Edwards files, which would put its
-    invoices into the ERP a second time (B-2745; before, it was offered, with a warning of the invoices left out)."""
+    invoices into the ERP a second time (B-2619; before, it was offered, with a warning of the invoices left out)."""
     invoice_id = db.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", _gt(), {})
     db.approve_invoice(invoice_id, _gt(), "Jane")
     batch = db.create_export_batch([invoice_id], "csv")

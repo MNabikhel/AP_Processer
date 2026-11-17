@@ -245,7 +245,7 @@ def _registration_line(line: Line, hit: _LabelHit) -> bool:
 
         if _PREPAYMENT.match(plain(hit.label_text)):
             # "Less credit memo #55", "Deposit no 1234": the deposit's or credit's own number, not a registration's;
-            # only a GST/HST or QST number's line is (B-2707).
+            # only a GST/HST or QST number's line is (B-2629).
             return bool(find_gst_numbers(after) or find_qst_numbers(after))
     return bool(
         _REG_WORDS.search(plain(after[:12]))
@@ -505,7 +505,7 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line], under: bool = Fals
                 if under and _over_its_own_label(lines, other):
                     break  # the value of the label printed under it, not this one's
                 if _beside_a_label(lines, other, shaped=True):
-                    break  # "Customer No: | C-10022" under the title: that label's value, not this one's (B-2701)
+                    break  # "Customer No: | C-10022" under the title: that label's value, not this one's (B-2623)
                 got = _value_reading(field, other, 0, 0.85 * hit.strength, "label-below")
                 if got and _after_another_label(other, got):
                     got = None

@@ -191,7 +191,7 @@ def received_not_invoiced(store: Store, period_end: dt.date) -> list[Accrual]:
                     li["gl_code"],
                     li["cost_center"],
                     round(qty * li["unit_price"], 2),
-                    full["currency"] or "CAD",  # (none given: CAD, B-2760)
+                    full["currency"] or "CAD",  # (none given: CAD, B-2612)
                     note=f"{qty:g} received and not invoiced at {li['unit_price']:,.2f}",
                     cad_assumed=not full["currency"],
                 )  # fmt: skip

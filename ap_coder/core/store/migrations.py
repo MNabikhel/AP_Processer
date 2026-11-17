@@ -206,7 +206,7 @@ def _v28_journal_dates(store: Any, conn: sqlite3.Connection) -> None:
 
 
 def _v30_po_currency(store: Any, conn: sqlite3.Connection) -> None:
-    """Each purchase order keeps its currency (``purchase_orders.currency``, B-2760): one imported before has none
+    """Each purchase order keeps its currency (``purchase_orders.currency``, B-2612): one imported before has none
     (''), taken as CAD as it was."""
     if "currency" not in dialect.columns(conn, "purchase_orders"):
         dialect.add_column(conn, "purchase_orders", "currency", "TEXT NOT NULL DEFAULT ''")

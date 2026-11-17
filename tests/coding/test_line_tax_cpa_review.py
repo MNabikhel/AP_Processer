@@ -489,7 +489,7 @@ def test_gst_charged_where_hst_applies_is_hst_not_charged_not_an_itc_risk_b717(r
 
 
 def test_gst_charged_beside_the_hst_is_not_payable_and_the_hst_was_charged(reference):
-    """B-2721: GST 5% and HST 13% both charged on an Ontario line (18%: the HST already holds the federal 5%) said
+    """B-2609: GST 5% and HST 13% both charged on an Ontario line (18%: the HST already holds the federal 5%) said
     HST_NOT_CHARGED, "the vendor should have charged HST ...; the GST is claimable", of an invoice that charged it:
     the GST was claimed beside the HST. The GST is charged in error (ETA s.169): an ITC at risk, and the sales tax
     report says so; HST_NOT_CHARGED stays for GST alone (B-717)."""

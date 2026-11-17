@@ -357,7 +357,7 @@ def test_the_po_import_reads_an_optional_open_amount_column():
 
 
 def test_the_po_import_reads_an_optional_currency_column():
-    """B-2760: a PO's currency, from its file's currency column (upper case); none: '' (taken as CAD)."""
+    """B-2612: a PO's currency, from its file's currency column (upper case); none: '' (taken as CAD)."""
     for header in ("Currency", "Currency Code", "CRCD", "Curr Code"):
         assert map_columns(["PO", "Description", "Amount", header])["currency"] == header
     records = [{"PO": "PO-1", "Description": "Widget", "Amount": "100", "Currency": " usd "},
@@ -377,7 +377,7 @@ def _in_currency(store, number, currency):
 
 
 def test_the_po_list_adds_up_only_the_invoices_in_the_pos_currency(store, tmp_path):
-    """B-2761: the Purchase orders list added a CAD invoice's subtotal to a USD PO's Invoiced and took it off its
+    """B-2613: the Purchase orders list added a CAD invoice's subtotal to a USD PO's Invoiced and took it off its
     Remaining, and its tiles added USD and CAD POs together. A PO's amounts are in its currency: an invoice in another
     is left out, and said; the tiles keep each currency apart."""
     from tests.webclient import client_for
@@ -398,7 +398,7 @@ def test_the_po_list_adds_up_only_the_invoices_in_the_pos_currency(store, tmp_pa
 
 
 def test_amounts_are_compared_with_a_po_only_in_its_own_currency(store, reference):
-    """B-2760: an invoice in CAD on a USD PO had its CAD prices compared with the PO's USD ones; amounts are compared
+    """B-2612: an invoice in CAD on a USD PO had its CAD prices compared with the PO's USD ones; amounts are compared
     only in one currency, and the match says why not. Quantities are compared whatever the currency."""
     dear = _laptops(2)
     dear["line_items"][0] |= {"unit_price": 1600.0, "amount": 3200.0}

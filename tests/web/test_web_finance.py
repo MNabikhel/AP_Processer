@@ -203,7 +203,7 @@ def _batch(client, store, fmt="xlsx"):
 def test_batch_downloads_are_the_export_functions_files(client, busy):
     names, ids = export_page.gl_names(busy), busy.vendor_ids()
     # CSV and custom CSV: byte for byte, each of a batch made in it (a batch goes again only in its own format, or as
-    # the Excel workbook: B-2745)
+    # the Excel workbook: B-2619)
     for fmt in ("csv", "custom"):
         batch = _batch(client, busy, fmt)
         invoices = [busy.get_invoice(i) for i in busy.batch_invoice_ids(batch)]
@@ -788,7 +788,7 @@ def test_a_statement_is_compared_with_the_vouchers_loaded_from_jd_edwards_too(ch
 
 
 def test_a_statement_finds_the_vouchers_of_a_supplier_number_typed_with_a_leading_zero(chart_company):
-    """B-2740: the vouchers loaded from JD Edwards under another name were found by the supplier number compared as
+    """B-2614: the vouchers loaded from JD Edwards under another name were found by the supplier number compared as
     text, so a number typed with a leading zero in Settings → JD Edwards ("0886135" for 886135, as B-2487's) missed
     them and the statement's invoices already in JD Edwards showed "Not received"."""
     from ap_coder.erp import jde_settings
@@ -829,7 +829,7 @@ def test_month_end_with_a_chart_shows_each_account_as_its_one_string(chart_compa
 
 
 def test_the_accruals_csv_of_a_chart_company_gives_each_account_as_its_one_string(chart_company, chart_company_client):
-    """B-2741: the accruals CSV (booked from) gave a chart company's account as its object and subsidiary
+    """B-2615: the accruals CSV (booked from) gave a chart company's account as its object and subsidiary
     ("1620.130") with the business unit beside it ("0021061010"), as the page did before B-2606: opened in Excel they
     are the numbers 1620.13 and 21061010, an account JD Edwards does not have. The GL account column is the one
     string, business unit.object.subsidiary, as the page shows it (text in Excel: it is no number)."""

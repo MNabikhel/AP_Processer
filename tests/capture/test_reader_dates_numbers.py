@@ -486,7 +486,7 @@ def test_a_french_printed_received_or_service_date_is_not_the_invoice_date_besid
 
 
 def test_an_invoice_number_with_a_date_in_it_is_the_invoice_number_not_the_next_rows(tmp_path):
-    """B-2700: "Invoice No: INV-2026-10-30" (a number made of the date, a prefix or a suffix to it) was taken for a date
+    """B-2622: "Invoice No: INV-2026-10-30" (a number made of the date, a prefix or a suffix to it) was taken for a date
     and passed over: the customer's number on the next row, "C-10022", was proposed as the invoice number, likely. A
     date alone after the label is still no number."""
     for number in ("INV-2026-10-30", "RE-2026-11-03", "SO-03/11/26", "2026-10-30-01"):
@@ -500,7 +500,7 @@ def test_an_invoice_number_with_a_date_in_it_is_the_invoice_number_not_the_next_
 
 
 def test_the_value_of_a_label_on_the_row_below_is_not_the_invoice_number_of_the_title_above(tmp_path):
-    """B-2701: an invoice whose number was not read (none printed after "Invoice No:", or OCR lost it) showed the
+    """B-2623: an invoice whose number was not read (none printed after "Invoice No:", or OCR lost it) showed the
     customer's number as its invoice number, likely: "C-10022", printed after "Customer No:", sits under the title
     "INVOICE", and was read as the title's value below it."""
     items = [(40, 50, "Northwind Supply Ltd."), (400, 50, "INVOICE"), (330, 66, "Invoice No:"),
@@ -511,7 +511,7 @@ def test_the_value_of_a_label_on_the_row_below_is_not_the_invoice_number_of_the_
 
 
 def test_a_date_labelled_after_the_invoice_number_on_its_line_is_read(tmp_path):
-    """B-2702: "Invoice # 55012 Date: 2026-10-04" (one line, one space apart: a text invoice, a PDF printed so, the page
+    """B-2624: "Invoice # 55012 Date: 2026-10-04" (one line, one space apart: a text invoice, a PDF printed so, the page
     reader's line) gave the number but no invoice date: the review screen said none was found and put in the day it
     was read. A date's label after the invoice's number on its line is read; another number's ("PO 4471 Date ...") is
     not the invoice's date."""

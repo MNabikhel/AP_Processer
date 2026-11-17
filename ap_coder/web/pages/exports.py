@@ -96,7 +96,7 @@ SHORT_FORMATS = {
 AGAIN_FORMATS = {"custom": "Custom CSV", jde_settings.FORMAT: "JD Edwards E1 (ZIP)",
                  jde_keying.FORMAT: "JD Edwards keying sheet"}  # the others read as XLSX, CSV  # fmt: skip
 # A batch goes again in its own format, or as the Excel workbook (people read it; no loader takes it): in any other
-# its invoices could go into the ERP twice, a keying sheet typed by hand and its Z-files loaded too (B-2745).
+# its invoices could go into the ERP twice, a keying sheet typed by hand and its Z-files loaded too (B-2619).
 READ_ONLY_FORMAT = "xlsx"
 TWICE = (
     "Batch {batch} went out as {made}: it is downloaded again only as that, or as the Excel workbook to look at, "
@@ -105,7 +105,7 @@ TWICE = (
 
 
 def again_formats(batch: dict[str, Any] | None) -> list[str]:
-    """The formats batch ``batch`` may be downloaded again in: its own, and the Excel workbook (B-2745)."""
+    """The formats batch ``batch`` may be downloaded again in: its own, and the Excel workbook (B-2619)."""
     own = (batch or {}).get("format") or READ_ONLY_FORMAT
     return list(dict.fromkeys([own, READ_ONLY_FORMAT]))
 
@@ -564,7 +564,7 @@ def download_batch(request: Request, batch: int, fmt: str = "") -> Response:
     fmt = fmt or known["format"]
     if fmt not in exports.FORMATS:
         raise HTTPException(status_code=400, detail="Unknown export format.")
-    if fmt not in again_formats(known):  # never into the ERP twice: typed from a sheet and loaded too (B-2745)
+    if fmt not in again_formats(known):  # never into the ERP twice: typed from a sheet and loaded too (B-2619)
         made = SHORT_FORMATS.get(known["format"], known["format"])
         raise HTTPException(status_code=409, detail=TWICE.format(batch=batch, made=made))
     if fmt == jde_settings.FORMAT and request.method != "POST":

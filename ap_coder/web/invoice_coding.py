@@ -132,7 +132,7 @@ def po_section(store: Store, coding: InvoiceCoding, invoice_id: int) -> dict[str
             if received:
                 qty += f" / {_fmt_qty(m.received)}"
         pills = [(flags[p], "info" if p == "coding" else "warn") for p in m.problems if p in flags] or [("OK", "ok")]
-        left = match.left.get(m.po_line)  # (none: the PO and the invoice in two currencies, B-2760)
+        left = match.left.get(m.po_line)  # (none: the PO and the invoice in two currencies, B-2612)
         rows.append({"line": m.invoice_line, "description": m.description,
                      "po_line": f"{m.po_line} · {m.po_description}",
                      "coding": " · ".join(x for x in (f"GL {m.po_gl}" if m.po_gl else "", m.po_cc) if x),

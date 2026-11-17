@@ -226,7 +226,7 @@ def test_the_queues_findings_are_decoded_once_for_all_the_invoices_that_have_the
 
 
 def test_a_scan_hard_to_read_or_read_otherwise_by_azure_is_never_approved_in_bulk_after_a_change_of_settings(tmp_path):
-    """B-2723: once the settings changed (another checks stamp), bulk approval and the queue's Ready checked the coding
+    """B-2611: once the settings changed (another checks stamp), bulk approval and the queue's Ready checked the coding
     again without what was read (its OCR's word confidence, Azure's fields: the invoice's ``meta``), and left out the
     stored findings the checks make from it: a scan 62% sure of its words (LOW_OCR_CONFIDENCE), or one whose total
     Azure read otherwise (DI_AMOUNT_DIFFERS), was approved in bulk, though its review screen still said so."""

@@ -56,7 +56,7 @@ SCHEMA_VERSION = 30  # 19: the invoices' summary and its triggers (summary.py, `
 # 29: roles (by _SCHEMA: the roles an Admin makes, roles.py, D-250), a version of its own: an older AP Coder knows the
 # five built-in roles only, so it would let nobody with a role made here do anything; it refuses the database instead
 # 30: purchase_orders.currency, the PO's currency as its file gave it ('' for none, taken as CAD, and for one
-# imported before, B-2760)
+# imported before, B-2612)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"

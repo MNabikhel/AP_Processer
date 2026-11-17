@@ -76,13 +76,13 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (r"(?:less\s*:?\s*)?(?:posted\s*)?pre\s*-?\s*payments?(?:\s*(?:applied|received|posted))?|"
          r"(?:less\s*:?\s*)?deposits?\s*(?:applied|received|paid)|less\s*:?\s*deposits?|"
          r"less\s*:?\s*payments?\s*(?:applied|received)", 0.9),
-        # The same in French: "Dépôt reçu", "Moins acompte", "Acompte versé", "Moins paiement reçu" (B-2703).
+        # The same in French: "Dépôt reçu", "Moins acompte", "Acompte versé", "Moins paiement reçu" (B-2625).
         (r"(?:moins\s*:?\s*)?(?:depots?|acomptes?)\s*(?:recus?|verses?|appliques?|payes?)|moins\s*:?\s*(?:depots?|acomptes?)|"
          r"moins\s*:?\s*(?:paiements?|versements?)\s*(?:recus?|appliques?)", 0.9),
-        # The same without "Less": "Payment received", "Paiement reçu", "Acompte", "Deposit" (B-2706).
+        # The same without "Less": "Payment received", "Paiement reçu", "Acompte", "Deposit" (B-2628).
         (r"payments?\s*received|paiements?\s*recus?|acomptes?|deposits?", 0.85),
         # A credit memo taken off this invoice: "Credit applied", "Less credit memo CM-55", "Crédit appliqué", "Moins note
-        # de crédit NC-55" (B-2704).
+        # de crédit NC-55" (B-2626).
         (r"(?:less\s*:?\s*)?credits?\s*(?:memo\s*|note\s*)?applied|less\s*:?\s*credit\s*(?:memo|note)?|"
          r"credits?\s*appliques?|moins\s*:?\s*(?:la\s*|le\s*)?(?:(?:note|avis)\s*de\s*)?credit", 0.9),
         # Held back until the work is done: "Less 10% holdback", "Holdback 10%", "Retenue 10 %", "Less retainage 10%".

@@ -76,7 +76,7 @@ def status_pill(p: dict[str, Any]) -> tuple[str, str, str]:
 
 def by_currency(pos: list[dict[str, Any]], amount: Callable[[dict[str, Any]], float], hint: str) -> tuple[str, str]:
     """(a tile's figure, its hint) of ``amount`` of each PO, added up in each PO's currency (none: CAD), never across
-    them (B-2761): CAD's as before; another currency's said after the hint."""
+    them (B-2613): CAD's as before; another currency's said after the hint."""
     sums: dict[str, float] = {}
     for p in pos:
         sums[p["currency"] or "CAD"] = sums.get(p["currency"] or "CAD", 0.0) + amount(p)

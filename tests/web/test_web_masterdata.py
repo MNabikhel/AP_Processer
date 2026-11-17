@@ -703,7 +703,7 @@ def test_the_po_import_takes_an_optional_open_amount_column(client, store):
 
 
 def test_the_po_import_takes_an_optional_currency_column(client, store):
-    """B-2760: the PO import offers a Currency column (folded with the optional ones, D-248); a PO keeps it, and its
+    """B-2612: the PO import offers a Currency column (folded with the optional ones, D-248); a PO keeps it, and its
     page says it; one with none is said to be taken as CAD."""
     sheet = "PO,Item,Amount,Currency Code\nPO-9201,Drills,2000,USD\nPO-9202,Paper,300,\n"
     page = upload(client, "/purchase-orders/upload", "pos.csv", sheet.encode())

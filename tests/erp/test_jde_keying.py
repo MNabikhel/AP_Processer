@@ -190,13 +190,13 @@ def test_a_voucher_split_across_two_business_units_has_a_line_each_with_its_rema
         [f"{IT}.6431", "Courier", 300, "Same-day courier"],
         ["Check", "G/L lines + recovered tax = gross", 600, "600.00 + 78.00 = 678.00: balanced"],
     ]
-    assert field(block, "Remark").value == "Courier to the north office"  # the first line's, at a word end (B-2743)
+    assert field(block, "Remark").value == "Courier to the north office"  # the first line's, at a word end (B-2617)
     assert (field(block, "Taxable amount").value, field(block, "Tax amount").value) == (600, 78)
     assert (field(block, "Tax explanation code").value, field(block, "Tax rate/area").value) == ("V", "ON-HST")
 
 
 def test_a_line_without_a_remark_is_keyed_with_its_description_cut_at_a_word_end():
-    """B-2743: a line with no remark of its own was keyed with its description cut at 30 characters mid-word
+    """B-2617: a line with no remark of its own was keyed with its description cut at 30 characters mid-word
     ("Professional consulting servic"), on the sheet and in the batch files' explanation (VNEXA). It is cut at a word
     end within 30 (``remark.fit``)."""
     final = one_line()["final_output"]
@@ -211,7 +211,7 @@ def test_a_line_without_a_remark_is_keyed_with_its_description_cut_at_a_word_end
 
 def test_a_line_with_a_remark_of_its_own_is_on_the_sheet_with_it():
     """D-213: the "Explanation -Remark-" column and the pay item's Remark carry the line's remark, fitted to 30
-    characters at a word end; a line without one its description, at a word end too (B-2743)."""
+    characters at a word end; a line without one its description, at a word end too (B-2617)."""
     invoice = split()
     lines = invoice["final_output"]["line_items"]
     lines[0].update(remark="KT Oct.parcels 3-1-204", remark_from="person")
@@ -609,7 +609,7 @@ def test_a_keying_batchs_sheet_downloaded_again_keeps_its_vouchers_once_they_are
     store.import_erp_register([{"vendor_name": final["vendor_name"], "invoice_number": final["invoice_number"],
                                 "total": final["grand_total"]}])  # fmt: skip
     assert sheet() == first
-    # Another batch (made as Excel) has no keying sheet: its invoices may be in the ERP by then (B-2745).
+    # Another batch (made as Excel) has no keying sheet: its invoices may be in the ERP by then (B-2619).
     follow(client, post(client, "/exports/batches/1/undo"))
     follow(client, post(client, "/exports/create", {"fmt": "xlsx", "ids": [northwind["id"]]}))
     assert client.get(f"/exports/batches/2/download?fmt={jde_keying.FORMAT}").status_code == 409
@@ -618,7 +618,7 @@ def test_a_keying_batchs_sheet_downloaded_again_keeps_its_vouchers_once_they_are
 def test_a_batch_is_downloaded_again_only_in_its_own_format_or_as_the_excel_workbook(
     tmp_path, cost_centers_demo_template
 ):
-    """B-2745: "Download again" offered every format for any batch, so a keying-sheet batch (typed by hand) could be
+    """B-2619: "Download again" offered every format for any batch, so a keying-sheet batch (typed by hand) could be
     downloaded as JD Edwards batch files and loaded too: each voucher in JD Edwards twice. A batch goes again in its
     own format, or as the Excel workbook, which people read and no loader takes; any other is refused."""
     from tests.webclient import PAGE, follow, post
@@ -652,7 +652,7 @@ def test_the_keying_sheet_is_offered_only_where_jd_edwards_is_shown(store):
 
 def test_a_jd_edwards_batch_has_no_keying_sheet_so_no_voucher_is_typed_too(tmp_path, monkeypatch):
     """A JD Edwards batch's vouchers are loaded from its files or posted through the API: it has no keying sheet,
-    before its vouchers are posted or after, so none is typed too (B-2745; before, its sheet listed a voucher posted
+    before its vouchers are posted or after, so none is typed too (B-2619; before, its sheet listed a voucher posted
     through the API as Not ready and the others to type, though the file may have been loaded, D-210)."""
     from ap_coder.erp import jde_ais, jde_sync
     from tests.erp.test_jde_post import batch_of
@@ -857,7 +857,7 @@ def test_a_credit_note_that_prints_payment_terms_is_keyed_with_none():
 
 
 def test_printed_terms_with_no_jd_edwards_code_are_never_put_in_the_payment_terms_field():
-    """B-2744: printed terms the terms table has no code for ("2/10 Net 30") were shown in Payment terms, JD Edwards'
+    """B-2618: printed terms the terms table has no code for ("2/10 Net 30") were shown in Payment terms, JD Edwards'
     3-character code, which they can't be typed in, while the batch files send it blank (the supplier's own terms).
     The field is blank, as the files send it, and a note gives the printed terms for the person to pick the code."""
     printed = one_line()
@@ -872,7 +872,7 @@ def test_printed_terms_with_no_jd_edwards_code_are_never_put_in_the_payment_term
 
 
 def test_a_document_type_other_than_the_standard_voucher_is_on_the_sheet():
-    """B-2747: the batch files send a credit note with the credit document type when one is set (Settings → JD Edwards
+    """B-2621: the batch files send a credit note with the credit document type when one is set (Settings → JD Edwards
     E1), but the keying sheet did not say it: the credit was typed as a standard voucher (PV). The sheet gives the
     document type whenever it is not PV, as the files send it."""
     js = settings(credit_document_type="PD")

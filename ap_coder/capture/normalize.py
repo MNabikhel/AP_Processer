@@ -30,7 +30,7 @@ def amounts_equal(a: float | None, b: float | None, tol: float = 0.005) -> bool:
 
 def looks_like_money(text: str) -> bool:
     """A token printed like money: two decimals (".65" too), or a currency sign. A credit's "CR" (or a debit's "DR") run
-    into the cents by OCR ("10,118.53CR") is still money (B-2705)."""
+    into the cents by OCR ("10,118.53CR") is still money (B-2627)."""
     s = text.strip()
     cents = r"(?:\b|(?=[CD][Rr]\b|cr\b|dr\b))"
     two_decimals = re.search(rf"\d[.,]\d{{2}}{cents}|(?<![\w.,])\.\d{{2}}{cents}", s)
@@ -199,7 +199,7 @@ _PAYMENT_NOTE = re.compile(r"ACCEPT|PAYMENTS?\s+(?:IN|EN)\b|PAIEMENTS?\s+EN\b|RE
 _CODE_ON_AMOUNT = re.compile(_CODE + r"\s*\$?\s*\d|\d[.,]\d{2}\s*\$?\s*" + _CODE)
 _EXCHANGE = re.compile(r"EXCHANGE|\bRATE\b|\bTAUX\b|CONVERSION|[EÉ]QUIVALEN|=")
 # A total given in another currency for reference only: "Total in USD: 98.21 (for reference only)", "à titre indicatif"
-# (B-2708). Its code is not the invoice's.
+# (B-2630). Its code is not the invoice's.
 _FOR_REFERENCE = re.compile(
     r"FOR\s+(?:REFERENCE|INFORMATION)|(?:REFERENCE|INFORMATION)\s+ONLY|[AÀ]\s+TITRE\s+(?:INDICATIF|D['’]INFORMATION)|"
     r"POUR\s+INFORMATION"

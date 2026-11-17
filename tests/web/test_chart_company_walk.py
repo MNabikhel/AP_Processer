@@ -411,7 +411,7 @@ def test_the_batch_files_of_the_same_invoices_agree_with_the_sheet(chart_company
     batch, workbook = _sheet(chart_company_client, store, _approve_the_ready_ones(chart_company_client, chart_company))
     from ap_coder.web.pages import exports as exports_page
 
-    # (the batch's Z-files as they would be made: a keying batch is not downloaded as them, B-2745)
+    # (the batch's Z-files as they would be made: a keying batch is not downloaded as them, B-2619)
     data, _name, _mime = exports_page.jde_file(store, batch)
     with zipfile.ZipFile(io.BytesIO(data)) as files:
         heads = list(csv.DictReader(io.StringIO(files.read(jde_zfiles.HEADER_FILE).decode())))
@@ -438,7 +438,7 @@ def test_the_batch_files_of_the_same_invoices_agree_with_the_sheet(chart_company
 
 
 def test_the_excel_exports_by_gl_account_sheet_totals_each_whole_account_string(chart_company, chart_company_client):
-    """B-2746: the Excel export's "By GL account" sheet added up one object and subsidiary across every business unit
+    """B-2620: the Excel export's "By GL account" sheet added up one object and subsidiary across every business unit
     as one account ("7510.5107": ten business units' cell phones as one line), as Month-end did before B-2606. With a
     chart of accounts each account is its one string, business unit.object.subsidiary, totalled so."""
     from collections import defaultdict

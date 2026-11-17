@@ -224,7 +224,7 @@ def line_tax_codes(dist: list[dict[str, Any]], items: list[dict[str, Any]],
 
 def gl_summary(lines: list[dict[str, Any]], joined: bool = False) -> list[dict[str, Any]]:
     """The posting lines totalled by GL account and currency. ``joined``: a chart of accounts is imported (D-209), so
-    an account is its one string, business unit.object.subsidiary, totalled as one (B-2746, as Month-end: B-2606)."""
+    an account is its one string, business unit.object.subsidiary, totalled as one (B-2620, as Month-end: B-2606)."""
     totals: dict[tuple[str, str, str], float] = defaultdict(float)
     for r in lines:
         gl = r["gl_code"] or ""

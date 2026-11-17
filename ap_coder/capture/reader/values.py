@@ -78,7 +78,7 @@ def _label_hits(line: Line) -> list[_LabelHit]:
         hits += [h for h in _hits_at(line, text, after_colon, chained=set(after_colon))
                  if "/" in h.label_text and h.field not in seen]  # fmt: skip
     # "Invoice # 55012 Date: 2026-10-04", one space apart (a text invoice, the page reader's line): the date's label
-    # after the invoice's number on a line the number's label starts (B-2702).
+    # after the invoice's number on a line the number's label starts (B-2624).
     if any(h.field == "invoice_number" and h.start == 0 for h in hits):
         after_number = [m.end() for m in re.finditer(r"\d\s+(?=[a-z])", text) if m.end() not in starts]
         seen = {h.field for h in hits}
@@ -258,7 +258,7 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             value, b = value[: glued.start()], b - (len(value) - glued.start())
         dated = any(da == 0 and db == len(value) for _d, da, db, _amb in parse_dates(value))
         if _looks_like_phone_or_postal(value) or dated or _MONTH_DAY.match(plain(value)):
-            return None  # a date, not a number ("INV-2026-10-30", a date with more to it, is a number: B-2700)
+            return None  # a date, not a number ("INV-2026-10-30", a date with more to it, is a number: B-2622)
         if any(da <= a - start < db and db >= b - start for _d, da, db, _amb in parse_dates(rest)):
             return None  # the day of a date ("30 Jun 2025"), not a number
         if any(ga == a for _v, ga, _gb, _ok in find_gst_numbers(text)):

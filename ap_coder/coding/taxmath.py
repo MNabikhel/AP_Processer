@@ -312,7 +312,7 @@ def _self_assess_rows(sums: _Sums) -> list[dict[str, Any]]:
 def _total_row(coding: InvoiceCoding, taxes_total: float) -> dict[str, Any]:
     """Subtotal + tax = total: the tax total, as TOTAL_MISMATCH adds it, and the tax lines, as
     TAX_LINES_TOTAL_MISMATCH holds them to it, the row saying which is off (B-1911). Within a cent, as TOTAL_MISMATCH
-    (B-1865), when the posting balances (B-2720), or a total rounded to the nickel for cash with its rounding a line
+    (B-1865), when the posting balances (B-2608), or a total rounded to the nickel for cash with its rounding a line
     (B-1907)."""
     computed = half_up(coding.subtotal + coding.tax_total)
     diff = half_up(coding.grand_total - computed)
@@ -321,7 +321,7 @@ def _total_row(coding: InvoiceCoding, taxes_total: float) -> dict[str, Any]:
     adds_up = within(diff, 0, CENT) or cash
     taxes_agree = within(taxes_total, coding.tax_total, CENT)
     # A cent off either way: right when the posting balances (the subtotal rounded otherwise), as the lines row
-    # (B-1910); else it is POSTING_UNBALANCED's cent and the row says it (B-2720).
+    # (B-1910); else it is POSTING_UNBALANCED's cent and the row says it (B-2608).
     exact = within(diff, 0, EXACT) and within(taxes_total, coding.tax_total, EXACT)
     if adds_up and taxes_agree and not exact and coding.line_items and not _posting_balances(coding):
         adds_up = within(diff, 0, EXACT)

@@ -476,7 +476,7 @@ _CREDIT_HEAD = [(0.08, 0.06, "Northwind Supply Ltd."), (0.66, 0.08, "CREDIT MEMO
 
 
 def test_a_scanned_credit_memo_with_cr_run_into_its_amounts_reads_them_negative(tmp_path):
-    """B-2705: OCR runs a credit's "CR" into its amount ("10,118.53CR", printed "10,118.53 CR"). Those amounts were read
+    """B-2627: OCR runs a credit's "CR" into its amount ("10,118.53CR", printed "10,118.53 CR"). Those amounts were read
     negative, then turned positive again: their "CR" made them no money to the check of whether the credit memo prints
     its signs, so its amounts were taken for a credit printed without signs. The credit memo was read as an invoice
     of 11,433.94, subtotal, HST and total verified."""
@@ -491,7 +491,7 @@ def test_a_scanned_credit_memo_with_cr_run_into_its_amounts_reads_them_negative(
 
 
 def test_a_credit_memos_amount_read_positive_is_never_verified_or_likely(tmp_path):
-    """B-2705: what agrees on a credit memo's amounts may be their size and not their sign. OCR read the "CREDIT MEMO"
+    """B-2627: what agrees on a credit memo's amounts may be their size and not their sign. OCR read the "CREDIT MEMO"
     title but not the totals; the page reader read the totals but not the title, printed without a sign: the subtotal
     was verified at 10,118.53, a credit keyed as an invoice. An amount read positive on a document that calls itself
     a credit is checked by a person."""

@@ -41,7 +41,7 @@ def test_a_bill_counts_its_vouchers_dates_and_goes_with_its_last(tmp_path):
 
 
 def test_a_bill_filed_under_another_name_is_found_by_a_supplier_number_typed_with_a_leading_zero(tmp_path):
-    """B-2742: ``in_erp`` (the review screen's "already in the ERP", JD Edwards not reached) compared the supplier
+    """B-2616: ``in_erp`` (the review screen's "already in the ERP", JD Edwards not reached) compared the supplier
     number as text, so one typed with a leading zero in Settings → JD Edwards ("04001" for 4001, as B-2487's) missed
     the voucher JD Edwards files under its own name for the supplier."""
     store = Store(tmp_path / "ap.db")

@@ -152,7 +152,7 @@ def result_from_raw(source: str | Path, raw: dict[str, Any]) -> ExtractionResult
 def kept_extraction(inv: dict[str, Any]) -> ExtractionResult:
     """What was read of a stored invoice, as its checks read it again (``validate_coding``'s ``extraction``): its
     words' confidence and Azure's fields, kept in its ``meta`` (``pipeline._meta``), not its text. The review screen,
-    bulk approval and the queue's Ready check it alike (B-2723)."""
+    bulk approval and the queue's Ready check it alike (B-2611)."""
     kept = (inv.get("meta") or {}).get("extraction") or {}
     return ExtractionResult(
         source=str(inv.get("source_path") or ""),

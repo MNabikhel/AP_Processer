@@ -232,7 +232,7 @@ class RegisterMixin:
         if not key or not number:
             return []
         an8 = str(master_vendor_id(self.vendor_ids(), vendor_name) if an8 is None else an8).strip()
-        an8 = an8.lstrip("0")  # as a number: "04001" is JD Edwards' 4001 (B-2742, as B-2487)
+        an8 = an8.lstrip("0")  # as a number: "04001" is JD Edwards' 4001 (B-2616, as B-2487)
         with self._conn() as conn:
             rows = [
                 dict(r)

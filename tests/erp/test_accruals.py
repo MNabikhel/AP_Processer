@@ -400,7 +400,7 @@ def test_received_not_invoiced_is_accrued_half_up(tmp_path):
 
 
 def test_a_received_usd_po_line_is_accrued_in_usd_never_added_to_the_cad_lines(tmp_path):
-    """B-2760: a PO line received, not invoiced, of a USD order was accrued as CAD and added to the CAD totals: a PO
+    """B-2612: a PO line received, not invoiced, of a USD order was accrued as CAD and added to the CAD totals: a PO
     keeps the currency its file gives, and one with none is taken as CAD, said so on a schedule with others."""
     from ap_coder.coding.po import map_columns, rows_from_records
     from tests.webclient import client_for

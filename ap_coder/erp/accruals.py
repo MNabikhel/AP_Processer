@@ -52,7 +52,7 @@ PROPOSED = "proposed: not approved yet"
 EXPORTED_LATE = "exported after the month end"
 # An expected recurring invoice not accrued: its vendor's received, not invoiced PO lines are, and it would bill them.
 ON_PO = "left out: its received, not invoiced purchase-order lines are accrued instead"
-# A received, not invoiced line of a PO whose file gave no currency, on a schedule with other currencies (B-2760).
+# A received, not invoiced line of a PO whose file gave no currency, on a schedule with other currencies (B-2612).
 CAD_ASSUMED = "currency assumed CAD: the purchase-order file gave none"
 # The export batches made after a period end (``?``): their invoices were not in the ERP at that period end (D-133).
 _LATE_BATCHES = "SELECT id FROM export_batches WHERE substr(created_at, 1, 10) > ?"
@@ -73,7 +73,7 @@ class Accrual:
     currency: str = "CAD"
     note: str = ""
     old: bool = False  # dated more than OLD_DAYS before the period end: accrued, flagged for AP to check
-    cad_assumed: bool = False  # of a PO whose file gave no currency: CAD, as taken (B-2760)
+    cad_assumed: bool = False  # of a PO whose file gave no currency: CAD, as taken (B-2612)
 
 
 # Each received PO's accruals as last worked out in this process, by database and period end: {PO: (a digest of what
@@ -463,7 +463,7 @@ def by_gl_columns(accruals: list[Accrual]) -> tuple[list[str], list[tuple[str, d
 
 def said_cad(accruals: list[Accrual]) -> bool:
     """Whether the PO lines taken as CAD, their file giving no currency, are said to be: on a schedule in other
-    currencies too, where CAD is a guess that matters (B-2760); one all in CAD says nothing of it."""
+    currencies too, where CAD is a guess that matters (B-2612); one all in CAD says nothing of it."""
     return any(a.cad_assumed for a in accruals) and any((a.currency or "CAD") != "CAD" for a in accruals)
 
 

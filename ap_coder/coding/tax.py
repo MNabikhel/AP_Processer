@@ -593,7 +593,7 @@ def _hst_where_it_applies(check: _TaxCheck, expected_types: set[str], name: str)
                   f"HST charged on a supply in {name}, where it is not payable: only the tax properly payable is "
                   "claimable (ETA s.169), so claim the GST part only or get a corrected invoice")  # fmt: skip
     # GST beside the HST on a line (18% in Ontario): the HST holds the federal part, so the GST is charged in error,
-    # not claimable, and the HST was charged (B-2721).
+    # not claimable, and the HST was charged (B-2609).
     beside = "HST" in charged and any({"GST", "HST"} <= set(li.taxes_applied) for li in check.coding.line_items)
     if "GST" in charged and expected_types == {"HST"} and beside:
         check.add(WARNING, "ITC_AT_RISK",

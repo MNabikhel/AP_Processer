@@ -18,7 +18,7 @@ REMARK_WIDTH = 30  # VLRMK
 def line_remark(line: Mapping[str, Any]) -> str:
     """The remark of a G/L line as JD Edwards holds it (30 characters): the line's own remark (suggested or typed,
     D-213; ``remark.fit``: the whole words that fit), else the line's description fitted the same way, at a word end
-    within 30, not mid-word (B-2743). The batch files and the keying sheet (``jde_keying``) both ask here. A remark
+    within 30, not mid-word (B-2617). The batch files and the keying sheet (``jde_keying``) both ask here. A remark
     the person emptied on purpose stays empty (D-229)."""
     remark = fit(line.get("remark"))[0]
     if remark or line.get("remark_from") == "person":

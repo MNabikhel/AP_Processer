@@ -59,7 +59,7 @@ def test_tax_charged_in_error_is_a_claim_to_check(tmp_path):
 
 
 def test_tax_charged_below_the_rate_is_never_claimed_at_the_rate_in_force(tmp_path):
-    """B-2722: HST charged at 13% on a Nova Scotia supply (14% in force) was flagged "Tax charged at the wrong rate:
+    """B-2610: HST charged at 13% on a Nova Scotia supply (14% in force) was flagged "Tax charged at the wrong rate:
     recover the excess from the vendor ..., claim only the right rate": there is no excess, and the claim at 14% is
     more than the tax paid. Only the tax charged may be claimed (ETA s.169), never more."""
     store = _store(tmp_path)

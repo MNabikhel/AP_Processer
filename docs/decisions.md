@@ -6153,9 +6153,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     by age is never shown unexplained; "24 of 24" over two years says nothing more.
   - **Bench:** `bench coding --journal --quick` and `bench coding --quick` are the same before and after: the
     made-up company's journal covers one year, every line within 12 months of its latest date.
-- **D-275** · **A purchase order keeps its currency; amounts are compared with it only in one currency**
+- **D-256** · **A purchase order keeps its currency; amounts are compared with it only in one currency**
   (`coding/po.py` `COLUMN_ALIASES["currency"]`, `_currencies`, `PoMatch.currencies`; `purchase_orders.currency`,
-  schema 30; `erp/accruals.py` `Accrual.cad_assumed`, `said_cad`; the owner's to-do item; 17 Nov 2026; B-2760).
+  schema 30; `erp/accruals.py` `Accrual.cad_assumed`, `said_cad`; the owner's to-do item; 17 Nov 2026; B-2612).
   - **Kept:** the PO file's optional Currency column (Currency Code, CRCD...), upper case, on the PO (a PO has one:
     its lines' first given). None given is kept as '' and taken as CAD, as before, so "the file said CAD" and "the
     file said nothing" stay told apart. The AIS sync's PO read gives none yet (HANDOFF 6.6).

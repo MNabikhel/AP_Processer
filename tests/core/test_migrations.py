@@ -196,7 +196,7 @@ def test_a_journal_loaded_before_its_dates_read_were_kept_says_none(tmp_path):
 
 
 def test_a_purchase_order_kept_before_pos_had_a_currency_has_none(tmp_path):
-    """B-2760: a PO imported at schema 29, before a PO kept its currency, is kept with none ('': taken as CAD); the
+    """B-2612: a PO imported at schema 29, before a PO kept its currency, is kept with none ('': taken as CAD); the
     database is then a new one."""
     db = Store(tmp_path / "old" / "ap_coder.db").path
     with closing(sqlite3.connect(db)) as conn, conn:
