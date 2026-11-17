@@ -123,12 +123,13 @@ function toFix() {
 }
 
 /** The boxes of what a person looks at before approving: an account that is a guess (or not offered for invoices),
-    a tax code the Tax check points at, a suggested remark no one has been in yet. */
-function toCheck() {
+    a tax code the Tax check points at, and (F8's round, ``remarks``) a suggested remark no one has been in yet.
+    Approving asks for none of the remarks: they are on screen, and approving takes them (D7). */
+function toCheck(remarks = true) {
   return gridRows().flatMap((row) => [
     row.classList.contains("is-check") ? accountBox(row) : null,
     row.querySelector(".c-tax.is-taxcheck select"),
-    row.querySelector("input[data-remark-box].is-suggested"),
+    remarks ? row.querySelector("input[data-remark-box].is-suggested") : null,
   ]).filter(Boolean);
 }
 
@@ -145,24 +146,23 @@ function goToNext(boxes, by = 1) {
   return true;
 }
 
-/* Approving with something to check: the first Ctrl+Enter says what in the bar and goes to it, the second approves
-   (no dialog). Any edit between the two starts again. */
+/* Approving with something to check (an account that is a guess, a tax code the Tax check points at): the first
+   Ctrl+Enter says what in the bar and goes to it, the second approves (no dialog). Any edit between the two starts
+   again. Suggested remarks are never asked about: approving takes them as shown (D7). */
 let checkAsked = false;
 let leaving = null; // the box the focus leaves for what to check: its change as it is left is no edit (B-2362)
 function checkSaid() {
   const rows = gridRows();
   const guesses = rows.filter((row) => row.classList.contains("is-check")).map(lineNo);
   const taxes = rows.filter((row) => row.querySelector(".c-tax.is-taxcheck")).map(lineNo);
-  const remarks = rows.filter((row) => row.querySelector("input[data-remark-box].is-suggested")).length;
   const of = (numbers) => (numbers.length === 1 ? `line ${numbers[0]}` : `lines ${numbers.join(", ")}`);
   return [
     guesses.length ? `the account of ${of(guesses)}` : "",
     taxes.length ? `the tax of ${of(taxes)}` : "",
-    remarks ? `${remarks === 1 ? "1 suggested remark" : `${remarks} suggested remarks`} not looked at` : "",
   ].filter(Boolean).join("; ");
 }
 function checkedOrAsked() {
-  const boxes = toCheck();
+  const boxes = toCheck(false);
   if (!boxes.length || checkAsked) return true;
   checkAsked = true;
   showBarState();

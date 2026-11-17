@@ -128,10 +128,7 @@ def test_ctrl_enter_with_a_list_open_only_closes_it_then_approves(browser, chart
     page.keyboard.press("Control+Enter")
     page.wait_for_timeout(400)
     assert not page.query_selector(LIST) and store.get_invoice(invoice_id)["status"] == REVIEW  # only closed
-    page.keyboard.press("Control+Enter")  # the suggested remark no one looked at: said in the bar first
-    page.wait_for_selector("[data-bar-check]:not([hidden])")
-    assert store.get_invoice(invoice_id)["status"] == REVIEW
-    page.keyboard.press("Control+Enter")  # again: approves
+    page.keyboard.press("Control+Enter")  # then approves (its suggested remark is taken as shown, D7)
     wait_until(page, lambda: store.get_invoice(invoice_id)["status"] == APPROVED, 10)
     assert store.get_invoice(invoice_id)["status"] == APPROVED
     assert not errors
@@ -178,7 +175,7 @@ def test_with_something_to_check_the_first_ctrl_enter_says_what_and_the_second_a
     page.keyboard.press("Control+Enter")
     page.wait_for_selector("[data-bar-check]:not([hidden])")
     said = page.inner_text("[data-bar-check]")
-    assert said == "To check: the account of line 1; 1 suggested remark not looked at. Ctrl+Enter again approves."
+    assert said == "To check: the account of line 1. Ctrl+Enter again approves."  # (its suggested remark: never asked)
     assert store.get_invoice(invoice_id)["status"] == REVIEW and _focused(page) == "account 1"
     page.keyboard.press("Control+Enter")
     wait_until(page, lambda: store.get_invoice(invoice_id)["status"] == APPROVED, 10)
@@ -186,11 +183,10 @@ def test_with_something_to_check_the_first_ctrl_enter_says_what_and_the_second_a
     assert not errors
 
 
-def test_after_picking_each_account_the_first_ctrl_enter_says_what_to_check_and_the_second_approves(
-    browser, chart_company
-):
+def test_after_picking_each_account_one_ctrl_enter_approves_with_the_suggested_remarks(browser, chart_company):
     """B-2362: on four_lines, accounts picked, the first Ctrl+Enter went to the first suggested remark and the change
-    of the Account box it left started the two steps again: three presses to approve."""
+    of the Account box it left started the two steps again: three presses to approve. D7: the second press only
+    asked about the suggested remarks, shown on the screen: one press approves, the remarks as suggested."""
     invoice, invoice_id = chart_company.invoices["four_lines"]
     page, errors = _review(browser, chart_company, "four_lines")
     store = chart_company.store
@@ -201,14 +197,14 @@ def test_after_picking_each_account_the_first_ctrl_enter_says_what_to_check_and_
         page.wait_for_timeout(200)
         page.keyboard.press("Enter")
     page.wait_for_load_state("networkidle")
-    page.keyboard.press("Control+Enter")
-    page.wait_for_selector("[data-bar-check]:not([hidden])")
-    assert page.inner_text("[data-bar-check]").startswith("To check: ")
-    assert store.get_invoice(invoice_id)["status"] == REVIEW
-    assert page.evaluate("document.activeElement.matches('input[data-remark-box]')")
+    page.wait_for_timeout(800)  # the check after the last account has answered: each remark follows its account
+    suggested = page.eval_on_selector_all("input[data-remark-box].is-suggested", "els => els.map((e) => e.value)")
+    assert len(suggested) == 4 and all(suggested)  # none looked at
     page.keyboard.press("Control+Enter")
     wait_until(page, lambda: store.get_invoice(invoice_id)["status"] == APPROVED, 10)
     assert store.get_invoice(invoice_id)["status"] == APPROVED
+    stored = store.get_invoice(invoice_id)["final_output"]["line_items"]
+    assert [li["remark"] for li in stored] == suggested and "person" not in {li.get("remark_from") for li in stored}
     assert not errors
 
 
@@ -223,16 +219,11 @@ def test_the_remark_box_is_marked_suggested_until_visited_counts_and_is_never_cu
     assert suggested and "is-suggested" in page.get_attribute(REMARK, "class")
     assert page.input_value(POSTED) == ""  # a suggestion is not posted: it follows the line's account
     assert page.inner_text(COUNT) == f"{len(suggested)} / 30"
-    page.keyboard.press("Control+Enter")  # a suggested remark no one looked at: said first, not approved
-    page.wait_for_selector("[data-bar-check]:not([hidden])")
-    assert page.inner_text("[data-bar-check]") == (
-        "To check: 1 suggested remark not looked at. Ctrl+Enter again approves.")  # fmt: skip
-    assert page.evaluate("document.activeElement.matches('input[data-remark-box]')")  # and it goes to it
+    page.click(REMARK)
     assert "is-suggested" not in page.get_attribute(REMARK, "class")  # visited
     page.keyboard.press("Control+a")
     page.keyboard.type("KT parcels 3-1-204")
     assert page.input_value(POSTED) == "KT parcels 3-1-204" and page.inner_text(COUNT) == "18 / 30"
-    assert page.is_hidden("[data-bar-check]")  # an edit: the two steps start again
     page.keyboard.type(" for the third floor kitchen")
     assert page.inner_text(COUNT) == "46 / 30: 16 too many" and "is-over" in page.get_attribute(REMARK, "class")
     assert page.input_value(REMARK) == "KT parcels 3-1-204 for the third floor kitchen"  # whole, never cut
