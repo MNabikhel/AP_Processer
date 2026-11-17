@@ -158,7 +158,7 @@ def test_thirty_lines_of_history_are_not_sure_for_a_line_like_one_a_person_coded
         f"({CARPET}): check it.")  # fmt: skip
     approve(store, tmp_path, coding, [CARPET])
     prior = prior_for(store, "Brightway Janitorial Ltd.")
-    # 2025's 12 lines count 1 each, 2024's 0.5 and 2023's 0.25 (D-249): 19.5 of 24.5 with the correction's 5
+    # 2025's 12 lines count 1 each, 2024's 0.5 and 2023's 0.25 (D-251): 19.5 of 24.5 with the correction's 5
     assert prior.accounts[0].account == JANITOR and round(prior.accounts[0].share, 3) == round(19.5 / 24.5, 3)
     assert prior.sure() is None  # of all its lines: 80%, and the last line approved here went elsewhere
     alike = "Steam clean the lobby and stair carpets on two floors"
@@ -563,7 +563,7 @@ def test_a_new_suppliers_line_is_offered_the_accounts_the_journal_has_for_its_wo
     assert all(c["reason"].startswith("1 of the 2 suppliers named “courier”") for c in saas.candidates)
 
 
-# --- Recent lines count more (D-249) ----------------------------------------------------------------------------
+# --- Recent lines count more (D-251) ----------------------------------------------------------------------------
 
 
 def test_a_journal_line_counts_less_each_year_older_than_the_latest_g_l_date():

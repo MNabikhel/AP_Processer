@@ -6019,19 +6019,19 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     at the window (`AP_NO_PAUSE`, no terminal) is said and not taken. No: that release is not asked about again
     (`update_skipped` in `~/.ap_coder/settings.json`; `--update` asks again, typed in scripts\terminal.bat or a Mac's
     Terminal, as the next start says), and this version starts; for the rest of that day GitHub is not asked at all
-    (`update_asked`, the day of the no: a build is released at each merge, so at most one question a day, B-2588). A
+    (`update_asked`, the day of the no: a build is released at each merge, so at most one question a day, B-2574). A
     yes that could not be installed is asked again at the next start.
   - **Taking it:** the ZIP and `SHA256SUMS` from GitHub's hosts only (api.github.com, github.com,
     objects/release-assets.githubusercontent.com), every redirect checked, over HTTPS; the SHA-256 must match; the ZIP
     must be one folder named after it, with no name outside it (absolute, `..`, a drive, a backslash) and no link,
     holding AP Coder of the release's version; unzipped beside this folder (never over it, never in the data folder),
     then renamed into place (tried again for 5 seconds while it fails: an antivirus may still be reading the new
-    files, B-2590). Its own `APProcessor` then runs in this window as a double-click would (`handover`: this
+    files, B-2576). Its own `APProcessor` then runs in this window as a double-click would (`handover`: this
     start's lock let go, `AP_UPDATE_FROM` so D-231's question is not asked twice), and takes over: stops nothing that
     runs (nothing does yet), backs the database and the data folder's files up before it opens them, whether or not
-    its version changes the database (`backup_before_update`, D-143's `safety_copy`, B-2592; one that can't be made
+    its version changes the database (`backup_before_update`, D-143's `safety_copy`, B-2578; one that can't be made
     stops it, nothing changed), copies the OCR models from this folder's .venv rather than downloading them again
-    (each checked as a download is, B-2589), records itself, repoints the shortcut, cleans this folder up after
+    (each checked as a download is, B-2575), records itself, repoints the shortcut, cleans this folder up after
     its self-check (what this window still holds open: on a later start). A failure is said, the download and a half
     unzipped folder deleted, and this version starts. A folder an earlier yes unzipped, the same build, is started
     again, not downloaded again.
@@ -6125,7 +6125,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     roles only (it would let a person with a made role do nothing, and its console's list fails on one), refuses the
     database; going back uses the before-update backup (docs/UPGRADING.md).
   - **A laptop's own sign-in** has no Roles page: only its Admin signs in there (D-243).
-- **D-249** · **Past invoice coding: recent lines count more** (`ai/supplier_prior.py` `age_weight`,
+- **D-251** · **Past invoice coding: recent lines count more** (`ai/supplier_prior.py` `age_weight`,
   `Prior.recent`, `Prior.weighed`; `Store.journal_last_date`; `web/account_lines.py` `why_words`; the owner's
   decision; 17 Nov 2026). Refines D-248's "the supplier prior counts every line".
   - **The rule:** a coding line of the journal counts 1 within 12 months of the latest G/L date of the journals
@@ -6135,7 +6135,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     while its older lines still outnumber it; one seen only years before keeps its own account (its lines all weigh
     alike, so its shares are as before).
   - **A line with no date** counts 1, as before: its age is not known, and a journal whose dates could not be read
-    (one printed with two-digit years, loaded before B-2597) is not made worth less than a dated one, nor less
+    (one printed with two-digit years, loaded before B-2580) is not made worth less than a dated one, nor less
     against AP's approvals, without anyone being told.
   - **AP's approvals here** keep their weights (3 as proposed, 5 coded or changed): as much against a line of the
     latest year as before, more against older ones. Imported past coding and bulk approvals count 1, as before.

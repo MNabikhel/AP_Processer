@@ -58,7 +58,7 @@ class PriorMixin:
 
     def journal_last_date(self) -> str:
         """The latest G/L date of the journal's vouchers counted (YYYY-MM-DD; "" when none has one): a line's age is
-        measured from it (``supplier_prior.age_weight``, D-249), not from today."""
+        measured from it (``supplier_prior.age_weight``, D-251), not from today."""
         with self._conn() as conn:
             row = conn.execute(_LAST_DATE).fetchone()
         return str(row[0] or "") if row else ""

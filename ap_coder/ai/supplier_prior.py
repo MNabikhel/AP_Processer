@@ -22,7 +22,7 @@ accents or punctuation and "&" as "and":
   (``Prior.note`` says so): two suppliers whose names start with the same 26 characters cannot be told apart by name.
 
 What counts for how much. A coding line of the journal counts 1 (``JOURNAL_WEIGHT``) within 12 months of the latest
-G/L date of the journals loaded, half as much for each year older (``age_weight``, D-249: a supplier recoded last
+G/L date of the journals loaded, half as much for each year older (``age_weight``, D-251: a supplier recoded last
 year is offered its new account, and one seen only long ago still has its own); a line of imported past coding or one
 approved in bulk, which nobody looked at, counts 1; a line a person approved here as proposed counts 3
 (``APPROVAL_WEIGHT``); a line a person coded or changed here counts 5 (``CORRECTION_WEIGHT``): a correction outweighs
@@ -92,7 +92,7 @@ _PERIOD = re.compile(
 
 
 def age_weight(gl_date: Any, latest: Any) -> float:
-    """What a coding line of the journal counts for by its age (D-249): ``JOURNAL_WEIGHT`` within ``AGE_HALVES``
+    """What a coding line of the journal counts for by its age (D-251): ``JOURNAL_WEIGHT`` within ``AGE_HALVES``
     months of ``latest`` (the latest G/L date of the journals loaded: not today, so a prior does not change from one
     day to the next), half as much for each further ``AGE_HALVES``, never 0. A line whose date could not be read
     counts in full, as before: its age is not known, and a journal read without its dates is not made worth less."""
@@ -245,7 +245,7 @@ class Candidate:
     name: str = ""  # the account's name
     example: str = ""  # a remark AP usually wrote for it, as written
     reasons: list[str] = field(default_factory=list)
-    recent: bool = False  # its supplier's lines count by their age: ``share`` is not ``lines`` over ``of`` (D-249)
+    recent: bool = False  # its supplier's lines count by their age: ``share`` is not ``lines`` over ``of`` (D-251)
 
     def decided(self) -> dict[str, Any]:
         """What decided a line coded to this candidate with no one picking (``LineItem.decided_by``): where the
