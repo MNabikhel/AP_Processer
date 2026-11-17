@@ -135,14 +135,21 @@ def _from_chart(store: Store, table: str, listed: list[dict[str, Any]]) -> dict[
 
 
 def tax_context(store: Store) -> dict[str, Any]:
+    """The Sales tax accounts tab. ``jde_posts``: a tax JD Edwards posts itself from the voucher's pay item, for which
+    no account is asked (``doctor.taxes_jde_posts``, B-2600)."""
+    from ap_coder.ops.doctor import taxes_jde_posts
+
     accounts = store.list_accounts("gl_accounts")
     treatments = store.tax_treatments()
     rates = TaxRateTable.load().in_force()
+    posts = taxes_jde_posts(store)
     return {
         "taxes": [
-            {"type": t, "where": WHERE.get(t, ""), "treatment": treatments[t].treatment, "gl": treatments[t].gl_code}
+            {"type": t, "where": WHERE.get(t, ""), "treatment": treatments[t].treatment, "gl": treatments[t].gl_code,
+             "jde_posts": t in posts}
             for t in TAX_TYPES
         ],
+        "jde_posts": [t for t in TAX_TYPES if t in posts],
         "treatments": {k: v.split(" (")[0] for k, v in TREATMENTS.items()},
         "gl_options": [(a["code"], f"{a['code']} · {short_name(a['description'])}") for a in accounts],
         "expense_to_line": EXPENSE_TO_LINE,

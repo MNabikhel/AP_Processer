@@ -208,9 +208,14 @@ def email_line(mail: Unpacked, already: int = 0, repeated: int = 0) -> tuple[str
 
 
 def tax_types_mapped(store: Store) -> int:
-    """Tax types ready to post: added to expense lines, or mapped to a GL account that still exists."""
+    """Tax types ready to post: added to expense lines, mapped to a GL account that still exists, or posted by JD
+    Edwards itself from the voucher's pay item with no account of ours (``doctor.taxes_jde_posts``, B-2600)."""
+    from ap_coder.ops.doctor import taxes_jde_posts
+
     codes = {a["code"] for a in store.list_accounts("gl_accounts")}
-    return sum(1 for t in store.tax_treatments().values() if not t.needs_gl or t.gl_code in codes)
+    posts = taxes_jde_posts(store)
+    return sum(1 for tax_type, t in store.tax_treatments().items()
+               if not t.needs_gl or t.gl_code in codes or (not t.gl_code and tax_type in posts))  # fmt: skip
 
 
 LM_STUDIO = "LM Studio running"
@@ -314,6 +319,7 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
     the vendor master, the settings map the accounts, and the past coding warm-starts the coding of the first
     invoices."""
     from ap_coder.erp import jde_accounts, jde_settings
+    from ap_coder.ops.doctor import taxes_jde_posts
     from ap_coder.web.core import jde_shown
 
     shown = jde_shown(store)
@@ -346,9 +352,11 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
         saved = bool(store.get_setting(jde_settings.SETTING_KEY))
         problems = jde_settings.settings_problems(jde_settings.load(store)) if saved else []
         settings = jde_settings.load(store)
+        posts = taxes_jde_posts(store)  # (posted by JD Edwards from the pay item: no account of ours, B-2601)
         missing = jde_accounts.accounts_without_bu(
             settings, [a["code"] for a in store.list_accounts("gl_accounts")],
-            [t.gl_code for t in store.tax_treatments().values() if t.needs_gl and t.gl_code],
+            [t.gl_code for tax_type, t in store.tax_treatments().items()
+             if t.needs_gl and t.gl_code and tax_type not in posts],
             bool(store.list_accounts("cost_centers")),
         ) if saved and not problems else []  # fmt: skip
         if missing:  # the export would hold back every invoice posting to them (B-1300)

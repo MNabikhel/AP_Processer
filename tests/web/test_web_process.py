@@ -826,3 +826,37 @@ def test_two_attachments_that_could_not_be_read_are_not_said_repeated(store, tmp
     mail.saved, mail.repeated = mail.saved[:2], 0  # the two invoices that differ, neither read
     lines = _email_lines(store, [mail], [], include_failed=False)
     assert lines[0]["text"] == "mail.eml: Invoice; 2 invoices to the review queue"
+
+
+def test_keying_to_jd_edwards_asks_no_account_for_the_tax_it_posts_itself(chart_company, chart_company_client):
+    """B-2600: with the tax keyed on the voucher's pay item (tax code V), JD Edwards posts the GST and HST itself, yet
+    the Sales tax accounts tab asked for an account for them and Getting started counted them as not set ("3 of 5"),
+    where the checks and the doctor already need none (B-2259)."""
+    from ap_coder.core.tax_setup import RECOVERABLE
+    from ap_coder.web.core import using_store
+    from ap_coder.web.pages.process import tax_types_mapped
+
+    store = chart_company.store
+    for tax_type in ("GST", "HST"):
+        store.set_tax_treatment(tax_type, RECOVERABLE, "")
+    with using_store(store):
+        assert tax_types_mapped(store) == 5
+    page = re.sub(r"\s+", " ", chart_company_client.get("/accounts?tab=tax").text)
+    assert 'aria-label="GST GL account"' not in page and 'aria-label="HST GL account"' not in page
+    assert "pick one for GST, HST and QST" not in page
+    assert "JD Edwards posts it itself" in page
+    assert 'aria-label="OTHER GL account"' in page  # (a tax it does not post keeps its box, hidden when per line)
+
+
+def test_getting_started_asks_no_business_unit_for_the_tax_account_jd_edwards_posts_itself(chart_company):
+    """B-2601: on the made-up company Getting started said "1 account (2420) has no JD Edwards business unit: set a
+    Default BU" though 2420 is the GST account JD Edwards posts itself from the pay item: no voucher is held back for
+    it."""
+    from ap_coder.web.core import using_store
+    from ap_coder.web.pages.process import JDE_STEP, pilot_steps
+
+    store = chart_company.store
+    assert store.tax_treatments()["GST"].gl_code == "2420"
+    with using_store(store):
+        state, _, text = next(s for s in pilot_steps(store) if s[1] == JDE_STEP)
+    assert "2420" not in text and state == "ok", text
