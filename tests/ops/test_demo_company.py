@@ -30,6 +30,12 @@ def test_the_company_has_its_lists_loaded_by_the_importers(chart_company):
     assert sorted(p.stem for p in (chart_company.folder / "invoices").glob("*.pdf")) == sorted(jde_invoices.NAMED)
 
 
+def test_the_company_has_its_province_set(chart_company):
+    """The setup's "Your province" was left to do: the sales tax check had no province for an invoice with no
+    ship-to."""
+    assert chart_company.store.our_province() == jde_invoices.HOME_PROVINCE == "AB"
+
+
 def test_the_company_is_set_up_the_way_a_department_that_types_its_vouchers_keys_them(chart_company):
     store, company = chart_company.store, chart_company.truth.company
     settings = store.chart_settings()

@@ -274,9 +274,8 @@ def test_a_claim_of_two_tax_areas_is_separated_and_joined_again_as_one_voucher_a
         ("fuel and 1 more.pdf", 97.4), ("room and 1 more.pdf", 259.9)]  # fmt: skip
     took = [e["detail"]["took"] for e in reversed(store.events(actions=["joined"])) if e["detail"]["took"]]
     assert took == [[alone[0]["id"], alone[1]["id"]], [alone[2]["id"], alone[3]["id"]]]
-    # Each is of one tax area: what JD Edwards still asks of it is what it asks of any invoice (its place of supply).
-    assert {i["message"] for v in vouchers for i in v["validation"]["issues"] if i["code"] == "JDE_TAX_AREA"} == {
-        "JD Edwards: province of supply unknown: no JDE tax area for the Canadian tax charged"}  # fmt: skip
+    # Each is of one tax area, and the company's province is set: JD Edwards asks nothing more of it.
+    assert [i for v in vouchers for i in v["validation"]["issues"] if i["code"] == "JDE_TAX_AREA"] == []
 
     invoice, _ = next(iter(chart_company.invoices.values()))  # an employee stands in: a supplier JD Edwards knows
     for voucher, province in zip(vouchers, ("AB", "ON"), strict=True):
