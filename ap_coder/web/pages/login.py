@@ -88,6 +88,18 @@ X_ARR = "x-arr-"
 LAPTOP_ADMIN_ONLY = ("On this laptop AP Coder opens for its Admin only. To let colleagues in with their own accounts, "
                      "its owner runs python -m ap_coder share (docs/SERVER.md, section 16).")  # fmt: skip
 NAME_FIRST = "Type your name, as it is written on your approvals: AP Coder shows it on each one."
+# A laptop's Admin is its only one (D-243): what would send them to an Admin names the console's command instead.
+CONSOLE_RESET = ("Close AP Coder's black window, double-click scripts\\terminal.bat in AP Coder's folder and type "
+                 "python -m ap_coder users reset-2fa admin: it gives a temporary password and sets up the app "
+                 "again.")  # fmt: skip
+LAPTOP_WORDS = {
+    LOCKED: ("Too many tries that didn't match: signing in on this laptop is paused for 15 minutes. Wait, then try "
+             f"again. Forgot your password, or lost your phone? {CONSOLE_RESET}"),
+    ACCOUNT_PAUSED: ("Too many tries that didn't match: signing in on this laptop is paused for a few minutes. Wait, "
+                     f"then try again. Forgot your password, or lost your phone? {CONSOLE_RESET}"),
+    KEY_MISSING: ("AP Coder can't check your authenticator codes on this laptop: its key file (authenticator.key in "
+                  f"the data folder) is missing, damaged or not the one your app was set up with. {CONSOLE_RESET}"),
+}  # fmt: skip
 
 
 def _next(url: str | None) -> str:
@@ -262,7 +274,10 @@ def _first_sign_in(request: Request, password: str, next: str) -> JSONResponse |
 
 def _refusal(store: Any, said: str, username: str, server: bool = True) -> str:
     """What a login refused says; to the only active Admin, whose temporary password expired, the command that gives
-    a new one: there is no other Admin to ask (B-2525). (Said only once the password matched.)"""
+    a new one: there is no other Admin to ask (B-2525). (Said only once the password matched.) On a laptop, whose Admin
+    is its only one, a pause or a missing key names the console's command (``LAPTOP_WORDS``)."""
+    if not server and said in LAPTOP_WORDS:
+        return LAPTOP_WORDS[said]
     if said != TEMPORARY_EXPIRED:
         return said
     account = store.find_user(username) or {}
@@ -473,9 +488,10 @@ def _second_step(request: Request, step: str, code: str, next: str) -> Response:
     try:
         found = store.check_code(user["id"], typed, ip, console=from_console(request))
     except LoginRefused as exc:
+        said = _refusal(store, str(exc), user["username"], server_mode(request))
         if str(exc) in (LOCKED, ACCOUNT_PAUSED, KEY_MISSING):
-            return _back_to_login(request, str(exc), next)
-        return refuse(str(exc), 401)
+            return _back_to_login(request, said, next)
+        return refuse(said, 401)
     store.end_pending(_pending(request))
     token = store.start_session(found["id"], ip, request.headers.get("user-agent", ""))
     said = []

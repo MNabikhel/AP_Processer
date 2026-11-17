@@ -224,6 +224,27 @@ def test_the_laptops_words_name_the_console_not_an_admin_to_ask(store, owner):
     assert "clock" in refused
 
 
+def test_a_pause_or_a_lost_key_on_the_laptop_names_the_console_not_an_admin_to_ask(store, owner):
+    """The laptop's Admin is its only one: five wrong passwords, or the codes' key gone, told them to ask an Admin."""
+    client = browser(laptop(store))
+    first_sign_in(client)
+    client.post("/logout", headers=PAGE)
+    for _ in range(5):
+        refused = client.post("/login", data={"username": "admin", "password": "not the one at all"}, headers=PAGE)
+    said = refused.json()["error"]
+    assert "paused" in said and "ask an Admin" not in said and "users reset-2fa admin" in said
+    store.reset_password(store.find_user("admin")["id"], password=CHOSEN)  # (lifts the pause)
+    with store._conn() as conn:
+        conn.execute("UPDATE users SET must_change = 0")
+    (store.path.parent / "authenticator.key").unlink()
+    answer = client.post("/login", data={"username": "admin", "password": CHOSEN, "next": "/review"}, headers=PAGE)
+    assert answer.json()["redirect"].startswith("/login/code"), answer.text
+    refused = client.post("/login/code", data={"code": "123456", "next": "/review"}, headers=PAGE).json()
+    said = client.get(refused["redirect"]).text
+    assert "authenticator.key" in said and "Ask an Admin" not in said and "on this server" not in said
+    assert "users reset-2fa admin" in refused["error"]
+
+
 def test_the_own_address_is_compared_as_an_address_on_a_dual_stack_socket():
     """Listening on both stacks, the server's own address comes as ``::ffff:192.168.1.20`` while the browser names
     ``192.168.1.20``: the same address."""
