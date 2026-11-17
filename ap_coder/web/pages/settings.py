@@ -674,7 +674,8 @@ def restore_backup(request: Request, name: str = Form(""), confirm: str = Form("
         return refuse("That backup is not in the backups folder any more.", status=404)
     had_copy_dir = bool(store.get_setting("backup_copy_dir").strip())
     try:
-        keep = server_mode(request) or store.get_setting(SIGN_IN) in LAPTOPS  # the server's, a laptop's own (D-243)
+        # the server's, a laptop's own (D-243), a team's opened without sign-in (its accounts, unused meanwhile)
+        keep = server_mode(request) or store.get_setting(SIGN_IN) in LAPTOPS or bool(store.user_count())
         restored = store.restore_state(path, keep_accounts=keep)  # (D-101)
     except ValueError as exc:  # not an AP Coder backup: nothing was changed
         return refuse(f"Not restored: {exc}.")

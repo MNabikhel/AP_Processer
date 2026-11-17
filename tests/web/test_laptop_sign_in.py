@@ -121,6 +121,22 @@ def test_without_sign_in_on_purpose_the_setting_is_left_and_the_laptop_opens(sto
     assert client.get("/review").status_code == 200 and store.get_setting(SIGN_IN) == LAPTOP
 
 
+def test_a_restore_on_a_teams_data_opened_without_sign_in_keeps_its_accounts(store, owner):
+    """A team's data folder opened in laptop mode on purpose (``--without-sign-in``): a restore on Settings brought the
+    backup's accounts back, an account turned off since on again and a password changed since the old one, as the
+    server's restore (and the console's) never does (D-101)."""
+    store.set_setting(SIGN_IN, "team")
+    store.add_user("boss", CHOSEN, role="admin", must_change=False)
+    gone = store.add_user("ann", CHOSEN, role="clerk", must_change=False)
+    backup = store.backup_now("before-ann-left")
+    store.deactivate_user(gone)
+    client = browser(laptop(store, sign_in=False))
+    store.set_setting(SIGN_IN, "team")  # (``laptop`` set it for the laptop's own: a team's is left as it is)
+    answer = client.post("/settings/data/restore", data={"name": backup.name, "confirm": "RESTORE"}, headers=PAGE)
+    assert answer.json()["ok"], answer.text
+    assert not store.user(gone)["active"] and store.get_setting(SIGN_IN) == "team"
+
+
 def test_a_new_name_in_settings_is_the_accounts_too(store, owner):
     """The account keeps the name on the approvals, so a later ``share`` still knows them for the owner's."""
     client = browser(laptop(store))
