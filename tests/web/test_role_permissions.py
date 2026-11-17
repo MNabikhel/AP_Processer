@@ -27,7 +27,7 @@ GOOD = "correct horse battery"
 PANEL = {"/admin", "/admin/sign-in", "/admin/users/{user_id:int}", "/admin/users/{user_id:int}/sign-out",
          "/admin/roles", "/admin/roles/new", "/admin/roles/{key}", "/admin/roles/add", "/admin/roles/{key}/save",
          "/admin/roles/{key}/delete"}  # fmt: skip  # the Admin panel's own routes, made since (D-249, D-250)
-# Excel twins of a CSV of before, a workbook to read (B-2650): each allowed to whoever the CSV is.
+# Excel twins of a CSV of before, a workbook to read (B-2633): each allowed to whoever the CSV is.
 TWINS = {"/month-end/accruals.xlsx", "/statements/reconciliation.xlsx", "/jde-files/loaded/{what}.xlsx"}
 
 

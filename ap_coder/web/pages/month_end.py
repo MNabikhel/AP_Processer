@@ -178,7 +178,7 @@ async def accruals_csv(request: Request) -> Response:
 
 @router.get("/month-end/accruals.xlsx")
 async def accruals_xlsx(request: Request) -> Response:
-    """The accruals schedule as an Excel workbook, to read: codes stay text (B-2650). On the company server made by
+    """The accruals schedule as an Excel workbook, to read: codes stay text (B-2633). On the company server made by
     its background process, as the CSV."""
     return await downloads.answer(request, "/month-end/accruals.xlsx", _made_now(write_accruals_xlsx, XLSX))
 

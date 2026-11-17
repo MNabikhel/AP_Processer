@@ -255,7 +255,7 @@ def _void(voucher, days=6):
 
 @pytest.mark.parametrize("files", [1, 2])
 def test_a_voided_voucher_and_its_void_count_for_nothing_in_one_file_or_across_two(store, truth, files):
-    """D-261: a miscoded voucher voided counted as two lines to the wrong account. Its negative lines cancel the
+    """D-258: a miscoded voucher voided counted as two lines to the wrong account. Its negative lines cancel the
     lines they reverse (the same account string, amount and remark), in the same file or one loaded after; the made-up
     company's credits, which reverse nothing, stay as they were."""
     busiest = max({v.supplier for v in truth.vouchers}, key=lambda n: sum(v.supplier == n for v in truth.vouchers))

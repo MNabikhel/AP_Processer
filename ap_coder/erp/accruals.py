@@ -469,7 +469,7 @@ def said_cad(accruals: list[Accrual]) -> bool:
 
 
 HEADER = ["Source", "Vendor", "Reference", "Description", "GL account", "Cost center", "Amount", "Currency", "Note"]
-CODES = ("Reference", "GL account", "Cost center")  # text in the workbook: leading zeros kept (B-2650)
+CODES = ("Reference", "GL account", "Cost center")  # text in the workbook: leading zeros kept (B-2633)
 
 
 def table(accruals: list[Accrual]) -> list[list[Any]]:

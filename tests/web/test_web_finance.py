@@ -850,7 +850,7 @@ def _sheet(response, name: str) -> list[list]:
 
 
 def test_the_accruals_schedule_downloads_as_a_workbook_whose_accounts_stay_text(chart_company_client):
-    """B-2650: the accruals CSV, opened in Excel, made an account 0021061010.1620.130 a number or a reference 000417
+    """B-2633: the accruals CSV, opened in Excel, made an account 0021061010.1620.130 a number or a reference 000417
     the number 417. The page's main download is a workbook to read: the CSV's rows, each code a text cell, leading
     zeros and all, each amount a number; the CSV stays, a link beside it."""
     from tests.web.test_web_jde_loaded import same_rows
@@ -868,7 +868,7 @@ def test_the_accruals_schedule_downloads_as_a_workbook_whose_accounts_stay_text(
 
 
 def test_a_statement_reconciliation_downloads_as_a_workbook_whose_invoice_numbers_stay_text(client, busy):
-    """B-2650: the reconciliation's CSV, opened in Excel, made the invoice number 000417 the number 417. Its main
+    """B-2633: the reconciliation's CSV, opened in Excel, made the invoice number 000417 the number 417. Its main
     download is a workbook: the CSV's rows, invoice numbers text, amounts numbers; the CSV stays beside it."""
     from tests.web.test_web_jde_loaded import same_rows
 

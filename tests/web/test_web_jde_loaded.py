@@ -225,7 +225,7 @@ def test_on_the_server_a_clerk_and_above_see_the_lists_and_only_an_admin_changes
 
 
 def test_each_list_downloads_as_a_workbook_whose_codes_keep_their_leading_zeros(chart_company_client, chart_company):
-    """B-2650: the CSV, opened in Excel, made a business unit 0021061010 the number 21061010 and a supplier number
+    """B-2633: the CSV, opened in Excel, made a business unit 0021061010 the number 21061010 and a supplier number
     0410010 the number 410010. Each list's main download is a workbook to read: the CSV's rows, each code a text
     cell, leading zeros and all, each amount a number; the CSV stays, a link beside it, for another program."""
     client, store = chart_company_client, chart_company.store

@@ -10,7 +10,7 @@ Your existing data is safe. On first start the database upgrades itself (schema 
 backup of AP Coder (the database and the invoice files) is made automatically once a day (the newest 14 are
 kept).
 
-## The second approval checks again; voided vouchers cancel out (D-260, D-261)
+## The second approval checks again; voided vouchers cancel out (D-257, D-258)
 
 - **The second approval checks the invoice again.** What changed since the first approval (the supplier put on
   hold, the same invoice found in JD Edwards or the ERP register, a duplicate approved, the period closed) stops the

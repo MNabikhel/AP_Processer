@@ -347,7 +347,7 @@ def _copy_key(inv: dict[str, Any]) -> tuple[str, float]:
 HEADER = ["Result", "Invoice #", "Date", "Statement amount", "Our amount", "Difference", "AP Coder #",
           "AP Coder status", "Note"]  # fmt: skip
 AMOUNTS = ("Statement amount", "Our amount", "Difference")
-CODES = ("Invoice #",)  # text in the workbook: leading zeros kept (B-2650)
+CODES = ("Invoice #",)  # text in the workbook: leading zeros kept (B-2633)
 
 
 def table(rec: Reconciliation) -> list[list[Any]]:

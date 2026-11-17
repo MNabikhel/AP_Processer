@@ -454,7 +454,7 @@ def table_workbook(out: Any, title: str, header: list[str], rows: Iterable[list[
                    money: Collection[str] = ()) -> None:  # fmt: skip
     """Rows a person reads, as an Excel workbook of one sheet called ``title``, written to ``out`` a row at a time
     (``sheet_workbook``): the columns named in ``codes`` are text cells, so a supplier number, business unit, account
-    or invoice number keeps its leading zeros (the same file as CSV, opened in Excel, loses them: B-2650); those in
+    or invoice number keeps its leading zeros (the same file as CSV, opened in Excel, loses them: B-2633); those in
     ``money`` are numbers with two decimals."""
     text = {n for n, label in enumerate(header) if label in codes}
     cells = ({str(n): str(v) if n in text and v is not None else v for n, v in enumerate(row)} for row in rows)

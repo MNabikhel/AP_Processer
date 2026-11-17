@@ -938,7 +938,7 @@ def review_unpark(request: Request, invoice_id: int) -> JSONResponse:
 
 def _not_approvable_now(store: Store, settings: Any, inv: dict[str, Any]) -> list[str]:
     """What keeps an invoice waiting for its second approval from being approved now, one short line each (none: it
-    may be): its approved coding checked again as the first approval and bulk approval check it (D-260), for what
+    may be): its approved coding checked again as the first approval and bulk approval check it (D-257), for what
     changed since (the supplier put on hold, the invoice found in the ERP, a duplicate approved, the period closed).
     An error the first approver approved anyway, with their reason, stays approved over unless "Approve anyway" never
     covers it (``is_hard``); warnings never keep it."""

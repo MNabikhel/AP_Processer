@@ -656,7 +656,7 @@ def test_an_approval_here_counts_as_much_against_a_line_of_the_latest_year_and_m
     assert [(a.account, a.weight) for a in after.accounts] == [(CARPET, 5.0), (JANITOR, 4.0 + 4 * 0.25)]
 
 
-# --- A voucher voided cancels out (D-261) -------------------------------------------------------------------------
+# --- A voucher voided cancels out (D-258) -------------------------------------------------------------------------
 
 BRIGHTWAY = "BRIGHTWAY JANITORIAL LTD."
 
@@ -666,7 +666,7 @@ def _miscoded(day, amount=250, remark="Oct cleaning"):
 
 
 def test_a_voucher_voided_and_its_void_count_for_nothing_toward_the_suppliers_accounts(store):
-    """B-2641: a voucher coded to the carpet account, voided in JD Edwards, counted as two lines of it."""
+    """B-2632: a voucher coded to the carpet account, voided in JD Edwards, counted as two lines of it."""
     load_chart(store)
     _vendor(store, BRIGHTWAY, 740075)
     load_journal(store, [*monthly(740075, BRIGHTWAY, JANITOR, "{month} cleaning", 9),

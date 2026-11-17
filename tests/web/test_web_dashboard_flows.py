@@ -341,7 +341,7 @@ def _final_approval(client, store, invoice_id):
 
 
 def test_the_second_approval_is_refused_once_the_supplier_is_put_on_hold_after_the_first(client, store, monkeypatch):
-    """B-2640: the second approval did not check the invoice again: a supplier put on hold after the first approval
+    """B-2631: the second approval did not check the invoice again: a supplier put on hold after the first approval
     was paid all the same."""
     from ap_coder.coding.vendors import ON_HOLD
 
@@ -355,7 +355,7 @@ def test_the_second_approval_is_refused_once_the_supplier_is_put_on_hold_after_t
 
 
 def test_the_second_approval_is_refused_once_the_invoice_is_found_in_jd_edwards(client, store, monkeypatch):
-    """B-2640: the same invoice entered in the ERP (its register) after the first approval: paid twice."""
+    """B-2631: the same invoice entered in the ERP (its register) after the first approval: paid twice."""
     invoice_id = _waiting_for_kim(store, monkeypatch, "ERP-1")
     inv = store.get_invoice(invoice_id)
     store.import_erp_register([{"vendor_name": inv["vendor_name"], "invoice_number": "ERP-1",
@@ -372,7 +372,7 @@ def test_a_clean_invoice_still_gets_its_second_approval(client, store, monkeypat
 
 
 def test_an_error_the_first_approver_approved_anyway_does_not_stop_the_second_approval(client, store, monkeypatch):
-    """D-260: the first approver's reason stands for an error they saw (not one "Approve anyway" never covers)."""
+    """D-257: the first approver's reason stands for an error they saw (not one "Approve anyway" never covers)."""
     monkeypatch.setenv("AP_REVIEWER", "Kim")
     store.set_setting("approval_limit", "100")
     invoice_id = add_clean(store, invoice_number="ERP-2")

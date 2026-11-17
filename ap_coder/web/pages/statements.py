@@ -229,7 +229,7 @@ def reconciliation_csv(
 def reconciliation_xlsx(
     request: Request, vendor: str = "", file: str = "", sheet: str = "", open_items: str = ""
 ) -> Response:
-    """The reconciliation as an Excel workbook, to read: invoice numbers stay text (B-2650)."""
+    """The reconciliation as an Excel workbook, to read: invoice numbers stay text (B-2633)."""
     out = io.BytesIO()
     rec = _reconciled(request, vendor, file, sheet, open_items)
     table_workbook(out, "Statement reconciliation", stm.HEADER, stm.table(rec), stm.CODES, stm.AMOUNTS)

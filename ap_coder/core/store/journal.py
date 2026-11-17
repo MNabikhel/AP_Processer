@@ -100,7 +100,7 @@ def voucher_identity(voucher: Any) -> str:
 
 
 def without_voids(lines: Sequence[Mapping[str, Any]]) -> list[Any]:
-    """One supplier's ``lines``, the oldest first, without the vouchers voided (D-261): the report has no document
+    """One supplier's ``lines``, the oldest first, without the vouchers voided (D-258): the report has no document
     number to tie a void to its voucher, so a negative line cancels the latest positive line before it, not cancelled
     yet, with the same account string, the same amount and, when it has one, the same remark; neither is kept. A
     negative line that cancels none (a credit) is kept as it is."""
