@@ -217,7 +217,7 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
 .apc-table.fit td.r .link {white-space: nowrap;}
 .apc-table.fit td .row input[type="text"] {flex: 1 1 9rem; width: 9rem; min-width: 0;}
 /* A role's long name (D-250) never widens the Users table's Role boxes past the card (B-2590); its headings and
-   labels take two lines rather than the card's width (B-2610) */
+   labels take two lines rather than the card's width (B-2607) */
 .apc-table.fit td select {max-width: 9rem;}
 .apc-table.fit th, .apc-table.fit td .apc-pill {white-space: normal;}
 /* Roles (admin_roles.html): what a role may do keeps lines of words on a phone, its name wraps (B-2588) */
@@ -513,7 +513,7 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
 @media (max-width: 1199px) {
   .rail {width: 208px; padding-left: 8px; padding-right: 8px;}
   .main {margin-left: 208px; padding-left: 24px; padding-right: 24px;}
-  .apc-table.fit th, .apc-table.fit td {padding-left: 8px; padding-right: 8px;}  /* (B-2610) */
+  .apc-table.fit th, .apc-table.fit td {padding-left: 8px; padding-right: 8px;}  /* (B-2607) */
 }
 /* The menu folded to its icons by its own button (D8; rail_fold.js, remembered by this browser), from 901 px: each
    page's name in its tooltip and still read out, the page taking the room. Under 901 px the bar's Menu button opens

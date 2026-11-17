@@ -392,7 +392,7 @@ def test_in_a_browser_find_an_invoice_fits_a_laptop_and_each_filter_shows_its_ow
 
 
 def test_in_a_browser_the_users_buttons_are_in_view_beside_the_menus_words(server_roles):
-    """B-2610: with the menu showing its words from 901 to 1199 px (D8, 208 px where its icons took 64), the Users
+    """B-2607: with the menu showing its words from 901 to 1199 px (D8, 208 px where its icons took 64), the Users
     table at 911 px was 723 px wide in a card of 581: Clara's Turn off out of sight past the card's edge."""
     browser, base, sign_in = server_roles
     page = browser.new_page(viewport={"width": 911, "height": 800})

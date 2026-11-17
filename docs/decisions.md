@@ -6185,7 +6185,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Every zoom of a 1366 laptop** (80 % to 200 %: 1707 to 683 px to the page) checked on the queue, the review
     screen, Exports and Settings, open and folded: the page fills its width and nothing goes past the edge. From
     901 to 1199 px the page's sides are 24 px and a fitted table's cells narrower, so a table fits beside the menu's
-    words (B-2610).
+    words (B-2607).
 - **D-254** · **A line "Use each line's first offer" filled is a suggestion taken, not a person's pick**
   (`coding/review.py` `FIRST_OFFER`, `first_offer_taken`; `core/store/_base.py` `first_offer`;
   `web/account_lines.py` `why_words`; the owner's choice D5; 17 Nov 2026).
