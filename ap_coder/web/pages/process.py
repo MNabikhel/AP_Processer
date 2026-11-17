@@ -876,7 +876,9 @@ def process_page(request: Request) -> HTMLResponse:
     waiting = [i for i in recent if i["status"] == REVIEW]
     reasons = attention(store, reference_or_none(store), waiting) if waiting else {}
     recent = [{**i, "needs_attention": i["id"] in reasons} for i in recent]  # its pill says what the queue says
-    steps, coming, links = shown_setup(request, steps, next_step(steps))
+    # LM Studio not ready is said by the banner and the checklist's first row, never a Next step card besides (the
+    # welcome page keeps it, B-529): the card is the next step after it.
+    steps, coming, links = shown_setup(request, steps, next_step([s for s in steps if s[1] != LM_STUDIO]))
     files, not_read, folder_note = (shared_files if server_mode(request) else folder_files)(store)
     return render(
         request, "process.html", "process",

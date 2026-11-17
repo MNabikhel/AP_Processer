@@ -151,6 +151,18 @@ def test_import_invoices_counts_the_same_rows(client):
     assert _step_labels(card)[0] == "LM Studio running"
 
 
+def test_import_invoices_says_lm_studio_is_not_running_in_its_banner_and_checklist_not_in_a_card_too(client):
+    """D2: with LM Studio not running, Add invoices said so three times while it said "Ready to read invoices": its
+    banner, a big "Next step: Start LM Studio" card and the checklist's first row. The card is left out there (the
+    welcome page keeps it); the next step after it shows instead, if any."""
+    page = client.get("/process").text
+    card = page.split("<h4>Setup</h4>", 1)[1].split("</section>", 1)[0]
+    assert _step_rows(card)[0] == "todo" and _step_labels(card)[0] == "LM Studio running"
+    nxt = page.split('class="card next-step"', 1)[1].split("</section>", 1)[0] if "card next-step" in page else ""
+    assert "Start LM Studio" not in nxt and "Developer tab" not in nxt and "Start server" not in nxt
+    assert "Add your name" in nxt  # the next step after it
+
+
 def test_the_province_counts_once_given(client, store):
     count = lambda html: int(re.search(r"aria-label='(\d+)/\d+'", html).group(1))  # noqa: E731
     before = count(client.get("/review").text)
