@@ -6045,3 +6045,23 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     it). The card, the pages, the suggestions' reasons ("14 lines posted in JD Edwards", "this supplier's usual
     account: 14 of 15 past lines"), the command line and the guides now say past invoice coding. The code's names
     (`journal`, `journal_files`) stay.
+- **D-249** · **Past invoice coding: recent lines count more** (`ai/supplier_prior.py` `age_weight`,
+  `Prior.recent`, `Prior.weighed`; `Store.journal_last_date`; `web/account_lines.py` `why_words`; the owner's
+  decision; 17 Nov 2026). Refines D-248's "the supplier prior counts every line".
+  - **The rule:** a coding line of the journal counts 1 within 12 months of the latest G/L date of the journals
+    loaded, 0.5 from 12 to 24 months before it, 0.25 from 24 to 36, halving for each further year, never 0. The age
+    is measured from that latest date, not today, so a prior does not change from one day to the next and the tests
+    stay stable; loading a newer journal moves it. A supplier recoded in the latest year is offered its new account
+    while its older lines still outnumber it; one seen only years before keeps its own account (its lines all weigh
+    alike, so its shares are as before).
+  - **A line with no date** counts 1, as before: its age is not known, and a journal whose dates could not be read
+    (one printed with two-digit years, loaded before B-2597) is not made worth less than a dated one, nor less
+    against AP's approvals, without anyone being told.
+  - **AP's approvals here** keep their weights (3 as proposed, 5 coded or changed): as much against a line of the
+    latest year as before, more against older ones. Imported past coding and bulk approvals count 1, as before.
+  - **What a person reads:** the counts stay counts ("6 of this supplier's 18 lines posted in JD Edwards"); when a
+    supplier's lines weigh differently by age, the reason, the shares of a line left for a person and the why under
+    the Account box add ", recent lines counting more" (`decided_by.recent`), so a share that is not lines over lines
+    is never shown unexplained.
+  - **Bench:** `bench coding --journal --quick` and `bench coding --quick` are the same before and after: the
+    made-up company's journal covers one year, every line within 12 months of its latest date.
