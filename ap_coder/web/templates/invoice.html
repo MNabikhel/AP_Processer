@@ -438,7 +438,7 @@
     <span class="inv-checking small muted" data-checking role="status" aria-live="polite"></span>
     {% if can("/review/1/approve") %}{# server mode: only a role that may approve sees these (web/roles.py, D-98) #}
     <details class="pop up" data-park>
-      <summary class="btn" title="Set it aside while waiting for information, or send it to the manager to confirm the coding (P)" aria-keyshortcuts="p"><span class="ms" aria-hidden="true">pause_circle</span>Park</summary>
+      <summary class="btn" title="Set it aside while waiting for information{% if can("/review/1/manager") and not simple_screens %}, or send it to the manager to confirm the coding{% endif %} (P)" aria-keyshortcuts="p"><span class="ms" aria-hidden="true">pause_circle</span>Park</summary>
       {# One panel holds Park's form and, below it, Send to manager: two panels would sit at the same spot (B-1545). #}
       <div class="pop-body">
       <form class="stack" method="post" action="/review/{{ inv.id }}/park">
