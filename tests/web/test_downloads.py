@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
-from ap_coder.core.store import Store, load_sample_setup, reports
+from ap_coder.core.store import Store, load_sample_setup, load_sample_vendor_master, reports
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import downloads
 from tests.browser import browser_on
@@ -32,6 +32,7 @@ ADDRESSES = ["/search/export.csv", "/search/export.xlsx", "/activity/events.csv"
 def store(tmp_path):
     store = Store(tmp_path / "private" / "ap_coder.db")
     load_sample_setup(store)
+    load_sample_vendor_master(store)
     add_clean(store)
     for username, role in (("ann", "clerk"), ("bob", "clerk"), ("reader", "readonly"), ("boss", "admin")):
         uid = store.add_user(username, GOOD, role=role, display_name=username.title())
@@ -92,8 +93,8 @@ def test_on_the_server_the_page_asks_the_background_process_makes_it_and_the_fil
         named = [r.headers["content-disposition"].split(";")[1] for r in (made, here)]  # (filename="…")
         assert named[0] == named[1] and made.headers["content-disposition"].startswith("attachment;"), address
         assert made.headers["cache-control"] == "no-store"
-        if address.endswith(".xlsx"):
-            assert _cells(made.content) == _cells(here.content), address
+        if address.split("?")[0].endswith(".xlsx"):
+            assert _cells(made.content) == _cells(here.content) and len(_cells(made.content)) >= 2, address
             assert len(_cells(made.content)) == 2 or not address.startswith("/search"), address
         elif address.startswith("/activity"):  # (newest first: the laptop's has the events since on top)
             header, _, rows = made.content.partition(b"\r\n")
