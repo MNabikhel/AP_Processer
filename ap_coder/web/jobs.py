@@ -229,8 +229,8 @@ BULK_RUNNERS = 2  # bulk approvals the background process does at once, each on 
 BULK_POLL = 0.5  # seconds between two looks for a bulk approval waiting (the background process)
 BULK_STALE = 30.0  # seconds without an invoice done: the process approving them stopped, the next one goes on
 NOT_DONE = "AP Coder stopped approving these invoices ({why}). The ones still in the queue need a person."
-NO_LONGER = ("AP Coder stopped approving these invoices: your account can no longer approve invoices (an Admin "
-             "changed it). The ones still in the queue need a person.")  # fmt: skip
+NO_LONGER = ("AP Coder stopped approving these invoices: your account can no longer approve invoices (its role "
+             "was changed). The ones still in the queue need a person.")  # fmt: skip
 _ENDED: dict[tuple[str, int], threading.Event] = {}  # bulk approvals a request of this process waits for (``ended``)
 _ENDED_LOCK = threading.Lock()
 

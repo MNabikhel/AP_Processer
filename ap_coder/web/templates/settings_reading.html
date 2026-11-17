@@ -25,7 +25,7 @@
   </div>
   {% if not reader.running and server_mode %}
   <div class="st-note">
-    <b>LM Studio runs on the server; ask IT or an Admin</b>
+    <b>LM Studio runs on the server; ask IT or someone who may change settings</b>
     <p>LM Studio isn't answering on the server. Whoever looks after the server starts it there (docs/SERVER.md, section
       8: LM Studio on the same server), then presses Check again here.</p>
     Without it AP Coder still works, but every invoice waits for a person: nothing is checked by OvisOCR2 or the AI
@@ -209,7 +209,7 @@
   <h4 id="models">Models in LM Studio</h4>
   <p class="muted">What LM Studio has downloaded, which are loaded now, and what AP Coder uses each one for.</p>
   {% if models is none %}
-  {% if server_mode %}{{ ui.empty_note("LM Studio isn't answering", " LM Studio runs on the server; ask IT or an Admin. Without it, invoices are still read by the PDF's text and OCR, and coded from what AP approved.", "hourglass_empty") }}
+  {% if server_mode %}{{ ui.empty_note("LM Studio isn't answering", " LM Studio runs on the server; ask IT or someone who may change settings. Without it, invoices are still read by the PDF's text and OCR, and coded from what AP approved.", "hourglass_empty") }}
   {% else %}{{ ui.empty_note("LM Studio isn't answering", " Start it, then its server (Developer tab, Start server), and press Check again. Without it, invoices are still read by the PDF's text and OCR, and coded from what AP approved.", "hourglass_empty") }}{% endif %}
   {% elif not models %}
   {{ ui.empty_note("No models yet", " LM Studio has no chat or vision model downloaded yet.", "deployed_code") }}

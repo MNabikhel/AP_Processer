@@ -254,7 +254,8 @@ def undo_approve(request: Request, invoice_id: int) -> JSONResponse:
     if found is not None and found.user_id and UNDO not in found.granted:  # server: one's own approval (D-98)
         last = next((e for e in store.events(invoice_id, ["approved", "final_approved"])), None)
         if ((last or {}).get("detail") or {}).get("user_id") != found.user_id:
-            return refuse("Only the person who gave this approval (or an Admin) can undo it. To correct it, use "
+            return refuse("Only the person who gave this approval (or someone who may delete and undo) can undo "
+                          "it. To correct it, use "
                           "Reopen for correction.", 403)  # fmt: skip
     me = reviewer()
     try:

@@ -1097,7 +1097,7 @@ def test_no_bank_accounts_yet_says_what_this_person_can_do(store):
         log_in(client, role)
         page = client.get("/accounts?tab=bank").text
         said[role] = page.split("No bank accounts yet", 1)[1].split("</div>", 1)[0]
-    assert "An Approver or an Admin adds them" in said["clerk"] and "grid" not in said["clerk"]
+    assert "Someone who may keep the bank accounts adds them" in said["clerk"] and "grid" not in said["clerk"]
     assert "Type them in the grid below." in said["approver"] and "Import" not in said["approver"]
     assert "Import them above, or type them in the grid below." in said["admin"]
 

@@ -78,7 +78,7 @@ def test_on_the_server_lm_studio_is_its_or_an_admins(store, monkeypatch):
             lm_studio=False, banner="LM Studio isn't running: invoices are read by OCR only and wait for a person."
         ),
     )
-    said = "LM Studio runs on the server; ask IT or an Admin"
+    said = "LM Studio runs on the server; ask IT or someone who may change settings"
     empty = Store(store.path.parent.parent / "empty" / "ap_coder.db")
     for role in ("clerk", "readonly"):
         welcome = client_as(empty, role).get("/review").text
@@ -143,9 +143,9 @@ def test_on_the_server_the_setup_findings_say_an_admin(store, monkeypatch):
     laptop = [f[2] for f in jde_review.voucher_findings(output, settings, "")]  # no settings yet, no AN8
     monkeypatch.setenv(offline.SERVER_ENV, "1")
     server = [f[2] for f in jde_review.voucher_findings(output, settings, "")]
-    assert any("an Admin" in t for t in server) and not any("pilot tester" in t for t in server)
+    assert any("someone who may change settings" in t for t in server) and not any("pilot tester" in t for t in server)
     assert any("Settings → JD Edwards E1 → Supplier address numbers" in t for t in laptop)  # where, since B-1297
-    assert offline.setup_contact("Ask the pilot tester to map it") == "Ask an Admin to map it"
+    assert offline.setup_contact("Ask the pilot tester to map it") == "Ask someone who may change settings to map it"
     help_page = client_as(store, "clerk").get("/help").text
     assert "ask the pilot tester" not in help_page.lower() and "ask an admin" in help_page.lower()
 
@@ -424,6 +424,6 @@ def test_a_clerk_is_told_to_ask_an_admin_to_undo_a_batch(store):
     answer = clerk.post("/exports/create", data={"ids": [str(invoice_id)], "fmt": "csv"}, headers=PAGE)
     assert answer.status_code == 200 and answer.json().get("ok", True), answer.text
     page = clerk.get(answer.json()["redirect"]).text
-    assert "ask an Admin to undo the batch below" in page and "/undo" not in page
+    assert "ask someone who may delete and undo to undo the batch below" in page and "/undo" not in page
     admin = client_as(store, "admin").get(answer.json()["redirect"]).text
     assert "fails, undo the batch below" in admin

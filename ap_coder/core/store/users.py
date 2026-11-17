@@ -68,7 +68,8 @@ TOKEN_BYTES = 32
 IDLE_SECONDS = 30 * 60
 ABSOLUTE_SECONDS = 12 * 3600
 TEMPORARY_SECONDS = 72 * 3600  # a temporary password (a new account, a reset) not changed by then no longer logs in
-TEMPORARY_EXPIRED = ("Your temporary password has expired (it lasts 3 days): ask an Admin for a new one (Users → "
+TEMPORARY_EXPIRED = ("Your temporary password has expired (it lasts 3 days): ask someone who may manage users "
+                     "for a new one (Users → "
                      "Reset password).")  # fmt: skip
 SEEN_EVERY = 60  # seconds between two writes of a session's last use
 SEEN_WAIT_MS = 200  # how long that write may wait for another writer before it is left to the next request
@@ -91,15 +92,18 @@ MAX_DISPLAY_NAME = 60
 WRONG = "That username and password don't match. Check them and try again."
 LOCKED = (
     "Too many tries that didn't match: logging in from this computer is paused for 15 minutes. Wait, then try "
-    "again, or ask an Admin to reset your password."
+    "again, or ask someone who may manage users to reset your password."
 )
 # An account's logins paused from anywhere (D-109), in words of its own; at the console from its own tries (D-243).
 ACCOUNT_PAUSED = (
     "Too many tries that didn't match for this username: logging in with it is paused for a few minutes, except where "
-    "it logged in lately. Wait, then try again, or ask an Admin."
+    "it logged in lately. Wait, then try again, or ask someone who may manage users."
 )
-LAST_ADMIN = "AP Coder needs at least one active Admin: make another person an Admin first."
-OWN_OFF = "This is your own account: another Admin turns it off, so AP Coder always has someone who manages the people."
+LAST_ADMIN = "AP Coder needs at least one active account that may manage users: give that to another person first."
+OWN_OFF = (
+    "This is your own account: someone else who may manage users turns it off, so AP Coder always has "
+    "someone who manages the people."
+)
 WRONG_CODE = ("That code doesn't match, or it was used already. Type the 6 digits your authenticator app shows now "
               "(a new code every 30 seconds). Refused again? Check that this computer's clock and your phone's show "
               "the right time: a minute off and the codes don't match.")  # fmt: skip
@@ -107,10 +111,12 @@ CODE_WHY = "authenticator code"  # login_failed's why: the code didn't match (D-
 KEY_WHY = "authenticator key missing"
 KEY_MISSING = (
     "AP Coder can't check your authenticator codes on this server: its key file (authenticator.key in the data "
-    "folder) is missing, damaged or not the one your app was set up with. Ask an Admin to reset your authenticator "
-    "(Users)."
+    "folder) is missing, damaged or not the one your app was set up with. Ask someone who may manage users to "
+    "reset your authenticator (Users)."
 )
-ALREADY_SET_UP = "This account's authenticator app is set up already: an Admin resets it to set it up again."
+ALREADY_SET_UP = (
+    "This account's authenticator app is set up already: someone who may manage users resets it to set it up again."
+)
 PENDING_KIND = "login-pending"  # a login half way, in the short-lived table (D-146)
 PENDING_SECONDS = 15 * 60  # time to change a password and set an app up; the code's step takes seconds
 # The first sign-in (D-243): while the database has no account at all, admin / admin, typed in a browser on the computer
@@ -602,7 +608,7 @@ class UsersMixin:
             return ""
         which = ", ".join(f"#{i}" for i in mine[:5]) + (" and more" if len(mine) > 5 else "")
         return (f"Not posted: you approved {which} in this batch, and here the person who posts to JD Edwards can't "
-                "be one who approved its invoices (Settings → Review, set by an Admin). Another Approver posts "
+                "be one who approved its invoices (Settings → Review). Someone else who may post to JD Edwards posts "
                 "it.")  # fmt: skip
 
     def vouched_for(self, admin_id: int, user_id: int, days: int = VOUCH_DAYS) -> bool:

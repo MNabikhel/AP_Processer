@@ -76,8 +76,8 @@ NO_LOGINS = "There are no logins on this computer: AP Coder opens for whoever us
 TOO_LONG = "Your login took too long, or it ended: log in again."
 OUT_OF_STEP = "That isn't the next step of your login: reload the page."
 SIX_DIGITS = "Type the six digits your authenticator app shows (spaces don't matter)."
-ONLY_ADMIN = ("Your temporary password has expired (it lasts 3 days). You are the only Admin: for a new one, run "
-              "python -m ap_coder users reset {username} {where}.")  # fmt: skip
+ONLY_ADMIN = ("Your temporary password has expired (it lasts 3 days). You are the only one who may manage users: "
+              "for a new one, run python -m ap_coder users reset {username} {where}.")  # fmt: skip
 QUIET = 4  # modules of white around a QR code, as the standard asks
 # What a reverse proxy adds to the requests it passes on: one on this computer makes every browser arrive from 127.0.0.1
 # (D-243). IIS's ARR adds X-ARR-SSL, X-ARR-LOG-ID and the like too (``X_ARR``).

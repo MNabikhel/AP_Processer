@@ -319,7 +319,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     hard = [i for i in errors if is_hard(i)]
     soft = [i for i in errors if not is_hard(i)]
     if not may_lift_hold():  # a Clerk on the server: no "Approve anyway" for a held vendor's invoice moved (D-142)
-        hard += [Issue(i.severity, i.code, f"Only an Approver can approve it. {i.message[:1].upper()}{i.message[1:]}")
+        hard += [Issue(i.severity, i.code, f"Only someone who may lift holds can approve it. "
+                                           f"{i.message[:1].upper()}{i.message[1:]}")
                  for i in soft if i.code == MOVED_OFF_HOLD]  # fmt: skip
         soft = [i for i in soft if i.code != MOVED_OFF_HOLD]
     blockers = ordered_blockers(line_pick, bank, hard, account_lines.bar_words(coding.line_items, reference))

@@ -813,10 +813,11 @@ def test_the_only_admin_whose_temporary_password_expired_is_told_the_command_tha
         conn.execute("UPDATE users SET last_login = '2000-01-01T00:00:00' WHERE username = 'boss'")
         conn.execute("UPDATE events SET created_at = '2000-01-01T00:00:00' WHERE action = 'user_added'")
     said = log_in(web["client"](), "boss").json()["error"]
-    assert "only Admin" in said and "python -m ap_coder users reset boss" in said and "ask an Admin" not in said
+    assert "the only one who may manage users" in said and "python -m ap_coder users reset boss" in said
+    assert "ask someone who may manage users" not in said
     store.add_user("kim", GOOD, role="admin", must_change=False)  # another Admin: the one to ask
     said = log_in(web["client"](), "boss").json()["error"]
-    assert "ask an Admin" in said and "users reset" not in said
+    assert "ask someone who may manage users" in said and "users reset" not in said
 
 
 def test_wrong_current_passwords_on_the_password_page_log_the_person_out(web):

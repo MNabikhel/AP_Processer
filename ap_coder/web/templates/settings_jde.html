@@ -58,7 +58,7 @@
         orchestrations your JDE team builds from <code>docs/JDE_ORCHESTRATIONS.md</code>. <b>Step 1</b> reads suppliers,
         GL accounts, business units, open POs and the AP ledger's vouchers (every night, or now) and asks JD Edwards
         whether an invoice is already there while it is reviewed. <b>Step 2</b> posts approved vouchers from Exports,
-        after a dry run and an Approver's go-ahead; the batch files stay the fallback. Off, AP Coder connects to
+        after a dry run and the go-ahead of someone who may post to JD Edwards; the batch files stay the fallback. Off, AP Coder connects to
         nothing; on, only to the AIS address below.</p></div>
     {{ ui.pill("On" if c.on else "Off", "ok" if api.usable else ("warn" if c.on else "gray"), "lan" if c.on else "cloud_off") }}
   </div>

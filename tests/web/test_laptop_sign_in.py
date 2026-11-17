@@ -188,10 +188,10 @@ def test_the_laptops_words_name_the_console_not_an_admin_to_ask(store, owner):
     first_sign_in(client)
     client.post("/logout", headers=PAGE)
     page = client.get("/login").text
-    assert "Ask an Admin" not in page and "users reset-2fa admin" in page
+    assert "Ask someone who may manage users" not in page and "users reset-2fa admin" in page
     answer = client.post("/login", data={"username": "admin", "password": CHOSEN, "next": "/review"}, headers=PAGE)
     code = client.get(answer.json()["redirect"]).text
-    assert "Ask an Admin" not in code and "users reset-2fa admin" in code
+    assert "Ask someone who may manage users" not in code and "users reset-2fa admin" in code
     refused = client.post("/login/code", data={"code": "000000", "next": "/review"}, headers=PAGE).json()["error"]
     assert "clock" in refused
 

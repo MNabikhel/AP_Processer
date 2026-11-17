@@ -30,7 +30,8 @@ from .dialect import begin_write, in_list, nocase
 
 CUSTOM = "role-"  # the key of a role made here: role-1, role-2...
 MAX_ROLE_NAME = 40
-OWN_USERS = ("You can't take away your own Manage users and roles: another Admin changes your role, so AP Coder "
+OWN_USERS = ("You can't take away your own Manage users and roles: someone else who may manage users changes "
+             "your role, so AP Coder "
              "always has someone who can.")  # fmt: skip
 ROLE_IN_USE = "{name} is the role of {count}: give them another role first, then delete it."
 GIVES_MORE = "You can't give more than your own role may do ({missing}): someone whose role has that does it."

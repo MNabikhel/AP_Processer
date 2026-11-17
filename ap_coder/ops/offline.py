@@ -388,7 +388,8 @@ def setup_contact(text: str) -> str:
     the setup is an Admin's (D-98, D-102)."""
     if not server_mode():
         return text
-    return text.replace("the pilot tester", "an Admin").replace("The pilot tester", "An Admin")
+    said = "someone who may change settings"
+    return text.replace("the pilot tester", said).replace("The pilot tester", said[:1].upper() + said[1:])
 
 
 def dashboard_address() -> str:

@@ -198,7 +198,7 @@
 
 {% elif tab == "second" %}
   <p class="muted">{% if limit_amount %}A second approval is needed over {{ limit_amount | money }} CAD, or in a currency with no CAD exchange rate set: each invoice says why. {% endif %}The second approver must be someone other than the first,
-    {% if account %}logged in with their own account (an Approver or an Admin).{% else %}on another computer login: on one laptop with one Windows login it can't be given. To test it, sign in to this laptop
+    {% if account %}logged in with their own account (one that may give the second approval).{% else %}on another computer login: on one laptop with one Windows login it can't be given. To test it, sign in to this laptop
     with a second Windows account and open AP Coder there, or have a colleague open it from their computer over the
     office network.{% endif %} Not going ahead? Send back returns an invoice to the review queue.</p>
   <section class="card list">
