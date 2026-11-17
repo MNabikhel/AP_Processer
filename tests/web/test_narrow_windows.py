@@ -261,6 +261,8 @@ def test_in_a_browser_the_sign_in_pages_buttons_stay_in_view_at_683(server_roles
     button = page.locator("#sessions button:has-text('Sign out everywhere')").bounding_box()
     assert button["x"] + button["width"] <= wrap.bounding_box()["x"] + wrap.bounding_box()["width"] + 1
     page.close()
+
+
 def test_in_a_browser_the_journals_forget_button_stays_on_one_line_on_a_laptop(chromium, chart_company):
     """B-2603: at 1366 px the journal table of JD Edwards files broke its Forget button in two, "Forg / et"."""
     app = create_app(web_settings(), chart_company.store, start_reader=False)
