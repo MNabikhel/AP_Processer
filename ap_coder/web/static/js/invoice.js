@@ -20,7 +20,7 @@
    Everything from the server is either HTML it escaped (the sections, the rows) or set as text here.
 */
 
-import { ACTION_MS, HEADERS, fetchWithin, follow, noAnswer, poll, post, toast } from "./app.js";
+import { ACTION_MS, HEADERS, fetchWithin, follow, noAnswer, poll, post, toast, ourWords } from "./app.js";
 import { openFor, register } from "./ctxmenu.js";
 import { InvoiceViewer } from "./invoice_viewer.js";
 import { joined as joinedAccount, prepare as prepareAccounts, search as searchAccounts } from "./account_search.js";
@@ -96,6 +96,11 @@ function applySections(answer, posted = null) {
   if (answer.header) applyHeader(answer.header, posted);
   if (Array.isArray(answer.taxes)) applyTaxRows(answer.taxes, posted);
   if (Array.isArray(answer.lines)) applyLineViews(answer.lines, posted);
+  const linesNote = document.querySelector("[data-lines-note]"); // why the lines to fix were left, said once (D6)
+  if (linesNote && typeof answer.lines_note === "string") {
+    linesNote.querySelector("[data-lines-note-text]").textContent = answer.lines_note;
+    linesNote.hidden = !answer.lines_note;
+  }
   if (Array.isArray(answer.supplier_accounts)) accounts.supplier = answer.supplier_accounts;
   followList(); // a list open on a box the sections drawn again have moved
   openFlaggedDetails();
@@ -118,12 +123,13 @@ function toFix() {
 }
 
 /** The boxes of what a person looks at before approving: an account that is a guess (or not offered for invoices),
-    a tax code the Tax check points at, a suggested remark no one has been in yet. */
-function toCheck() {
+    a tax code the Tax check points at, and (F8's round, ``remarks``) a suggested remark no one has been in yet.
+    Approving asks for none of the remarks: they are on screen, and approving takes them (D7). */
+function toCheck(remarks = true) {
   return gridRows().flatMap((row) => [
     row.classList.contains("is-check") ? accountBox(row) : null,
     row.querySelector(".c-tax.is-taxcheck select"),
-    row.querySelector("input[data-remark-box].is-suggested"),
+    remarks ? row.querySelector("input[data-remark-box].is-suggested") : null,
   ]).filter(Boolean);
 }
 
@@ -140,24 +146,23 @@ function goToNext(boxes, by = 1) {
   return true;
 }
 
-/* Approving with something to check: the first Ctrl+Enter says what in the bar and goes to it, the second approves
-   (no dialog). Any edit between the two starts again. */
+/* Approving with something to check (an account that is a guess, a tax code the Tax check points at): the first
+   Ctrl+Enter says what in the bar and goes to it, the second approves (no dialog). Any edit between the two starts
+   again. Suggested remarks are never asked about: approving takes them as shown (D7). */
 let checkAsked = false;
 let leaving = null; // the box the focus leaves for what to check: its change as it is left is no edit (B-2362)
 function checkSaid() {
   const rows = gridRows();
   const guesses = rows.filter((row) => row.classList.contains("is-check")).map(lineNo);
   const taxes = rows.filter((row) => row.querySelector(".c-tax.is-taxcheck")).map(lineNo);
-  const remarks = rows.filter((row) => row.querySelector("input[data-remark-box].is-suggested")).length;
   const of = (numbers) => (numbers.length === 1 ? `line ${numbers[0]}` : `lines ${numbers.join(", ")}`);
   return [
     guesses.length ? `the account of ${of(guesses)}` : "",
     taxes.length ? `the tax of ${of(taxes)}` : "",
-    remarks ? `${remarks === 1 ? "1 suggested remark" : `${remarks} suggested remarks`} not looked at` : "",
   ].filter(Boolean).join("; ");
 }
 function checkedOrAsked() {
-  const boxes = toCheck();
+  const boxes = toCheck(false);
   if (!boxes.length || checkAsked) return true;
   checkAsked = true;
   showBarState();
@@ -395,6 +400,32 @@ document.addEventListener("click", (e) => {
   }
   const more = e.target.closest?.("[data-row-menu]"); // the row's own menu button: as a right-click on the line
   if (more) openFor(rowOf(more), more);
+});
+// "Use each line's first offer" (D5): every line whose Account box is empty takes the first account offered under it,
+// in one change Undo puts back; a line with an account, or words typed, keeps them. Its reason says so, in place of
+// why it was left for a person: what decided it is then the offer taken with one click, not a person's pick.
+const FIRST_OFFER = "First offer, taken with one click."; // coding/review.py FIRST_OFFER
+const LEFT_FOR_A_PERSON = /^[\s\S]*?: pick the account\./; // coding/review.py _LEFT
+function saidFirstOffer(row) {
+  const reason = row.querySelector('input[name="line_reason"]');
+  if (!reason) return;
+  const was = reason.value.trim();
+  reason.value = LEFT_FOR_A_PERSON.test(was) ? was.replace(LEFT_FOR_A_PERSON, FIRST_OFFER) : `${FIRST_OFFER} ${was}`.trim();
+}
+document.addEventListener("click", (e) => {
+  if (!e.target.closest?.("[data-first-offers]")) return;
+  const rows = gridRows().filter((row) => !accountBox(row)?.value.trim() && row.querySelector("[data-use-account]"));
+  if (!rows.length) {
+    toast({ text: "No line without an account has one offered under it.", tone: "info" }, 3000);
+    return;
+  }
+  const said = rows.length === 1 ? `${lineName(rows[0])} took` : `${rows.length} lines took`;
+  undoable(`${said} the first account offered.`, () => {
+    for (const row of rows) {
+      saidFirstOffer(row);
+      setAccount(row, row.querySelector("[data-use-account]").dataset.useAccount);
+    }
+  });
 });
 
 /** The tax rows' provinces as the server checked them: a row put in the old place of supply follows a new one
@@ -684,7 +715,7 @@ try {
 }
 
 registerGroups("gl", (select) => {
-  const groups = [{ label: "Used for this vendor", values: vendorAccounts }];
+  const groups = [{ label: ourWords("Used for this vendor"), values: vendorAccounts }];
   // the line's suggestions (the Suggested GL accounts card): a line's own, or the line being split
   const number = rowOf(select)?.querySelector('[name="line_number"]')?.value || (select.closest("[data-split]") ? splitLine?.value : "");
   if (number) {
@@ -996,15 +1027,15 @@ function showVendorMatch() {
     if (found.added) vendorLine("person_add", "warn", `Added here, not in JD Edwards yet${id}`);
     else if (!vendors.enforced) vendorLine("history", "ok", "Approved before"); // no vendor master: a past vendor
     // in the list, but its number is no AN8 (JD Edwards not set up for it): plain, the error under it says why (B-827)
-    else if (an8 !== undefined && !valid) vendorLine("info", "", `In the vendor list${id}`);
-    else vendorLine("verified", "ok", `In the vendor list${id}`);
+    else if (an8 !== undefined && !valid) vendorLine("info", "", ourWords(`In the vendor list${id}`));
+    else vendorLine("verified", "ok", ourWords(`In the vendor list${id}`));
     return;
   }
   if (!knows) {
     // never "Not in the vendor list", nor whose GST/HST number it is, from the seed alone: the list is asked for (again)
-    if (loadVendors()) vendorLine("hourglass_top", "", "Checking the vendor list…");
+    if (loadVendors()) vendorLine("hourglass_top", "", ourWords("Checking the vendor list…"));
     else if (vendors.enforced) {
-      vendorLine("cloud_off", "warn", "Couldn't load the vendor list: the check on approval still compares the vendor with it.");
+      vendorLine("cloud_off", "warn", ourWords("Couldn't load the vendor list: the check on approval still compares the vendor with it."));
     } else {
       vendorMatch.replaceChildren();
       vendorMatch.className = "inv-vendor-match small";
@@ -1028,7 +1059,7 @@ function showVendorMatch() {
     vendorMatch.className = "inv-vendor-match small";
     return;
   }
-  vendorLine("gpp_maybe", "warn", typed ? "Not in the vendor list: pick one, or add it as a new vendor." : "Pick the vendor from the list.");
+  vendorLine("gpp_maybe", "warn", ourWords(typed ? "Not in the vendor list: pick one, or add it as a new vendor." : "Pick the vendor from the list."));
 }
 
 function setVendor(name) {
@@ -1132,7 +1163,7 @@ function vendorChanged(waited = false) {
   if (!changed.length) return;
   showVendorMatch();
   for (const name of changed) viewer?.setEdited(name, input(name).value.trim(), false);
-  offerUndo({ text: `${changed.length === 1 ? "Tax number" : "Tax numbers"} filled from the vendor list.`, tone: "info", icon: "menu_book" }, snap);
+  offerUndo({ text: ourWords(`${changed.length === 1 ? "Tax number" : "Tax numbers"} filled from the vendor list.`), tone: "info", icon: "menu_book" }, snap);
 }
 
 
@@ -1214,7 +1245,7 @@ document.addEventListener("click", (e) => {
 });
 
 /** The invoice details a check is about: amber, with its note under it (the checks list them too); red when the
-    check is an error, as in "Must be fixed" (``errors``: those details, B-796). */
+    check is an error, as in "To fix before approving" (``errors``: those details, B-796). */
 function showFlags(flags, errors = []) {
   document.querySelectorAll(".inv-details [data-field]").forEach((field) => {
     const note = flags[field.dataset.field] || "";
@@ -1250,7 +1281,7 @@ if (vendorInput && vendorAdd) {
     if (!vendorList.whole) return null; // whether it is new is known once the list is here
     if (!vendors.enforced || !key || vendors.list.some((v) => (v.key ?? vendorKey(v.name)) === key)) return null;
     return {
-      label: "Not in the vendor list: add as a new vendor…",
+      label: ourWords("Not in the vendor list: add as a new vendor…"),
       run: () => {
         showVendorMatch();
         vendorAdd.open = true; // its "toggle" fills the name typed and focuses it
@@ -1659,7 +1690,7 @@ document.addEventListener("apc:ask-why", (event) => {
     "dialog",
     { class: "inv-why card", "aria-labelledby": "why-title" },
     el("h3", { id: "why-title", text: "One question before saving" }),
-    el("p", { class: "muted", text: "You keep making the same correction for this vendor. In a sentence: why is your value the right one? AP Coder keeps your reason and the AI reads it with this vendor's next invoices, so it gets it right without you." }),
+    el("p", { class: "muted", text: ourWords("You keep making the same correction for this vendor. In a sentence: why is your value the right one? AP Coder keeps your reason and the AI reads it with this vendor's next invoices, so it gets it right without you.") }),
     ...items,
     el("div", { class: "row inv-why-actions" }, skip, save),
   );

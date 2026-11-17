@@ -3,16 +3,15 @@ first thing to fix in words. On the made-up company (``chart_company``)."""
 
 from ap_coder.web.pages.review import first_to_fix
 from tests.review_page import ReviewPage, queue_reasons
-from tests.web.test_chart_company_walk import NEW_SUPPLIER, SEVERAL
+from tests.web.test_chart_company_walk import NEW_SUPPLIER
 
 
 def test_the_queue_says_the_first_thing_to_fix_in_words(chart_company, chart_company_client):
     said = queue_reasons(chart_company_client)
     ids = {name: invoice_id for name, (_, invoice_id) in chart_company.invoices.items()}
     assert set(said) == set(ids.values())
-    # Why its first line without an account was left, as the line itself says it.
-    several = SEVERAL.format(lines=3, accounts=3, shares="33% / 33% / 33%").rstrip(".")
-    assert said[ids["four_lines"]] == f"Line 1: {several[0].lower()}{several[1:]}"
+    # Its lines without an account, counted (D6: why each was left is said on its review screen, cut off here).
+    assert said[ids["four_lines"]] == "Pick accounts for 4 lines"
     # The first error's own sentence; what else there is to fix is counted after it, not instead of it.
     page = ReviewPage(chart_company_client, ids["usd_new_supplier"])
     assert page.lines[0].reason == NEW_SUPPLIER
@@ -47,9 +46,12 @@ def test_the_first_thing_to_fix_in_order():
         "Subtotal + tax = 105.00 but the total is 150.00 (and 2 more)"
     )
     assert first_to_fix((pick, "", 0, 1, False, ""), issues[:2], output, "") == (
-        "Line 4: this supplier's 9 lines posted in JD Edwards went to 3 accounts: pick the account (and 1 more)"
+        "Pick the account for line 4 (and 1 more)"
     )
-    assert first_to_fix((pick, "", 0, 0, False, ""), [], {"line_items": [{"line_number": 4}]}, "") == pick
+    two = {"line_items": [{**lines[1], "line_number": 3}, lines[1]]}
+    assert first_to_fix((pick, "", 0, 0, False, ""), [], two, "") == "Pick accounts for 2 lines"
+    coded = {"line_items": [{"line_number": 4, "predicted_gl_code": "7620"}]}  # a cost center to pick only
+    assert first_to_fix((pick, "", 0, 0, False, ""), [], coded, "") == pick
     assert first_to_fix(("", "Pick the account to pay from", 0, 1, False, ""), issues[:1], output, "") == (
         "Pick the account to pay from (and 1 more)"
     )
@@ -61,3 +63,16 @@ def test_the_first_thing_to_fix_in_order():
     assert first_to_fix((pick, "", 1, 2, False, ""), [*issues, other], output, "") == (
         'This may not be an invoice: its title is "Statement of account" (and 3 more)'
     )
+
+
+def test_a_row_with_no_confidence_says_a_dash_not_a_bar_at_0(chart_company, chart_company_client):
+    """D6: an invoice with nothing coded showed an empty bar and "0%" in the queue's Confidence, read as a verdict."""
+    text = chart_company_client.get("/review").text
+
+    def row(name: str) -> str:
+        at = text.index(f'href="/review/{chart_company.invoices[name][1]}"')
+        return text[at : text.index("</li>", at)].split('class="c-conf"', 1)[1]
+
+    assert chart_company.store.get_invoice(chart_company.invoices["four_lines"][1])["adjusted_confidence"] == 0
+    assert "<b>—</b>" in row("four_lines") and 'class="bar"' not in row("four_lines")
+    assert "%</b>" in row("one_line") and 'class="bar"' in row("one_line")

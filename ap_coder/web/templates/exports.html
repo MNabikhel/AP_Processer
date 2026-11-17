@@ -4,6 +4,17 @@
 {% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">
 <link rel="stylesheet" href="{{ static_url('/static/imports.css') }}">{% endblock %}
 {% block content %}
+{% macro format_tabs() -%}
+<div class="row">
+  <span class="muted">ERP format</span>
+  <div class="segmented" role="group" aria-label="ERP format">
+    {% for key, label in formats.items() %}
+    <a href="/exports?fmt={{ key }}#ready" class="{{ 'on' if key == fmt else '' }}" title="{{ format_help[key] }}"
+       {% if key == fmt %}aria-current="true"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </div>
+</div>
+{%- endmacro %}
 {{ ui.tiles([
   ui.tile("Ready to export", ready | length, "outbox", "blue", (ready_total ~ " total") if ready else "nothing waiting"),
   ui.tile("Batches", live | length, "inventory_2", "violet", (exported_count | plural("invoice")) ~ " exported"),
@@ -16,15 +27,7 @@
   {% if not ready %}
   {{ ui.empty_state("Nothing waiting", "Approved invoices appear here until they are exported.", empty_art) }}
   {% else %}
-  <div class="row">
-    <span class="muted">ERP format</span>
-    <div class="segmented" role="group" aria-label="ERP format">
-      {% for key, label in formats.items() %}
-      <a href="/exports?fmt={{ key }}#ready" class="{{ 'on' if key == fmt else '' }}" title="{{ format_help[key] }}"
-         {% if key == fmt %}aria-current="true"{% endif %}>{{ label }}</a>
-      {% endfor %}
-    </div>
-  </div>
+  {% if not simple_screens %}{{ format_tabs() }}{% endif %}{# Simple screens: under "Other formats and tools" #}
   <p class="muted small">{{ format_help[fmt] }}</p>
   {% set jde_settings = can("/settings/jde", "GET") %}{% set export = can("/exports/create") %}{# server mode (D-98) #}
   {% for p in blocking %}
@@ -94,12 +97,15 @@
     <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">download</span>Download batch {{ just.id }}</button>
   </form>
   {% else %}
-  <a class="btn primary" href="/exports/batches/{{ just.id }}/download?fmt={{ just.format }}" download>
-    <span class="ms" aria-hidden="true">download</span>Download batch {{ just.id }}</a>
+  <a class="btn primary" href="/exports/batches/{{ just.id }}/download?fmt={{ just.format }}" download{% if auto_download %} data-auto-download{% endif %}>
+    <span class="ms" aria-hidden="true">download</span>{{ "Download it again" if auto_download else "Download batch " ~ just.id }}</a>
   {% endif %}
 </section>
 {% endif %}
 
+{# The custom layout and the ERP's invoice list, then the duplicate audit: in the Simple screens folded under "Other
+   formats and tools", after the past batches #}
+{% set erp_tools %}
 {% if can("/exports/layout") %}{# server mode: the ERP layout and the ERP's invoice list are an Admin's (D-98) #}
 <details class="card expander" id="layout"{% if fmt == "custom" %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">view_column</span>Custom layout for your ERP</summary>
@@ -185,6 +191,8 @@
 {% else %}
 <section class="card" id="register"><p class="muted">{{ imp.done_by("Someone who may change settings sets the ERP layout, and someone who may change the setup loads the ERP's invoice list.", "The ERP layout and the ERP's invoice list are set") }}</p></section>
 {% endif %}
+{% endset %}
+{% if not simple_screens %}{{ erp_tools }}{% endif %}
 
 <section class="card" id="batches">
   <h4>Past batches</h4>
@@ -335,6 +343,7 @@
   {% endif %}
 </section>
 
+{% set audit_tool %}
 <section class="card" id="audit">
   <div class="card-head">
     <div><h4>Duplicate payment audit</h4>
@@ -370,6 +379,15 @@
   {% endif %}
   {% endif %}
 </section>
+{% endset %}
+{% if simple_screens %}
+<details class="card expander" id="tools"{% if tools_open %} open{% endif %}>
+  <summary><span class="ms" aria-hidden="true">build</span>Other formats and tools</summary>
+  {% if ready %}{{ format_tabs() }}{% endif %}
+  {{ erp_tools }}
+  {{ audit_tool }}
+</details>
+{% else %}{{ audit_tool }}{% endif %}
 {% endblock %}
 {% block scripts %}<script type="module" src="{{ static_url('/static/js/exports.js') }}"></script>
 <script type="module" src="{{ static_url('/static/js/imports.js') }}"></script>{% endblock %}

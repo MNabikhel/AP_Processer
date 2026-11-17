@@ -34,13 +34,14 @@ from ap_coder.web.core import (
     data_dir,
     developer_tools,
     get_store,
+    our_words,
+    page_meta,
     page_router,
     render,
     server_mode,
     short_path,
-    simple_screens,
 )
-from ap_coder.web.pages import BY_KEY, SIMPLE_MAIN
+from ap_coder.web.pages import BY_KEY
 from ap_coder.web.pages.settings_reading import azure_check_on, how_it_reads
 
 router = page_router()  # each plain handler: one connection a request
@@ -232,14 +233,23 @@ def link(key: str) -> dict[str, str] | None:
     return {"path": page.path, "title": page.title} if page else None
 
 
+# Help's texts name pages by their former titles; every menu now names them as the Simple menu did (D-252).
+FORMER_TITLES: dict[str, str] = {"Review queue": "review", "Import invoices": "process", "Invoice directory": "search",
+                                 "Learning & accuracy": "learning", "Coding rules": "rules", "Exports": "exports",
+                                 "Vendor statements": "statements"}  # fmt: skip
+
+
 def menu_names(store: Any) -> Any:
-    """What puts each page's name in Help's words as the menu shows it: in Simple screens, "Invoice directory" is
-    "Find an invoice", "Learning & accuracy" "What was learned" (``pages.SIMPLE_MAIN``, B-2598)."""
-    if not simple_screens(store):
-        return lambda text: text
-    names = {BY_KEY[key].title: title for key, title in SIMPLE_MAIN.items() if BY_KEY[key].title != title}
+    """What puts each page's name in Help's words as the menu shows it: "Invoice directory" is "Find an invoice",
+    "Learning & accuracy" "What was learned" (``pages.PAGES``), and with JD Edwards' words "Exports" is "To key into
+    JDE" (``core.page_meta``, B-2598) and a vendor a supplier (``core.our_words``, D-252)."""
+    names = {old: page_meta(store, key).title for old, key in FORMER_TITLES.items()}
+    names = {old: title for old, title in names.items() if title != old}
+    say = our_words(store)
+    if not names:
+        return say
     pattern = re.compile(r"\b(" + "|".join(re.escape(name) for name in names) + r")\b")
-    return lambda text: pattern.sub(lambda m: names[m.group(1)], text)
+    return lambda text: say(pattern.sub(lambda m: names[m.group(1)], text))
 
 
 @router.get("/help", response_class=HTMLResponse)
@@ -254,7 +264,8 @@ def help_page(request: Request, q: str = "", area: str = "") -> HTMLResponse:
     named = menu_names(store)
     jde = jde_settings.in_use(store)
     checks = [
-        (code, replace(about, meaning=named(about.meaning), action=named(about.action))) for code, about in checks
+        (code, replace(about, title=named(about.title), meaning=named(about.meaning), action=named(about.action)))
+        for code, about in checks
     ]
     data = data_dir(store)
     groups = [
@@ -271,7 +282,7 @@ def help_page(request: Request, q: str = "", area: str = "") -> HTMLResponse:
             (title, named(text), path)
             for title, text, path in quick_start(server_mode(request), jde, bool(jde and taxes_jde_posts(store)))
         ],
-        how_it_reads=how_it_reads(server_mode(request)),
+        how_it_reads=[(named(bold), named(rest)) for bold, rest in how_it_reads(server_mode(request))],
         routine=[(when, [(named(task), link(key)) for task, key in tasks]) for when, tasks in ROUTINE],
         area=area,
         q=q,

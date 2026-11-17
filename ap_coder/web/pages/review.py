@@ -225,9 +225,9 @@ def _said(issue: dict[str, Any]) -> str:
 def first_to_fix(parts: tuple[str, str, int, int, bool, str], issues: list[dict[str, Any]], output: dict[str, Any],
                  counted: str) -> str:  # fmt: skip
     """The queue's one sentence for an invoice that needs attention: the first thing to fix, in words (B-2219). That
-    it may not be an invoice (``SAID_FIRST``); else the first error's own sentence; else why the first line without
-    an account was left for a person ("Line 4: this supplier's 9 lines posted in JD Edwards went to 3 accounts
-    ..."); else its Pay from account's trouble; else the first finding a person looks at; else its lines coded from
+    it may not be an invoice (``SAID_FIRST``); else the first error's own sentence; else the lines without an account
+    ("Pick accounts for 4 lines": why each was left is said on its review screen, D6); else its Pay from account's
+    trouble; else the first finding a person looks at; else its lines coded from
     other vendors' approvals; else ``counted`` (``attention``'s own words: confidence under the threshold). What else
     there is to fix is counted after it: "(and 2 more)"."""
     to_pick, bank, errors, warned, _, others = parts
@@ -239,13 +239,12 @@ def first_to_fix(parts: tuple[str, str, int, int, bool, str], issues: list[dict[
     elif to_pick:
         from ap_coder.core.reference_data import UNASSIGNED
 
-        left = next((li for li in output.get("line_items") or []
-                     if str(li.get("predicted_gl_code") or UNASSIGNED) == UNASSIGNED), None)  # fmt: skip
-        why = str((left or {}).get("reasoning_justification") or "").strip().rstrip(".")
-        if why:
-            first = f"Line {left.get('line_number')}: {why[:1].lower() + why[1:] if why[1:2].islower() else why}"
+        left = [li for li in output.get("line_items") or []
+                if str(li.get("predicted_gl_code") or UNASSIGNED) == UNASSIGNED]  # fmt: skip
+        if len(left) == 1:
+            first = f"Pick the account for line {left[0].get('line_number')}"
         else:
-            first = to_pick
+            first = f"Pick accounts for {len(left)} lines" if left else to_pick
     elif bank:
         first = bank
     elif warned:
@@ -359,7 +358,8 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float, reas
             "flagged": inv["id"] in reasons,
             "reason": reasons.get(inv["id"], ""),
             "confidence": confidence,
-            "confidence_text": confidence_pct(confidence, threshold),
+            # none to say (nothing coded yet: a 0% bar read as a verdict, D6): "—"
+            "confidence_text": confidence_pct(confidence, threshold) if confidence > 0 else "—",
             "confidence_ok": confidence >= threshold,
             "amount": money(inv.get("grand_total")),
             "currency": inv.get("currency") or "",
@@ -587,7 +587,7 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
 def _getting_started(request: Request, store: Store, counts: dict[str, int]) -> HTMLResponse:
     from ap_coder.web.pages.process import first_steps, next_step, shown_setup, step_state
 
-    steps, done_steps, needed = first_steps(store, get_settings(request), bool(counts))  # as Import invoices counts
+    steps, done_steps, needed = first_steps(store, get_settings(request), bool(counts))  # as Add invoices counts
     named = step_state(steps, "Your name") == "ok"  # (before it, first_name() is the login: "Good morning, root")
     steps, coming, links = shown_setup(request, steps, next_step(steps))
     return render(

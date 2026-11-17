@@ -10,11 +10,12 @@
   <link rel="stylesheet" href="{{ static_url('/static/picker.css') }}">
   {% block head %}{% endblock %}
 </head>
-<body data-page="{{ page }}"{% if server_mode %} data-server{% endif %}>
+<body data-page="{{ page }}"{% if server_mode %} data-server{% endif %}{% if our_words is defined and our_words("vendor") != "vendor" %} data-supplier{% endif %}>
   <a class="skip" href="#main">Skip to the page</a>
   <div class="shell">
     {# A window under 901 px (a laptop zoomed in to 200%, a phone): this bar in place of the menu, whose Menu button
-       opens it over the page; from 901 to 1199 px the menu shows its icons only, its own Menu button above them. #}
+       opens it over the page; from 901 to 1199 px the menu is narrower, its words still shown; from 901 px its button
+       folds it to its icons (D8). #}
     <div class="topbar">
       <button type="button" class="btn sm" data-rail-toggle aria-expanded="false"><span class="ms" aria-hidden="true">menu</span>Menu</button>
       <a class="brand" href="/" aria-label="AP Coder: review queue"><img src="{{ static_url('/assets/logo.svg') }}" alt="AP Coder" height="24"></a>
@@ -24,7 +25,9 @@
         <a class="brand" href="/" aria-label="AP Coder: review queue">
           <img src="{{ static_url('/assets/logo.svg') }}" alt="AP Coder" height="24">
         </a>
-        <button type="button" class="rail-toggle" data-rail-toggle aria-expanded="false" aria-label="Menu" title="Show the whole menu (Esc closes it)"><span class="ms" aria-hidden="true">menu</span></button>
+        {# folds the menu to its icons and back, remembered by this browser (D8); before the page is drawn #}
+        <button type="button" class="rail-fold" data-rail-fold aria-label="Fold the menu to its icons" title="Fold the menu to its icons"><span class="ms" aria-hidden="true">left_panel_close</span></button>
+        <script src="{{ static_url('/static/js/rail_fold.js') }}"></script>
       </div>
       {% macro nav_link(item) %}
         <a href="{{ item.page.path }}" class="nav-link{% if item.page.key == page %} on{% endif %}" title="{{ item.page.title }}"
@@ -98,7 +101,7 @@
       {% if meta %}
       <header class="apc-head apc-anim">
         <div>
-          {{ ui.breadcrumbs(["AP Coder", section]) }}
+          {{ ui.breadcrumbs(["AP Coder", section] if section else ["AP Coder"]) }}
           <h1 class="apc-title">{% block heading %}{{ title }}{% endblock %}</h1>
           <div class="apc-sub">{% block subtitle %}{{ meta.subtitle }}{% endblock %}</div>
         </div>

@@ -293,12 +293,15 @@ def _company_lists(store: Store, folder: Path) -> list[str]:
 
 
 def _company_setup(store: Store, company: Any) -> None:
-    """The settings a person makes after the lists are in: the chart's (its reserved subsidiaries never offered, its
-    home business unit), the tax setup (the GST and HST recovered, to the company's clearing account; a PST kept in
-    the expense line) and JD Edwards': the company's own values (its company number, its terms code), then the way a
-    department that types its vouchers keys them (``jde_prototype.use_prototype``: the one definition; it shows JD
-    Edwards and keeps the QST in the expense line), with the company's GST-only tax area where that has its
-    placeholder."""
+    """The settings a person makes after the lists are in: the company's province (its head office's), the chart's
+    (its reserved subsidiaries never offered, its home business unit), the tax setup (the GST and HST recovered, to
+    the company's clearing account; a PST kept in the expense line) and JD Edwards': the company's own values (its
+    company number, its terms code), then the way a department that types its vouchers keys them
+    (``jde_prototype.use_prototype``: the one definition; it shows JD Edwards and keeps the QST in the expense line),
+    with the company's GST-only tax area where that has its placeholder."""
+    from ..bench.jde_invoices import HOME_PROVINCE
+
+    store.set_setting("our_province", HOME_PROVINCE, actor=COMPANY_ACTOR)
     never = tuple(f"*.{subsidiary}" for subsidiary in company.reserved_subsidiaries)
     store.save_chart_settings(replace(store.chart_settings(), never_offered=never,
                                       home_business_unit=company.main_business_unit), actor=COMPANY_ACTOR)  # fmt: skip

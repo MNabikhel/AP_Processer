@@ -39,6 +39,7 @@ from ._base import (
     _now,
     _store_class,
     _tax_signature,
+    first_offer,
     line_guessed,
     nothing_proposed,
     parse_fx_rates,
@@ -731,6 +732,8 @@ class InvoicesMixin:
                 continue  # not a coding decision: nothing to learn from it
             rule = by_rule.get(suggestion.get("line_number")) if suggestion else None
             guess = line_guessed(suggestion, rule)
+            if offered := first_offer(suggestion, li):  # taken with one click: a suggestion taken, not coded (D5)
+                s_gl, s_cc = offered[0], offered[1] if cost_centers else ""
             kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
             # A kept guess is no edit; another account in its place is (B-479), as any change to what was proposed.
             blank = nothing_proposed(s_gl, s_cc)

@@ -107,10 +107,11 @@ def _sentence(words: str) -> str:
     return words[0].upper() + words[1:].rstrip(".")
 
 
-def _left_line(reason: str, line: int = 1) -> str:
-    """The queue's sentence for an invoice whose first line without an account is ``line``, left for ``reason``."""
-    words = reason.rstrip(".")
-    return f"Line {line}: {words[0].lower()}{words[1:]}"
+def _left_line(accounts: list[str]) -> str:
+    """The queue's sentence for an invoice whose lines without an account ("" in ``accounts``) are left for a person:
+    how many (D6; why each was left is said on its review screen)."""
+    left = [n for n, account in enumerate(accounts, 1) if not account]
+    return f"Pick the account for line {left[0]}" if len(left) == 1 else f"Pick accounts for {len(left)} lines"
 
 
 # --- (a) (b) (c) long invoices ------------------------------------------------------------------------------------
@@ -173,7 +174,7 @@ def test_d_a_credit_note(chart_company, chart_company_client):
     assert stored["ai_output"]["grand_total"] == float(invoice.total) < 0
     reason = TOO_FEW.format(counted="2 of this supplier's 2 lines", account=invoice.parts[0].account)
     assert [(row.account, row.reason) for row in page.lines] == [("", reason)]  # offered, never put in
-    assert queue_reasons(chart_company_client)[invoice_id] == _left_line(reason)
+    assert queue_reasons(chart_company_client)[invoice_id] == _left_line([row.account for row in page.lines])
     found = {i["code"]: i["message"] for i in stored["validation"]["issues"]}
     said = found["CREDIT_NOTE_ORIGINAL_UNKNOWN"]  # (the invoice it credits is the one its page names)
     assert said.startswith("credits invoice ") and said.endswith(
@@ -194,7 +195,7 @@ def test_e_a_usd_invoice(chart_company, drop, hard):
         "no sales tax charged on a supply in Alberta; confirm it is exempt or zero-rated, or that the vendor is not "
         "registered for GST/HST (a small supplier, no GST/HST number printed: no GST/HST is due)"
     )
-    assert got.queue == _left_line(reason) + " (and 1 more)"
+    assert got.queue == _left_line(got.accounts) + " (and 1 more)"
 
 
 # --- (f) (t) duplicates -------------------------------------------------------------------------------------------
@@ -271,7 +272,7 @@ def test_i_a_supplier_with_several_accounts(chart_company, chart_company_client)
     assert [(li["predicted_gl_code"], li["reasoning_justification"]) for li in stored] == [("UNASSIGNED", reason)] * 4
     for li in stored:  # its accounts of last year are offered first, none put in
         assert {c["account"] for c in li["candidates"][:3]} == set(invoice.supplier.accounts[:3])
-    assert queue_reasons(chart_company_client)[invoice_id] == _left_line(reason)
+    assert queue_reasons(chart_company_client)[invoice_id] == _left_line([""] * len(stored))
 
 
 def test_j_a_supplier_marked_do_not_use(chart_company, chart_company_client, drop, hard):
@@ -294,7 +295,7 @@ def test_k_a_supplier_on_payment_hold(drop, hard):
         "Edwards"))  # fmt: skip
     reason = SEVERAL.format(lines=2, accounts=2, shares="50% / 50%")
     assert (got.accounts, got.reasons) == ([""], [reason])
-    assert got.queue == _left_line(reason) + " (and 1 more)"
+    assert got.queue == _left_line(got.accounts) + " (and 1 more)"
 
 
 def test_l_two_suppliers_of_one_name(chart_company, drop, hard):
@@ -331,7 +332,7 @@ def test_m_an_account_that_left_the_chart_since_last_year(chart_company, drop, h
     reason = GONE.format(account=gone, code=chart.split_account(gone)[1])
     assert (got.accounts, got.reasons) == (["", ""], [reason, reason])
     assert not any(gone in offered for offered in got.offered)
-    assert got.queue == _left_line(reason)
+    assert got.queue == _left_line(got.accounts)
 
 
 # --- (n) to (q) tax -----------------------------------------------------------------------------------------------
@@ -394,7 +395,7 @@ def test_p_some_lines_exempt(drop, printed):
     reason = TOO_FEW.format(counted="2 of this supplier's 2 lines", account=account)
     assert got.accounts == ["", "", ""]
     assert got.reasons == [reason, reason, reason + WORKED_OUT]  # the exempt line says its tax code is to check
-    assert got.queue.startswith(_left_line(reason))
+    assert got.queue.startswith(_left_line(got.accounts))
 
 
 def test_p_an_exempt_line_raises_no_finding_that_is_not_so(drop, printed):
@@ -439,7 +440,7 @@ def test_q_a_lunch_on_a_couriers_invoice_is_not_coded_as_courier(chart_company, 
     offered = [(c["account"], c["name"]) for c in got.lines[1]["candidates"]]
     assert offered[0][0] == account and offered[1][1] == "Working Lunches"
     assert "Meals - Travel" in [name for _, name in offered[:4]]
-    assert got.status == REVIEW and got.queue.startswith(_left_line(reason, 2))
+    assert got.status == REVIEW and got.queue.startswith(_left_line(got.accounts))
 
 
 # --- (r) line tables ----------------------------------------------------------------------------------------------

@@ -243,7 +243,7 @@ def test_the_headers_to_fix_count_is_the_blocking_items_listed(client, store):
         return rows
 
     answer = check(client, invoice_id, form_of(store, invoice_id, blank, invoice_number=""))
-    listed = sum(int(n) for n in re.findall(r"(?:Before you can approve|Must be fixed) \((\d+)\)",
+    listed = sum(int(n) for n in re.findall(r"To fix before approving \((\d+)\)",
                                             answer["sections"]["checks"]))  # fmt: skip
     said = re.search(r"(\d+) to fix", answer["sections"]["summary"])
     assert listed >= 2 and said and int(said.group(1)) == listed, (said and said.group(0), listed)

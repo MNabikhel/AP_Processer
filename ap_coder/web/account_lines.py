@@ -16,7 +16,7 @@ from typing import Any
 
 from ap_coder.ai.supplier_prior import prior_for
 from ap_coder.coding.remark import CLEARED, PERSON, REMARK_MOST, one_line
-from ap_coder.coding.review import codes_to_pick, is_blank
+from ap_coder.coding.review import codes_to_pick, first_offer_taken, is_blank
 from ap_coder.coding.taxmath import INSIDE, OWN_LINE, READ, InvoiceTaxes, LineTaxes
 from ap_coder.core import chart
 from ap_coder.core.memory import pair_lines
@@ -154,6 +154,8 @@ def why_words(decided_by: dict[str, Any] | None) -> str:
         return f"approved this way {lines} {'time' if lines == 1 else 'times'}" if lines else "approved this way before"
     if source == "rule":
         return f"the rule “{by['rule']}”" if by.get("rule") else "a coding rule"
+    if source == "person" and by.get("first_offer"):  # "Use each line's first offer" (D5)
+        return "first offer, taken with one click"
     return {"others": "other suppliers' lines like it went here", "words": "the words match the account's name",
             "model": "AP Coder's guess: check it", "person": "picked by a person"}.get(str(source), "")  # fmt: skip
 
@@ -194,7 +196,8 @@ def _view(reference: ReferenceData, row: dict[str, Any], before: dict[str, Any],
     view["name"], view["unit"] = pairs.description(cc, gl), pairs.name_of(cc)
     view["candidates"] = _candidates(pairs, before.get("candidates"))  # still in the box's list
     same = gl == _code(before.get("predicted_gl_code")) and cc == _code(before.get("predicted_cost_center"))
-    view["why"] = why_words(before.get("decided_by") if same else {"source": "person"})
+    view["why"] = why_words(before.get("decided_by") if same else
+                            {"source": "person", "first_offer": first_offer_taken(row, before)})  # fmt: skip
     if status in (chart.NOT_IN_CHART, chart.NOT_POSTABLE, chart.BU_INACTIVE):
         view.update(state=FIX, note=said or f"Account {view['text']} cannot be used: pick another", why="",
                     candidates=_offered(pairs, gl) if status != chart.NOT_POSTABLE else [])  # fmt: skip
@@ -251,6 +254,25 @@ def row_views(reference: ReferenceData, lines: list[dict[str, Any]], proposed: l
         view["listed"] = [[c["account"], c["name"], c["unit"], c["reason"]] for c in view["candidates"]]
         views.append(view)
     return views
+
+
+SAID_ABOVE = "Pick its account"  # a line whose reason is said once above the lines (``said_above``)
+
+
+def said_above(views: list[dict[str, Any]], numbers: list[Any]) -> str:
+    """The reason two or more lines to fix share ("This supplier's 3 lines ... went to 3 accounts: ...: pick the
+    account."), said once above the lines with their numbers (D6); those rows then say ``SAID_ABOVE`` with their
+    offers. ``numbers``: the rows' line numbers, in ``views``' order. "" when no reason is shared."""
+    notes = [v["note"] for v in views if v["state"] == FIX and v["note"]]
+    shared = max(notes, key=notes.count) if notes else ""
+    if notes.count(shared) < 2:
+        return ""
+    which = []
+    for view, number in zip(views, numbers, strict=True):
+        if view["state"] == FIX and view["note"] == shared:
+            view["note"] = SAID_ABOVE
+            which.append(str(number or "").removesuffix(".0"))
+    return f"Lines {', '.join(which)}: {shared[:1].lower() + shared[1:] if shared[1:2].islower() else shared}"
 
 
 TWO_AREAS = ("This invoice charges two federal taxes or rates: its lines are in two tax areas, and one voucher's pay "

@@ -101,7 +101,8 @@ def to_queue(store: Any, folder: Path, entry_id: str, n: int, actor: str | None 
         return None
     if source.suffix.lower() in triage.SHEET_EXTENSIONS:
         raise ValueError(f"{source.name} is a spreadsheet: AP Coder reads invoices only from PDFs and pictures. Open "
-                         "it, and if it is an invoice, save it as a PDF and add that on Import invoices.")  # fmt: skip
+                         "it, and if it is an invoice, save it as a PDF and add that on the Add invoices "
+                         "page.")  # fmt: skip
     target = folder / safe_name(source.name)
     stem, k = target.stem, 1
     while target.exists():

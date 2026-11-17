@@ -84,25 +84,17 @@ def test_every_page_in_the_rail_answers(client):
     text = client.get("/help").text
     for page in PAGES:  # the rail lists every page (the less used ones under More)
         assert f'href="{page.path}"' in text
-    assert 'id="nav-more"' in text and "System" in text  # (the page's section, in its breadcrumbs)
+    assert 'id="nav-more"' in text
     assert "Offline · Data stays on this computer" in text
 
 
-NAV_SECTIONS = {  # the breadcrumbs' sections
-    "Work": ["review", "process", "search", "manager"],
-    "Close & compliance": ["exports", "month_end", "sales_tax", "statements"],
-    "Master data": ["vendors", "purchase_orders", "accounts", "rules", "jde_files"],
-    "Analytics": ["learning", "spend", "insights", "activity"],
-    "System": ["settings", "help"],
-}
 RAIL_ORDER = ["review", "process", "search", "exports", "accounts",  # then More:
               "rules", "manager", "month_end", "sales_tax", "statements", "jde_files", "vendors", "purchase_orders",
               "learning", "spend", "insights", "activity", "settings", "help"]  # fmt: skip
 
 
-def test_rail_order_and_sections():
+def test_rail_order():
     assert [p.key for p in PAGES] == RAIL_ORDER
-    assert {p.key: p.section for p in PAGES} == {k: s for s, keys in NAV_SECTIONS.items() for k in keys}
     assert [p.key for p in PAGES if p.more] == RAIL_ORDER[5:17]
 
 

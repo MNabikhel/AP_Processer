@@ -1,5 +1,7 @@
 {# Settings → JD Edwards E1 (pages/settings_jde.py). The GL map's file and the worksheet are shown before they are
-   imported (_import.html). #}
+   imported (_import.html). In Simple screens (D9) the company and the tax areas first, the rest folded under "For the
+   JD Edwards team": in the vouchers' form (one Save) its other fields, and after the tax areas the other cards. #}
+{% set team = simple_screens %}
 {% import "_import.html" as imp with context %}
 {% if jde_hidden %}
 <div class="flash info" role="status"><span class="ms" aria-hidden="true">visibility_off</span>
@@ -12,6 +14,7 @@
   <input type="text" name="{{ name }}" value="{{ js[name] }}" maxlength="{{ maxlen }}"{% if help %} title="{{ help }}"{% endif %}>
   {% if help %}<small class="muted">{{ help }}</small>{% endif %}</label>
 {%- endmacro %}
+{% set team_top %}
 <section class="card" id="worksheet">
   <div class="card-head">
     <div><h4>Questions for the JDE team</h4>
@@ -134,6 +137,7 @@
   </details>
   {% endif %}
 </section>
+{% endset %}{% if not team %}{{ team_top }}{% endif %}
 
 <section class="card" id="general">
   <h4>JD Edwards E1 vouchers</h4>
@@ -141,8 +145,11 @@
     Batch Processor R04110ZA. See <code>docs/JDE_E1.md</code>.</p>
   <form method="post" action="/settings/jde" class="stack" data-busy="Saving…">
     {{ ui.subhead("Voucher header", first=True) }}
+    {% if team %}<div class="st-grid three">{{ text_field(*header_fields[0]) }}</div>
+    <details class="st-details" id="team-fields"><summary>For the JD Edwards team: the other voucher fields, the formats
+      and the default account rule</summary>{% endif %}
     <div class="st-grid three">
-      {% for name, label, maxlen, help in header_fields %}{{ text_field(name, label, maxlen, help) }}{% endfor %}
+      {% for name, label, maxlen, help in (header_fields[1:] if team else header_fields) %}{{ text_field(name, label, maxlen, help) }}{% endfor %}
       <label class="field">Currencies set up in E1
         <input type="text" name="currencies" value="{{ currencies }}" title="Invoices in other currencies are not exported.">
         <small class="muted">Invoices in other currencies are not exported.</small></label>
@@ -219,10 +226,12 @@
           JDE team gives it. Blank: no VLGLBA (E1 takes its default bank, AAI PB); once any is filled, the dry run and
           each batch's README list the invoices paid from an account left blank.</small></fieldset>
     </details>
+    {% if team %}</details>{% endif %}
     <div><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save JD Edwards settings</button></div>
   </form>
 </section>
 
+{% set team_map %}
 <section class="card" id="gl-map">
   <h4>GL accounts → BU.Object.Subsidiary</h4>
   <p class="muted">One row per AP Coder GL code (and cost center, blank = any). A blank BU or object is filled by the default
@@ -267,6 +276,7 @@
   {% endif %}
   </div>
 </section>
+{% endset %}{% if not team %}{{ team_map }}{% endif %}
 
 <section class="card" id="tax-map">
   <h4>Province → tax area and explanation code</h4>
@@ -292,6 +302,7 @@
   </form>
 </section>
 
+{% set team_rest %}
 <section class="card" id="terms">
   <h4>Payment terms → JD Edwards code</h4>
   <p class="muted">The code JD Edwards gets in VLPTC for the terms printed on an invoice. Terms are matched by what they mean:
@@ -352,3 +363,11 @@
   <h4>Before the first live load</h4>
   {{ checklist }}
 </section>
+{% endset %}
+{% if team %}
+<details class="card st-dev" id="jde-team">
+  <summary><span class="ms" aria-hidden="true">engineering</span>For the JD Edwards team: the worksheet of questions,
+    the API, the account mapping, payment terms and address numbers</summary>
+  {{ team_top }}{{ team_map }}{{ team_rest }}
+</details>
+{% else %}{{ team_rest }}{% endif %}

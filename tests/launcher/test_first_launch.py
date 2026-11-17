@@ -453,7 +453,7 @@ def test_the_welcome_page_leads_through_name_gl_accounts_and_first_invoices_one_
 
     load_sample_setup(fresh)
     card = _next_step(client.get("/review").text)
-    assert "Import your first invoices" in card and 'class="btn primary" href="/process"' in card
+    assert "Add your first invoices" in card and 'class="btn primary" href="/process"' in card
 
 
 def test_import_invoices_shows_the_next_step_until_it_is_its_own(fresh, monkeypatch):
@@ -525,7 +525,7 @@ def test_help_names_the_pages_by_the_names_the_menu_gives_them():
     from ap_coder.web.pages import PAGES
 
     titles = {p.title for p in PAGES}
-    assert "Import invoices" in titles and "Process invoices" not in titles
+    assert "Add invoices" in titles and "Process invoices" not in titles  # (Import invoices before D3)
     for question, answer in FAQ:
         for old in ("Process invoices", "Load sample setup"):  # former names of a page and a button
             assert old not in answer, (question, old)

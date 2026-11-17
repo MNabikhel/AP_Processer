@@ -66,6 +66,7 @@ FIELD_LABELS = {
     "ship_to_province": "Place of supply", "original_invoice_number": "Credits invoice #", "subtotal": "Subtotal",
     "tax_total": "Tax total", "grand_total": "Total",
 }  # fmt: skip
+JDE_LABELS = {**FIELD_LABELS, "vendor_name": "Supplier"}  # the review screen's with JD Edwards: its own word
 LINE_COLUMNS = ("line_number", "description", "quantity", "unit_price", "amount", "predicted_gl_code",
                 "predicted_cost_center", "taxes_applied", "tax_exempt", "tax_status",
                 "reasoning_justification", "remark", "remark_from")  # fmt: skip

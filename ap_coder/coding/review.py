@@ -40,7 +40,21 @@ def _blank(code: Any) -> str:
 
 
 PICKED = "Picked by a person."  # a line's reason once a person picked its account (``account_lines.why_words``)
+# A line's reason once the review screen's "Use each line's first offer" filled its account (D5): the button writes it
+# (invoice.js), in place of why the line was left for a person.
+FIRST_OFFER = "First offer, taken with one click."
 _LEFT = re.compile(r"^.*?: pick the account\.", re.S)  # why a line was left for a person (``ai.suggest.why_left``)
+
+
+def first_offer_taken(line: dict[str, Any], before: dict[str, Any] | None) -> bool:
+    """Whether ``line``'s account was put there by "Use each line's first offer" (D5): its reason says so
+    (``FIRST_OFFER``) and its account is still the first one offered with it as proposed (``before``'s candidates);
+    one a person changed since is theirs."""
+    if not str(line.get("reasoning_justification") or "").startswith(FIRST_OFFER):
+        return False
+    first = next(iter((before or {}).get("candidates") or []), None)
+    gl, cc = _blank(line.get("predicted_gl_code")), _blank(line.get("predicted_cost_center"))
+    return bool(first and gl) and first.get("code") == gl and _blank(first.get("business_unit")) in ("", cc)
 
 
 def decided_on_screen(line_items: list[dict[str, Any]], proposed: list[dict[str, Any]], vendor: str = "",
@@ -52,16 +66,26 @@ def decided_on_screen(line_items: list[dict[str, Any]], proposed: list[dict[str,
     them), or by a fixed coding rule a person applied (the rule that codes it so). The accounts offered stay with
     the line: what the person chose among. A line without an account has no decision. A line left for a person
     ("…: pick the account.") whose account a person picked says that instead (``PICKED``); what its reason says
-    after (its tax code) is kept."""
+    after (its tax code) is kept. A line "Use each line's first offer" filled (``first_offer_taken``, D5) says so:
+    ``first_offer`` in what decided it, ``FIRST_OFFER`` in its reason, what an approval learns as a suggestion
+    taken (``Store.approve_invoice``)."""
     for before, li in pair_lines(proposed, line_items):
         before = before or {}
         li["candidates"] = list(before.get("candidates") or [])
         gl, cc = _blank(li.get("predicted_gl_code")), _blank(li.get("predicted_cost_center"))
+        reason = str(li.get("reasoning_justification") or "")
         if not gl:
             li["decided_by"] = {}
+            if reason.startswith(FIRST_OFFER):  # emptied again: why it was left for a person, as proposed
+                li["reasoning_justification"] = str(before.get("reasoning_justification") or "")
         elif gl == _blank(before.get("predicted_gl_code")) and cc == _blank(before.get("predicted_cost_center")):
             li["decided_by"] = dict(before.get("decided_by") or {})
+        elif first_offer_taken(li, before):
+            li["decided_by"] = decided("person", was=(before.get("decided_by") or {}).get("source"), candidate=1,
+                                       first_offer=True)  # fmt: skip
         else:
+            if reason.startswith(FIRST_OFFER):  # another account since the click: a person's pick
+                li["reasoning_justification"] = PICKED + reason[len(FIRST_OFFER) :]
             rule = rule_for(rules, vendor, str(li.get("description") or "")) if rules else None
             if rule is not None and rule.gl_code.strip() == gl and rule.cost_center.strip() in ("", cc):
                 li["decided_by"] = decided_by_rule(rule, before.get("decided_by"))
