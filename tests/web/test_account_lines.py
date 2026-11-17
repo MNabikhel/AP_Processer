@@ -241,6 +241,20 @@ def test_what_is_keyed_on_the_pay_item_is_one_line_from_the_voucher(chart_compan
     assert "Not ready to key" in four.check()["sections"]["keyed"]  # no account yet: said, not a wrong voucher
 
 
+def test_not_ready_to_key_points_to_the_findings_and_never_says_their_reason_again(chart_company, chart_company_client):
+    """B-2602: the review screen said "Not ready to key: a line has no GL account (…): code it in the review screen"
+    on the review screen itself, the third time the same problem was said (the findings, the bar); and "set the
+    vendor's ERP ID in the vendor master", which no page calls it. The line now only points to the findings; the
+    reason held back at export says what to do in plain words."""
+    from ap_coder.erp import jde_voucher
+
+    four = _page(chart_company, chart_company_client, "four_lines")
+    line = re.sub(r"\s+", " ", four.check()["sections"]["keyed"])
+    assert "Not ready to key" in line and "fix what is listed at the top first" in line
+    assert "review screen" not in line and "no GL account" not in line
+    assert "ERP ID" not in jde_voucher.NO_AN8_FIX and "vendor master" not in jde_voucher.NO_AN8_FIX
+
+
 def test_a_line_without_its_account_is_one_finding(chart_company, chart_company_client):
     page = _page(chart_company, chart_company_client, "four_lines")
     checks = page.check()["sections"]["checks"]

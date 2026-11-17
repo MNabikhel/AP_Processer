@@ -126,9 +126,15 @@
 {% elif tab == "tax" %}
 <section class="card">
   <h4>How each sales tax posts</h4>
+  {% if jde_posts %}
+  <p class="muted">A recoverable tax ({{ jde_posts | join(", ") }}) is keyed on the voucher's pay item: JD Edwards posts
+    it itself, so it needs no account here. A tax that is not recoverable is added to the cost of the expense lines it
+    applies to, so it needs no account of its own either. Then Save tax setup.</p>
+  {% else %}
   <p class="muted">Recoverable taxes (input tax credits / refunds) go to their own GL account: pick one for GST, HST
     and QST. Non-recoverable PST (and any other tax) is normally added to the cost of the expense lines it applies to,
     so it needs no account of its own. Then Save tax setup.</p>
+  {% endif %}
   <form{% if edit %} method="post" action="/accounts/tax"{% endif %} class="stack" id="tax-form" data-busy="Saving…"><fieldset class="ro-fieldset"{% if not edit %} disabled{% endif %}>
     <div class="table-wrap">
       <table class="apc-table edit">
@@ -142,10 +148,14 @@
             </select></td>
             <td>
               <span class="per-line" data-for="{{ t.type }}"{% if t.treatment != expense_to_line %} hidden{% endif %}>{{ ui.pill("Posted with each expense line's GL", "gray", "call_split") }}</span>
+              {% if t.jde_posts %}{# keyed on the pay item: no account asked (B-2596); one set before is kept #}
+              <span data-gl="{{ t.type }}"{% if t.treatment == expense_to_line %} hidden{% endif %}>{{ ui.pill("On the pay item: JD Edwards posts it itself", "gray", "receipt_long") }}<input type="hidden" name="gl_{{ t.type }}" value="{{ t.gl }}"></span>
+              {% else %}
               <select name="gl_{{ t.type }}" aria-label="{{ t.type }} GL account" data-gl="{{ t.type }}"{% if t.treatment == expense_to_line %} hidden{% endif %}>
                 <option value="">(choose an account)</option>
                 {% for code, label in gl_options %}<option value="{{ code }}"{% if code == t.gl %} selected{% endif %}>{{ label }}</option>{% endfor %}
               </select>
+              {% endif %}
             </td>
           </tr>
           {% endfor %}

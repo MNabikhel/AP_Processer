@@ -178,7 +178,7 @@ def settings_tab(request: Request, tab: str) -> HTMLResponse:
 def review_version(request: Request) -> str:
     """The stamp of the values the Review tab shows (B-655)."""
     shown = review_context(request, stamped=False)
-    return page_version({k: v for k, v in shown.items() if k not in ("provinces", "uses_cost_centers")})
+    return page_version({k: v for k, v in shown.items() if k not in ("provinces", "uses_cost_centers", "chart")})
 
 
 def review_context(request: Request, stamped: bool = True) -> dict[str, Any]:
@@ -200,6 +200,7 @@ def review_context(request: Request, stamped: bool = True) -> dict[str, Any]:
         "why_surprise": lessons.asks_why(store),
         "site_provinces": store.get_setting("site_provinces"),
         "uses_cost_centers": bool(store.list_accounts("cost_centers")),
+        "chart": store.account_pairs() is not None,  # (a line's cost center is its business unit then)
         "provinces": PROVINCE_NAMES,
         **({"version": review_version(request)} if stamped else {}),
     }

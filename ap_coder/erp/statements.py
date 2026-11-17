@@ -1,17 +1,18 @@
 """Vendor statement reconciliation.
 
 A vendor's statement of account (CSV or Excel: one row per invoice, credit or payment) is compared with
-the invoices AP Coder holds for that vendor, by invoice number (compared the way people mean them:
-"INV-00123" = "123"):
+the invoices AP Coder holds for that vendor, then with the vouchers loaded from JD Edwards (its voucher list: the ERP
+register, ``register``), by invoice number (compared the way people mean them: "INV-00123" = "123"); each line says
+which matched (``Line.note``: "In JD Edwards ...", B-2605):
 
 * matched: same number, same amount
 * amount differs: same number, different amount
-* not received: on the statement but not in AP Coder (ask the vendor for a copy)
+* not received: on the statement but neither in AP Coder nor in JD Edwards (ask the vendor for a copy)
 * not on statement: in AP Coder for the statement period but not on the statement (on a statement of open items,
   the invoices exported are counted instead: they are paid or on their way, D-242)
 * payment / credit: without a number, or with an invoice's number and the opposite sign: shown for information
 
-Entry points: ``map_columns``, ``reconcile`` (a ``Reconciliation``) and ``to_csv``.
+Entry points: ``map_columns``, ``statement_numbers``, ``reconcile`` (a ``Reconciliation``) and ``to_csv``.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import csv
 import datetime as dt
 import io
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -53,6 +55,9 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "type": ("type", "doctype", "documenttype", "transactiontype", "description"),
 }  # fmt: skip
 TYPE_HEADERS = {"type", "doctype", "documenttype", "transactiontype"}  # a column that says what each line is
+# Where a line's invoice was found, when not in AP Coder: the voucher list loaded from JD Edwards, else the invoice
+# register imported from another ERP
+IN_JDE, IN_ERP = "In JD Edwards (the voucher list loaded)", "In the ERP (the invoice register imported)"
 
 
 def _norm(value: Any) -> str:
@@ -155,16 +160,41 @@ class Reconciliation:
         return round(sum((li.statement_amount or li.ap_amount or 0) for li in self.lines if li.status == status), 2)
 
 
+def _raw_number(rec: dict[str, Any], columns: dict[str, str]) -> str:
+    number = str(rec.get(columns["number"]) if "number" in columns else "").strip()
+    return "" if number.lower() in ("nan", "none") else number
+
+
+def statement_numbers(records: list[dict[str, Any]], columns: dict[str, str]) -> list[str]:
+    """The invoice numbers of a statement's rows as compared (``norm_invoice_number``): what to look up in the
+    vouchers loaded from JD Edwards (``Store.erp_register``) for ``reconcile``'s ``register``."""
+    return sorted({key for rec in records if (key := norm_invoice_number(_raw_number(rec, columns)))})
+
+
 def reconcile(
-    records: list[dict[str, Any]], columns: dict[str, str], invoices: list[dict[str, Any]], open_items: bool = False
+    records: list[dict[str, Any]],
+    columns: dict[str, str],
+    invoices: list[dict[str, Any]],
+    open_items: bool = False,
+    register: Sequence[dict[str, Any]] = (),
+    found_in: str = IN_JDE,
 ) -> Reconciliation:
     """``records``: statement rows; ``columns``: ``map_columns`` output (number and amount or balance needed);
     ``invoices``: ``Store.vendor_invoices`` rows (id, invoice_number, invoice_date, grand_total, status,
     export_batch); ``open_items``: the statement lists only unpaid invoices, so the ones exported (an export batch:
-    sent to the ERP or on a keying sheet) it leaves out are counted in ``exported_left_out``, not listed (D-242)."""
+    sent to the ERP or on a keying sheet) it leaves out are counted in ``exported_left_out``, not listed (D-242).
+    ``register``: this vendor's vouchers loaded from JD Edwards (``Store.erp_register`` rows: invoice_number,
+    number_key, invoice_date, total), where a line no invoice of AP Coder's takes is looked for, said ``found_in``
+    (B-2605)."""
 
     def get(rec: dict[str, Any], key: str) -> Any:
         return rec.get(columns[key]) if key in columns else None
+
+    in_jde: dict[str, list[dict[str, Any]]] = {}  # (as AP Coder's invoices, an id of their own: never one of them)
+    for n, row in enumerate(register, 1):
+        doc = {"id": -n, "invoice_number": row["invoice_number"], "invoice_date": row.get("invoice_date") or "",
+               "grand_total": row["total"], "status": ""}  # fmt: skip
+        in_jde.setdefault(norm_invoice_number(row["invoice_number"]), []).append(doc)
 
     by_number: dict[str, list[dict[str, Any]]] = {}
     for inv in sorted(invoices, key=_first_to_match):
@@ -180,9 +210,7 @@ def reconcile(
     # payment only when no invoice has its number, or the amount's sign says so (below). A Type column is believed.
     free_text = "type" in columns and _norm(columns["type"]) not in TYPE_HEADERS
     for rec in records:
-        raw_number = str(get(rec, "number") or "").strip()
-        if raw_number.lower() in ("nan", "none"):
-            raw_number = ""
+        raw_number = _raw_number(rec, columns)
         amount = parse_amount(get(rec, "amount"))
         if "credit" in columns:  # separate Debit / Credit columns: the amount is debit minus credit
             debit, credit = amount, parse_amount(get(rec, "credit"))
@@ -199,7 +227,7 @@ def reconcile(
         # A date not read is shown as written ("1 sept. 2026"), not cut at its first word (B-2544)
         shown = date if _ISO.fullmatch(date) or _EITHER_WAY.fullmatch(date) else str(get(rec, "date") or "").strip()
         key = norm_invoice_number(raw_number)
-        same_number = by_number.get(key, [])
+        same_number = by_number.get(key, []) or in_jde.get(key, [])  # AP Coder's first, else JD Edwards' (B-2605)
 
         def opposite(inv: dict[str, Any], amount: float | None = amount) -> bool:
             return amount is not None and amount * (inv["grand_total"] or 0) < 0
@@ -228,6 +256,10 @@ def reconcile(
         inv = (same or candidates)[0]
         seen.add(inv["id"])
         status = MATCHED if same else DIFFERS
+        if inv["id"] < 0:  # a voucher loaded from JD Edwards, not an invoice of AP Coder's
+            dated = f", dated {inv['invoice_date']}" if inv["invoice_date"] else ""
+            result.lines.append(Line(status, raw_number, shown, amount, inv["grand_total"], note=f"{found_in}{dated}"))
+            continue
         result.lines.append(Line(status, raw_number, shown, amount, inv["grand_total"], inv["id"], inv["status"]))
     if day_first is None:  # every date read both ways: the matched invoices' own dates may tell the order
         day_first = _order_of_matches(result.lines, invoices)
@@ -315,7 +347,7 @@ def _copy_key(inv: dict[str, Any]) -> tuple[str, float]:
 def to_csv(rec: Reconciliation) -> bytes:
     out = io.StringIO()
     writer = csv.writer(out)
-    writer.writerow(["Result", "Invoice #", "Date", "Statement amount", "AP Coder amount", "Difference",
+    writer.writerow(["Result", "Invoice #", "Date", "Statement amount", "Our amount", "Difference",
                      "AP Coder #", "AP Coder status", "Note"])  # fmt: skip
     for li in rec.lines:
         writer.writerow(csv_row([

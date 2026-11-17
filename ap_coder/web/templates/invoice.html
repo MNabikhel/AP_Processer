@@ -438,7 +438,7 @@
     <span class="inv-checking small muted" data-checking role="status" aria-live="polite"></span>
     {% if can("/review/1/approve") %}{# server mode: only a role that may approve sees these (web/roles.py, D-98) #}
     <details class="pop up" data-park>
-      <summary class="btn" title="Set it aside while waiting for information, or send it to the manager to confirm the coding (P)" aria-keyshortcuts="p"><span class="ms" aria-hidden="true">pause_circle</span>Park</summary>
+      <summary class="btn" title="Set it aside while waiting for information{% if can("/review/1/manager") and not simple_screens %}, or send it to the manager to confirm the coding{% endif %} (P)" aria-keyshortcuts="p"><span class="ms" aria-hidden="true">pause_circle</span>Park</summary>
       {# One panel holds Park's form and, below it, Send to manager: two panels would sit at the same spot (B-1545). #}
       <div class="pop-body">
       <form class="stack" method="post" action="/review/{{ inv.id }}/park">
@@ -528,10 +528,8 @@
     <p class="muted small">{% if same %}You approved it first, so another person gives the final approval, logged in with their own account.{% else %}It takes another person than the first approver, with their own account.{% endif %}
       Not going ahead? Send back returns it to the review queue.</p></div>
     {% else %}
-    <p class="muted small">{% if same %}You approved it first, so someone else gives the final approval, on{% else %}It takes another person on{% endif %}
-      another computer login: on one laptop with one Windows login it can't be given. To test it, sign in to this laptop
-      with a second Windows account and open AP Coder there, or have a colleague open it from their computer over the
-      office network. Not going ahead? Send back returns it to the review queue.</p></div>
+    <p class="muted small">{% if same %}You approved it first, so someone else gives the final approval,{% else %}It takes another person than the first approver,{% endif %}
+      a colleague with an account of their own: on one laptop one person can't give both, so share this laptop with them (the pilot guide says how) and they sign in to give it. Not going ahead? Send back returns it to the review queue.</p></div>
     {% endif %}
     {% if can("/review/1/final-approve") %}
     <div class="row end">

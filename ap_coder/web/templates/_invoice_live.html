@@ -354,11 +354,14 @@
 {%- endmacro %}
 
 {# With a chart of accounts (D-214): what is keyed on the voucher's pay item, in one read-only line
-   (jde_review.voucher_view's ``keyed``: "Keyed on the pay item: …", or "Not ready to key: …" with the first reason). #}
+   (jde_review.voucher_view's ``keyed``: "Keyed on the pay item: …"). Not ready, its reasons are the findings at the
+   top already: the line points to them, never says them a third time (B-2602). #}
 {% macro keyed(live, invoice_id) -%}
 {% set j = live.jde %}
-{% if j and j.keyed %}{% set said = j.keyed.partition(": ") %}
-<div class="inv-keyed-line{% if j.not_ready %} not-ready{% endif %}" title="{{ j.keyed }}"><span class="k">{{ said[0] }}</span> <span class="v">{{ said[2] }}</span></div>
+{% if j and j.not_ready %}
+<div class="inv-keyed-line not-ready"><span class="k">Not ready to key</span> <span class="v">fix what is listed at the top first</span></div>
+{% elif j and j.keyed %}{% set said = j.keyed.partition(": ") %}
+<div class="inv-keyed-line" title="{{ j.keyed }}"><span class="k">{{ said[0] }}</span> <span class="v">{{ said[2] }}</span></div>
 {% endif %}
 {%- endmacro %}
 

@@ -121,6 +121,20 @@ def test_simple_screens_leave_the_manager_out_of_park(demo_db, tmp_path):
     assert "Or send it to the manager" not in page and "data-park" in page  # Park itself stays
 
 
+def test_simple_screens_parks_tooltip_offers_no_manager(demo_db, tmp_path):
+    """B-2601: in the Simple screens, Park's tooltip still said "or send it to the manager to confirm the coding",
+    which Park there does not offer."""
+    target = tmp_path / "demo" / "ap_coder.db"
+    target.parent.mkdir(parents=True)
+    shutil.copy(demo_db, target)
+    store = Store(target)
+    client, invoice = client_for(store), store.list_invoices(REVIEW)[0]["id"]
+    assert "or send it to the manager to confirm the coding (P)" in client.get(f"/review/{invoice}").text
+    _simple(store)
+    page = client.get(f"/review/{invoice}").text
+    assert 'title="Set it aside while waiting for information (P)"' in page and "send it to the manager" not in page
+
+
 # --- The first run of a new data folder -------------------------------------------------------------------------------
 
 

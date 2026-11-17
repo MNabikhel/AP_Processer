@@ -13,8 +13,8 @@
       <label class="field">Your name
         <input type="text" name="reviewer_name" maxlength="60" value="{{ reviewer_name }}" placeholder="shown on the invoices you approve"
                title="Saved for your Windows account: two people sharing one AP Coder each keep their own name."></label>
-      <p class="muted">Each approval is recorded under it. A colleague who opens AP Coder from their own computer gives
-        their own name on the <a href="/who">Who are you?</a> page.</p>
+      <p class="muted">Each approval is recorded under it. Colleagues who use AP Coder from their own computer sign in
+        with an account of their own once you share this laptop with them (the pilot guide says how).</p>
       {% endif %}
       {# on the server the province is the whole company's, set once by an Admin (D-102) #}
       <label class="field">{% if account %}The company's province (where goods are delivered; the same for everyone){% else %}Your province (where goods are delivered to you){% endif %}
@@ -26,9 +26,10 @@
         prints no ship-to and no bill-to, the sales tax check uses this province. A ship-to printed on the invoice
         always wins, then a bill-to.</p>
       {% if uses_cost_centers or site_provinces %}
-      <label class="field">Sites in other provinces, by cost center (optional)
+      {% set unit = "business unit" if chart else "cost center" %}{# a chart's lines carry a business unit (D-209) #}
+      <label class="field">Sites in other provinces, by {{ unit }} (optional)
         <textarea name="site_provinces" rows="3" placeholder="CC400=BC&#10;CC500=ON">{{ site_provinces }}</textarea></label>
-      <p class="muted">An invoice with no ship-to coded to one of these cost centers uses that site's province.</p>
+      <p class="muted">An invoice with no ship-to coded to one of these {{ unit }}s uses that site's province.</p>
       {% endif %}
     </section>
 
@@ -42,11 +43,9 @@
         one that may give the second approval) before export. A foreign-currency invoice is converted to CAD at the exchange rates
         below. An invoice waiting for it can always be sent back to the review queue with Send back.</p>
       {% else %}
-      <p class="muted">Above this amount, an approved invoice waits for a second, different approver (another name and
-        another computer login) before export. A foreign-currency invoice is converted to CAD at the exchange rates below.
-        On one laptop with one Windows login it can't be given: sign in with a second Windows account, or have a
-        colleague open AP Coder from their computer over the office network (IT sets that up). An invoice waiting for it can always be sent back
-        to the review queue with Send back.</p>
+      <p class="muted">Above this amount, an approved invoice waits for a second, different approver before export. A
+        foreign-currency invoice is converted to CAD at the exchange rates below. It takes a colleague with an account of their own: on one laptop one person can't give both, so share this laptop with them (the pilot guide says how) and they sign in to give it.
+        An invoice waiting for it can always be sent back to the review queue with Send back.</p>
       {% endif %}
       {% if account %}
       <input type="hidden" name="duties_shown" value="1">
@@ -60,8 +59,9 @@
                title="Used to show when an invoice is due, to sort the queue by due date and in exports."></label>
       <label class="field">Exchange rates to CAD (optional)
         <input type="text" name="fx_rates" value="{{ fx_rates }}" placeholder="e.g. USD=1.37, EUR=1.50"></label>
-      <p class="muted">CAD per unit of each foreign currency you are billed in, for estimates in CAD (Spend, Sales tax);
-        invoices and exports keep their own currency.</p>
+      <p class="muted">CAD per unit of each foreign currency you are billed in, for the second approval's limit and
+        estimates in CAD{% if not simple_screens %} (Spend, Sales tax){% endif %}; invoices and exports keep their own
+        currency.</p>
     </section>
   </div>
 

@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.coding import vendor_mail
 from ap_coder.core.store import Store
-from ap_coder.erp import jde_keying
+from ap_coder.erp import jde_keying, jde_settings
 from ap_coder.erp import statements as stm
 from ap_coder.erp.import_specs import STATEMENTS
 from ap_coder.intake import inbox
@@ -73,7 +73,14 @@ def mapping_ready(chosen: dict[str, str]) -> bool:
 def reconciliation(
     store: Store, vendor: str, records: list[dict[str, Any]], chosen: dict[str, str], open_items: bool = False
 ) -> Any:
-    return stm.reconcile(records, chosen, store.vendor_invoices(vendor), open_items)
+    """The statement compared with the vendor's invoices in AP Coder, then with its vouchers loaded from JD Edwards:
+    filed under its name, or under its supplier number (AN8: Settings → JD Edwards first, then the vendor master),
+    whatever name JD Edwards has (B-2605)."""
+    an8 = str(jde_settings.load(store).an8_overrides.get(vendor) or store.vendor_ids().get(vendor) or "").strip()
+    register = [row for row in store.erp_register(stm.statement_numbers(records, chosen))
+                if row["vendor_key"] == vendor or (an8 and row.get("an8") == an8)]  # fmt: skip
+    found_in = stm.IN_JDE if jde_settings.in_use(store) else stm.IN_ERP
+    return stm.reconcile(records, chosen, store.vendor_invoices(vendor), open_items, register, found_in)
 
 
 @router.get("/statements", response_class=HTMLResponse)
@@ -112,7 +119,11 @@ def statements_page(
                 params = [(k, v) for k, v in request.query_params.multi_items() if k != "lang"]
                 counts = ", ".join(f"{rec.count(status):,} {stm.LABELS[status].lower()}" for status in TILED)
                 context["s"]["look"] |= {"go": "reconcile again", "compared": "compared with AP Coder."}
-                context["compared"] = f"Compared with {names[vendor]}'s invoices in AP Coder: {counts}."
+                erp = ("the vouchers loaded from JD Edwards" if jde_settings.in_use(store)
+                       else "the ERP's invoice register") if store.erp_register_count() else ""  # fmt: skip
+                context["erp"] = ("JD Edwards" if jde_settings.in_use(store) else "the ERP") if erp else ""
+                context["compared"] = (f"Compared with {names[vendor]}'s invoices in AP Coder"
+                                       f"{f' and {erp}' if erp else ''}: {counts}.")  # fmt: skip
                 context.update(
                     rec=rec,
                     tiles=[
