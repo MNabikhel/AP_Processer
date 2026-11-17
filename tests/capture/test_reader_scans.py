@@ -452,3 +452,55 @@ def test_a_number_before_words_that_only_look_like_a_street_is_still_read():
         got = _value_reading("invoice_number", line(value_line), 0, 1.0, "label-right")
         assert got is not None and got.value == value_line.split()[0], value_line
     assert _value_reading("invoice_number", line("Page - 1"), 0, 1.0, "label-right") is None
+
+
+def _ocr_page(rows: list[tuple[float, float, str]]):
+    """A scan's layout as OCR reads it: (x, y, text) per OCR line, in fractions of the page."""
+    from ap_coder.capture.layout import group_lines
+    from ap_coder.capture.types import Box, DocLayout, PageLayout, Word
+
+    words = []
+    for x, y, text in rows:
+        at = x
+        for w in text.split():
+            width = 0.0085 * len(w)
+            words.append(Word(w, Box(1, at, y, at + width, y + 0.014), 0.95, "ocr"))
+            at += width + 0.006
+    return DocLayout([PageLayout(1, 1700, 2200, words, group_lines(words, 1), dpi=200.0)], "ocr")
+
+
+_CREDIT_HEAD = [(0.08, 0.06, "Northwind Supply Ltd."), (0.66, 0.08, "CREDIT MEMO"),
+                (0.56, 0.12, "Credit No: 063418-CR"), (0.56, 0.14, "Credit Date: 2026-10-20"),
+                (0.08, 0.3, "Description"), (0.85, 0.3, "Line Total"),
+                (0.08, 0.33, "Returned steel brackets"), (0.84, 0.33, "10,118.53CR")]  # fmt: skip
+
+
+def test_a_scanned_credit_memo_with_cr_run_into_its_amounts_reads_them_negative(tmp_path):
+    """B-2705: OCR runs a credit's "CR" into its amount ("10,118.53CR", printed "10,118.53 CR"). Those amounts were read
+    negative, then turned positive again: their "CR" made them no money to the check of whether the credit memo prints
+    its signs, so its amounts were taken for a credit printed without signs. The credit memo was read as an invoice
+    of 11,433.94, subtotal, HST and total verified."""
+    layout = _ocr_page([*_CREDIT_HEAD, (0.72, 0.43, "Sub Total:"), (0.83, 0.43, "10,118.53CR"),
+                        (0.70, 0.45, "H.S.T. (13%):"), (0.83, 0.45, "1,315.41CR"),
+                        (0.74, 0.47, "Total: 11,433.94CR")])  # fmt: skip
+    fields = analyze(tmp_path / "credit.pdf", layout=layout, tables=False, second_read=False,
+                     today=dt.date(2026, 11, 1)).fields  # fmt: skip
+    assert fields["subtotal"].value == -10118.53
+    assert fields["hst_amount"].value == -1315.41
+    assert fields["grand_total"].value == -11433.94
+
+
+def test_a_credit_memos_amount_read_positive_is_never_verified_or_likely(tmp_path):
+    """B-2705: what agrees on a credit memo's amounts may be their size and not their sign. OCR read the "CREDIT MEMO"
+    title but not the totals; the page reader read the totals but not the title, printed without a sign: the subtotal
+    was verified at 10,118.53, a credit keyed as an invoice. An amount read positive on a document that calls itself
+    a credit is checked by a person."""
+    layout = _ocr_page(_CREDIT_HEAD[:-1] + [(0.84, 0.33, "10,118.53")])
+    page = ("Northwind Supply Ltd.\n\nCredit No: 063418-CR\nCredit Date: 2026-10-20\n\n| Description | Line Total |\n"
+            "|---|---|\n| Returned steel brackets | 10,118.53 |\n\nSub Total: 10,118.53\nH.S.T. (13%): 1,315.41\n"
+            "Total: 11,433.94\n")  # fmt: skip
+    fields = analyze(tmp_path / "credit.pdf", layout=layout, tables=False, second_read=False, page_text=[page],
+                     today=dt.date(2026, 11, 1)).fields  # fmt: skip
+    for name in ("subtotal", "hst_amount", "tax_total", "grand_total"):
+        value, status = fields[name].value, fields[name].status
+        assert value is None or value < 0 or status == "check", (name, value, status)

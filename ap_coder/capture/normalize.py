@@ -29,9 +29,12 @@ def amounts_equal(a: float | None, b: float | None, tol: float = 0.005) -> bool:
 
 
 def looks_like_money(text: str) -> bool:
-    """A token printed like money: two decimals (".65" too), or a currency sign."""
+    """A token printed like money: two decimals (".65" too), or a currency sign. A credit's "CR" (or a debit's "DR") run
+    into the cents by OCR ("10,118.53CR") is still money (B-2705)."""
     s = text.strip()
-    return bool(re.search(r"\d[.,]\d{2}\b|(?<![\w.,])\.\d{2}\b", s)) or bool(re.search(r"[$€£]\s*\.?\d", s))
+    cents = r"(?:\b|(?=[CD][Rr]\b|cr\b|dr\b))"
+    two_decimals = re.search(rf"\d[.,]\d{{2}}{cents}|(?<![\w.,])\.\d{{2}}{cents}", s)
+    return bool(two_decimals) or bool(re.search(r"[$€£]\s*\.?\d", s))
 
 
 # ---------------------------------------------------------------- dates
