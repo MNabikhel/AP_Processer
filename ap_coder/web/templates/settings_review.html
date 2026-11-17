@@ -14,7 +14,7 @@
         <input type="text" name="reviewer_name" maxlength="60" value="{{ reviewer_name }}" placeholder="shown on the invoices you approve"
                title="Saved for your Windows account: two people sharing one AP Coder each keep their own name."></label>
       <p class="muted">Each approval is recorded under it. Colleagues who use AP Coder from their own computer sign in
-        with an account of their own once you share this laptop (<code>python -m ap_coder share</code>).</p>
+        with an account of their own once you share this laptop with them (the pilot guide says how).</p>
       {% endif %}
       {# on the server the province is the whole company's, set once by an Admin (D-102) #}
       <label class="field">{% if account %}The company's province (where goods are delivered; the same for everyone){% else %}Your province (where goods are delivered to you){% endif %}
@@ -44,7 +44,7 @@
         below. An invoice waiting for it can always be sent back to the review queue with Send back.</p>
       {% else %}
       <p class="muted">Above this amount, an approved invoice waits for a second, different approver before export. A
-        foreign-currency invoice is converted to CAD at the exchange rates below. It takes a colleague with an account of their own: on one laptop one person can't give both, so share it (<code>python -m ap_coder share</code>) and they sign in to give it.
+        foreign-currency invoice is converted to CAD at the exchange rates below. It takes a colleague with an account of their own: on one laptop one person can't give both, so share this laptop with them (the pilot guide says how) and they sign in to give it.
         An invoice waiting for it can always be sent back to the review queue with Send back.</p>
       {% endif %}
       {% if account %}

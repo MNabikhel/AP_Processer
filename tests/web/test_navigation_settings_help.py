@@ -219,7 +219,7 @@ def test_the_review_tab_is_one_form_with_one_save_and_the_risky_settings_folded(
     for name in ('name="threshold"', 'name="constrain"', 'name="why_after"'):
         assert name in advanced, name
     assert "Ask why after the same correction (times)" not in page
-    assert "python -m ap_coder share" in tab  # how colleagues sign in (no Who are you? page any more: B-2600)
+    assert "share this laptop with them" in tab  # how colleagues sign in (no Who are you? page any more: B-2600)
 
 
 def test_saving_your_name_says_your_name_was_saved(client):
@@ -505,4 +505,4 @@ def test_settings_review_on_a_laptop_says_how_colleagues_sign_in_and_names_only_
     for gone in ("Who are you?", "second Windows account", "office network", "IT sets that up", "(Spend, Sales tax)",
                  "by cost center"):  # fmt: skip
         assert gone not in page, gone
-    assert "python -m ap_coder share" in page and "Sites in other provinces, by business unit" in page
+    assert "share this laptop with them" in page and "Sites in other provinces, by business unit" in page

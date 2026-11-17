@@ -180,9 +180,9 @@ def test_the_second_approval_says_how_to_give_it_when_one_login_cannot(client, s
     assert store.get_invoice(inv["id"])["status"] == PENDING
 
     for page in (client.get(f"/review/{inv['id']}").text, client.get("/review?tab=second").text):
-        assert "python -m ap_coder share" in page and "account of their own" in page and "Send back" in page
+        assert "share this laptop with them" in page and "account of their own" in page and "Send back" in page
     settings = client.get("/settings/review").text
-    assert "python -m ap_coder share" in settings and "account of their own" in settings  # (B-2600)
+    assert "share this laptop with them" in settings and "account of their own" in settings  # (B-2600)
     # The control itself is unchanged: the first approver still can't give it.
     answer = client.post(f"/review/{inv['id']}/final-approve", headers=PAGE).json()
     assert store.get_invoice(inv["id"])["status"] == PENDING and "Not done" in client.get(answer["redirect"]).text
