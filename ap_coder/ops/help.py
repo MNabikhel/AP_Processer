@@ -1215,14 +1215,42 @@ def faq(server: bool = False) -> list[tuple[str, str]]:
     return [SERVER_FAQ.get(q, (q, a)) if server else (q, a) for q, a in FAQ]
 
 
-def quick_start(server: bool = False) -> list[tuple[str, str, str]]:
-    """The Quick start's steps as Help lists them: on the company server, the first ones say who does them."""
+# With approved invoices keyed into JD Edwards (``jde_settings.in_use``), what Getting started says instead, as
+# docs/PROTOTYPE.md does (B-2602): (what to do, where it is done). The sales tax sentence: JD Edwards posts the tax
+# itself from the voucher's pay item (``doctor.taxes_jde_posts``), or the tax is coded to G/L lines.
+JDE_TAX_POSTED = ("The Sales tax accounts tab needs nothing: the GST/HST recovered goes on the voucher's pay item and "
+                  "JD Edwards posts it itself.")  # fmt: skip
+JDE_TAX_ON_GL = "Then pick a GL account for each recoverable tax on the Sales tax accounts tab of GL accounts & tax."
+JDE_QUICK_START: dict[str, tuple[str, str]] = {
+    "Your GL accounts and sales tax": (
+        "Load JD Edwards' own exports on JD Edwards files: the chart of accounts, the business units, the suppliers, "
+        "the past invoice coding (AP Coder learns your coding from it) and the vouchers already entered. {tax} "
+        "Optional: your company's bank accounts, on GL accounts & tax → Bank accounts.",
+        "/jde-files",
+    ),
+    "Your first export": (
+        "Put the approved invoices on the keying sheet (Excel) and key each voucher into JD Edwards from it. The same "
+        "page makes JD Edwards batch files, for when the JDE team can load one.",
+        "/exports",
+    ),
+}
+
+
+def quick_start(server: bool = False, jde: bool = False, tax_posted: bool = False) -> list[tuple[str, str, str]]:
+    """The Quick start's steps as Help lists them: on the company server, the first ones say who does them; with
+    JD Edwards (``jde``), its files and the keying sheet (``tax_posted``: JD Edwards posts the tax itself)."""
+    steps = QUICK_START
+    if jde:
+        tax = JDE_TAX_POSTED if tax_posted else JDE_TAX_ON_GL
+        steps = [(title, JDE_QUICK_START[title][0].format(tax=tax), JDE_QUICK_START[title][1])
+                 if title in JDE_QUICK_START else (title, text, path) for title, text, path in steps]  # fmt: skip
     if not server:
-        return QUICK_START
-    return [(title, SERVER_QUICK_START.get(title, text), path) for title, text, path in QUICK_START]
+        return steps
+    return [(title, SERVER_QUICK_START.get(title, text), path) for title, text, path in steps]
 
 
 # What's new, for the pilot tester (the developer changelog, docs/WHATS_NEW.md, is a developer tool).
+EXCEL_OR_CSV = "Exports are Excel or CSV for the pilot, and the page remembers the last one you used."
 WHATS_NEW: list[str] = [
     "LM Studio is the first step: the welcome page and Settings → Reading say whether it runs, with Check again.",
     "The AI reviewer: the chat model in LM Studio checks every invoice against its pages before it can skip review.",
@@ -1233,6 +1261,15 @@ WHATS_NEW: list[str] = [
     "On the review screen, G goes to the line still to code.",
     "AP Coder can also run on a company server: each person logs in with their own account.",
     "Settings opens on Review: your name, approvals and your province, with one Save.",
-    "Exports are Excel or CSV for the pilot, and the page remembers the last one you used.",
+    EXCEL_OR_CSV,
     "Pay from: the company bank account that pays each invoice, from GL accounts & tax → Bank accounts.",
 ]
+# With JD Edwards (B-2602): what What's new says instead of an item that is not so there.
+JDE_WHATS_NEW = {
+    EXCEL_OR_CSV: "Approved invoices go on a keying sheet (Excel) to key into JD Edwards, or in a batch file."
+}
+
+
+def whats_new(jde: bool = False) -> list[str]:
+    """What's new as Help lists it: with JD Edwards (``jde``), the keying sheet's item instead of Excel or CSV."""
+    return [JDE_WHATS_NEW.get(item, item) for item in WHATS_NEW] if jde else WHATS_NEW

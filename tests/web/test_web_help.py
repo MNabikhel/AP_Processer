@@ -134,3 +134,23 @@ def test_help_names_where_the_screens_show_park_and_jd_edwards_files(demo_templa
     store.set_setting(SCREENS, SIMPLE)
     assert group_of_jde_files() == "Setup"
     assert "under More" in help_text.CHART_IMPORT and "under Setup" in help_text.CHART_IMPORT
+
+
+def test_help_with_jd_edwards_keying_says_what_the_pilot_guide_and_the_menu_say(chart_company, chart_company_client):
+    """B-2602: in the Simple screens keying to JD Edwards, Getting started said to pick a GL account for GST, HST and
+    QST, to use "Learning & accuracy" and to export "as an Excel workbook or a CSV file", and What's new said "Exports
+    are Excel or CSV for the pilot" and named "the Invoice directory": none of it so there (docs/PROTOTYPE.md, the
+    menu). Without JD Edwards, Help says what it said."""
+    from ap_coder.web.core import SCREENS, SIMPLE
+
+    chart_company.store.set_setting(SCREENS, SIMPLE)
+    plain = html.unescape(page(chart_company_client))
+    for gone in ("pick a GL account for GST, HST and QST", "Learning & accuracy", "Excel workbook or a CSV file",
+                 "Exports are Excel or CSV", "Invoice directory"):  # fmt: skip
+        assert gone not in plain, gone
+    assert "keying sheet" in plain and "JD Edwards files" in plain and "JD Edwards posts it itself" in plain
+    assert "Find an invoice: every invoice in one table" in plain and "(What was learned → Lessons)" in plain
+    other = create_app(Settings(), Store(chart_company.store.path.parent / "x.db"))
+    plain = html.unescape(page(TestClient(other, base_url="http://localhost")))
+    assert "pick a GL account for GST, HST and QST" in plain and "Exports are Excel or CSV" in plain
+    assert "Learning & accuracy" in plain

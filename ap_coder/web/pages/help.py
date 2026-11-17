@@ -21,14 +21,26 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from ap_coder.core import paths
+from ap_coder.erp import jde_settings
 from ap_coder.ops import service
-from ap_coder.ops.help import AREAS, CHECKS, CLOUD_CHECKS, ROUTINE, TO_DO, WHATS_NEW, CheckHelp, faq, quick_start
+from ap_coder.ops.doctor import taxes_jde_posts
+from ap_coder.ops.help import AREAS, CHECKS, CLOUD_CHECKS, ROUTINE, TO_DO, CheckHelp, faq, quick_start, whats_new
 from ap_coder.ops.offline import internet_allowed, setup_contact
 from ap_coder.ops.service import log_path as service_log
 from ap_coder.web import minimd
 from ap_coder.web.access import is_admin
-from ap_coder.web.core import can, data_dir, developer_tools, get_store, page_router, render, server_mode, short_path
-from ap_coder.web.pages import BY_KEY
+from ap_coder.web.core import (
+    can,
+    data_dir,
+    developer_tools,
+    get_store,
+    page_router,
+    render,
+    server_mode,
+    short_path,
+    simple_screens,
+)
+from ap_coder.web.pages import BY_KEY, SIMPLE_MAIN
 from ap_coder.web.pages.settings_reading import azure_check_on, how_it_reads
 
 router = page_router()  # each plain handler: one connection a request
@@ -94,7 +106,7 @@ def matching_checks(query: str = "", area: str | None = None, cloud: bool = True
     return out
 
 
-def whats_new() -> Any:
+def changelog() -> Any:
     """docs/WHATS_NEW.md without its own title, as HTML ("" when the file isn't there)."""
     news = paths.PROJECT_DIR / "docs" / "WHATS_NEW.md"
     if not news.is_file():
@@ -220,6 +232,16 @@ def link(key: str) -> dict[str, str] | None:
     return {"path": page.path, "title": page.title} if page else None
 
 
+def menu_names(store: Any) -> Any:
+    """What puts each page's name in Help's words as the menu shows it: in Simple screens, "Invoice directory" is
+    "Find an invoice", "Learning & accuracy" "What was learned" (``pages.SIMPLE_MAIN``, B-2602)."""
+    if not simple_screens(store):
+        return lambda text: text
+    names = {BY_KEY[key].title: title for key, title in SIMPLE_MAIN.items() if BY_KEY[key].title != title}
+    pattern = re.compile(r"\b(" + "|".join(re.escape(name) for name in names) + r")\b")
+    return lambda text: pattern.sub(lambda m: names[m.group(1)], text)
+
+
 @router.get("/help", response_class=HTMLResponse)
 def help_page(request: Request, q: str = "", area: str = "") -> HTMLResponse:
     store = get_store(request)
@@ -229,6 +251,11 @@ def help_page(request: Request, q: str = "", area: str = "") -> HTMLResponse:
     if server_mode(request):  # who to ask about the setup: an Admin; where it runs: the server (D-102)
         checks = [(code, replace(about, meaning=_on_the_server(about.meaning), action=_on_the_server(about.action)))
                   for code, about in checks]  # fmt: skip
+    named = menu_names(store)
+    jde = jde_settings.in_use(store)
+    checks = [
+        (code, replace(about, meaning=named(about.meaning), action=named(about.action))) for code, about in checks
+    ]
     data = data_dir(store)
     groups = [
         {"area": a, "title": title, "checks": [(code, about) for code, about in checks if about.area == a]}
@@ -238,18 +265,21 @@ def help_page(request: Request, q: str = "", area: str = "") -> HTMLResponse:
         request,
         "help.html",
         "help",
-        news=whats_new() if developer_tools(store) else "",
-        whats_new=WHATS_NEW,
-        quick_start=quick_start(server_mode(request)),
+        news=changelog() if developer_tools(store) else "",
+        whats_new=[named(item) for item in whats_new(jde)],
+        quick_start=[
+            (title, named(text), path)
+            for title, text, path in quick_start(server_mode(request), jde, bool(jde and taxes_jde_posts(store)))
+        ],
         how_it_reads=how_it_reads(server_mode(request)),
-        routine=[(when, [(task, link(key)) for task, key in tasks]) for when, tasks in ROUTINE],
+        routine=[(when, [(named(task), link(key)) for task, key in tasks]) for when, tasks in ROUTINE],
         area=area,
         q=q,
         checks=checks,
         groups=[g for g in groups if g["checks"]],
         open_groups=bool(q.strip() or area),
         check_total=len(matching_checks(cloud=cloud)),
-        faq=faq(server_mode(request)),
+        faq=[(named(question), named(answer)) for question, answer in faq(server_mode(request))],
         shortcuts=SHORTCUTS,
         where=[
             ("Database", short_path(store.path)),
