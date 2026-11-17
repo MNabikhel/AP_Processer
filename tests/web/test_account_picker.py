@@ -235,8 +235,8 @@ def test_the_remark_box_is_marked_suggested_until_visited_counts_and_is_never_cu
 
 def test_use_each_lines_first_offer_fills_the_empty_lines_in_one_change_undo_puts_back(browser, chart_company):
     """D5: an invoice of many lines took one click a line to take its offered account. "Use each line's first offer"
-    fills every line whose box is empty with the first account offered under it; a line with an account keeps it;
-    Undo puts the boxes back as they were."""
+    fills every line whose box is empty with the first account offered under it, each saying so (not "picked by a
+    person"); a line with an account keeps it; Undo puts the boxes back as they were."""
     invoice_id = chart_company.invoices["four_lines"][1]
     lines = chart_company.store.get_invoice(invoice_id)["ai_output"]["line_items"]
     page, errors = _review(browser, chart_company, "four_lines")
@@ -249,6 +249,9 @@ def test_use_each_lines_first_offer_fills_the_empty_lines_in_one_change_undo_put
     assert filled == [lines[0]["candidates"][0]["account"], kept, lines[2]["candidates"][0]["account"],
                       lines[3]["candidates"][0]["account"]]  # fmt: skip
     assert "3 lines took the first account offered." in page.inner_text("body")
+    cap = '[data-grid="lines"] [data-row]:nth-child({}) .c-cap'
+    wait_until(page, lambda: "first offer, taken with one click" in page.inner_text(cap.format(1)))
+    assert "picked by a person" in page.inner_text(cap.format(2))  # (chosen by hand among the offers)
     page.keyboard.press("Control+z")
     wait_until(page, lambda: page.input_value(box.format(1)) == "")
     assert [page.input_value(box.format(n)) for n in range(1, 5)] == ["", kept, "", ""]

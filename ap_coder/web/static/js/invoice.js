@@ -402,7 +402,16 @@ document.addEventListener("click", (e) => {
   if (more) openFor(rowOf(more), more);
 });
 // "Use each line's first offer" (D5): every line whose Account box is empty takes the first account offered under it,
-// in one change Undo puts back; a line with an account, or words typed, keeps them.
+// in one change Undo puts back; a line with an account, or words typed, keeps them. Its reason says so, in place of
+// why it was left for a person: what decided it is then the offer taken with one click, not a person's pick.
+const FIRST_OFFER = "First offer, taken with one click."; // coding/review.py FIRST_OFFER
+const LEFT_FOR_A_PERSON = /^[\s\S]*?: pick the account\./; // coding/review.py _LEFT
+function saidFirstOffer(row) {
+  const reason = row.querySelector('input[name="line_reason"]');
+  if (!reason) return;
+  const was = reason.value.trim();
+  reason.value = LEFT_FOR_A_PERSON.test(was) ? was.replace(LEFT_FOR_A_PERSON, FIRST_OFFER) : `${FIRST_OFFER} ${was}`.trim();
+}
 document.addEventListener("click", (e) => {
   if (!e.target.closest?.("[data-first-offers]")) return;
   const rows = gridRows().filter((row) => !accountBox(row)?.value.trim() && row.querySelector("[data-use-account]"));
@@ -412,7 +421,10 @@ document.addEventListener("click", (e) => {
   }
   const said = rows.length === 1 ? `${lineName(rows[0])} took` : `${rows.length} lines took`;
   undoable(`${said} the first account offered.`, () => {
-    for (const row of rows) setAccount(row, row.querySelector("[data-use-account]").dataset.useAccount);
+    for (const row of rows) {
+      saidFirstOffer(row);
+      setAccount(row, row.querySelector("[data-use-account]").dataset.useAccount);
+    }
   });
 });
 

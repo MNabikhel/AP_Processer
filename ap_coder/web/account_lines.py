@@ -16,7 +16,7 @@ from typing import Any
 
 from ap_coder.ai.supplier_prior import prior_for
 from ap_coder.coding.remark import CLEARED, PERSON, REMARK_MOST, one_line
-from ap_coder.coding.review import codes_to_pick, is_blank
+from ap_coder.coding.review import codes_to_pick, first_offer_taken, is_blank
 from ap_coder.coding.taxmath import INSIDE, OWN_LINE, READ, InvoiceTaxes, LineTaxes
 from ap_coder.core import chart
 from ap_coder.core.memory import pair_lines
@@ -154,6 +154,8 @@ def why_words(decided_by: dict[str, Any] | None) -> str:
         return f"approved this way {lines} {'time' if lines == 1 else 'times'}" if lines else "approved this way before"
     if source == "rule":
         return f"the rule “{by['rule']}”" if by.get("rule") else "a coding rule"
+    if source == "person" and by.get("first_offer"):  # "Use each line's first offer" (D5)
+        return "first offer, taken with one click"
     return {"others": "other suppliers' lines like it went here", "words": "the words match the account's name",
             "model": "AP Coder's guess: check it", "person": "picked by a person"}.get(str(source), "")  # fmt: skip
 
@@ -194,7 +196,8 @@ def _view(reference: ReferenceData, row: dict[str, Any], before: dict[str, Any],
     view["name"], view["unit"] = pairs.description(cc, gl), pairs.name_of(cc)
     view["candidates"] = _candidates(pairs, before.get("candidates"))  # still in the box's list
     same = gl == _code(before.get("predicted_gl_code")) and cc == _code(before.get("predicted_cost_center"))
-    view["why"] = why_words(before.get("decided_by") if same else {"source": "person"})
+    view["why"] = why_words(before.get("decided_by") if same else
+                            {"source": "person", "first_offer": first_offer_taken(row, before)})  # fmt: skip
     if status in (chart.NOT_IN_CHART, chart.NOT_POSTABLE, chart.BU_INACTIVE):
         view.update(state=FIX, note=said or f"Account {view['text']} cannot be used: pick another", why="",
                     candidates=_offered(pairs, gl) if status != chart.NOT_POSTABLE else [])  # fmt: skip

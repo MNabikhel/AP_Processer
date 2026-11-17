@@ -487,14 +487,27 @@ def nothing_proposed(s_gl: str | None, s_cc: str | None) -> bool:
     return s_gl is not None and s_gl in ("", UNASSIGNED) and (s_cc or "") in ("", UNASSIGNED)
 
 
+def first_offer(suggestion: dict[str, Any] | None, line: dict[str, Any]) -> tuple[str, str] | None:
+    """The account offered first with a line the AI left blank, (GL code, business unit or ""), when the approved
+    ``line`` took it with "Use each line's first offer" (``decided_by``'s ``first_offer``, D5): what was proposed
+    for the line, as an approval learns it (a suggestion taken, not the reviewer's own coding). None otherwise."""
+    first = next(iter((suggestion or {}).get("candidates") or []), None)
+    if not first or not (line.get("decided_by") or {}).get("first_offer"):
+        return None
+    if not nothing_proposed(suggestion.get("predicted_gl_code"), suggestion.get("predicted_cost_center")):
+        return None
+    return str(first.get("code") or ""), "" if first.get("guess") else str(first.get("business_unit") or "")
+
+
 def coded_blanks(ai: dict[str, Any] | None, final: dict[str, Any] | None) -> int:
     """How many lines the AI left blank (``nothing_proposed``) that the reviewer gave a GL account: the reviewer's own
-    coding, an edit of its own ("line_coded"), not a correction (B-670)."""
+    coding, an edit of its own ("line_coded"), not a correction (B-670); one that took its first offer is not (D5)."""
     return sum(
         1
         for before, li in pair_lines((ai or {}).get("line_items") or [], (final or {}).get("line_items") or [])
         if before is not None and li.get("predicted_gl_code") not in (None, "", UNASSIGNED)
         and nothing_proposed(before.get("predicted_gl_code"), before.get("predicted_cost_center"))
+        and first_offer(before, li) is None
     )  # fmt: skip
 
 

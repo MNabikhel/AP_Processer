@@ -177,6 +177,17 @@ class ReviewPage:
         if boxes := self._cells(LINE_ACCOUNT):
             boxes[line - 1][1:] = [account, account]
 
+    def take_first_offer(self, line: int, account: str) -> None:
+        """Line ``line`` (the first is 1) given ``account`` as "Use each line's first offer" gives it (D5): the account
+        in its box, and its reason saying so in place of why it was left for a person (as invoice.js writes it)."""
+        from ap_coder.coding.review import FIRST_OFFER
+
+        self.set_account(line, account)
+        reason = self._cells("line_reason")[line - 1]
+        reason[1] = re.sub(r"^.*?: pick the account\.", FIRST_OFFER, reason[1] or "", count=1, flags=re.S)
+        if not reason[1].startswith(FIRST_OFFER):
+            reason[1] = f"{FIRST_OFFER} {reason[1]}".strip()
+
     @property
     def form(self) -> dict[str, list[str]]:
         """The form as the page posts it: every control's value under its name, in page order."""

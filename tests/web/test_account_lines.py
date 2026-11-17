@@ -149,6 +149,54 @@ def test_a_line_a_person_coded_no_longer_says_to_pick_the_account(chart_company,
     assert [li["reasoning_justification"] for li in stored] == ["Picked by a person."] * 4
 
 
+def test_lines_the_first_offer_filled_say_so_and_are_learned_as_suggestions_taken(chart_company, chart_company_client):
+    """D5: the lines "Use each line's first offer" filled said "picked by a person", and an approval learned them
+    as a person's own coding (weighed as a correction in the supplier's coding, 5 against 3). They say "first offer,
+    taken with one click" under the box and in their reason, and are learned as the suggestion taken; a line a person
+    picked among the offers is still theirs."""
+    from ap_coder.coding.review import FIRST_OFFER, PICKED
+
+    store = chart_company.store
+    page = _page(chart_company, chart_company_client, "four_lines")
+    proposed = store.get_invoice(page.id)["ai_output"]["line_items"]
+    for n in (1, 3, 4):
+        page.take_first_offer(n, proposed[n - 1]["candidates"][0]["account"])
+    page.set_account(2, proposed[1]["candidates"][-1]["account"])  # a person's own pick among the offers
+    caps = [row["cap"] for row in page.check()["lines"]]
+    assert ["first offer, taken with one click" in cap for cap in caps] == [True, False, True, True], caps
+    assert "picked by a person" in caps[1]
+    assert page.approve()["ok"]
+    stored = store.get_invoice(page.id)["final_output"]["line_items"]
+    assert [li["decided_by"].get("first_offer", False) for li in stored] == [True, False, True, True]
+    assert [li["reasoning_justification"].startswith(FIRST_OFFER) for li in stored] == [True, False, True, True]
+    assert stored[1]["reasoning_justification"].startswith(PICKED)
+    with store._conn() as conn:
+        learned = conn.execute("SELECT line_number, outcome, suggested_gl FROM feedback WHERE invoice_id = ? "
+                               "ORDER BY line_number", (page.id,)).fetchall()  # fmt: skip
+    assert [(r[0], r[1]) for r in learned] == [(1, "accepted"), (2, "coded"), (3, "accepted"), (4, "accepted")]
+    assert learned[0][2] == proposed[0]["candidates"][0]["code"]  # the offer taken, as what was suggested
+
+
+def test_a_first_offer_changed_or_emptied_after_the_click_is_no_longer_said_to_be_one():
+    from ap_coder.coding.review import FIRST_OFFER, PICKED, decided_on_screen
+
+    left = "This supplier's 3 lines posted in JD Edwards went to 3 accounts: 33% / 33% / 33%: pick the account."
+    offers = [{"account": f"0021022510.{gl}", "code": gl, "business_unit": "0021022510"} for gl in ("1450", "2480")]
+    proposed = [{"line_number": n, "description": f"item {n}", "predicted_gl_code": "UNASSIGNED",
+                 "predicted_cost_center": "UNASSIGNED", "reasoning_justification": left, "candidates": offers}
+                for n in (1, 2, 3)]  # fmt: skip
+    clicked = {"reasoning_justification": FIRST_OFFER}
+    lines = [{**proposed[0], **clicked, "predicted_gl_code": "1450", "predicted_cost_center": "0021022510"},
+             {**proposed[1], **clicked, "predicted_gl_code": "2480", "predicted_cost_center": "0021022510"},
+             {**proposed[2], **clicked}]  # fmt: skip
+    decided_on_screen(lines, proposed)
+    assert lines[0]["decided_by"] == {"source": "person", "candidate": 1, "first_offer": True}
+    assert (
+        lines[1]["decided_by"] == {"source": "person", "candidate": 2} and lines[1]["reasoning_justification"] == PICKED
+    )
+    assert lines[2]["decided_by"] == {} and lines[2]["reasoning_justification"] == left
+
+
 def test_a_reason_a_person_picked_keeps_what_the_line_says_of_its_tax():
     from ap_coder.coding.line_tax import GUESS_NOTE
     from ap_coder.coding.review import decided_on_screen
