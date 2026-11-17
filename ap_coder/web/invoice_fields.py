@@ -73,7 +73,7 @@ def code_flags(issues: list[Any]) -> dict[str, str]:
 
 
 def flag_errors(errors: list[Any], date_notes: dict[str, str]) -> list[str]:
-    """The invoice details whose note under them is an error: red there as in "Must be fixed", not amber (B-796)."""
+    """The invoice details whose note under them is an error: red there, as the errors to fix at the top (B-796)."""
     out = set(date_notes)
     for issue in errors:
         if issue.line_number:

@@ -259,7 +259,7 @@ def test_a_line_without_its_account_is_one_finding(chart_company, chart_company_
     page = _page(chart_company, chart_company_client, "four_lines")
     checks = page.check()["sections"]["checks"]
     assert "Lines 1, 2, 3, 4: no account yet: pick one" in checks
-    assert "Before you can approve (1)" in checks and "no GL account yet" not in checks.split("Details and what")[0]
+    assert "To fix before approving (1)" in checks and "no GL account yet" not in checks.split("Details and what")[0]
     assert 'data-code="CC_UNASSIGNED" hidden>' in checks  # the same line's second code: in the list, not shown
 
 

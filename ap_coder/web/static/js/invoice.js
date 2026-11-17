@@ -1214,7 +1214,7 @@ document.addEventListener("click", (e) => {
 });
 
 /** The invoice details a check is about: amber, with its note under it (the checks list them too); red when the
-    check is an error, as in "Must be fixed" (``errors``: those details, B-796). */
+    check is an error, as in "To fix before approving" (``errors``: those details, B-796). */
 function showFlags(flags, errors = []) {
   document.querySelectorAll(".inv-details [data-field]").forEach((field) => {
     const note = flags[field.dataset.field] || "";

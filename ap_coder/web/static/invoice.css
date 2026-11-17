@@ -133,6 +133,11 @@
 .rvw-status-group.warn .rvw-status-title {color: var(--rv-warning);}
 .rvw-status-key {margin-left: auto; font-weight: 400; font-size: 12px; color: var(--rv-muted);}
 .rvw-status li .t {display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
+/* D4: an item to fix says whether it must be fixed or may be approved anyway with a reason */
+.rvw-mark {display: inline-block; margin-left: 4px; padding: 0 7px; border-radius: 999px; font-size: 11.5px;
+  font-weight: 600; line-height: 18px; white-space: nowrap; color: var(--rv-muted); background: var(--lg-surface);
+  border: 1px solid var(--lg-hairline);}
+.rvw-mark.must {color: var(--rv-danger);}
 /* a line's missing account or cost center: a link-like button to its box (B-443) */
 .rvw-goto {border: 0; padding: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer;
   text-decoration: underline; text-decoration-color: currentColor; text-underline-offset: 2px;}
@@ -620,7 +625,7 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 /* The Shortcuts list inside its panel at 1366: what a key does wraps (B-795). */
 .rvw-nav .pop-body .apc-table td:last-child {white-space: normal; overflow-wrap: anywhere;}
 .rvw-nav details.pop > .pop-body {max-width: calc(100vw - 32px); overflow-x: hidden;}
-/* A detail whose check is an error: red, as under "Must be fixed" at the top; amber stays for what is to check. */
+/* A detail whose check is an error: red, as the errors to fix at the top; amber stays for what is to check. */
 .inv-details .is-flagged.is-error input, .inv-details .is-flagged.is-error select {border-color: var(--rv-danger);
   background: var(--rv-danger-weak);}
 .inv-details .is-flagged.is-error > .inv-flag {color: var(--rv-danger);}

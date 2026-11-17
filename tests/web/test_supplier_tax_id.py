@@ -158,7 +158,9 @@ def test_another_account_of_the_same_business_is_approved_as_it_is_and_the_keyin
     answer = check(client, invoice_id, data)
     checks = html.unescape(answer["sections"]["checks"])
     assert "another of its GST/HST accounts" in checks and OTHER_NUMBER in checks and SISTER in checks
-    assert "Must be fixed" not in checks and GST not in answer["header"]["flag_errors"]  # no error, nothing in red
+    assert (
+        "To fix before approving" not in checks and GST not in answer["header"]["flag_errors"]
+    )  # no error, nothing in red
     assert 'name="override"' not in answer["sections"]["bar"]  # no "Approve anyway", so no reason to give
     assert client.post(f"/review/{invoice_id}/approve", data={**data, "why_done": "1"}, headers=PAGE).json()["ok"]
     inv = listed.get_invoice(invoice_id)
