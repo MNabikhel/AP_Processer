@@ -783,7 +783,7 @@ def _check(cfg: AzureCheckSettings, store: Any, row: dict[str, Any], client: Any
                              reason=reason)  # fmt: skip
     outcome = CheckOutcome(iid, "done", result["summary"])
     outcome.differ, outcome.approved = _fold_in(store, inv, capture, rows, reason, now, expect=identity)
-    if not outcome.approved and digest and rows:
+    if not outcome.approved and digest and values:  # (also when nothing read here compared: Azure fills it in)
         outcome.read_again = _read_again(settings, store, iid, identity)
     store.log_event("azure_checked", iid, actor="AP Coder", detail={
         "reason": reason, "compared": len(rows), "agreed": agreed, "differ": outcome.differ, "pages": billed,
