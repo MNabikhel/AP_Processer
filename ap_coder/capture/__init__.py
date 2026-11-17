@@ -762,6 +762,15 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
                 fr.reasons.append(f"scanned at about {coarse:.0f} dpi, coarser than the scans its reading was measured "
                                   "on (150 dpi and up): a person checks it")  # fmt: skip
     credit = credit_titled(layout)
+    if credit:
+        # A credit's amounts are negative: one read positive agrees with the other readings in size, not in sign (a
+        # "CR" lost on a scan, a reader that missed the title). A person checks it (B-2705).
+        for name in TOTAL_FIELDS:
+            fr = fields.get(name)
+            positive = fr is not None and isinstance(fr.value, (int, float)) and fr.value > 0
+            if positive and fr.status not in (CHECK, MISSING):
+                fr.status, fr.confidence = CHECK, min(fr.confidence, 0.6)
+                fr.reasons.append("read as a positive amount on a credit note: check its sign on the page")
     return CaptureResult(fields=fields, line_items=items, checks=checks, layout_source=layout.source,
                          page_count=len(layout.pages) + layout.pages_left_out,
                          pages_left_out=layout.pages_left_out + layout.pages_unread_locally,

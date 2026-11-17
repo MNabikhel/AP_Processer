@@ -278,11 +278,17 @@ def _date_fit(cands: dict[str, list[Reading]]) -> int:
     return 2 if days in (0, 7, 10, 14, 15, 20, 21, 30, 45, 60, 90) else 1
 
 
-_PREPAYMENT = re.compile(r".*(pre\s*-?\s*payment|deposit|payments?\s*(?:applied|received)|holdback|retainage|retenue)")
+_PREPAYMENT = re.compile(
+    r".*(pre\s*-?\s*payment|deposit|payments?\s*(?:applied|received)|holdback|retainage|retenue|depot|acompte|"
+    r"(?:paiements?|versements?)\s*(?:recus?|appliques?)|credits?\s*(?:memo\s*|note\s*)?(?:applied|appliques?)|"
+    r"(?:less|moins)\s*:?\s*(?:la\s*|le\s*)?(?:(?:note|avis)\s*de\s*)?credit)"
+)
 
 _DISCOUNT = re.compile(
     r".*(discount|escompte|rabais|remise|abschlag|rabatt|abzgl|abzuglich|nachlass|pre\s*-?\s*payment|deposit|"
-    r"payments?\s*(?:applied|received)|holdback|retainage|retenue)"
+    r"payments?\s*(?:applied|received)|holdback|retainage|retenue|depot|acompte|"
+    r"(?:paiements?|versements?)\s*(?:recus?|appliques?)|credits?\s*(?:memo\s*|note\s*)?(?:applied|appliques?)|"
+    r"(?:less|moins)\s*:?\s*(?:la\s*|le\s*)?(?:(?:note|avis)\s*de\s*)?credit)"
 )
 
 _GLUED_TITLE = re.compile(

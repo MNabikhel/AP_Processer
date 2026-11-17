@@ -194,13 +194,16 @@ def _value_over_label(lines: list[Line], line: Line, hit: _LabelHit) -> Reading 
     return None
 
 
-def _beside_a_label(lines: list[Line], value: Line) -> bool:
+def _beside_a_label(lines: list[Line], value: Line, shaped: bool = False) -> bool:
     """``value`` printed right of a label on its row, that label's value: "Invoice date | 2026-11-05" over "Terms |
     Due in 30 days" is not the due date printed over its label "Due" (B-2537). A label on its own: not a name that
-    starts with a label's word ("Total Supply Ltd")."""
+    starts with a label's word ("Total Supply Ltd"). ``shaped``: a line shaped like a label counts too ("Customer
+    No:", no field's label)."""
     left = (other for other in lines if other is not value and other.box.page == value.box.page
             and other.box.x1 <= value.box.x0 + 0.002 and other.box.y0 < value.box.y1 and value.box.y0 < other.box.y1)  # fmt: skip
-    return any(value in _right_of(lines, other)[:1] and _bare_hits(other) for other in left)
+    return any(value in _right_of(lines, other)[:1]
+               and (_bare_hits(other) or shaped and _LABEL_SHAPE.search(plain(other.text).strip()))
+               for other in left)  # fmt: skip
 
 
 def _under_another_label(lines: list[Line], value: Line, label: Line) -> bool:
@@ -237,6 +240,13 @@ _BRACKETED_REG = re.compile(r"\s*[(（\[]\s*\d{9,10}\s*(?:RT|TQ)\s*\d{4}\s*[)）
 
 def _registration_line(line: Line, hit: _LabelHit) -> bool:
     after = line.text[hit.end :]
+    if hit.field == "other_charges":
+        from .entry import _PREPAYMENT
+
+        if _PREPAYMENT.match(plain(hit.label_text)):
+            # "Less credit memo #55", "Deposit no 1234": the deposit's or credit's own number, not a registration's;
+            # only a GST/HST or QST number's line is (B-2707).
+            return bool(find_gst_numbers(after) or find_qst_numbers(after))
     return bool(
         _REG_WORDS.search(plain(after[:12]))
         or find_gst_numbers(after)
@@ -494,6 +504,8 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line], under: bool = Fals
                     break
                 if under and _over_its_own_label(lines, other):
                     break  # the value of the label printed under it, not this one's
+                if _beside_a_label(lines, other, shaped=True):
+                    break  # "Customer No: | C-10022" under the title: that label's value, not this one's (B-2701)
                 got = _value_reading(field, other, 0, 0.85 * hit.strength, "label-below")
                 if got and _after_another_label(other, got):
                     got = None

@@ -29,9 +29,12 @@ def amounts_equal(a: float | None, b: float | None, tol: float = 0.005) -> bool:
 
 
 def looks_like_money(text: str) -> bool:
-    """A token printed like money: two decimals (".65" too), or a currency sign."""
+    """A token printed like money: two decimals (".65" too), or a currency sign. A credit's "CR" (or a debit's "DR") run
+    into the cents by OCR ("10,118.53CR") is still money (B-2705)."""
     s = text.strip()
-    return bool(re.search(r"\d[.,]\d{2}\b|(?<![\w.,])\.\d{2}\b", s)) or bool(re.search(r"[$€£]\s*\.?\d", s))
+    cents = r"(?:\b|(?=[CD][Rr]\b|cr\b|dr\b))"
+    two_decimals = re.search(rf"\d[.,]\d{{2}}{cents}|(?<![\w.,])\.\d{{2}}{cents}", s)
+    return bool(two_decimals) or bool(re.search(r"[$€£]\s*\.?\d", s))
 
 
 # ---------------------------------------------------------------- dates
@@ -195,6 +198,12 @@ _PAYMENT_NOTE = re.compile(r"ACCEPT|PAYMENTS?\s+(?:IN|EN)\b|PAIEMENTS?\s+EN\b|RE
 # A code printed on an amount: "CAD 1,050.00", "$1,050.00 USD", "TOTALCAD1,050.00".
 _CODE_ON_AMOUNT = re.compile(_CODE + r"\s*\$?\s*\d|\d[.,]\d{2}\s*\$?\s*" + _CODE)
 _EXCHANGE = re.compile(r"EXCHANGE|\bRATE\b|\bTAUX\b|CONVERSION|[EÉ]QUIVALEN|=")
+# A total given in another currency for reference only: "Total in USD: 98.21 (for reference only)", "à titre indicatif"
+# (B-2708). Its code is not the invoice's.
+_FOR_REFERENCE = re.compile(
+    r"FOR\s+(?:REFERENCE|INFORMATION)|(?:REFERENCE|INFORMATION)\s+ONLY|[AÀ]\s+TITRE\s+(?:INDICATIF|D['’]INFORMATION)|"
+    r"POUR\s+INFORMATION"
+)
 # The label of the invoice's total, printed with its code ("Total USD", "Amount Due (CAD)", "Montant dû CAD"): the
 # code is on the total's amount, though the layout may read the label and the amount in two columns.
 _TOTAL_LABEL = re.compile(
@@ -241,7 +250,7 @@ def currency_evidence(text: str) -> tuple[str, float] | None:
     }
     if len(stated) == 1:
         return stated.pop(), 0.8
-    lines = [ln for ln in s.splitlines() if not _EXCHANGE.search(ln)]
+    lines = [ln for ln in s.splitlines() if not _EXCHANGE.search(ln) and not _FOR_REFERENCE.search(ln)]
     on_total = {m.group(1) for ln in lines if _TOTAL_LABEL.search(ln) and not _PAYMENT_NOTE.search(ln)
                 for m in re.finditer(_CODE, ln)}  # fmt: skip
     if len(on_total) == 1:
@@ -254,7 +263,9 @@ def currency_evidence(text: str) -> tuple[str, float] | None:
     rest = "\n".join(ln for ln in s.splitlines() if not _PAYMENT_NOTE.search(ln))
     codes = _codes_in_order(rest)
     if codes:
-        return codes[0], 0.8 if len(codes) == 1 else 0.5
+        # Printed only on a total given for reference: a guess, not as sure.
+        own = codes[0] in _codes_in_order("\n".join(ln for ln in rest.splitlines() if not _FOR_REFERENCE.search(ln)))
+        return codes[0], 0.8 if len(codes) == 1 and own else 0.5
     codes = _codes_in_order(s)
     if codes:
         return codes[0], 0.5
