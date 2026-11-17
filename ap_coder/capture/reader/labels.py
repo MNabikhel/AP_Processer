@@ -76,6 +76,9 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (r"(?:less\s*:?\s*)?(?:posted\s*)?pre\s*-?\s*payments?(?:\s*(?:applied|received|posted))?|"
          r"(?:less\s*:?\s*)?deposits?\s*(?:applied|received|paid)|less\s*:?\s*deposits?|"
          r"less\s*:?\s*payments?\s*(?:applied|received)", 0.9),
+        # The same in French: "Dépôt reçu", "Moins acompte", "Acompte versé", "Moins paiement reçu" (B-2703).
+        (r"(?:moins\s*:?\s*)?(?:depots?|acomptes?)\s*(?:recus?|verses?|appliques?|payes?)|moins\s*:?\s*(?:depots?|acomptes?)|"
+         r"moins\s*:?\s*(?:paiements?|versements?)\s*(?:recus?|appliques?)", 0.9),
         # Held back until the work is done: "Less 10% holdback", "Holdback 10%", "Retenue 10 %", "Less retainage 10%".
         (r"(?:less\s*:?\s*)?(?:\(?\d{1,2}(?:[.,]\d{1,2})?\s*%\)?\s*)?(?:holdback|retainage|retenue)"
          r"(?:\s*\(?\d{1,2}(?:[.,]\d{1,2})?\s*%\)?)?", 0.9),

@@ -617,6 +617,22 @@ def test_a_deposit_or_holdback_under_a_printed_total_holds_the_total_for_a_perso
     assert held["grand_total"].status == VERIFIED
 
 
+def test_a_french_deposit_under_a_printed_total_holds_the_total_for_a_person_to_check(tmp_path):
+    """B-2703: "Total 1 149,75 | Dépôt reçu -500,00 | Solde à payer 649,75" had its total verified, the deposit never
+    said: a person, or an invoice approved without one, took 1 149,75 for what is owed, 500,00 more than the balance.
+    As "Deposit received" and "Less payment received" are, the French words for what was paid before are held."""
+    for i, label in enumerate(["Dépôt reçu", "Moins dépôt", "Acompte reçu", "Moins acompte", "Acompte versé",
+                               "Moins paiement reçu"]):  # fmt: skip
+        f = _totals(tmp_path, [("Sous-total", "1 000,00"), ("TPS", "50,00"), ("TVQ", "99,75"), ("Total", "1 149,75"),
+                               (label, "-500,00"), ("Solde à payer", "649,75")], name=f"fr{i}.pdf")  # fmt: skip
+        assert f["grand_total"].value == 1149.75, label
+        assert f["grand_total"].status == "check", label
+    head = [x for x in _NORTHWIND if x[2] not in ("Consulting services", "550.00")]
+    row = [(50, 258, "Acompte reçu sur BC 1234"), (500, 258, "550.00")]
+    f = _totals(tmp_path, _PLAIN, head=[*head, *row], name="li.pdf")
+    assert (f["grand_total"].value, f["grand_total"].status) == (621.5, VERIFIED)
+
+
 def test_a_line_item_named_for_a_deposit_or_holdback_or_a_holdback_of_nothing_leaves_the_total_as_it_is(tmp_path):
     """B-2492 held every total of a document printing a deposit or holdback with an amount: a line item's own words
     ("Holdback release - Phase 1 550.00") and a totals row of nothing ("Holdback 0.00") held ordinary invoices too."""
