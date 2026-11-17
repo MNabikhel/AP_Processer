@@ -5906,6 +5906,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     refuses a signed-in laptop folder (its D-211 doesn't know the setting): `--without-sign-in` at every start.
   - **Left out:** more than one account and a Users page on the laptop, a Settings switch, choosing another
     username than admin, admin / admin through `share` (its console still asks), the browser path behind `--proxy`.
+    Once a laptop has been shared with `share`, its data folder is a team's and signs in as a team's (`share`, or
+    the server): going back to the laptop's own sign-in is not offered (`users sign-in on` refuses it; laptop mode
+    again is `--without-sign-in`, with no sign-in). A laptop started with `--proxy` treats every request the proxy
+    passes on as this computer's: its Admin's sign-in (password and code) is reachable from wherever the proxy
+    is, though admin / admin is still refused there.
 - **D-244** · **Each Transaction Journal loaded keeps how its G/L dates were read: schema 28**
   (`journal_files.dates_read`, `core/store/migrations.py` `_v28_journal_dates`, `ops/journal_cmd.py`
   `_dated_otherwise`; B-2543; 13 Nov 2026).

@@ -154,6 +154,21 @@ def test_restore_on_a_new_server_says_the_backups_accounts_come_back(tmp_path, g
     assert "stay as they are now" in capsys.readouterr().out
 
 
+def test_restore_at_a_console_without_server_mode_keeps_a_teams_accounts(tmp_path, ground_truth, capsys, monkeypatch):
+    """A team's data folder (started with ``serve --server``, so its sign-in setting says team) restored from a console
+    whose environment has no AP_SERVER_MODE and no server.json beside it: the backup's accounts came back, one turned
+    off since on again (D-101)."""
+    monkeypatch.delenv("AP_SERVER_MODE", raising=False)
+    store, _data_folder = _data(tmp_path, ground_truth)
+    store.set_setting("sign_in", "team")
+    store.add_user("boss", "correct horse battery staple 42", role="admin")
+    gone = store.add_user("ann", "correct horse battery staple 42")
+    name = store.backup_now().name
+    store.deactivate_user(gone)
+    assert cli.main(["--db", str(store.path), "backup", "restore", name, "--yes"]) == 0
+    assert not store.user(gone)["active"] and store.get_setting("sign_in") == "team"
+
+
 def test_check_reads_every_file_and_says_what_is_missing_or_damaged(tmp_path, ground_truth, capsys):
     store, data = _data(tmp_path, ground_truth)
     made = store.backup_now("manual")

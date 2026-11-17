@@ -54,6 +54,7 @@ from typing import Any
 
 from .. import authenticator
 from ..permissions import ADMIN, APPROVER, CLERK, MANAGER, READONLY, ROLE_LABELS, ROLES, permissions_of  # noqa: F401
+from . import peek
 from ._base import _now
 from .dialect import begin_write, json_get
 
@@ -311,15 +312,7 @@ def sign_in_accounts(db: Path) -> int:
     be read. Asked before a laptop-mode start opens it (D-211): no Store is opened on it (that would migrate it), and
     one closed cleanly (no write-ahead log) is read as a file that does not change, so that no ``-wal`` file is left
     beside it (the update reads that file's time as the database's last use: ``scripts/upgrade.py``)."""
-    how = "mode=ro" if db.with_name(db.name + "-wal").exists() else "mode=ro&immutable=1"  # (ro: none made, B-2317)
-    try:
-        conn = sqlite3.connect(f"{db.resolve().as_uri()}?{how}", uri=True, timeout=5)
-        try:
-            return int(conn.execute("SELECT COUNT(*) FROM users").fetchone()[0])
-        finally:
-            conn.close()
-    except (sqlite3.Error, OSError, ValueError):
-        return 0
+    return peek.accounts(db)  # (read only, no -wal file made: B-2317; on a network path too: B-2569)
 
 
 def add_columns(conn: Any) -> None:

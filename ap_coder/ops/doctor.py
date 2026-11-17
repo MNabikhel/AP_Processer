@@ -363,6 +363,8 @@ def store_checks(store: Any, server: bool) -> list[Check]:
     from ..erp.hub.run import FOLDER, HubConfig, last_run
 
     checks: list[Check] = []
+    if not server and store.get_setting("sign_in") == "laptop":  # (core/store/sign_in.py's words, D-243)
+        checks.append(_laptop_sign_in(store))
     if server:
         checks.append(_server_accounts(store))
         from .health import store_rows
@@ -469,6 +471,27 @@ def _server_accounts(store: Any) -> Check:
                      f"{', '.join(u['username'] for u in admins)} has expired (it lasts 3 days): python -m ap_coder "
                      f"users reset {name}")  # fmt: skip
     return Check("server accounts", PASS, f"{len(users)} account(s), {len(admins)} active Admin(s)")
+
+
+def _laptop_sign_in(store: Any) -> Check:
+    """Whether a laptop's Admin can still sign in (D-243, B-2571), as ``_server_accounts`` asks of the server: the key
+    that opens the authenticator codes, once the app is set up, and a temporary password not past its 3 days. The way
+    back is the console's ``users reset-2fa`` (a temporary password, the app set up again)."""
+    from ..core import authenticator
+
+    admins = [u for u in store.list_users() if u["role"] == "admin" and u["active"]]
+    if not admins:
+        return Check("laptop sign-in", PASS, "on; no account yet: the first sign-in is admin / admin in a browser on "
+                     "this computer")  # fmt: skip
+    name = admins[0]["username"]
+    fix = f"python -m ap_coder users reset-2fa {name} (a temporary password, the app set up again)"
+    if all(u["totp_on"] for u in admins) and authenticator.load_key(store.path.parent) is None:
+        return Check("laptop sign-in", FAIL, f"the sign-in codes' key ({authenticator.KEY_FILE} in the data folder) is "
+                     f"missing or damaged: {name} can't sign in. Put it back from a backup, or {fix}")  # fmt: skip
+    if all(u["must_change"] and store._temporary_expired(u) for u in admins):
+        return Check("laptop sign-in", FAIL, f"the temporary password of {name} has expired (it lasts 3 days): "
+                     f"{fix}")  # fmt: skip
+    return Check("laptop sign-in", PASS, f"on, for {name}")
 
 
 def _provider_detail(provider: str) -> str:

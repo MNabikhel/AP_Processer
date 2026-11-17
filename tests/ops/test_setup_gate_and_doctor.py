@@ -305,3 +305,36 @@ def test_the_web_setup_report_says_what_the_doctor_says_of_the_taxes_jde_posts(t
         return [re.split(r"\s{2,}", line, maxsplit=1)[0].split("] ", 1)[1] for line in lines if line.startswith("[")]
 
     assert areas(report.splitlines()) == areas(doctor)  # the same checks, in the same order
+
+
+def test_the_doctor_says_when_a_laptops_admin_can_no_longer_sign_in(store, monkeypatch):
+    """B-2571: on a laptop that signs in (D-243), the doctor said nothing of its Admin's account: the codes' key gone
+    (every code refused) or the temporary password past its 3 days (after `users reset-2fa`) passed unseen, as the
+    server's did before B-2525."""
+    import time
+
+    from ap_coder.core import authenticator
+    from ap_coder.core.store import users
+    from ap_coder.core.store.sign_in import LAPTOP, SIGN_IN
+    from ap_coder.ops.doctor import FAIL, PASS, store_checks
+    from tests.webclient import enrol
+
+    def line():
+        return next(c for c in store_checks(store, server=False) if c.area == "laptop sign-in")
+
+    store.set_setting(SIGN_IN, LAPTOP)
+    assert line().status == PASS and "admin / admin" in line().detail  # no account yet: the first sign-in
+    pat = store.add_user("pat", "a long admin password 1", role="admin", must_change=False)
+    enrol(store, pat)
+    assert line().status == PASS
+    (store.path.parent / authenticator.KEY_FILE).unlink()
+    said = line()
+    assert said.status == FAIL and authenticator.KEY_FILE in said.detail and "users reset-2fa pat" in said.detail
+    store.reset_authenticator(pat, actor="the server console")  # a temporary password, the app to set up again
+    with store._conn() as conn:
+        conn.execute("UPDATE users SET last_login = '2026-11-01T09:00:00' WHERE id = ?", (pat,))
+    assert line().status == PASS
+    later = time.time() + users.TEMPORARY_SECONDS + 60
+    monkeypatch.setattr(users.time, "time", lambda: later)
+    said = line()
+    assert said.status == FAIL and "users reset-2fa pat" in said.detail and "3 days" in said.detail, said
