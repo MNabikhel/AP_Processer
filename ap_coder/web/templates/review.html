@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "_second_approval.html" as second_ui %}
 {% block subtitle %}{{ lead }}{% endblock %}
-{% block aside %}{% if can("/process", "GET") %}<a class="btn" href="/process"><span class="ms" aria-hidden="true">upload_file</span>Import invoices</a>{% endif %}{% endblock %}
+{% block aside %}{% if can("/process", "GET") %}<a class="btn" href="/process"><span class="ms" aria-hidden="true">upload_file</span>Add invoices</a>{% endif %}{% endblock %}
 {% block content %}
 {% include "_screens_card.html" %}
 {% if unnamed %}

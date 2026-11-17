@@ -176,7 +176,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         grid={**invoice_grid.grid(reference, draft, inv.get("ai_output") or {},
                           invoice_grid.vendor_accounts(store, draft.header.get("vendor_name") or ""), analysis),
               "tax_marks": analysis.live.get("tax_marks") or {}},
-        labels=invoice_form.FIELD_LABELS, provinces=invoice_grid.province_options(),
+        labels=invoice_form.JDE_LABELS if analysis.live.get("jde") else invoice_form.FIELD_LABELS,
+        provinces=invoice_grid.province_options(),
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else
         "None: a credit is not paid" if float(start.get("grand_total") or 0) < 0 else "YYYY-MM-DD",
         sent_back=_sent_back(events), poll_seconds=PAGE_READER_POLL_SECONDS,

@@ -72,9 +72,9 @@ def test_in_a_browser_each_role_logs_in_sees_what_it_may_and_logs_out(browser, s
     foot = page.locator(".rail-foot").inner_text()
     assert username.title() in foot and {"readonly": "Read-only"}.get(role, role.title()) in foot
     menu = _menu(page)
-    assert {"Review queue", "Invoice directory", "Exports", "Help"} <= menu
+    assert {"To review", "Find an invoice", "To key into JDE", "Help"} <= menu  # (JD Edwards: the server)
     assert ("Settings" in menu) == (role == "admin")
-    assert ("Import invoices" in menu) == (role != "readonly")
+    assert ("Add invoices" in menu) == (role != "readonly")
     assert ("GL accounts & tax" in menu) == (role != "readonly")
     bulk = page.locator("summary:has-text('Approve 2')")
     assert bulk.count() == (0 if role == "readonly" else 1)

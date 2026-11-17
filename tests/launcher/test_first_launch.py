@@ -525,7 +525,7 @@ def test_help_names_the_pages_by_the_names_the_menu_gives_them():
     from ap_coder.web.pages import PAGES
 
     titles = {p.title for p in PAGES}
-    assert "Import invoices" in titles and "Process invoices" not in titles
+    assert "Add invoices" in titles and "Process invoices" not in titles  # (Import invoices before D3)
     for question, answer in FAQ:
         for old in ("Process invoices", "Load sample setup"):  # former names of a page and a button
             assert old not in answer, (question, old)

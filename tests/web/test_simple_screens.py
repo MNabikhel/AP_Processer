@@ -21,7 +21,7 @@ from tests.browser import browser_on
 from tests.webclient import PAGE, add_clean, client_for, enrol, web_settings
 
 SIMPLE_MENU = ["To review", "Add invoices", "To key into JDE", "Find an invoice", "What was learned", "Rules",
-               "GL accounts & tax", "JD Edwards files", "Vendors", "Activity", "Settings", "Help"]  # fmt: skip
+               "GL accounts & tax", "JD Edwards files", "Suppliers", "Activity", "Settings", "Help"]  # fmt: skip
 SIMPLE_PATHS = ["/review", "/process", "/exports", "/search", "/learning", "/rules", "/accounts", "/jde-files",
                 "/vendors", "/activity", "/settings", "/help"]  # fmt: skip
 HIDDEN = ["/purchase-orders", "/statements", "/month-end", "/spend", "/insights", "/sales-tax", "/manager",
@@ -48,7 +48,7 @@ def _simple(store: Store) -> None:
 def test_a_database_that_never_chose_shows_everything(client, store):
     assert store.get_setting(core.SCREENS) == "" and not core.simple_screens(store)
     rail = _rail(client.get("/review").text)
-    assert 'id="nav-more"' in rail and 'id="nav-setup"' not in rail and "Review queue" in _labels(rail)
+    assert 'id="nav-more"' in rail and 'id="nav-setup"' not in rail and "To review" in _labels(rail)
     assert _tabs(store) == ["review", "reading", "automation", "data", "about", "hub"]
     assert SAYS not in client.get("/spend").text
 

@@ -98,7 +98,7 @@
       {% if meta %}
       <header class="apc-head apc-anim">
         <div>
-          {{ ui.breadcrumbs(["AP Coder", section]) }}
+          {{ ui.breadcrumbs(["AP Coder", section] if section else ["AP Coder"]) }}
           <h1 class="apc-title">{% block heading %}{{ title }}{% endblock %}</h1>
           <div class="apc-sub">{% block subtitle %}{{ meta.subtitle }}{% endblock %}</div>
         </div>

@@ -155,7 +155,7 @@
           <span class="inv-flag small" data-flag{% if "vendor_name" not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("vendor_name", "") }}</span></span>
           {% if edit %}
           <details class="pop inv-vendor-add" data-vendor-add>
-            <summary class="btn sm ghost"><span class="ms" aria-hidden="true">person_add</span>Add new vendor…</summary>
+            <summary class="btn sm ghost"><span class="ms" aria-hidden="true">person_add</span>Add new {{ "supplier" if live.jde else "vendor" }}…</summary>
             <div class="pop-body stack">
               <p class="small muted">A vendor not in the vendor list. AP Coder never approves its invoices on its own: each one is checked by a person, who approves it with “Approve anyway”, until the vendor is set up in JD Edwards and the vendor list is imported again.</p>
               <label class="field">Vendor name<input type="text" data-new="name" autocomplete="off"></label>

@@ -19,9 +19,10 @@ from ap_coder.web.pages import exports as exports_page
 from tests.browser import browser_on
 from tests.webclient import PAGE
 
-CORE = ["Review queue", "Import invoices", "Invoice directory", "Exports", "GL accounts & tax", "Settings", "Help"]
-MORE = ["Coding rules", "Manager confirmations", "Month-end", "Sales tax", "Vendor statements", "JD Edwards files",
-        "Vendors", "Purchase orders", "Learning & accuracy", "Spend", "Insights", "Activity"]  # fmt: skip
+# The Simple menu's names in the whole menu too (D3)
+CORE = ["To review", "Add invoices", "Find an invoice", "Exports", "GL accounts & tax", "Settings", "Help"]
+MORE = ["Rules", "Manager confirmations", "Month-end", "Sales tax", "Vendor statements", "JD Edwards files",
+        "Vendors", "Purchase orders", "What was learned", "Spend", "Insights", "Activity"]  # fmt: skip
 
 
 def _settings() -> Settings:
@@ -66,6 +67,30 @@ def test_the_more_fold_opens_by_itself_on_one_of_its_pages(client):
         rail = _rail(client.get(path).text)
         assert 'id="nav-more" open' in rail, path
         assert 'aria-current="page"' in rail.split('id="nav-more"', 1)[1].split("</details>", 1)[0], path
+
+
+def _crumbs(text: str) -> list[str]:
+    nav = text.split("<nav class='apc-crumbs'", 1)[1].split("</nav>", 1)[0]
+    return re.sub(r"<[^>]+>", "|", nav.split(">", 1)[1]).replace("&amp;", "&").replace("/", "").split("|")
+
+
+def test_the_breadcrumb_is_the_menu_group_and_with_jd_edwards_a_vendor_is_a_supplier(client, store):
+    """D3: the breadcrumbs said "Close & compliance", "Master data", "Analytics", groups the menu doesn't have; the
+    menu said "Vendors" where JD Edwards files said "Suppliers"."""
+    from ap_coder.web import core
+
+    crumbs = lambda path: [c for c in _crumbs(client.get(path).text) if c.strip()]  # noqa: E731
+    assert crumbs("/process") == crumbs("/settings") == ["AP Coder"]
+    assert crumbs("/month-end") == crumbs("/vendors") == ["AP Coder", "More"]
+    labels = lambda html: [x.replace("&amp;", "&") for x in re.findall(r'<span class="label">([^<]+)</span>', html)]  # noqa: E731
+    assert "Vendors" in labels(_rail(client.get("/review").text))
+    store.set_setting(core.SHOW_JDE, "1")
+    shown = labels(_rail(client.get("/review").text))
+    assert {"Suppliers", "Supplier statements", "To key into JDE"} <= set(shown) and "Vendors" not in shown
+    assert "<title>Suppliers · AP Coder</title>" in client.get("/vendors").text
+    store.set_setting(core.SCREENS, core.SIMPLE)
+    assert crumbs("/jde-files") == crumbs("/vendors") == ["AP Coder", "Setup"]
+    assert crumbs("/process") == ["AP Coder"]
 
 
 @pytest.fixture

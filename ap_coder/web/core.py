@@ -58,7 +58,7 @@ from ap_coder.ops import offline
 from ap_coder.web import identity
 from ap_coder.web.access import is_admin
 from ap_coder.web.jobs import Jobs
-from ap_coder.web.pages import BANNER_PAGES, BY_KEY, PAGES, PINNED, SIMPLE_KEYS, SIMPLE_MAIN, SIMPLE_SETUP
+from ap_coder.web.pages import BANNER_PAGES, BY_KEY, JDE_TITLES, PAGES, PINNED, SIMPLE_KEYS, SIMPLE_MAIN, SIMPLE_SETUP
 
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
@@ -834,24 +834,42 @@ def nav_counts(store: Store) -> dict[str, int]:
     return {"review": store.status_counts(settled=True).get(REVIEW, 0), "exports": store.ready_to_export_count()}
 
 
+def page_meta(store: Store, key: str) -> Any:
+    """Page ``key`` of ``pages.PAGES`` under its name in the menu: JD Edwards' words (``pages.JDE_TITLES``) with
+    JD Edwards shown, and in Simple screens, the menu of coding invoices to JD Edwards; None for a page not in the
+    menu."""
+    found = BY_KEY.get(key)
+    if found is not None and key in JDE_TITLES and (jde_shown(store) or simple_screens(store)):
+        return dataclasses.replace(found, title=JDE_TITLES[key])
+    return found
+
+
+def menu_group(store: Store, key: str) -> str:
+    """The menu's group page ``key`` is under, its header's breadcrumb: "Setup" in Simple screens, "More" in the
+    whole menu; "" for the everyday pages, Settings and Help (and a page left out of the Simple menu)."""
+    if simple_screens(store):
+        return "Setup" if key in SIMPLE_SETUP else ""
+    found = BY_KEY.get(key)
+    return "More" if found is not None and found.more else ""
+
+
 def rail(store: Store) -> dict[str, list[dict[str, Any]]]:
     """The rail's groups, each page with its count: the everyday pages (``main``), the pages folded under More
     (``more``) and Settings and Help, pinned at its foot (``pinned``). In Simple screens (``simple_screens``): the
-    everyday pages under their names there, the pages under "Setup" (``setup``) and Help, with no More."""
+    everyday pages, the pages under "Setup" (``setup``) and Help, with no More. Each page under its name in the menu
+    (``page_meta``)."""
     counts = nav_counts(store)
 
-    def items(pages: list[Any]) -> list[dict[str, Any]]:
-        return [{"page": p, "count": counts.get(p.key, 0)} for p in pages]
+    def items(keys: Any) -> list[dict[str, Any]]:
+        return [{"page": page_meta(store, key), "count": counts.get(key, 0)} for key in keys]
 
     if simple_screens(store):
-        named = [dataclasses.replace(BY_KEY[key], title=title) for key, title in SIMPLE_MAIN.items()]
-        return {"main": items(named), "more": [], "setup": items([BY_KEY[key] for key in SIMPLE_SETUP]),
-                "pinned": items([BY_KEY["help"]])}  # fmt: skip
+        return {"main": items(SIMPLE_MAIN), "more": [], "setup": items(SIMPLE_SETUP), "pinned": items(["help"])}
     return {
-        "main": items([p for p in PAGES if not p.more and p.key not in PINNED]),
-        "more": items([p for p in PAGES if p.more]),
+        "main": items([p.key for p in PAGES if not p.more and p.key not in PINNED]),
+        "more": items([p.key for p in PAGES if p.more]),
         "setup": [],
-        "pinned": items([p for p in PAGES if p.key in PINNED]),
+        "pinned": items([p.key for p in PAGES if p.key in PINNED]),
     }
 
 
@@ -924,7 +942,7 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
     reviewer, the messages left by the last action and, on Process and Review, OvisOCR2's warning
     (``reading_status``: the readers' state when the page has it already, ``reading_status_or_none``)."""
     store, settings = get_store(request), get_settings(request)
-    meta = BY_KEY.get(page)
+    meta = page_meta(store, page)
     banner, banner_tone = "", "warn"
     if page in BANNER_PAGES:
         status = reading_status_or_none(settings, store) if reading_status is _UNASKED else reading_status
@@ -937,15 +955,13 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
             banner = f"{banner} {SERVER_LM_STUDIO}."
     me = reviewer()
     simple = simple_screens(store)
-    if simple and meta and page in SIMPLE_MAIN:  # the page under the name the Simple menu gives it
-        meta = dataclasses.replace(meta, title=SIMPLE_MAIN[page])
     base = {
         "page": page,
         "meta": meta,
         "simple_screens": simple,
         "hidden_in_simple": simple and hidden_in_simple(store, page, context.get("tab")),  # opened by its address
         "title": meta.title if meta else context.get("title", "AP Coder"),
-        "section": meta.section if meta else "",
+        "section": menu_group(store, page),  # the header's breadcrumb
         "rail": _shown_rail(request, store),
         "reviewer": me,
         "approved_today": approved_today(store),
