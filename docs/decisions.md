@@ -6239,10 +6239,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     assistant licence" line say nothing. "Approve this invoice" alone is not enough (a vendor may print "Please
     approve this invoice"): it takes "without review", "automatically", "immediately".
   - **Hidden text:** the layout keeps no colour or size, so only a piece found in a PDF's text layer is looked up
-    again in the PDF's spans, and said "(printed in white)", "(in tiny type)" (under 4 pt) or "(not drawn: invisible on the page)". Text
-    outside the page box is cut off by the reading and steers nothing; a hidden layer's or an annotation's text is
-    read only when a reader reads it (the page reader sees what is drawn). Hidden text with no such words is left to
-    the text-layer check (`TEXT_LAYER_MATCHES_PAGE`).
+    again in the PDF's spans, and said "(printed in white)", "(in tiny type)" (under 4 pt) or "(not drawn: invisible
+    on the page)". Text outside the page box is cut off by the reading and steers nothing; a hidden layer's or an
+    annotation's text is read only when a reader reads it (the page reader sees what is drawn). Hidden text with no
+    such words is left to the text-layer check (`TEXT_LAYER_MATCHES_PAGE`).
   - **Effect:** a warning quoting the text, kept with the capture and the stored findings (`bulk.AFTER_PROCESSING`),
     always a person (`ALWAYS_A_PERSON`: never touchless, never in bulk), a fraud signal of the controls report, the
     queue's first sentence, and a box at the top of the review screen.
