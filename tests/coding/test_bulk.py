@@ -223,3 +223,31 @@ def test_the_queues_findings_are_decoded_once_for_all_the_invoices_that_have_the
     bulk.recheck_queue(store)  # their checks made against other settings: the queue's re-check with the stored ones
     checks, updating = bulk.queue_checks(store, ids, recheck=False)
     assert updating == 0 and found(checks) == _as_read(store, ids)
+
+
+def test_a_scan_hard_to_read_or_read_otherwise_by_azure_is_never_approved_in_bulk_after_a_change_of_settings(tmp_path):
+    """B-2723: once the settings changed (another checks stamp), bulk approval and the queue's Ready checked the coding
+    again without what was read (its OCR's word confidence, Azure's fields: the invoice's ``meta``), and left out the
+    stored findings the checks make from it: a scan 62% sure of its words (LOW_OCR_CONFIDENCE), or one whose total
+    Azure read otherwise (DI_AMOUNT_DIFFERS), was approved in bulk, though its review screen still said so."""
+    from ap_coder.core.store import Store, load_sample_setup
+    from tests.webclient import SAMPLES, add_clean, gt, known_vendors, web_settings
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    stems = ("northwind_ON_HST_NW-2026-0912", "chinook_AB_GST_CCO-26-10418", "harbourview_NS_HST_HPS-2026-0347")
+    known_vendors(store, *stems)
+    clean = add_clean(store, stems[0])
+    reads = [{"mean_word_confidence": 0.62}, {"invoice_fields": {"InvoiceTotal": {"value": {"amount": 9999.0}}}}]
+    checked = {"requires_review": False, "adjusted_confidence": 0.97}
+    ids = [store.add_invoice(SAMPLES / f"{stem}.pdf", gt(stem), checked, meta={"extraction": read})
+           for stem, read in zip(stems[1:], reads, strict=True)]  # fmt: skip
+    before = store.checks_stamp()
+    store.save_vendor(vendor_key("Another Supplier Ltd"), "Another Supplier Ltd", "on_hold")  # a change of settings
+    assert store.checks_stamp() != before
+    today = bulk.issues_today(store, [clean, *ids])
+    assert "LOW_OCR_CONFIDENCE" in {i["code"] for i in today[ids[0]]}
+    assert "DI_AMOUNT_DIFFERS" in {i["code"] for i in today[ids[1]]}
+    out = bulk.bulk_approve(store, store.reference_data(), web_settings(), [clean, *ids], "Pat")
+    assert out["approved"] == [clean] and [i for i, _ in out["skipped"]] == ids, out
+    assert {store.get_invoice(i)["status"] for i in ids} == {REVIEW}
