@@ -352,8 +352,10 @@ def _azure_words(capture, **changes):
     words = [{"content": text, "polygon": [1, y, 3, y, 3, y + 0.2, 1, y + 0.2], "confidence": 0.99}
              for text, y in (("Total", 9.0), ("113.00", 9.3))]  # fmt: skip
     raw = _raw_from(capture, **changes)
-    raw["pages"] = [{"pageNumber": 1, "width": 8.5, "height": 11, "unit": "inch", "words": []},
-                    {"pageNumber": 2, "width": 8.5, "height": 11, "unit": "inch", "words": words}]
+    raw["pages"] = [
+        {"pageNumber": 1, "width": 8.5, "height": 11, "unit": "inch", "words": []},
+        {"pageNumber": 2, "width": 8.5, "height": 11, "unit": "inch", "words": words},
+    ]
     return raw
 
 
