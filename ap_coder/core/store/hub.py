@@ -100,10 +100,12 @@ class HubMixin:
         return rows
 
     def hub_user_roles(self) -> dict[int, dict[str, str]]:
-        """{account id: {username, role}} (server mode's accounts; none on a laptop)."""
+        """{account id: {username, role}} (server mode's accounts; none on a laptop): a built-in role by its key (clerk,
+        admin...), one made on the Admin panel by its name (D-250: its key would mean nothing in the hub)."""
         with self._conn() as conn:
-            return {int(r["id"]): {"username": r["username"], "role": r["role"]}
-                    for r in conn.execute("SELECT id, username, role FROM users")}  # fmt: skip
+            return {int(r["id"]): {"username": r["username"], "role": r["name"] or r["role"]}
+                    for r in conn.execute("SELECT u.id, u.username, u.role, r.name FROM users u LEFT JOIN roles r ON "
+                                          "r.key = u.role")}  # fmt: skip
 
     def record_import_run(
         self, source: str, *, files: int, ok: int, failed: int, skipped: int = 0, started_at: str = "",

@@ -3,7 +3,7 @@
 * **A role made here** (``roles``): its key (``role-<n>``, kept in ``users.role``), its name (unique, not one of the
   built-in ones, case aside) and its permissions (a JSON list of ``permissions.PERMISSIONS``' keys). Made from scratch
   or from another role's permissions, changed, and deleted only while no account has it (its row kept, marked
-  ``deleted_at``, so its key is never given to another role: old events and the finance hub feed name it). A
+  ``deleted_at``, so its key is never given to another role: old events name it). A
   built-in role is never stored: its permissions are fixed in the code.
 * **Who manages the people** is any active account whose role has ``users`` (``_active_admins``): there is always one
   (``LAST_ADMIN``); an Admin never takes it from themselves (``OWN_USERS``), by their own role nor by changing the

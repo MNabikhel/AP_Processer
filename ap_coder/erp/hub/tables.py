@@ -189,7 +189,12 @@ APPROVALS = Table(
             STRING,
             "The account that approved (the username, on the company server; the computer login on a laptop).",
         ),
-        _c("approver_role", STRING, "The account's role on the company server (clerk, approver, admin...)."),
+        _c(
+            "approver_role",
+            STRING,
+            "The account's role on the company server: a built-in one by its key (readonly, clerk, approver, admin, "
+            "manager), one made on the Admin panel by its name.",
+        ),
         _c("approved_at", TIMESTAMP, "When."),
         _c("amount", MONEY, "The invoice total approved."),
         _c("currency", STRING, "Its currency."),

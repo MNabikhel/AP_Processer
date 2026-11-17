@@ -186,7 +186,7 @@ Key: `approval_id`. Changes: compared row by row with what was sent (a fingerpri
 | `step` | string | first or second. |
 | `approver_name` | string | The name on the approval. |
 | `approver_account` | string | The account that approved (the username, on the company server; the computer login on a laptop). |
-| `approver_role` | string | The account's role on the company server (clerk, approver, admin...). |
+| `approver_role` | string | The account's role on the company server: a built-in one by its key (readonly, clerk, approver, admin, manager), one made on the Admin panel by its name. |
 | `approved_at` | timestamp | When. |
 | `amount` | decimal(18,2) | The invoice total approved. |
 | `currency` | string | Its currency. |
