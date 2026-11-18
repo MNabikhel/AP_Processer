@@ -16,7 +16,10 @@ with its own reasons, up to ``rounds`` times and ``minutes`` in all (Settings â†
 
 Like the Azure check (azure_check.py), an invoice waits in line (``verifications``), is never approved without a
 person until the reviewer agrees (with the reviewer on), and the reviewer runs between the page reader's invoices, in
-the same background thread, so the two never load LM Studio at once. It never changes a value: a person decides.
+the same background thread, so the two never load LM Studio at once. It changes no value it only disputes: a person
+decides. An invoice with a problem (its amounts don't add up, its supplier is unsure) is first asked for corrections,
+applied only when the page prints them and the invoice's math confirms them (corrections.py, D-263); the invoice still
+goes to a person.
 An invoice read again with its proposal unchanged is not reviewed again by the same model (its review stands); a
 person can still ask for it.
 """
@@ -53,8 +56,10 @@ NAME = "AI reviewer"
 READER = "verifier"  # its name among the readers (a field's sources)
 AGREED, DISAGREES, UNSURE = "agreed", "disagrees", "unsure"
 DISAGREES_CODE, UNSURE_CODE = "VERIFIER_DISAGREES", "VERIFIER_UNSURE"
+CORRECTED_CODE = "VERIFIER_CORRECTED"  # what it corrected, the math confirming it (corrections.py, D-263)
+CORRECTED_BY = f"Corrected by the {NAME}"  # how the reason of a field it corrected starts
 WAITING_FOR_REVIEWER = f"waiting for the {NAME}: approved once it agrees"
-WARNING = "warning"
+WARNING, INFO = "warning", "info"
 
 # What it checks, with the names a clerk knows them by.
 FIELDS: dict[str, str] = {
@@ -472,14 +477,17 @@ def issues(result: dict[str, Any] | None, output: dict[str, Any] | None = None) 
     parts = [f"{FIELDS.get(f, f)}: it reads {v.get('on_page') or 'something else'} on the page"
              f"{' (' + v['reason'] + ')' if v.get('reason') else ''}" for f, v in fields.items()]  # fmt: skip
     parts += [f"line {n}: {reason or 'not as entered'}" for n, reason in lines.items()]
+    out: list[tuple[str, str, str]] = []
     if status == DISAGREES and parts:
-        return [(WARNING, "VERIFIER_DISAGREES", f"the {NAME} disagrees: " + "; ".join(parts)[:900])]
+        out.append((WARNING, "VERIFIER_DISAGREES", f"the {NAME} disagrees: " + "; ".join(parts)[:900]))
     if status == UNSURE:
         what = "; ".join(parts) if parts else "it could not confirm the invoice"
-        return [
-            (WARNING, "VERIFIER_UNSURE", f"the {NAME} is not sure ({result.get('why') or 'not sure'}): {what}"[:900])
-        ]
-    return []
+        why = result.get("why") or "not sure"
+        out.append((WARNING, "VERIFIER_UNSURE", f"the {NAME} is not sure ({why}): {what}"[:900]))
+    corrected = result.get("corrections") or {}
+    if corrected.get("applied"):  # what it corrected before it reviewed (D-263)
+        out.append((INFO, CORRECTED_CODE, str(corrected.get("message") or "")))
+    return out
 
 
 def mark_capture(capture: Any, result: dict[str, Any]) -> list[str]:
@@ -688,11 +696,20 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
         approved = _fold_in(store, inv, earlier, expect=identity)
         return Outcome(iid, str(earlier.get("status") or ""), "reviewed before: the same proposal, by the same model",
                        approved)  # fmt: skip
-    vendor = vendor_record(store, output)
     try:
         names = {a["code"]: a["description"] for a in store.list_accounts("gl_accounts")}
     except Exception:  # noqa: BLE001
         names = {}
+    budget, started = cfg.minutes * 60, clock()
+    from . import corrections
+
+    # An invoice with a problem: its corrections first, in at most half the minutes; the review is of what it is then.
+    fixed = corrections.correct(settings, store, inv, coder, images, rounds=cfg.rounds, identity=identity, model=model,
+                                seconds_left=lambda: budget / 2 - (clock() - started), names=names)  # fmt: skip
+    if fixed and fixed.get("applied"):
+        inv = store.get_invoice(iid) or inv
+        output = inv.get("final_output") or inv.get("ai_output") or output
+    vendor = vendor_record(store, output)
     shown = proposal(output, vendor, names)
     from . import lessons
 
@@ -707,13 +724,12 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
         shown["lessons"] = learned
     if count > len(images):  # a long invoice: it is told which pages it has
         shown["pages"] = {"given": [image.page_number for image in images], "count": count}
-    budget, started = cfg.minutes * 60, clock()
     ask = ask_model(coder, images, seconds_left=lambda: budget - (clock() - started), not_shown="pages" in shown)
     from . import local_llm
 
     breaker, began = local_llm.chat_failover(settings.llm), time.time()
     try:
-        found = review(ask, shown, rounds=cfg.rounds, seconds=budget, clock=clock)
+        found = review(ask, shown, rounds=cfg.rounds, seconds=budget - (clock() - started), clock=clock)
     except CodingError as exc:
         if not exc.temporary:
             raise
@@ -725,7 +741,8 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
     result = {**found.to_dict(), "fields": fields, "model": model, "proposal": digest(output),
               # each disputed line as it was reviewed: once the clerk changes it, it is no longer reported (B-1527)
               "lines_seen": {str(n): line_seen(output, n) for n in found.lines},
-              "at": dt.datetime.now().isoformat(timespec="seconds")}  # fmt: skip
+              "at": dt.datetime.now().isoformat(timespec="seconds"),
+              **({"corrections": fixed} if fixed else {})}  # fmt: skip
     if store.restoring() or store.row_identity(iid) != identity:
         return Outcome(iid, "skipped", "not applied: a backup was restored meanwhile")
     if not _end(store, row, "done", result=result, rounds=found.rounds, seconds=found.seconds):
@@ -766,7 +783,7 @@ def _fold_in(store: Any, inv: dict[str, Any], result: dict[str, Any], *, expect:
     from ..core.store import REVIEW
 
     iid = int(inv["id"])
-    found = issues(result)
+    found = [f for f in issues(result) if f[1] != CORRECTED_CODE]  # (that one is kept with the corrected coding)
     capture = None
     stored = store.get_capture(iid)
     if stored:
@@ -792,7 +809,9 @@ def _fold_in(store: Any, inv: dict[str, Any], result: dict[str, Any], *, expect:
 
     # Its model qualified, and the one that read the header in the page reader's pass (D-180).
     trusted = not chat_trust(store, str(result.get("model") or "")) and not header_untrusted(store, inv.get("meta"))
-    if folded and held and untouched and result.get("status") == AGREED and output and trusted:
+    # An invoice it corrected goes to a person, whatever it agreed with after (D-263).
+    corrected = bool((result.get("corrections") or {}).get("applied"))
+    if folded and held and untouched and result.get("status") == AGREED and output and trusted and not corrected:
         # Read again first: another check may still hold it, or a person may have approved it with corrections and
         # reopened it while the reviewer looked.
         if still_touchless(store, capture, output, invoice_id=iid):

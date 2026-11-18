@@ -19,6 +19,8 @@ guides, the bug log (BUGS.md), decisions (decisions.md) and the owner's to-do li
 - One invoice, start to end: `ai/pipeline.py` (`finalise_coding`); the schema: `core/schema.py`. Reading: the rule
   reader `capture/reader/` (parts: labels, values, spatial, patterns, totals, line_items, entry: `read_fields`); the
   vision model `ai/page_reader.py`; their merged result `ai/reading.py`; the plain text `capture/transcript.py`.
+  The AI reviewer (the chat model checks the whole invoice, in the background) `ai/verifier.py`; its corrections
+  the math confirms, for an invoice with a problem `ai/corrections.py` (D-263).
 - The database (`Store`): the package `core/store/`, one part per subject (list in its `__init__.py`): `invoices.py`
   (approvals `approve_invoice`/`final_approve`), `_base.py` (schema, `SCHEMA_VERSION`), `accounts.py` (`events`),
   backups `backups.py` + `backup_files.py` (D-143; command line `ops/backup_cmd.py`), people `users.py`, managers

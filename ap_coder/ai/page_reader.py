@@ -1143,6 +1143,18 @@ def _file_pages(data: bytes, name: str, settings: Settings) -> tuple[str, bool, 
     return hashlib.sha256(data).hexdigest(), pdf, min(_page_count(data, pdf), settings.page_reader.max_pages)
 
 
+def kept_pages(settings: Settings, path: str | Path) -> list[str]:
+    """The page reader's kept reading of every page of a file (a document reader's first, else the newest), [] when
+    none is kept: nothing is read (the AI reviewer's corrections look a value up in it, D-263)."""
+    try:
+        path = Path(path)
+        digest, _, total = _file_pages(path.read_bytes(), path.name, settings)
+    except Exception:  # noqa: BLE001 - a file gone or unreadable: nothing kept to look in
+        return []
+    reading = _cached_reading(digest, total, None)
+    return list(reading.pages) if reading is not None else []
+
+
 def _cached_reading(digest: str, total: int, model: str | None) -> PageReading | None:
     """Every page (1..``total``) read by ``model`` as kept on disk; with no model, a document reader's reading, else
     the newest one. None when no model has read every page."""

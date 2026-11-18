@@ -942,6 +942,15 @@ CHECKS: dict[str, CheckHelp] = {
         "Check the fields it names (or the whole invoice) against the page, then approve. Have it check again from "
         "the review screen if the chat model was busy or not loaded.",
     ),
+    "VERIFIER_CORRECTED": CheckHelp(
+        READING, "The AI reviewer corrected what was read",
+        "The invoice's amounts did not add up, or its supplier was not sure, so the AI reviewer was asked what is "
+        "wrong. It found values the reading missed (a charge such as freight, a tax, the total, the supplier) and "
+        "AP Coder put them in only because each amount is printed on the page and the invoice now adds up with "
+        "them (a supplier only one in your supplier list). The finding lists each one; the fields are marked "
+        "“AI reviewer”. It is never approved without a person because of a correction.",
+        "Check each correction against the page, fix any that is wrong (and code a line it added), then approve.",
+    ),
     "AZURE_DI_DISAGREES": CheckHelp(
         READING, "Azure reads it differently",
         "Your company's Azure Document Intelligence, the optional reader someone who may change settings "

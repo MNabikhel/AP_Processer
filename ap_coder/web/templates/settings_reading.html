@@ -106,7 +106,10 @@
   <h4>AI reviewer</h4>
   <p class="muted">The chat model in LM Studio checks every invoice against its pages, as an AP clerk would before
     posting it: the header, each line and its GL account, the taxes and the math. What it reads differently is marked
-    Check; when it is not sure, a person looks. With it on, no invoice is approved without a person until it agrees.</p>
+    Check; when it is not sure, a person looks. With it on, no invoice is approved without a person until it agrees.
+    When an invoice doesn't add up or its supplier is unsure, it is asked what is wrong: a value it finds (a freight
+    charge, a tax, the total, the supplier) is put in only if it is printed on the page and the invoice then adds
+    up, marked “AI reviewer”, and a person still approves the invoice.</p>
   {% if servers and servers.untrusted %}
   <div class="flash warn" role="status"><span class="ms" aria-hidden="true">pending</span>
     <div><b>The AI reviewer waits:</b> {{ servers.untrusted }}. Until then no invoice is approved without a person

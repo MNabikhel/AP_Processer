@@ -547,6 +547,7 @@ class LessonsMixin:
     def replace_proposal(
         self, invoice_id: int, output: dict[str, Any], report: Any, capture: Any, meta: dict[str, Any] | None = None,
         actor: str = "AP Coder", *, expect: tuple[Any, ...] | None = None, unless_in_use: bool = False,
+        by: str = "page reader",
     ) -> bool:  # fmt: skip
         """Replace what AP Coder proposes for an invoice nobody has worked on yet (the page reader read it after
         it was processed): the coding, its checks and confidence, the columns the queue shows, the capture
@@ -557,7 +558,8 @@ class LessonsMixin:
         reopened invoice keeps the reviewer's coding), and still ``expect`` (``row_identity``, taken before the page
         reader read it: a backup restored meanwhile may hold another invoice under the same number).
         ``unless_in_use``: nor while a person has it open or keeps a draft of it (checked in the same transaction:
-        Azure Document Intelligence's reading again, D-245). Otherwise nothing changes and it returns False."""
+        Azure Document Intelligence's reading again, D-245; the AI reviewer's corrections, D-263). Otherwise nothing
+        changes and it returns False. ``by``: who changed it, in its history."""
         if not output:
             return False
         validation = report.to_dict() if hasattr(report, "to_dict") else dict(report or {})
@@ -595,7 +597,7 @@ class LessonsMixin:
             if capture is not None:
                 self._save_capture(conn, invoice_id, capture)
             self._log(conn, "proposal_updated", invoice_id, actor, {
-                "by": "page reader", "changes": diff_coding(json.loads(row["ai_output"] or "null") or {}, output),
+                "by": by, "changes": diff_coding(json.loads(row["ai_output"] or "null") or {}, output),
                 "confidence": validation.get("adjusted_confidence"),
                 "requires_review": bool(validation.get("requires_review", True)),
             })  # fmt: skip
