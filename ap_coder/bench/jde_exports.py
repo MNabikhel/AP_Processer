@@ -23,7 +23,17 @@ layouts, with their quirks, are a real E1's:
   A voucher is its coding lines, then for each pay item JDE's own payable line and (when taxed) GST line;
 * ``voucher_headers_xlsx``: the supplier ledger inquiry grid, one row per pay item, 56 columns, a totals row last;
 * ``gl_distribution_xlsx``, ``pay_items_xlsx``, ``payment_history_xlsx``: one voucher's three grids (36, 44 and 24
-  columns), the first two ending with the blank row the screen keeps for the next entry.
+  columns), the first two ending with the blank row the screen keeps for the next entry;
+* ``open_po_lines_xlsx``: the open purchase order lines (F4311, as Open Order Inquiry's grid exports them), 16 columns,
+  one row per line: the order number, type and company, the line number with three decimals (12.000), the supplier by
+  its address number, the quantities and amounts as numbers, the unit of measure, the account string padded as the
+  chart's, the last and next status. ``open_po_lines(truth)``: a few orders of the books' suppliers that buy on POs,
+  each with its goods and a freight line (D-264). Not in ``write_all``: a test writes the lines it needs;
+* ``order_details_xlsx``: the same lines as Purchase Order Inquiry's "Work With Order Details" grid (P4310, W4310G)
+  exports them, 67 columns as the pilot tester's grid has them: the quantity and amount to receive, the unit, the unit
+  cost, the account string and its parts, the order's own number and line beside its "Original" and "Related" ones,
+  the line's tax, and "Client Code" and "Long Description" each twice (the second description another text); with
+  ``short``, the 27 the grid has by default: no quantity, unit cost (but a foreign order's) or unit of measure.
 
 Only the standard grid and report column names are kept; a company's own category-code labels are ``Cat Code NN``
 here. ``write_all(folder)`` writes every file and returns the truth they were written from; the same seed and size
@@ -41,6 +51,7 @@ import random
 import re
 import zipfile
 from collections.abc import Iterable
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -50,7 +61,7 @@ from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font
 
 from ..core.chart import join_account, split_account
-from .jde_company import OVERHEAD_CLASS, Account, BusinessUnit, Supplier, Truth, Voucher, build
+from .jde_company import OVERHEAD_CLASS, Account, BusinessUnit, Supplier, Truth, Voucher, build, money
 
 BLANK = " "  # an empty text field of a grid's export
 DATE_FORMAT, THOUSANDS = "MM/dd/yyyy", "#,##0.00"
@@ -147,6 +158,33 @@ PAYMENTS_HEADER = [
     "Harvest Period", "Harvest Suffix", "Contract ID", "Harvest ID",
 ]  # fmt: skip
 PAY_STATUS = {"P": "Paid in Full", "A": "Approved for Payment", "H": "Held/Pending Approval"}
+OPEN_PO_FILE = "open_po_lines.xlsx"
+OPEN_PO_HEADER = ["Order Number", "Or Ty", "Order Co", "Line Number", "Address Number", "Description",
+                  "Quantity Ordered", "Quantity Open", "Amount Open", "Unit Cost", "UM", "Account Number",
+                  "Last Status", "Next Status", "Cur Cod", "Quantity Received"]  # fmt: skip
+LINE_FORMAT, COST_FORMAT = "0.000", "#,##0.0000"
+# Work With Order Details (P4310, W4310G) as the pilot tester's grid exports it, its columns in its order (D-264);
+# ORDER_DETAILS_SHORT: the grid as it comes (no quantity, unit cost or unit of measure).
+ORDER_DETAILS_HEADER = [
+    "Order Number", "Quantity To Receive", "UM", "Amount To Receive", "Ship To", "Or Ty", "Order Co", "Change Order",
+    "Supplier Number", "Supplier Name", "Line Description", "Ln Ty", "2nd Item Number", "Account Number", "Sub Type",
+    "Subledger", "Cost Center", "Obj Acct", "Sub", "Commodity Code", "Base Curr", "Foreign Amount To Receive",
+    "Buyer Number", "Transaction Originator", "Curr", "Unit Cost", "Foreign Unit Cost", "Order Date", "Request Date",
+    "Original Promise", "Promised Delivery Date", "G/L Date", "Last Status", "Next Status", "Cancel Date",
+    "Original Ordered Amount", "Report Code 1", "Report Code 2", "Report Code 3", "Report Code 4",
+    "Original Ordered Foreign Amount", "3rd Item Number", "Short Item No", "Asset ID", "Cost Rule",
+    "Supplier Item Number", "Original Number", "Original Type", "Original Co", "Original Line", "Orig Sfx",
+    "Related Number", "Related Type", "Related Co", "Related Line", "Line Number", "Tax Y/N", "Tax Expl",
+    "Tax Rate/Area", "Receipt Date", "Plan", "Elevation", "Client Code", "Long Description", "Description Line 2",
+    "Client Code", "Long Description",
+]  # fmt: skip
+ORDER_DETAILS_SHORT = [
+    "Line Number", "Ln Ty", "Order Co", "Order Number", "Or Ty", "Supplier Number", "Supplier Name", "Long Description",
+    "Account Number", "Amount To Receive", "Subledger", "Sub Type", "Asset ID", "Order Date", "Last Status",
+    "Next Status", "Buyer Number", "Transaction Originator", "Description Line 2", "Client Code", "Base Curr",
+    "Foreign Amount To Receive", "Curr", "Foreign Unit Cost", "Original Ordered Foreign Amount", "Client Code",
+    "Long Description",
+]  # fmt: skip
 _WRITTEN = dt.datetime(2025, 1, 14, 9, 41, 7)  # every file's "written" time, so the same books give the same bytes
 
 
@@ -554,6 +592,154 @@ def example_vouchers(truth: Truth) -> dict[str, Voucher]:
         if match and label not in found:
             found[label] = match
     return found
+
+
+# --- open purchase order lines (D-264) ------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OpenPoLine:
+    """One open line of a purchase order, as JD Edwards' F4311 holds it."""
+
+    order: int
+    line: Decimal  # 12.000; a line split later 12.500
+    supplier: int  # the address number
+    description: str  # 30 characters at most
+    ordered: Decimal
+    unit_cost: Decimal
+    uom: str
+    account: str  # BusinessUnit.Object.Subsidiary
+    company: str
+    received: Decimal = Decimal(0)
+    vouchered: Decimal = Decimal(0)  # the quantity matched on vouchers already: what is open is the rest
+    order_type: str = "OP"
+    currency: str = "CAD"
+    supplier_name: str = ""
+    order_date: dt.date = dt.date(2026, 9, 1)
+    closed: bool = False  # JD Edwards closed it (next status 999)
+    tax_flag: str = "Y"  # its Tax Y/N, explanation code and rate/area as the PO has them
+    tax_code: str = "V"
+    tax_area: str = "CDNGST"
+
+    @property
+    def open_quantity(self) -> Decimal:
+        return self.ordered - self.vouchered
+
+
+def open_po_lines(truth: Truth, orders: int = 4) -> list[OpenPoLine]:
+    """``orders`` purchase orders of the books' suppliers that buy on POs (the first ones in use), each with two or
+    three lines of goods on the supplier's accounts and a freight line on the first, some received; the numbers
+    follow the books' last order numbers."""
+    rng = random.Random("jde-open-po")
+    buyers = [s for s in truth.suppliers if s.purchase_orders and s.kind == "trade" and s.currency == "CAD"
+              and s.accounts and s.hold_payment == "N"][:orders]  # fmt: skip
+    out = []
+    for n, supplier in enumerate(buyers):
+        order, line = 59000 + 17 * n, 1 + rng.randrange(3)
+        for k in range(2 + rng.randrange(2)):
+            account = truth.account(supplier.accounts[k % len(supplier.accounts)])
+            ordered, cost = Decimal(rng.choice((4, 10, 24, 50, 100))), money(rng.uniform(4, 240))
+            out.append(OpenPoLine(order, Decimal(line), supplier.number, account.description[:30].upper(), ordered,
+                                  cost, rng.choice(("EA", "BX", "CS")), account.string, truth.company.number,
+                                  received=ordered if rng.random() < 0.5 else Decimal(0)))  # fmt: skip
+            line += 1
+        out.append(OpenPoLine(order, Decimal(line), supplier.number, "FREIGHT", Decimal(1), money(rng.uniform(15, 90)),
+                              "EA", supplier.accounts[0], truth.company.number))  # fmt: skip
+    return out
+
+
+def open_po_lines_xlsx(lines: Iterable[OpenPoLine]) -> bytes:
+    """The open lines as Open Order Inquiry's grid exports them: the order company and status codes as text, the line
+    number a number with three decimals, a received line at status 400 (next: voucher match, 510)."""
+    rows = []
+    for li in lines:
+        received = li.received >= li.ordered and li.received > 0
+        rows.append([
+            li.order, li.order_type, li.company, (float(li.line), LINE_FORMAT), li.supplier, li.description,
+            _number(li.ordered), _number(li.open_quantity), _number(money(li.open_quantity * li.unit_cost)),
+            (float(li.unit_cost), COST_FORMAT), li.uom, _padded(li.account), "400" if received else "220",
+            "510" if received else "400", li.currency, _number(li.received),
+        ])  # fmt: skip
+    return _workbook(OPEN_PO_HEADER, rows)
+
+
+def order_details_xlsx(lines: Iterable[OpenPoLine], base: str = "CAD", rate: Decimal = Decimal("1.35"),
+                       short: bool = False) -> bytes:  # fmt: skip
+    """The open lines as Work With Order Details (P4310, W4310G) exports them, the columns of ``ORDER_DETAILS_HEADER``
+    (``short``: ``ORDER_DETAILS_SHORT``, no quantity, unit cost or unit of measure): what is left to receive, a line's
+    line type J (a G/L account line), its tax as the PO has it; an order in another currency than ``base`` with its
+    foreign columns filled and its base amounts at ``rate``, a domestic one with them zero. The order's own number
+    and line are not its "Original" or "Related" ones (another order's, here made up apart). Of a name the grid has
+    twice ("Client Code", "Long Description") the first is the line's, the second another text."""
+    rows = []
+    for li in lines:
+        foreign = li.currency != base
+
+        def at_base(amount: Decimal, foreign: bool = foreign) -> Any:
+            return _number(money(amount * rate) if foreign else amount)
+
+        def own(amount: Decimal, foreign: bool = foreign) -> Any:
+            return _number(amount if foreign else Decimal(0))
+
+        open_amount, ordered = money(li.open_quantity * li.unit_cost), money(li.ordered * li.unit_cost)
+        last, nxt = ("999", "999") if li.closed else ("400", "510") if li.received >= li.ordered > 0 else ("220", "400")
+        business_unit, code = split_account(li.account)
+        obj, _, sub = code.partition(".")
+        cost = money(li.unit_cost * rate) if foreign else li.unit_cost
+        cells: dict[str, Any] = {
+            "Order Number": li.order,
+            "Quantity To Receive": _number(li.open_quantity),
+            "UM": li.uom,
+            "Amount To Receive": at_base(open_amount),
+            "Ship To": li.company + "0",
+            "Or Ty": li.order_type,
+            "Order Co": li.company,
+            "Change Order": "000",
+            "Supplier Number": li.supplier,
+            "Supplier Name": _text(li.supplier_name),
+            "Line Description": li.description,
+            "Ln Ty": "J",
+            "Account Number": _padded(li.account),
+            "Cost Center": _unit(business_unit),
+            "Obj Acct": obj,
+            "Sub": _text(sub),
+            "Base Curr": base,
+            "Foreign Amount To Receive": own(open_amount),
+            "Buyer Number": 4400,
+            "Transaction Originator": "BUYER1",
+            "Curr": li.currency,
+            "Unit Cost": (float(cost), COST_FORMAT),
+            "Foreign Unit Cost": (float(li.unit_cost) if foreign else 0.0, COST_FORMAT),
+            "Order Date": _date(li.order_date),
+            "Request Date": _date(li.order_date),
+            "G/L Date": _date(li.order_date),
+            "Last Status": last,
+            "Next Status": nxt,
+            "Original Ordered Amount": at_base(ordered),
+            "Original Ordered Foreign Amount": own(ordered),
+            "Original Number": li.order + 9000,
+            "Original Type": "OR",
+            "Original Co": li.company,
+            "Original Line": (float(li.line) + 100, LINE_FORMAT),
+            "Related Number": li.order + 7000,
+            "Related Type": "OQ",
+            "Related Co": li.company,
+            "Related Line": (float(li.line) + 50, LINE_FORMAT),
+            "Line Number": (float(li.line), LINE_FORMAT),
+            "Tax Y/N": li.tax_flag,
+            "Tax Expl": li.tax_code,
+            "Tax Rate/Area": li.tax_area,
+            # (the short grid's description; beside a Line Description, the longer text)
+            "Long Description": li.description if short else f"{li.description} (full text)",
+        }
+        seen: set[str] = set()
+        row = []
+        for name in ORDER_DETAILS_SHORT if short else ORDER_DETAILS_HEADER:
+            again = name in seen and name == "Long Description"
+            row.append(f"ITEM {li.order}-{li.line}" if again else cells.get(name, BLANK))
+            seen.add(name)
+        rows.append(row)
+    return _workbook(ORDER_DETAILS_SHORT if short else ORDER_DETAILS_HEADER, rows)
 
 
 def write_all(folder: str | Path, seed: int = 1, size: str = "small", year: int = 2024) -> Truth:

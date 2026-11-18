@@ -212,6 +212,24 @@ def _v30_po_currency(store: Any, conn: sqlite3.Connection) -> None:
         dialect.add_column(conn, "purchase_orders", "currency", "TEXT NOT NULL DEFAULT ''")
 
 
+def _v31_po_jde(store: Any, conn: sqlite3.Connection) -> None:
+    """What JD Edwards' voucher match names of a purchase order (D-264): its order type, order company and supplier
+    number, each line's own line number ("12.000"), unit of measure, quantity open and tax (Tax Y/N, explanation code,
+    rate/area). One imported before has none
+    ('' and NULL): its voucher match is held until its lines are loaded again."""
+    for table, column, kind in (("purchase_orders", "order_type", "TEXT NOT NULL DEFAULT ''"),
+                                ("purchase_orders", "order_company", "TEXT NOT NULL DEFAULT ''"),
+                                ("purchase_orders", "supplier_number", "TEXT NOT NULL DEFAULT ''"),
+                                ("po_lines", "erp_line", "TEXT NOT NULL DEFAULT ''"),
+                                ("po_lines", "uom", "TEXT NOT NULL DEFAULT ''"),
+                                ("po_lines", "open_quantity", "REAL"),
+                                ("po_lines", "tax_flag", "TEXT NOT NULL DEFAULT ''"),
+                                ("po_lines", "tax_code", "TEXT NOT NULL DEFAULT ''"),
+                                ("po_lines", "tax_area", "TEXT NOT NULL DEFAULT ''")):  # fmt: skip
+        if column not in dialect.columns(conn, table):
+            dialect.add_column(conn, table, column, kind)
+
+
 # --- The steps whatever the version ---------------------------------------------------------------------------------
 
 
@@ -490,6 +508,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (EVERY_TIME, _rule_use_since),
     (28, _v28_journal_dates),
     (30, _v30_po_currency),
+    (31, _v31_po_jde),
 )
 MIGRATIONS: dict[int, Step] = {number: step for number, step in STEPS if number is not EVERY_TIME}
 

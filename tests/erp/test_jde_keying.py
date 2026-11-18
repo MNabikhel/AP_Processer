@@ -925,3 +925,193 @@ def test_the_gst_printed_as_hst_is_no_other_tax_for_the_tax_area():
     assert [li.amount for li in v.lines] == [656.5, 32.0]
     assert not any(n.startswith("Tax area") for n in v.notes)
     assert jde_review.voucher_findings(inv["final_output"], js, "40417") == []
+
+
+# --- A PO-matched voucher: keyed in Voucher Match (D-264) ----------------------------------------------------------
+
+PROMO = "Prairie Promo Supply Inc."
+
+
+def po_invoice(inv_id=8, freight="Charges not in the line table", po_number="40917"):
+    """The one-row invoice of ``tests.pdfs`` as read: 100 cooler bags, their setup and the freight, GST in Alberta,
+    on the made-up JD Edwards PO 40917 (``tests.pdfs.ONE_ROW_PO_LINES``)."""
+    bags = {
+        **line(1, 599.0, "6420.2210", ["GST"], desc="CB-220 Non-Woven Lunch Cooler Bag, 2 colour", cc=HQ),
+        "quantity": 100,
+        "unit_price": 5.99,
+    }
+    lines = [bags, line(2, 57.5, "6420.2210", ["GST"], desc="SETUP Lunch Cooler Setup", cc=HQ),
+             line(3, 32.0, "6420.2210", ["GST"], desc=freight, cc=HQ)]  # fmt: skip
+    d = doc(lines, [tl("GST", "", 0.05, 688.5, 34.43)], prov="AB", vendor_name=PROMO, invoice_number="118204",
+            invoice_date="2026-09-14", payment_terms="Net 30", po_number=po_number)  # fmt: skip
+    return coded(d, inv_id=inv_id)
+
+
+def po_store(tmp_path):
+    from ap_coder.core.store import Store
+    from tests.coding.test_po import _jde_pos
+
+    store = Store(tmp_path / "ap.db")
+    _jde_pos(store)
+    return store
+
+
+def promo_lookup(final):
+    return "4471001" if final["vendor_name"] == PROMO else lookup(final)
+
+
+def test_a_po_matched_voucher_is_keyed_as_voucher_match_rows_in_the_screens_order(tmp_path):
+    """D-264: most of the pilot's invoices are matched to a JD Edwards purchase order, keyed in Voucher Match (P0411):
+    a row for each PO line matched (the freight too), never a G/L distribution. The keying sheet had none to give: a
+    PO-matched voucher said "JD Edwards distributes it from the receipts" and nothing more. Its rows now come in the
+    screen's order, each from the PO line its invoice line bills (the order number, type and company, the line's own
+    number, the quantity and amount matched, the unit, the PO line's account) with the tax and the remark; the header
+    is as before, and an invoice with no PO in the same batch keeps its G/L lines."""
+    store = po_store(tmp_path)
+    js = settings(po_matched=True)
+    invoices = [po_invoice(), one_line()]
+    matches = jde_keying.po_matches(store, invoices)
+    (matched, coded_to_gl), held = jde_keying.vouchers(invoices, js, promo_lookup, gl_names=NAMES, on=ON_DAY,
+                                                       po_matches=matches)  # fmt: skip
+    assert held == [] and matched.lines == [] and len(coded_to_gl.lines) == 1 and coded_to_gl.matches == []
+    assert (matched.supplier_number, matched.gross, matched.tax, matched.taxable) == ("4471001", 722.93, 34.43, 688.5)
+    area = matched.tax_area
+    assert [vars(m) for m in matched.matches] == [
+        {"order_number": "40917", "order_type": "OP", "order_company": "00210", "line": "12.000", "quantity": 100,
+         "uom": "EA", "amount": 599.0, "account": "0312005561.6420.2210", "taxed": "Y", "tax_code": "V",
+         "tax_area": area, "remark": "CB-220 Non-Woven Lunch Cooler"},
+        {"order_number": "40917", "order_type": "OP", "order_company": "00210", "line": "13.000", "quantity": 1,
+         "uom": "EA", "amount": 57.5, "account": "0312005561.6420.2210", "taxed": "Y", "tax_code": "V",
+         "tax_area": area, "remark": "SETUP Lunch Cooler Setup"},
+        {"order_number": "40917", "order_type": "OP", "order_company": "00210", "line": "14.000", "quantity": 1,
+         "uom": "EA", "amount": 32.0, "account": "0312005561.6420.2210", "taxed": "Y", "tax_code": "V",
+         "tax_area": area, "remark": "Charges not in the line table"},
+    ]  # fmt: skip
+    assert area and matched.balanced and jde_keying._check(matched) == "688.50 + 34.43 = 722.93: balanced"
+
+    data, _, _ = jde_keying.build(invoices, js, promo_lookup, gl_names=NAMES, on=ON_DAY, po_matches=matches)
+    book = openpyxl.load_workbook(io.BytesIO(data))
+    rows = [list(r) for r in book["Keying sheet"].iter_rows(values_only=True)]
+    at = rows.index(["Voucher match", *[None] * 11])
+    assert rows[at + 1] == jde_keying.MATCH_COLUMNS
+    assert rows[at + 2] == ["40917", "OP", "00210", "12.000", 100, "EA", 599, "0312005561.6420.2210", "Y", "V", area,
+                            "CB-220 Non-Woven Lunch Cooler"]  # fmt: skip
+    assert [r[3] for r in rows[at + 2 : at + 5]] == ["12.000", "13.000", "14.000"]
+    assert rows[at + 5][:3] == ["Check", "Amounts matched + recovered tax = gross", 688.5]
+    assert ["Supplier number", "4471001", "Supplier name", PROMO] in [r[:4] for r in rows]
+    assert ["G/L distribution", None, None, None] in [r[:4] for r in rows]  # the voucher with no PO: as before
+    assert book["Keying sheet"].page_setup.orientation == "landscape"
+
+
+def test_a_po_matched_voucher_with_a_line_on_no_po_line_is_not_ready_and_says_why(tmp_path):
+    """D-264: no PO line is ever guessed. A line that matches none of the PO's, or a PO that is not loaded, holds the
+    voucher on the "Not ready" sheet with why; without the PO-matched setting the same invoice is keyed with its G/L
+    lines as before."""
+    store = po_store(tmp_path)
+    js = settings(po_matched=True)
+    odd = po_invoice(9)
+    odd["final_output"]["line_items"][1].update(description="Artwork proof", unit_price=45.0)
+    invoices = [odd, po_invoice(10, po_number="40918")]
+    ready, held = jde_keying.vouchers(invoices, js, promo_lookup, on=ON_DAY,
+                                      po_matches=jde_keying.po_matches(store, invoices))  # fmt: skip
+    assert ready == [] and [(h.invoice_id, h.why) for h in held] == [
+        (9, ["line 2 “Artwork proof” matches no line of PO 40917 (none is guessed): correct the line or the PO "
+             "number, or match it in JD Edwards by hand"]),
+        (10, ["PO 40918 is not in the purchase orders loaded: load its open lines from JD Edwards (Purchase orders), "
+              "then make the keying sheet again"])]  # fmt: skip
+    (gl,), held = jde_keying.vouchers([odd], settings(), promo_lookup, on=ON_DAY,
+                                      po_matches=jde_keying.po_matches(store, [odd]))  # fmt: skip
+    assert held == [] and len(gl.lines) == 3 and gl.matches == []
+
+
+def test_the_exports_page_keying_sheet_keys_a_po_matched_voucher_from_the_purchase_orders_loaded(tmp_path):
+    """D-264: the Exports page's keying sheet (``exports.keying_file``) pairs a batch's PO-matched invoices with the
+    purchase orders loaded, and says a quantity matched over what JD Edwards had open."""
+    from ap_coder.web.pages.exports import keying_file
+
+    store = po_store(tmp_path)
+    js = settings(po_matched=True, an8_overrides={vendor_key(PROMO): "4471001"})
+    jde_settings.save(store, js)
+    inv = po_invoice()
+    inv["final_output"]["line_items"][0].update(quantity=120, amount=718.8)
+    final = {**inv["final_output"], "subtotal": 808.3, "tax_total": 40.42, "grand_total": 848.72,
+             "tax_lines": [tl("GST", "", 0.05, 808.3, 40.42)]}  # fmt: skip
+    invoice_id = store.add_invoice(tmp_path / "118204.pdf", final, {})
+    store.approve_invoice(invoice_id, final, "Pat Tester")
+    batch = store.create_export_batch([invoice_id], jde_keying.FORMAT, actor="Pat Tester")
+    data, _, _ = keying_file(store, batch)
+    rows = list(openpyxl.load_workbook(io.BytesIO(data))["Keying sheet"].iter_rows(values_only=True))
+    assert ("40917", "OP", "00210", "12.000", 120, "EA", 718.8) in [r[:7] for r in rows]
+    assert any(str(r[1] or "").startswith("Order 40917 line 12.000: 120 matched, but JD Edwards had 100 open")
+               for r in rows if r[0] == "Warning")  # fmt: skip
+
+
+def test_a_po_line_with_no_quantity_is_matched_by_its_amount_its_quantity_left_to_check(tmp_path):
+    """D-264: JD Edwards' "Work With Order Details" grid gives each open line's amount to receive and no quantity: the
+    line is matched by its amount. Quantity Matched is the quantity the invoice bills, or left empty when it bills
+    none (the freight read as a charge with no quantity), and a note says to check it."""
+    from ap_coder.bench import jde_exports
+    from ap_coder.coding import po
+    from ap_coder.core.store import Store
+    from ap_coder.web.files import read_sheet
+    from tests.pdfs import one_row_po_lines
+
+    store = Store(tmp_path / "ap.db")
+    sheet, _ = read_sheet("order_details.xlsx", jde_exports.order_details_xlsx(one_row_po_lines(), short=True))
+    store.import_purchase_orders(po.rows_from_records(sheet.to_dict("records"), po.map_columns(list(sheet.columns)))[0])
+    inv = po_invoice()
+    inv["final_output"]["line_items"][2]["quantity"] = 0  # the freight: no quantity printed
+    js = settings(po_matched=True)
+    (v,), held = jde_keying.vouchers([inv], js, promo_lookup, on=ON_DAY,
+                                     po_matches=jde_keying.po_matches(store, [inv]))  # fmt: skip
+    assert held == [] and [(m.line, m.quantity, m.uom, m.amount) for m in v.matches] == [
+        ("12.000", 100, "", 599.0), ("13.000", 1, "", 57.5), ("14.000", None, "", 32.0)]  # fmt: skip
+    assert v.notes[-1] == ("Order 40917 line 14.000 has no quantity in the purchase orders loaded: it is matched by "
+                           "its amount (32.00) and Quantity Matched is left empty. Check the quantity JD Edwards "
+                           "shows for it.")  # fmt: skip
+    assert "Quantity Matched is the invoice's 100" in v.notes[-3]
+    data = jde_keying.build_xlsx([v], [])
+    rows = [list(r) for r in openpyxl.load_workbook(io.BytesIO(data))["Keying sheet"].iter_rows(values_only=True)]
+    assert ["40917", "OP", "00210", "14.000", None, None, 32] == next(r[:7] for r in rows if r[3] == "14.000")
+    view = jde_review.voucher_view(inv["final_output"], js, "4471001", match=po.voucher_match(
+        po.match_invoice(_coding_of(inv), store, 8), "40917"))  # fmt: skip
+    assert [m["quantity_text"] for m in view["match"]] == ["100", "1", "—"]
+    from ap_coder.web.invoice_coding import po_section  # the review screen's PO match says how it is matched
+
+    shown = po_section(store, _coding_of(inv), 8)
+    assert [r["matched"] for r in shown["rows"]][2] == "32.00 matched (no quantity on the PO)"
+
+
+def _coding_of(inv):
+    from ap_coder.core.schema import InvoiceCoding
+
+    return InvoiceCoding.model_validate({k: x for k, x in inv["final_output"].items() if k != "gl_distribution"})
+
+
+def test_the_po_lines_own_tax_is_typed_on_its_voucher_match_row(tmp_path):
+    """D-264: with the PO file's Tax Y/N, Tax Expl and Tax Rate/Area (the order details grid with its columns
+    added), each voucher match row has the PO line's own tax, as JD Edwards will show it; a rate/area that is not the
+    pay item's is said, to check which JD Edwards should tax at."""
+    from dataclasses import replace
+
+    from ap_coder.bench import jde_exports
+    from ap_coder.coding import po
+    from ap_coder.core.store import Store
+    from ap_coder.web.files import read_sheet
+    from tests.pdfs import one_row_po_lines
+
+    bags, setup, freight = one_row_po_lines()
+    lines = [bags, replace(setup, tax_flag="N", tax_code="E", tax_area=""), replace(freight, tax_area="ONHST")]
+    store = Store(tmp_path / "ap.db")
+    sheet, _ = read_sheet("order_details.xlsx", jde_exports.order_details_xlsx(lines))
+    store.import_purchase_orders(po.rows_from_records(sheet.to_dict("records"), po.map_columns(list(sheet.columns)))[0])
+    inv = po_invoice()
+    js = settings(po_matched=True)
+    (v,), held = jde_keying.vouchers([inv], js, promo_lookup, on=ON_DAY,
+                                     po_matches=jde_keying.po_matches(store, [inv]))  # fmt: skip
+    assert held == [] and [(m.quantity, m.uom, m.taxed, m.tax_code, m.tax_area) for m in v.matches] == [
+        (100, "EA", "Y", "V", "CDNGST"), (1, "EA", "N", "E", v.tax_area), (1, "EA", "Y", "V", "ONHST")]  # fmt: skip
+    assert (
+        f"Order 40917 line 14.000: the PO line's tax rate/area is ONHST, the pay item's {v.tax_area} (where the "
+        "invoice was supplied): check which JD Edwards should tax it at."
+    ) in v.notes

@@ -334,7 +334,12 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   (vendor, invoice number, total required). Or synced (`APC_Vouchers_Read`). E1's voucher list (Supplier Ledger
   Inquiry's grid, one row per pay item) is read as it is exported: the supplier by its number, a voucher's pay items
   added up, its document number and batch kept (`Store.erp_vouchers_of`).
-- **Not confirmed:** E1's own receipt matching (P4314, F0411Z1T) for PO-matched vouchers.
+- **PO-matched vouchers typed by hand** (D-264): JD Edwards' open order lines exported to Excel load on the
+  Purchase orders page as they are (order type and company, each line's own number "12.000", unit, account); with
+  *PO-matched vouchers* on, the keying sheet gives each invoice's Voucher Match rows (P0411), a row per PO line, the
+  freight too. A line on no PO line is not ready, never guessed.
+- **Not confirmed:** E1's own receipt matching (P4314, F0411Z1T) for PO-matched vouchers: the Z-files' match rows
+  still name the invoice's line numbers, not the PO's.
 - **Left to expense** (D-139): the review screen's PO match shows what is left on each PO line after the invoice, from
   the line's amount or, when the PO file has it, an *Open amount* column (E1's AOPN, as of the last import). The AIS
   sync's PO read (`APC_OpenPOs_Read`) doesn't ask for AOPN yet: add it there to keep it current.

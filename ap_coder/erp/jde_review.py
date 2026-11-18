@@ -7,9 +7,11 @@ too. Every check code raised here needs its help entry (``ops/help.py``).
 from __future__ import annotations
 
 import datetime as dt
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from .jde_formats import _date, _units
+from .jde_remarks import line_remark
 from .jde_settings import (
     AMOUNT_TAX,
     GL_DATE_EXPORT,
@@ -20,6 +22,7 @@ from .jde_settings import (
     settings_problems,
 )
 from .jde_voucher import (
+    EXEMPT_STATUSES,
     TERMS_CREDIT,
     TERMS_DEFAULT,
     TERMS_TABLE,
@@ -36,6 +39,9 @@ from .jde_voucher import (
     terms_code,
     terms_unmapped,
 )
+
+if TYPE_CHECKING:
+    from ..coding.po import VoucherMatch
 
 ERROR, WARNING, INFO = "error", "warning", "info"  # a finding's severity (coding.validation.ERROR, WARNING, INFO)
 
@@ -176,15 +182,64 @@ def taxes_e1_posts(final: dict[str, Any], settings: JdeSettings) -> frozenset[st
     return v.recoverable_types
 
 
+@dataclass
+class MatchLine:
+    """One row of a PO-matched voucher as it is keyed in Voucher Match (P0411, D-264)."""
+
+    order_number: str
+    order_type: str
+    order_company: str
+    line: str  # the PO line's own number: "12.000"
+    quantity: float | None  # quantity matched; None (left empty): the PO line has none, the invoice bills none
+    uom: str
+    amount: float  # amount matched: the invoice line's, before tax
+    account: str  # the PO line's, BU.Object.Subsidiary
+    taxed: str  # Tax Y/N
+    tax_code: str
+    tax_area: str
+    remark: str
+
+
+def match_lines(v: _Voucher, matched: VoucherMatch, settings: JdeSettings) -> list[MatchLine]:
+    """The voucher match rows of a PO-matched voucher (``coding.po.voucher_match``'s, as keyed): the order type and
+    company the PO file gave (else Settings'), each line's tax (the PO line's own Tax Y/N, explanation code and rate/
+    area when the PO file gave them; else Y with the voucher's code and area, N with the exempt code on a line that
+    carries none) and remark."""
+    items = {li.get("line_number"): li for li in v.final.get("line_items") or []}
+    marked = any(li.get("taxes_applied") for li in items.values())  # (lines marked with their taxes: read them)
+    exempt = settings.exempt_code.strip().upper()
+    company = settings.po_company.strip()
+    company = (company.zfill(5) if company.isdigit() else company) or settings.company_code
+    out = []
+    for row in matched.rows:
+        li = items.get(row.invoice_line) or {}
+        taxed = (
+            bool(v.charged)
+            and li.get("tax_status") not in EXEMPT_STATUSES
+            and (bool(li.get("taxes_applied")) or not marked)
+        )
+        code = v.tax_code if taxed or v.tax_code in ("", exempt) else exempt
+        flag, po_code, po_area = row.tax
+        if flag:  # the PO line's own, as JD Edwards will have it on the row
+            taxed, code = flag == "Y", po_code or code
+        out.append(MatchLine(row.order_number, row.order_type or settings.po_document_type.strip(),
+                             row.order_company or company, row.line, row.quantity, row.uom, row.amount, row.account,
+                             "Y" if taxed else "N", code, po_area or v.tax_area, line_remark(li)))  # fmt: skip
+    return out
+
+
 def voucher_view(
-    output: dict[str, Any], settings: JdeSettings, an8: str, *, on: dt.date | None = None
-) -> dict[str, Any]:
+    output: dict[str, Any], settings: JdeSettings, an8: str, *, on: dt.date | None = None,
+    match: VoucherMatch | None = None,
+) -> dict[str, Any]:  # fmt: skip
     """The voucher header as JD Edwards gets it, in its order, for the review screen: each value, where it comes from
     (the invoice, or the settings: read-only there) and the Z-file column (``rows``). Beside them, what is keyed on
     the pay item: ``gl_date`` (ISO, ``gl_date_of``: moved into the open period when it must be), ``tax_code``,
     ``tax_area``, ``taxable`` and ``tax`` (None when the pay item carries no tax), ``not_ready`` (why the voucher is
     held back, each reason; empty when it can go) and ``keyed``, the one line that says it all ("Keyed on the pay
-    item: …", or "Not ready to key: <the first reason>")."""
+    item: …", or "Not ready to key: <the first reason>"). ``match``: the invoice's voucher match (D-264), for a
+    PO-matched voucher: its rows (``match``, ``match_lines``'s), and what holds it (``match_held``, in ``not_ready``
+    too)."""
     final = output
     v = _prepare({"id": 0, "final_output": final}, settings, str(an8 or "").strip(), on)
     invoice_date = _date(final.get("invoice_date"))
@@ -247,6 +302,9 @@ def voucher_view(
     tax, taxable = pay_item_tax(v, settings)
     day = gl_date_of(final, settings, on)[0].isoformat()
     not_ready = _accounts_once(v) if v.problems else []
+    rows_matched = match_lines(v, match, settings) if v.po_matched and match is not None else []
+    match_held = list(match.held) if v.po_matched and match is not None else []
+    not_ready += [why for why in match_held if why not in not_ready]
     if not_ready:
         keyed = f"Not ready to key: {not_ready[0]}"
     elif tax is None:
@@ -259,4 +317,7 @@ def voucher_view(
             "settings_url": SETTINGS_URL, "terms_sent": bool(code), "terms_code": code,
             "terms_note": terms_note, "gl_date": day, "tax_code": v.tax_code, "tax_area": v.tax_area,
             "taxable": None if taxable is None else taxable / 100, "tax": None if tax is None else tax / 100,
-            "not_ready": not_ready, "keyed": keyed}  # fmt: skip
+            "not_ready": not_ready, "keyed": keyed, "match_held": match_held,
+            "match": [{**vars(m), "quantity_text": "—" if m.quantity is None
+                       else f"{m.quantity:,.4f}".rstrip("0").rstrip("."),
+                       "amount_text": money(round(m.amount * 100))} for m in rows_matched]}  # fmt: skip

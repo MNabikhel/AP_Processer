@@ -179,7 +179,7 @@
     <tbody>{% for r in p.rows %}
       <tr><td>{{ r.line }}</td>
         <td class="w">{{ r.description }}
-          <div class="muted small">{% if r.po_line %}PO {{ r.po_line }}{% if r.coding %} · {{ r.coding }}{% endif %}{% else %}<span class="rvw-muted">not on the PO</span>{% endif %}</div>
+          <div class="muted small">{% if r.po_line %}PO {{ r.po_line }}{% if r.matched %} · <span data-po-matched>{{ r.matched }}</span>{% endif %}{% if r.coding %} · {{ r.coding }}{% endif %}{% else %}<span class="rvw-muted">not on the PO</span>{% endif %}</div>
           {% if r.pills %}<div class="po-pills">{% for text, tone in r.pills %}{{ ui.pill(text, tone) }} {% endfor %}</div>{% endif %}</td>
         <td class="r">{{ r.qty }}<div class="small">{% if r.price_po %}<b class="rvw-warn">{{ r.price }}</b> <span class="rvw-muted">PO {{ r.price_po }}</span>{% else %}<span class="rvw-muted">at {{ r.price }}</span>{% endif %}</div></td>
         <td class="r"{% if r.left_how %} title="{{ r.left_how }}"{% endif %}>{% if r.over %}<span class="rvw-warn">{{ r.left }}</span>{% else %}{{ r.left }}{% endif %}</td></tr>
@@ -351,6 +351,19 @@
     {% for r in j.rows %}<div class="inv-jde-row{{ ' from-settings' if r.source == 'settings' else '' }}" data-jde="{{ r.column }}">
       <dt title="{{ r.column }}">{{ r.label }}</dt><dd>{{ r.value }}{% if r.source == 'settings' %} <span class="inv-jde-src" title="From Settings → JD Edwards E1: read-only here">settings</span>{% endif %}</dd></div>{% endfor %}
   </dl>
+  {# A PO-matched voucher (D-264): its rows as Voucher Match (P0411) gets them, each from the PO line it bills #}
+  {% if j.match %}{% set first = j.match[0] %}
+  <div class="table-wrap" data-jde-match><table class="apc-table inv-jde-match">
+    <caption class="small">Voucher match: order {{ first.order_number }} {{ first.order_type }} {{ first.order_company }}</caption>
+    <thead><tr><th>Line</th><th class="r">Quantity matched</th><th class="r">Amount matched</th><th>Account</th></tr></thead>
+    <tbody>{% for m in j.match %}
+      <tr title="Tax {{ m.taxed }} · {{ m.tax_code or 'blank' }} · {{ m.tax_area or 'no tax area' }}{% if m.remark %} · {{ m.remark }}{% endif %}"><td>{{ m.line }}</td><td class="r">{{ m.quantity_text }} {{ m.uom }}</td><td class="r">{{ m.amount_text }}</td><td>{{ m.account or '—' }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+  {% if j.match_held %}
+  <ul class="inv-jde-held small" data-jde-held aria-label="Why the voucher match is not ready">{% for why in j.match_held %}<li class="rvw-warn">{{ why[0] | upper }}{{ why[1:] }}.</li>{% endfor %}</ul>
+  {% endif %}
   {# last, after the voucher's values: not in the middle of the form's Tab order (B-804) #}
   {% if live.jde_settings %}<a class="link small inv-jde-settings" href="{{ j.settings_url }}" title="The values marked “settings” come from Settings → JD Edwards E1 (for {{ live.setup_contact or 'the pilot tester' }})">Change the settings<span class="ms" aria-hidden="true">settings</span></a>{% endif %}
 </div>

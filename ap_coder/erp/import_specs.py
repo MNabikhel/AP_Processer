@@ -88,6 +88,9 @@ class ImportSpec:
     jde: bool = False
     card: str = ""  # a JD Edwards report's card on the JD Edwards files page, as the page numbers it
     guess: bool = False  # its columns are guessed by a word in their header (the Accounts tables)
+    # (field, header): a needed field whose header a known export has twice, the first being it (JD Edwards' order
+    # details grid has "Long Description" twice, the line's first, D-264): taken, not left for a person to pick
+    first_of: tuple[tuple[str, str], ...] = ()
 
     @property
     def required(self) -> tuple[Column, ...]:
@@ -381,19 +384,46 @@ VENDOR_MASTER = ImportSpec(
 PURCHASE_ORDERS = ImportSpec(
     key="purchase_orders", title="Purchase orders", page="/purchase-orders", file_types=SHEETS,
     purpose="The open purchase orders' lines, matched to the invoices that bill them.",
-    source="Your ERP's open purchase order lines, a row for each line.",
-    report="a list of purchase order lines", one_of=("quantity", "unit_price", "amount"),
+    source="Your ERP's open purchase order lines, a row for each line. From JD Edwards: the open order lines (Open "
+           "Order Inquiry, or the order detail of Work With Order Headers) exported to Excel, every column shown.",
+    report="a list of purchase order lines", one_of=("quantity", "unit_price", "amount", "open_amount"),
+    first_of=(("description", "Long Description"),),
     columns=_columns(po.COLUMN_ALIASES, po.REQUIRED_COLUMNS, {
-        "po_number": ("PO number", "PO Number"), "vendor_name": ("Vendor", "Vendor"),
+        "po_number": ("PO number", "PO Number"), "order_type": ("Order type", "Or Ty"),
+        "order_company": ("Order company", "Order Co"), "vendor_name": ("Vendor", "Vendor"),
+        "supplier_number": ("Supplier number", "Address Number"),
         "line_number": ("Line number", "Line Number"), "description": ("Description", "Description"),
         "quantity": ("Quantity ordered", "Quantity"), "unit_price": ("Unit price", "Unit Price"),
         "amount": ("Line amount", "Amount"), "open_amount": ("Open amount", "Open Amount"),
+        "open_quantity": ("Quantity open", "Quantity Open"), "uom": ("Unit of measure", "UM"),
         "received_quantity": ("Quantity received", "Received Quantity"), "gl_code": ("GL account", "GL Code"),
-        "cost_center": ("Cost center", "Cost Center"), "status": ("Status", "Status"),
-        "currency": ("Currency", "Currency"),
-    }, {"open_amount": "what is left to expense", "received_quantity": "what was received, for the match",
+        "cost_center": ("Cost center", "Cost Center"), "account_number": ("Account number", "Account Number"),
+        "status": ("Status", "Status"), "next_status": ("Next status", "Next Status"),
+        "last_status": ("Last status", "Last Status"), "currency": ("Currency", "Curr"),
+        "base_currency": ("Base currency", "Base Curr"),
+        "foreign_open_amount": ("Foreign open amount", "Foreign Amount To Receive"),
+        "foreign_unit_price": ("Foreign unit price", "Foreign Unit Cost"),
+        "foreign_amount": ("Foreign line amount", "Original Ordered Foreign Amount"),
+        "tax_flag": ("Taxable", "Tax Y/N"), "tax_code": ("Tax explanation code", "Tax Expl"),
+        "tax_area": ("Tax rate/area", "Tax Rate/Area"),
+    }, {"open_amount": "what is left to expense (alone, without a quantity, price or amount: the line's amount)",
+        "received_quantity": "what was received, for the match",
         "gl_code": "the account the line is coded to", "cost_center": "the cost center the line is coded to",
-        "status": "open or closed", "currency": "the PO's currency (without it, CAD)"}),
+        "status": "open or closed", "currency": "the PO's currency (without it, CAD)",
+        "order_type": "JD Edwards' order type, named on a voucher match (without it, the one in Settings)",
+        "order_company": "JD Edwards' order company, named on a voucher match (without it, the one in Settings)",
+        "supplier_number": "the supplier's number (JD Edwards' address number)",
+        "open_quantity": "what JD Edwards has open on the line, for the voucher match",
+        "uom": "the line's unit of measure, for the voucher match",
+        "account_number": "the account the line is coded to, business unit.object.subsidiary",
+        "next_status": "JD Edwards' next status: 999 is closed", "last_status": "JD Edwards' last status: 980 is "
+        "cancelled", "base_currency": "the company's currency: an order in another has its amounts in the foreign "
+        "columns", "foreign_open_amount": "a foreign order's open amount, in its currency",
+        "foreign_unit_price": "a foreign order's unit price, in its currency",
+        "foreign_amount": "a foreign order's line amount, in its currency",
+        "tax_flag": "JD Edwards' Tax Y/N of the line, typed on its voucher match row",
+        "tax_code": "the line's tax explanation code, typed on its voucher match row",
+        "tax_area": "the line's tax rate/area, typed on its voucher match row"}),
     find=_matcher(po.COLUMN_ALIASES),
 )  # fmt: skip
 
@@ -557,8 +587,8 @@ def _named(header: str, headers: set[str]) -> str:
 def check(spec: ImportSpec, headers: Iterable[Any]) -> HeaderCheck:
     """``headers`` (a file's column names, in any order) against ``spec``, as its reader finds them. A needed column
     whose header the file has twice is ``twice`` (the reader would take the first, whichever it is), unless the spec
-    reads both (the vendor information list's two "Business Unit" columns); for a spec whose columns are guessed by a
-    word, the fields found by no name it reads are ``guessed``."""
+    reads both (the vendor information list's two "Business Unit" columns) or knows the first is it (``first_of``);
+    for a spec whose columns are guessed by a word, the fields found by no name it reads are ``guessed``."""
     named = [_text(h) for h in headers]
     found = spec.find([h for h in named if h]) if any(named) else {}
     used = set(found.values())
@@ -569,8 +599,10 @@ def check(spec: ImportSpec, headers: Iterable[Any]) -> HeaderCheck:
     present = set(named)
     times = Counter(header_key(_named(h, present)) for h in named if h)
     taken = Counter(header_key(_named(h, present)) for h in found.values())
+    first = {(f, header_key(h)) for f, h in spec.first_of}
     twice = tuple(c for c in spec.required if c.field in found
-                  and times[key := header_key(_named(found[c.field], present))] > taken[key])  # fmt: skip
+                  and times[key := header_key(_named(found[c.field], present))] > taken[key]
+                  and (c.field, key) not in first)  # fmt: skip
     guessed = tuple(f for f, h in found.items() if spec.guess and header_key(h) not in {
         header_key(n) for n in (spec.column(f).header, *spec.column(f).names) if "…" not in n})  # fmt: skip
     return HeaderCheck(spec, tuple(named), found, missing, optional, none_of, unused, twice, guessed)
@@ -611,6 +643,11 @@ JDE_MARKS: dict[str, tuple[str, ...]] = {
     "payment_history": ("Doc Pay Item", "Payment Amount", "Discount Taken", "Doc Type-M", "Exchange Rate"),
 }  # fmt: skip
 MARKS = 3  # a file with this many of a report's marks is that report, whichever columns it lacks
+# JD Edwards' open purchase order lines (Work With Order Details, P4310, D-264): loaded on the Purchase orders page,
+# never taken for one of the reports above for the columns it shares with them (Subledger, Tax Rate/Area, Short Item
+# No: a voucher's G/L distribution's, B-2646).
+ORDER_MARKS = ("Or Ty", "Order Co", "Quantity To Receive", "Amount To Receive", "Line Description",
+               "Original Ordered Amount", "Foreign Amount To Receive", "Next Status", "Last Status")  # fmt: skip
 # The grids of one voucher in JD Edwards, as a message names them.
 VOUCHER_GRIDS = {
     "gl_distribution": "the G/L distribution of one voucher (its account lines)",
@@ -625,11 +662,14 @@ def recognise(headers: Iterable[Any]) -> str | None:
     """Which of JD Edwards' reports (a key of ``SPECS``) or a voucher's grids (``VOUCHER_GRIDS``) a file with these
     column names is, whichever columns it lacks: the one with the most of its marks (``JDE_MARKS``), when it has
     ``MARKS`` of them, or has every column it needs (``identify``) and two of them. None for any other list: a vendor
-    list of another system has a name and a number too, a cost center list a business unit."""
+    list of another system has a name and a number too, a cost center list a business unit; JD Edwards' open PO
+    lines (``ORDER_MARKS``) are the Purchase orders page's."""
     named = [_text(h) for h in headers]
     keys = {header_key(h) for h in named if h}
     counts = {key: sum(header_key(mark) in keys for mark in marks) for key, marks in JDE_MARKS.items()}
     best = max(counts, key=lambda key: counts[key])
+    if sum(header_key(mark) in keys for mark in ORDER_MARKS) >= max(MARKS, counts[best]):  # PO lines (B-2646)
+        return None
     if counts[best] >= MARKS:
         return best
     whole = identify(named)

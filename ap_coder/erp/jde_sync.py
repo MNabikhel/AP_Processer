@@ -320,7 +320,10 @@ def _with_lines_kept(rows: list[dict[str, Any]], before: dict[str, dict[str, Any
                      "description": li["description"], "quantity": li["quantity"], "unit_price": li["unit_price"],
                      "amount": li["amount"], "amount_only": bool(li.get("amount_only")),
                      "open_amount": li.get("open_amount"), "received_quantity": li["received_quantity"],
-                     "gl_code": li["gl_code"], "cost_center": li["cost_center"], "status": status}
+                     "gl_code": li["gl_code"], "cost_center": li["cost_center"], "status": status,
+                     "erp_line": li.get("erp_line") or "", "uom": li.get("uom") or "",
+                     "open_quantity": li.get("open_quantity"), "tax_flag": li.get("tax_flag") or "",
+                     "tax_code": li.get("tax_code") or "", "tax_area": li.get("tax_area") or ""}
                     for li in had["lines"] if li["line_number"] not in given]  # fmt: skip
         out += lines
     return out
@@ -330,8 +333,7 @@ def _open_lines(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Each PO's open lines, as a whole read lists them: a line JDE closed (999) leaves while another line of its PO
     is open (a line here has no status of its own: one kept by a later read of what changed is taken as open); with
     none open, every line stays and the PO is closed."""
-    open_pos = {po_mod.po_key(r["po_number"]) for r in rows if r.get("status") != po_mod.CLOSED}
-    return [r for r in rows if r.get("status") != po_mod.CLOSED or po_mod.po_key(r["po_number"]) not in open_pos]
+    return po_mod.open_lines(rows)
 
 
 def _purchase_orders(store: Any, found: list[dict[str, Any]], run: _Run, read: dict[str, Any]) -> None:
@@ -341,7 +343,10 @@ def _purchase_orders(store: Any, found: list[dict[str, Any]], run: _Run, read: d
         records.append({
             "po_number": _text(r.get("order_number")),
             "vendor_name": _text(r.get("supplier_name")) or names.get(_text(r.get("an8")), ""),
-            "line_number": line_number(r.get("line_number")), "description": _text(r.get("description")),
+            "supplier_number": _text(r.get("an8")), "order_type": _text(r.get("order_type")),
+            "order_company": _text(r.get("order_company")),
+            "line_number": line_number(r.get("line_number")), "erp_line": r.get("line_number"),
+            "description": _text(r.get("description")),
             "quantity": r.get("quantity"), "unit_price": r.get("unit_cost"), "amount": r.get("amount"),
             "received_quantity": r.get("received"), "gl_code": _code(r.get("object"), r.get("subsidiary")),
             "cost_center": _text(r.get("business_unit")),

@@ -14,7 +14,7 @@ from typing import Any
 
 from ap_coder.ai.offline_coder import supplier_evidence
 from ap_coder.ai.suggest import by_pairs, suggest_gl
-from ap_coder.coding.po import LineLeft, match_invoice, po_label
+from ap_coder.coding.po import LineLeft, PoMatch, match_invoice, po_label
 from ap_coder.coding.remark import PERSON, one_line
 from ap_coder.core.chart import join_account
 from ap_coder.core.memory import pair_lines
@@ -104,17 +104,21 @@ def _fmt_qty(value: float | None) -> str:
     return f"{value:,.2f}".rstrip("0").rstrip(".")
 
 
-def po_section(store: Store, coding: InvoiceCoding, invoice_id: int) -> dict[str, Any] | None:
-    """How the invoice lines compare with the purchase order it quotes (2- or 3-way match); None without one."""
+def po_section(store: Store, coding: InvoiceCoding, invoice_id: int,
+               match: PoMatch | None = None) -> dict[str, Any] | None:  # fmt: skip
+    """How the invoice lines compare with the purchase order it quotes (2- or 3-way match); None without one.
+    ``match``: its ``match_invoice`` already made (else made here). A JD Edwards order's lines are named by JD
+    Edwards' own line numbers (12.000), each with the quantity it matches (D-264)."""
     if not coding.po_number.strip() or not store.has_purchase_orders():
         return None
-    match = match_invoice(coding, store, invoice_id)
+    match = match or match_invoice(coding, store, invoice_id)
     if match is None:
         return None
     label = po_label(match.po_number)
     if not match.found:
         return {"found": False, "label": label}
     po = match.po or {}
+    jde = bool(po.get("order_type"))  # a JD Edwards order (its export or the sync): keyed as a voucher match
     problems = sum(1 for m in match.lines if set(m.problems) - {"coding"})
     received = any(m.received is not None for m in match.lines)
     flags = {"price": "Price", "quantity": "Over ordered", "received": "Not received", "coding": "Coding"}
@@ -122,7 +126,7 @@ def po_section(store: Store, coding: InvoiceCoding, invoice_id: int) -> dict[str
     for m in match.lines:
         if m.po_line is None:
             rows.append({"line": m.invoice_line, "description": m.description, "po_line": "", "coding": "", "qty": "",
-                         "price": "", "price_po": "", "left": "", "over": False, "left_how": "",
+                         "price": "", "price_po": "", "left": "", "over": False, "left_how": "", "matched": "",
                          "pills": [("Not on PO", "warn")]})  # fmt: skip
             continue
         if m.amount_only:  # a PO line with only an amount: compare amounts
@@ -134,7 +138,8 @@ def po_section(store: Store, coding: InvoiceCoding, invoice_id: int) -> dict[str
         pills = [(flags[p], "info" if p == "coding" else "warn") for p in m.problems if p in flags] or [("OK", "ok")]
         left = match.left.get(m.po_line)  # (none: the PO and the invoice in two currencies, B-2612)
         rows.append({"line": m.invoice_line, "description": m.description,
-                     "po_line": f"{m.po_line} · {m.po_description}",
+                     "po_line": f"{m.po_erp_line if jde and m.po_erp_line else m.po_line} · {m.po_description}",
+                     "matched": _matched(m) if jde else "",
                      "coding": " · ".join(x for x in (f"GL {m.po_gl}" if m.po_gl else "", m.po_cc) if x),
                      "qty": qty, "price": signed(m.unit_price),
                      "price_po": signed(m.po_unit_price) if "price" in m.problems else "",
@@ -160,6 +165,14 @@ def po_section(store: Store, coding: InvoiceCoding, invoice_id: int) -> dict[str
         "total_left": "—" if match.currencies else _left_text(match.total_left),
         "total_over": not match.currencies and match.total_left < 0,
     }  # fmt: skip
+
+
+def _matched(m: Any) -> str:
+    """What a line matches on a JD Edwards order's line (D-264): its quantity, or on a PO line with no quantity its
+    amount."""
+    if m.amount_only:
+        return f"{signed(m.amount)} matched (no quantity on the PO)"
+    return f"{_fmt_qty(m.matched_quantity)} {m.po_uom} matched".replace("  ", " ")
 
 
 def _left_text(left: float) -> str:

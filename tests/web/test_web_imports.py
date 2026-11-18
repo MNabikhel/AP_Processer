@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import re
+from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 
 import openpyxl
@@ -872,3 +873,66 @@ def test_every_import_page_offers_one_template(client):
         page = client.get(PAGES[key][4]).text
         assert len(re.findall(r"<a [^>]*template[^>]*download", page)) == 1, key
         assert "Or start from" not in page, key
+
+
+def test_jd_edwards_work_with_order_details_as_it_comes_loads_with_no_column_picked_by_hand(client, store):
+    """D-264: the pilot tester's open PO lines are Purchase Order Inquiry's "Work With Order Details" grid (P4310,
+    W4310G) exported as it is: no quantity, the open amount as "Amount To Receive", "Client Code" and "Long
+    Description" each twice. The page picks every column it needs itself, the first "Long Description" the line's
+    (not left to pick, as a needed column named twice is elsewhere: B-2469); a line JD Edwards closed (999) is left
+    out; a USD order's amounts are its foreign columns; each line is amount only, matched by its amount."""
+    from decimal import Decimal
+
+    from ap_coder.bench import jde_exports
+    from tests.pdfs import one_row_po_lines
+
+    lines = [*one_row_po_lines(), replace(one_row_po_lines()[0], line=Decimal("15"), closed=True),
+             replace(one_row_po_lines()[0], order=40930, currency="USD", unit_cost=Decimal("4.20"))]  # fmt: skip
+    data = jde_exports.order_details_xlsx(lines, short=True)
+    answer = client.post("/purchase-orders/upload", files={"file": ("order_details.xlsx", data)}, headers=PAGE)
+    redirect = answer.json()["redirect"]
+    html, token = client.get(redirect).text, parse_qs(urlsplit(redirect).query)["file"][0]
+    offered = _offered(html)
+    assert offered["description"] == "Long Description" and offered["open_amount"] == "Amount To Receive"
+    assert (offered["quantity"], offered["unit_price"], offered["amount"]) == ("", "", "")
+    assert _import(client, "purchase_orders", token, html).status_code == 200
+    po = store.purchase_order("40917")
+    assert [(li["erp_line"], li["description"], li["amount"], li["amount_only"], li["open_amount"])
+            for li in po["lines"]] == [("12.000", "LUNCH COOLER BAG NON-WOVEN 2C", 599.0, 1, 599.0),
+                                       ("13.000", "COOLER BAG SETUP", 57.5, 1, 57.5),
+                                       ("14.000", "DELIVERY CHARGE", 32.0, 1, 32.0)]  # fmt: skip
+    usd = store.purchase_order("40930")
+    assert usd["currency"] == "USD" and [(li["amount"], li["open_amount"]) for li in usd["lines"]] == [(420.0, 420.0)]
+
+
+def test_jd_edwards_work_with_order_details_with_its_columns_added_loads_with_no_column_picked_by_hand(client, store):
+    """D-264: the same grid with the columns the pilot tester added (67): the quantity and amount to receive, the unit,
+    the unit cost, the account string beside its parts, the line's own tax, and the order's "Original" and "Related"
+    numbers and lines. Each needed column is found by its own name, never another order's number or line; the
+    description is "Line Description" (not the "Long Description" the grid has twice); the line keeps its tax."""
+    from ap_coder.bench import jde_exports
+    from tests.pdfs import ONE_ROW_ACCOUNT, one_row_po_lines
+
+    data = jde_exports.order_details_xlsx(one_row_po_lines())
+    answer = client.post("/purchase-orders/upload", files={"file": ("order_details.xlsx", data)}, headers=PAGE)
+    redirect = answer.json()["redirect"]
+    html, token = client.get(redirect).text, parse_qs(urlsplit(redirect).query)["file"][0]
+    offered = _offered(html)
+    assert {f: offered[f] for f in ("po_number", "line_number", "description", "quantity", "open_quantity", "uom",
+                                    "unit_price", "amount", "open_amount", "account_number", "tax_flag", "tax_code",
+                                    "tax_area")} == {
+        "po_number": "Order Number", "line_number": "Line Number", "description": "Line Description",
+        "quantity": "", "open_quantity": "Quantity To Receive", "uom": "UM", "unit_price": "Unit Cost",
+        "amount": "Original Ordered Amount", "open_amount": "Amount To Receive", "account_number": "Account Number",
+        "tax_flag": "Tax Y/N", "tax_code": "Tax Expl", "tax_area": "Tax Rate/Area"}  # fmt: skip
+    assert _import(client, "purchase_orders", token, html).status_code == 200
+    assert [p["po_number"] for p in store.purchase_orders()] == ["40917"]
+    po = store.purchase_order("40917")
+    assert [(li["erp_line"], li["description"], li["quantity"], li["open_quantity"], li["uom"], li["unit_price"],
+             li["amount"], li["amount_only"]) for li in po["lines"]] == [
+        ("12.000", "LUNCH COOLER BAG NON-WOVEN 2C", 100, 100, "EA", 5.99, 599.0, 0),
+        ("13.000", "COOLER BAG SETUP", 1, 1, "EA", 57.5, 57.5, 0),
+        ("14.000", "DELIVERY CHARGE", 1, 1, "EA", 32.0, 32.0, 0)]  # fmt: skip
+    business_unit, code = ONE_ROW_ACCOUNT.split(".", 1)
+    assert {(li["cost_center"], li["gl_code"], li["tax_flag"], li["tax_code"], li["tax_area"]) for li in po["lines"]} \
+        == {(business_unit, code, "Y", "V", "CDNGST")}  # fmt: skip

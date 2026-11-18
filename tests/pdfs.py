@@ -81,18 +81,41 @@ ONE_ROW_ITEMS = (("CB-220", "Non-Woven Lunch Cooler Bag, 2 colour", "100", "100"
                  ("SETUP", "Lunch Cooler Setup", "1", "1", "0", "57.5000", "Each", "", "57.50"))  # fmt: skip
 
 
+# The made-up JD Edwards purchase order that invoice bills (D-264): its three open lines, the goods, the setup and the
+# freight, each its own line, the freight's words not the invoice's ("Freight Amount"). For
+# ``jde_exports.open_po_lines_xlsx``; the supplier's address number is ONE_ROW_SUPPLIER_NUMBER.
+ONE_ROW_PO, ONE_ROW_SUPPLIER_NUMBER, ONE_ROW_COMPANY = "40917", 4471001, "00210"
+ONE_ROW_ACCOUNT = "0312005561.6420.2210"
+ONE_ROW_PO_LINES = (("12", "LUNCH COOLER BAG NON-WOVEN 2C", "100", "5.99", "EA"),
+                    ("13", "COOLER BAG SETUP", "1", "57.50", "EA"),
+                    ("14", "DELIVERY CHARGE", "1", "32.00", "EA"))  # fmt: skip
+
+
+def one_row_po_lines() -> list:
+    """ONE_ROW_PO's open lines (``jde_exports.OpenPoLine``), nothing received or vouchered yet."""
+    from decimal import Decimal
+
+    from ap_coder.bench.jde_exports import OpenPoLine
+
+    return [OpenPoLine(int(ONE_ROW_PO), Decimal(line), ONE_ROW_SUPPLIER_NUMBER, words, Decimal(quantity),
+                       Decimal(cost), unit, ONE_ROW_ACCOUNT, ONE_ROW_COMPANY)
+            for line, words, quantity, cost, unit in ONE_ROW_PO_LINES]  # fmt: skip
+
+
 def one_row_totals(where: Path, name: str = "one_row.pdf", labels: str = "left", values: str = "right",
-                   supplier: bool = True, customer: str = "below") -> Path:  # fmt: skip
+                   supplier: bool = True, customer: str = "below", po: str = "") -> Path:  # fmt: skip
     """That invoice as ``where / name``: each label set at the ``labels`` side of its cell ("left", "center",
     "right"), each amount at the ``values`` side. ``supplier``: the supplier's name printed at the top (else only in
     its logo, a picture). ``customer``: "below" (the customer's name under "Bill To:"), "beside" ("Customer:" at
     the left margin, the name in a column far to its right) or "unlabelled" (its address block with no label, as in
-    an envelope's window)."""
+    an envelope's window). ``po``: a PO number printed under the terms (ONE_ROW_PO: the order it bills)."""
     import pymupdf
 
     items: list[tuple] = [(50, 68, "4410 Industrial Way NE, Calgary AB T2E 7H1"), (400, 50, "INVOICE", 14),
                           (400, 70, "Invoice #: 118204"), (400, 84, "Invoice Date: 2026-09-14"),
                           (400, 98, "Terms: Net 30")]  # fmt: skip
+    if po:
+        items.append((400, 112, f"PO Number: {po}"))
     if supplier:
         items.append((50, 50, ONE_ROW_SUPPLIER, 16))
     if customer == "below":

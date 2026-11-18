@@ -35,7 +35,9 @@ from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.capture.bridge import review_issues
 from ap_coder.capture.types import DATE_FIELDS, CaptureResult
 from ap_coder.coding import banks, rules, vendor_mail
+from ap_coder.coding import po as po_mod
 from ap_coder.coding.claim import totals_follow
+from ap_coder.coding.po import match_invoice
 from ap_coder.coding.review import codes_to_pick, coding_from_inputs, to_number, uses_cost_centers
 from ap_coder.coding.tax import PLACE_OF_SUPPLY
 from ap_coder.coding.taxmath import invoice_taxes, math_check
@@ -334,6 +336,10 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     from ap_coder.erp import jde_accounts, jde_review, jde_settings
 
     js = jde_settings.load(store) if jde_settings.in_use(store) else None  # JD Edwards is the export in use (D-75)
+    quoted = coding.po_number.strip()
+    po_match = match_invoice(coding, store, inv["id"]) if quoted and store.has_purchase_orders() else None
+    # A PO-matched voucher (D-264): what JD Edwards gets is its voucher match rows, or why it has none
+    voucher_match = po_mod.voucher_match(po_match, quoted) if js is not None and js.po_matched and quoted else None
     taxes = invoice_taxes(coding, reference.tax) if account_lines.in_use(reference) else None  # once a draw (D-214)
     an8 = jde_accounts.resolve_an8(output, store.vendor_ids(), js) if js is not None else ""
     live = {
@@ -353,7 +359,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "mail": mail,
         "reasons": reasons(coding, ai, report, reference),
         "suggestions": suggestions(store, reference, coding),
-        "po": po_section(store, coding, inv["id"]),
+        "po": po_section(store, coding, inv["id"], po_match),
         "tax_check": tax_check(coding, reference),
         "math": (math := math_check(coding, reference.tax)),
         "tax_marks": tax_marks(math, report.issues),
@@ -363,7 +369,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
                              dates.notes),
         "flag_errors": flag_errors(errors, dates.notes),
         "help": field_help(store, coding, draft, capture, dates, report.issues),
-        "jde": jde_review.voucher_view(output, js, an8) if js is not None else None,
+        "jde": jde_review.voucher_view(output, js, an8, match=voucher_match) if js is not None else None,
         "an8": an8 if js is not None else None,
         "from_vendor": from_list,
         "bar": {

@@ -170,6 +170,11 @@ class PurchasingMixin:
             order["lines"].append(row)
             if row.get("vendor_name") and not order["row"].get("vendor_name"):
                 order["row"] = row
+        # A PO file that names the supplier by its number alone (JD Edwards' address number): its name in the vendor
+        # list, so the PO is the supplier's (D-264).
+        numbers = {str(r.get("supplier_number")) for r in rows if r.get("supplier_number") and not r.get("vendor_name")}
+        named = {v["erp_id"]: v["display_name"] for v in self.master_vendors_of(set(), numbers).values()} if numbers \
+            else {}  # fmt: skip
         now = _now()
         with self._conn() as conn:
             if replace_all:
@@ -179,16 +184,22 @@ class PurchasingMixin:
             for key, order in orders.items():
                 head = order["row"]
                 status = "closed" if all(r.get("status") == "closed" for r in order["lines"]) else OPEN
-                # The PO's currency: its lines' first ('' when the file gives none: taken as CAD, B-2612).
-                currency = next((r["currency"] for r in order["lines"] if r.get("currency")), "")
+                # The PO's currency: its lines' first ('' when the file gives none: taken as CAD, B-2612); so its
+                # JD Edwards order type, company and supplier number (D-264).
+                currency, order_type, company, supplier = (
+                    next((r[f] for r in order["lines"] if r.get(f)), "")
+                    for f in ("currency", "order_type", "order_company", "supplier_number"))  # fmt: skip
+                name = head.get("vendor_name") or named.get(supplier) or ""
                 conn.execute(
                     """INSERT INTO purchase_orders (po_key, po_number, vendor_name, vendor_key, status, updated_at,
-                       currency) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(po_key) DO UPDATE SET
+                       currency, order_type, order_company, supplier_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(po_key) DO UPDATE SET
                        po_number = excluded.po_number, vendor_name = excluded.vendor_name,
                        vendor_key = excluded.vendor_key, status = excluded.status, updated_at = excluded.updated_at,
-                       currency = excluded.currency""",
-                    (key, head["po_number"], head.get("vendor_name") or "", vendor_key(head.get("vendor_name") or ""),
-                     status, now, currency),
+                       currency = excluded.currency, order_type = excluded.order_type,
+                       order_company = excluded.order_company, supplier_number = excluded.supplier_number""",
+                    (key, head["po_number"], name, vendor_key(name), status, now, currency, order_type, company,
+                     supplier),
                 )  # fmt: skip
                 conn.execute("DELETE FROM po_lines WHERE po_key = ?", (key,))
                 used: set[int] = set()
@@ -199,12 +210,15 @@ class PurchasingMixin:
                     used.add(number)
                     conn.execute(
                         """INSERT INTO po_lines (po_key, line_number, description, quantity, unit_price, amount,
-                           received_quantity, gl_code, cost_center, amount_only, open_amount)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           received_quantity, gl_code, cost_center, amount_only, open_amount, erp_line, uom,
+                           open_quantity, tax_flag, tax_code, tax_area)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (key, number, row["description"], row["quantity"], row["unit_price"], row["amount"],
                          row.get("received_quantity"), _clean_code(row.get("gl_code")),
                          _clean_code(row.get("cost_center")), int(bool(row.get("amount_only"))),
-                         row.get("open_amount")),
+                         row.get("open_amount"), row.get("erp_line") or "", row.get("uom") or "",
+                         row.get("open_quantity"), row.get("tax_flag") or "", row.get("tax_code") or "",
+                         row.get("tax_area") or ""),
                     )  # fmt: skip
             counts = {
                 "orders": len(orders),
