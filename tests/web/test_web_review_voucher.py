@@ -659,7 +659,7 @@ def test_a_po_matched_invoice_shows_each_lines_po_line_and_what_jd_edwards_gets(
     final = po_invoice()["final_output"]
     invoice_id = store.add_invoice(chart_company.folder / "118204.pdf", final, {"requires_review": True})
     page = chart_company_client.get(f"/review/{invoice_id}").text
-    match = page[page.index("data-po-match"):]
+    match = page[page.index("data-po-match") :]
     assert "PO 12.000 · LUNCH COOLER BAG NON-WOVEN 2C · <span data-po-matched>100 EA matched</span>" in match
     assert "PO 14.000 · DELIVERY CHARGE · <span data-po-matched>1 EA matched</span>" in match
     assert "data-jde-match" not in page  # PO-matched vouchers off: the voucher keeps its G/L lines
@@ -668,7 +668,7 @@ def test_a_po_matched_invoice_shows_each_lines_po_line_and_what_jd_edwards_gets(
     settings.po_matched = True
     jde_settings.save(store, settings)
     page = chart_company_client.get(f"/review/{invoice_id}").text
-    block = page[page.index("data-jde-match"):]
+    block = page[page.index("data-jde-match") :]
     block = block[: block.index("</table>")]
     assert "Voucher match: order 40917 OP 00210" in block
     cells = [re.sub(r"<[^>]+>", "|", row).strip("|").split("||")[:4] for row in re.findall(r"<tr title.*?</tr>", block)]
@@ -681,5 +681,5 @@ def test_a_po_matched_invoice_shows_each_lines_po_line_and_what_jd_edwards_gets(
     odd_id = store.add_invoice(chart_company.folder / "118205.pdf", odd, {"requires_review": True})
     page = chart_company_client.get(f"/review/{odd_id}").text
     assert "Not ready to key" in page
-    held = page[page.index("data-jde-held"):]
+    held = page[page.index("data-jde-held") :]
     assert "Line 2 “Artwork proof” matches no line of PO 40917 (none is guessed)" in held[: held.index("</ul>")]
