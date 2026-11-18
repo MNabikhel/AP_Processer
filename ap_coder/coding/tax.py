@@ -390,8 +390,9 @@ def _tax_line_rate(check: _TaxCheck, tl: Any) -> None:
     else:
         official = check.setup.rates.rate_for(tl.tax_type, rate_province, check.on)
         if official is None:
-            where = PROVINCE_NAMES.get(rate_province, rate_province or "this province")
-            check.add(ERROR, "TAX_TYPE_NOT_LEVIED", f"{tl.tax_type} is not levied in {where}")
+            if not (tl.tax_type == "HST" and _gst_under_hst(check)):  # (said once, by the regime's check)
+                where = PROVINCE_NAMES.get(rate_province, rate_province or "this province")
+                check.add(ERROR, "TAX_TYPE_NOT_LEVIED", f"{tl.tax_type} is not levied in {where}")
         elif abs(official - tl.rate) > 1e-6 and round(tl.rate, 6) not in LAWFUL_OTHER_RATES.get(
             (tl.tax_type, rate_province), ()
         ):
@@ -402,6 +403,17 @@ def _tax_line_rate(check: _TaxCheck, tl: Any) -> None:
             )
     if prov and tl.province and tl.tax_type != "GST" and tl.province != prov:
         check.add(WARNING, "TAX_PROVINCE_DIFFERS", f"{label} charged but place of supply is {prov}{check.assumed}")
+
+
+def _gst_under_hst(check: _TaxCheck) -> float | None:
+    """The GST rate, when every HST charged is at it on a supply where HST is not levied: the GST printed under the
+    HST's name (an Alberta supplier's "HST Tax" at 5%), all of it claimable as GST (B-2640). None otherwise."""
+    rates, prov = check.setup.rates, check.prov
+    gst = rates.rate_for("GST", prov, check.on) if prov else None
+    hst = [tl for tl in check.tax_lines if tl.tax_type == "HST" and not nil(tl.tax_amount)]
+    if not gst or not hst or rates.rate_for("HST", prov, check.on) is not None:
+        return None
+    return gst if all(abs(tl.rate - gst) <= 0.0005 for tl in hst) else None
 
 
 def _lines_carry_each_tax(check: _TaxCheck) -> None:
@@ -532,10 +544,12 @@ def _regime_of_the_place_of_supply(check: _TaxCheck) -> None:
     for extra in sorted(charged - expected_types):
         if check.two_provinces and extra in ("GST", "HST"):
             continue
+        gst = _gst_under_hst(check) if extra == "HST" else None
         check.add(
             WARNING,
             "TAX_REGIME_MISMATCH",
-            f"{extra} charged but {name} normally charges {' + '.join(sorted(expected_types))}",
+            f"{extra} charged but {name} normally charges {' + '.join(sorted(expected_types))}"
+            + (f": at {pct(gst)}, the GST rate, it is the GST under the HST's name, claimable as GST" if gst else ""),
         )
     if charged:
         _provincial_tax_due(check, expected_types, name, all_stated)
@@ -588,7 +602,7 @@ def _hst_where_it_applies(check: _TaxCheck, expected_types: set[str], name: str)
             check.add(WARNING, "TAX_REGIME_MISMATCH", f"{name} is an HST province but no HST was charged")
     # Only the tax properly payable is claimable as an input tax credit (ETA s.169): HST charged where GST applies
     # is a risk to the claim, said apart (never booked otherwise).
-    if "HST" in charged and "HST" not in expected_types:
+    if "HST" in charged and "HST" not in expected_types and not _gst_under_hst(check):
         check.add(WARNING, "ITC_AT_RISK",
                   f"HST charged on a supply in {name}, where it is not payable: only the tax properly payable is "
                   "claimable (ETA s.169), so claim the GST part only or get a corrected invoice")  # fmt: skip

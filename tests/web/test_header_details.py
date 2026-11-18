@@ -138,7 +138,7 @@ def test_a_blank_gst_number_is_filled_from_the_vendor_list_and_said_not_printed(
     invoice_id = _red_river(store, printed=False)
     first = client.get(f"/review/{invoice_id}").text  # opened: filled at once, with the note under it
     field = first.split(f'data-field="{GST}"', 1)[1].split("</label>", 1)[0]
-    assert 'value="741852966 RT0001"' in field and "From the vendor list — not printed on the invoice" in field
+    assert 'value="741852966 RT0001"' in field and invoice_fields.FROM_VENDOR_NOTE in field
     assert "data-from-vendor-note hidden" not in field
     answer = check(client, invoice_id, form_of(store, invoice_id))
     assert answer["header"]["values"] == {GST: "741852966 RT0001"}
@@ -598,3 +598,51 @@ def test_the_queue_does_not_decode_every_invoice_again_for_pay_from(store, monke
         rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "Operating", "currency": "CAD", "is_default": "yes"}])
         store.save_bank_accounts(rows)  # the bank accounts changed: asked again
         assert review.attention(store, None, pending, checks=checks) != first
+
+
+def _usual_only(store: Store) -> tuple[str, str]:
+    """A demo vendor with an approved invoice carrying a GST/HST number, and none in the vendor list: (its name, the
+    number)."""
+    import sqlite3
+
+    finals = (store.get_invoice(i["id"])["final_output"] or {} for i in store.list_invoices(APPROVED))
+    final = next(f for f in finals if f.get(GST))
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE vendors SET expected_gst = '' WHERE vendor_key = ?",
+                     (invoice_form.vendor_key(final["vendor_name"]),))  # fmt: skip
+    return final["vendor_name"], final[GST]
+
+
+def test_a_vendor_picked_without_numbers_in_the_vendor_list_fills_the_ones_on_its_approved_invoices(client, store):
+    """B-2638: picking another supplier on the review screen filled its GST/HST number only from the vendor list. A
+    supplier the list holds no number for, whose approved invoices all carried one (the note under the field even said
+    "Usual for this vendor: ..."), left the box blank, and the tax check ran without it."""
+    name, usual = _usual_only(store)
+    key = invoice_form.vendor_key(name)
+    invoice_id = _red_river(store, printed=False)
+    # Picked from the list: the browser filled nothing (the list has no number) and left the GST/HST number to the
+    # server, which knows the vendor's approved invoices.
+    data = form_of(store, invoice_id, vendor_name=name, **{GST: ""})
+    data["from_vendor"] = json.dumps({"vendor": key, "fields": {}, "open": [GST]})
+    answer = check(client, invoice_id, data)
+    assert answer["header"]["values"].get(GST) == usual
+    assert answer["header"]["from_vendor"] == {"vendor": key, "fields": {GST: usual}}
+    # Typed in (the browser's state still the vendor before): the same.
+    data["from_vendor"] = json.dumps({"vendor": "red river", "fields": {}})
+    assert check(client, invoice_id, data)["header"]["values"].get(GST) == usual
+    # A number the reviewer cleared for this vendor stays cleared.
+    data["from_vendor"] = json.dumps({"vendor": key, "fields": {}})
+    assert GST not in check(client, invoice_id, data)["header"]["values"]
+
+
+def test_in_a_browser_picking_a_vendor_fills_the_number_on_its_approved_invoices(browser, store):
+    name, usual = _usual_only(store)
+    _red_river(store, printed=False)
+    page, errors = _open_review(browser, store, "Red River", viewport=LAPTOP)
+    page.locator(f"[name={GST}]").fill("")
+    page.wait_for_timeout(600)
+    _pick_vendor(page, name[:8], name)
+    page.wait_for_function(f"document.querySelector('[name={GST}]').value === {usual!r}")
+    note = page.locator(f'[data-field="{GST}"] [data-from-vendor-note]')
+    assert note.is_visible() and "approved invoices" in note.inner_text()
+    assert errors == []

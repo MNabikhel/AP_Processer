@@ -171,7 +171,7 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
 .iv-tool[aria-pressed="true"] { background: var(--brand-50); border-color: var(--brand); color: var(--brand-600); }
 .iv.turned .iv-rotate { color: var(--brand-600); border-color: var(--brand); } /* the page shown turned */
 .iv-pager { display: inline-flex; align-items: center; gap: 2px; }
-.iv-where { min-width: 86px; text-align: center; font-size: 12.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+.iv-where { min-width: 86px; text-align: center; font-size: 12.5px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
 .iv-icon-btn {
   display: grid; place-items: center; width: 30px; height: 30px; padding: 0;
   border: 1px solid var(--line-strong); border-radius: 8px; background: var(--card); color: var(--ink); cursor: pointer;
@@ -259,6 +259,9 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
 .iv-img { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
 .iv-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 .iv-empty { margin: 0; padding: 48px 16px; text-align: center; color: var(--muted); font-size: 13px; }
+/* Under a page of several: "Page 1 of 3" between Previous page and Next page (B-2637) */
+.iv-page-foot { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.iv-foot-where { font-size: 12.5px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
 
 /* Field boxes: tinted by status, stronger when hovered or selected */
 .iv-f { pointer-events: all; cursor: pointer; }

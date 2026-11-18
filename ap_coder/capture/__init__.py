@@ -20,7 +20,7 @@ from .instructions import addressed_to_software
 from .layout import IMAGE_EXTENSIONS, CannotRead, build_layout, ocr_available, read_pages
 from .locate import locate
 from .normalize import find_amounts
-from .not_invoice import not_an_invoice
+from .not_invoice import not_an_invoice, several_invoices
 from .reader import (
     STRAIGHTEN_FROM,
     _on_tilted_page,
@@ -772,9 +772,10 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
             if positive and fr.status not in (CHECK, MISSING):
                 fr.status, fr.confidence = CHECK, min(fr.confidence, 0.6)
                 fr.reasons.append("read as a positive amount on a credit note: check its sign on the page")
+    not_invoice = "" if credit else not_an_invoice(layout, fields, items)
     return CaptureResult(fields=fields, line_items=items, checks=checks, layout_source=layout.source,
                          page_count=len(layout.pages) + layout.pages_left_out,
                          pages_left_out=layout.pages_left_out + layout.pages_unread_locally,
-                         credit_note=credit, pages_not_read=list(layout.not_read),
-                         not_invoice="" if credit else not_an_invoice(layout, fields, items),
-                         instructions=addressed_to_software(layout, page_text, di_raw, path))  # fmt: skip
+                         credit_note=credit, pages_not_read=list(layout.not_read), not_invoice=not_invoice,
+                         instructions=addressed_to_software(layout, page_text, di_raw, path),
+                         several_invoices=[] if not_invoice else several_invoices(layout))  # fmt: skip

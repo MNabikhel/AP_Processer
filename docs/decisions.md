@@ -6306,3 +6306,54 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     under them, so a filter would miss changes that break a start); the owner chose the lean set.
   - Tested by `tests/meta/test_ci_workflow.py`
     `::test_a_pull_request_runs_the_suite_on_ubuntu_and_the_pilot_laptops_windows_and_main_runs_everything`.
+- **D-261** · **A file that seems to hold several invoices is flagged for a person to split, never split by AP
+  Coder** (`capture/not_invoice.py` `several_invoices`, `SEVERAL_INVOICES` in `capture/bridge.py`, its help in
+  `ops/help.py`; 17 Nov 2026).
+  - **The rule:** each page of a file of several pages is read on its own by the rule reader (`read_fields` on a
+    one-page layout, about 17 ms a page): its invoice number, and whether it has a total its subtotal and taxes add
+    up to. A page whose number differs from the one before starts a new invoice only when every run of pages, the
+    first one included, closes with such a total of its own. So a continuation page that prints the number again
+    (or a misread of it), a page of terms, a packing slip naming the same invoice or lines running on to the next
+    page are one invoice. A document already said not to be an invoice (a statement, `NOT_AN_INVOICE`) is not
+    flagged again; the receipts of one expense claim are read one by one and never compared.
+  - **Why a warning and a person:** splitting a file means deciding where each invoice starts and ends; a wrong
+    split loses a page of a bill. The warning names each invoice's number and pages, holds the invoice from
+    touchless and bulk approval (as every warning does), is said first in the queue (`SAID_FIRST`) and kept when
+    the checks are worked out again (`AFTER_PROCESSING`). If it is one invoice after all, the person approves it.
+  - **Measured:** of the made-up invoices (`bench/generator.py`), none of several pages flagged (29 digital of 400,
+    12 scanned of 150); files of two of them joined, 100 of 100 digital flagged, 10 of 20 scanned (OCR misreads
+    leave a page's totals not adding up: then nothing is said, as before).
+- **D-262** · **The supplier: never the company's own name, and named by its GST/HST number when the page names
+  none of the list's; GST printed as HST is the GST** (B-2639 to B-2643; a pilot tester's invoice; 17 Nov 2026).
+  - **The company's own names** are a setting of their own, *Settings → Review → Your company's names* (`our_names`,
+    one a line, `Store.our_names`): AP Coder knew no name of the company it works for (JD Edwards' settings hold
+    its company number, the chart its business units). A name read as the supplier whose vendor key is one of them
+    is dropped by the rule reader (`patterns.OUR_NAMES`, set around `offline_coder.read_invoice`), so the next
+    name on the page is read; if another reader gives it all the same, it is the supplier the GST/HST number is
+    (below), or none: the field is left empty, its reason said, for a person to fill
+    (`workflow.apply_supplier_by_number`).
+    - *Not chosen:* learning the names from the bill-to blocks of approved invoices (a block the reader does not
+      see as a bill-to is the very case); the names of JD Edwards' business units (a department's, not the
+      company's).
+  - **The GST/HST number names the supplier** when ONE supplier in use of the vendor master has it
+    (`Store.supplier_of_tax_number`, D-219), the number is not "check" and not read only in the bill-to block, and
+    the name read is no supplier's of the list (or the company's own, or none): the name becomes that supplier's,
+    "likely" (a person sees it, with the name printed in the reason). A name read that is another supplier's in the
+    list is not replaced: it is "check", its reason naming the supplier whose number it is (the review screen's
+    one-click *Use ...*, D-219, offers it). Only the local readers' path (`read_invoice`), where the reading is the
+    proposal; with a chat model's proposal the capture is a check of it and is left as read.
+  - **5% printed under "HST" on a supply where only the GST is levied** (an Alberta supplier) is the GST under the
+    HST's name: the amount is the GST payable, all of it claimable. The tax check keeps the reading as printed and
+    says it once, as TAX_REGIME_MISMATCH with the rate (`tax._gst_under_hst`), not as the error TAX_TYPE_NOT_LEVIED
+    plus ITC_AT_RISK ("claim the GST part only"); HST at an HST rate there is still both. The JD Edwards note that
+    the area's rate may give another tax (B-2345) is not said when the area's rate of the taxable amount is the tax
+    charged.
+    - *Not chosen:* reading an "HST" label at 5% as the GST (as "GST/HST" is read by its rate): the label is what
+      the supplier printed, and a person sees the warning; the voucher is the same either way (tax area of the place
+      of supply, the tax as charged).
+  - **Totals as a table of one row** (`spatial.label_row_tables`): a row of three or more total labels with nothing
+    after them over one row of amounts, read cell by cell; an amount under no label goes to the nearest label on
+    the side the table sets its amounts (told by the amounts that are under their labels); nothing is read from a
+    table whose amounts it cannot place (the column reader of `_column_foot` stands). Its readings' method,
+    `label-row-table`, is not measured by the benchmark (it prints no such table), so they are never verified
+    alone; the totals adding up confirm them as any other reading.

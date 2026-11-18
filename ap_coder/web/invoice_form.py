@@ -291,7 +291,8 @@ class Draft:
 
 
 def parse_from_vendor(raw: Any) -> dict[str, Any]:
-    """The form's ``from_vendor`` JSON ({"vendor": key, "fields": {field: number}}), only the tax number fields."""
+    """The form's ``from_vendor`` JSON ({"vendor": key, "fields": {field: number}}), only the tax number fields; and
+    ``open``, the blank ones the browser's vendor list had no number for when it picked the vendor (B-2638)."""
     try:
         data = json.loads(raw) if isinstance(raw, str) and raw.strip() else {}
     except ValueError:
@@ -299,8 +300,10 @@ def parse_from_vendor(raw: Any) -> dict[str, Any]:
     if not isinstance(data, dict) or not isinstance(data.get("vendor"), str):
         return {}
     fields = data.get("fields") if isinstance(data.get("fields"), dict) else {}
+    left = [str(n) for n in data["open"] if n in TAX_NUMBER_FIELDS] if isinstance(data.get("open"), list) else []
     return {"vendor": data["vendor"],
-            "fields": {str(k): str(v) for k, v in fields.items() if k in TAX_NUMBER_FIELDS and v}}  # fmt: skip
+            "fields": {str(k): str(v) for k, v in fields.items() if k in TAX_NUMBER_FIELDS and v},
+            **({"open": left} if left else {})}  # fmt: skip
 
 
 def fill_from_vendor(
@@ -318,7 +321,9 @@ def fill_from_vendor(
     ``vendor``: the vendor's row (``Store.get_vendor``), None when it is not in the list; ``unread``: the fields the
     reading left blank (not printed), the only ones filled (None: any blank one). A number read and cleared by the
     reviewer is the reviewer's to type: filled from the vendor list, the change would be learned as no correction
-    (B-688)."""
+    (B-688). ``vendor`` holds the numbers on the vendor's approved invoices where the list has none (``vendor_numbers``,
+    B-2638): the browser fills from its vendor list alone, and leaves the fields it had no number for ``open`` in the
+    state, for these."""
     key = vendor_key(header.get("vendor_name") or "")
     fields = {n: v for n, v in (state.get("fields") or {}).items()
               if n in TAX_NUMBER_FIELDS and v and str(header.get(n) or "").strip() == v}  # fmt: skip
@@ -334,6 +339,11 @@ def fill_from_vendor(
                     fields[name] = number
                 else:
                     fields.pop(name)
+        for name in state.get("open") or []:  # the browser picked the vendor: what its list had no number for
+            number = str((vendor or {}).get(TAX_NUMBER_FIELDS[name]) or "").strip()
+            if name not in fields and not str(header.get(name) or "").strip() and number and name not in absent and (
+                    unread is None or name in unread):  # fmt: skip
+                header[name] = changed[name] = fields[name] = number
         return {"vendor": key, "fields": fields}, changed
     for name, column in TAX_NUMBER_FIELDS.items():
         number = str((vendor or {}).get(column) or "").strip()
@@ -357,6 +367,18 @@ def unread_numbers(read: dict[str, Any] | None) -> set[str] | None:
     return {n for n in TAX_NUMBER_FIELDS if not str(read.get(n) or "").strip()}
 
 
+def vendor_numbers(store: Store, key: str, vendor: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The vendor's row for the fill (``fill_from_vendor``), each tax number the vendor list lacks taken from the
+    vendor's approved invoices when they all carried the same one (``usual_tax_numbers``, B-2638); None for a vendor
+    neither knows."""
+    from ap_coder.coding.vendors import usual_tax_numbers
+
+    lacking = [n for n, column in TAX_NUMBER_FIELDS.items() if not str((vendor or {}).get(column) or "").strip()]
+    usual = usual_tax_numbers(store.vendor_invoices(key, shared=True)) if key and lacking else {}
+    found = {TAX_NUMBER_FIELDS[n]: usual[n] for n in lacking if n in usual}
+    return {**(vendor or {}), **found} if found else vendor
+
+
 def settle_header(store: Store, draft: Draft, read: dict[str, Any] | None = None) -> dict[str, str]:
     """What the server fills in the invoice details before they are checked: the supplier a GST/HST number read or
     typed belongs to, when none is chosen (``supplier_by_number``, D-219), the vendor list's tax numbers (D-65) and
@@ -369,7 +391,9 @@ def settle_header(store: Store, draft: Draft, read: dict[str, Any] | None = None
     # of two vendors whose names read alike, the one with the GST/HST number on screen (B-1021)
     vendor = store.find_vendor(header.get("vendor_name"), header.get("gst_hst_registration_number")) if key else None
     key = (vendor or {}).get("vendor_key") or key
-    draft.from_vendor, changed = fill_from_vendor(header, draft.from_vendor, draft.absent, vendor, unread_numbers(read))
+    draft.from_vendor, changed = fill_from_vendor(
+        header, draft.from_vendor, draft.absent, vendor_numbers(store, key, vendor), unread_numbers(read)
+    )
     if one:
         changed["vendor_name"] = one
     currency = (header.get("currency") or "CAD").strip().upper() or "CAD"

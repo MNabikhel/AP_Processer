@@ -157,7 +157,9 @@ Then **Save the settings** under them. Two things the files do not say are offer
 set the usual way, GST and HST *Recoverable*, PST and QST *Not recoverable: add to each expense line's GL*. The
 GST/HST that is recovered goes on the voucher's pay item (tax explanation code V) and JD Edwards posts it itself, so
 it needs no GL account here; PST or QST stays in the line's expense. Then set **Settings → Review → Your province**
-(where goods are delivered to you): the tax check uses it for an invoice that prints no ship-to or bill-to.
+(where goods are delivered to you): the tax check uses it for an invoice that prints no ship-to or bill-to. In the
+same card, type **Your company's names** (the legal name and any other name invoices are addressed to, one a line):
+a name printed there is the customer, never read as the supplier.
 
 **Bank accounts (optional).** JD Edwards' voucher entry takes a G/L bank account. To have each voucher carry
 one, type your bank accounts on **Setup → GL accounts & tax → Bank accounts**: the account as you key it in

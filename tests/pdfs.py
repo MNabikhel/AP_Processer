@@ -68,6 +68,55 @@ def long_invoice(where: Path, pages: int, per_page: int = 20, name: str = "long.
     return text_pdf(where, items, name=name, pages=pages), cents / 100, (cents + gst) / 100
 
 
+# A made-up supplier's invoice with its totals as a table of one row: a row of labels over a row of amounts, a cell
+# left empty where there is none. Tax "HST" at 5% (GST charged in Alberta under an HST label), on the goods and the
+# freight: 688.50 taxed, 34.43 of tax, 722.93 due.
+ONE_ROW_LABELS = ("Line-Item Total", "Freight Amount", "GST Tax", "HST Tax", "Sub Total", "Deposits",
+                  "Credits/Discounts", "Amount Due:")  # fmt: skip
+ONE_ROW_VALUES = ("656.50", "32.00", "", "34.43", "722.93", "", "", "722.93 CAD")
+ONE_ROW_SUPPLIER, ONE_ROW_CUSTOMER = "Prairie Promo Supply Inc.", "Maple Ridge Holdings Ltd."
+ONE_ROW_GST = "123456782RT0001"
+ONE_ROW_ADDRESS = "200 Ridge Road SW, Calgary AB T2P 1J9"
+ONE_ROW_ITEMS = (("CB-220", "Non-Woven Lunch Cooler Bag, 2 colour", "100", "100", "0", "5.9900", "Each", "", "599.00"),
+                 ("SETUP", "Lunch Cooler Setup", "1", "1", "0", "57.5000", "Each", "", "57.50"))  # fmt: skip
+
+
+def one_row_totals(where: Path, name: str = "one_row.pdf", labels: str = "left", values: str = "right",
+                   supplier: bool = True, customer: str = "below") -> Path:  # fmt: skip
+    """That invoice as ``where / name``: each label set at the ``labels`` side of its cell ("left", "center",
+    "right"), each amount at the ``values`` side. ``supplier``: the supplier's name printed at the top (else only in
+    its logo, a picture). ``customer``: "below" (the customer's name under "Bill To:"), "beside" ("Customer:" at
+    the left margin, the name in a column far to its right) or "unlabelled" (its address block with no label, as in
+    an envelope's window)."""
+    import pymupdf
+
+    items: list[tuple] = [(50, 68, "4410 Industrial Way NE, Calgary AB T2E 7H1"), (400, 50, "INVOICE", 14),
+                          (400, 70, "Invoice #: 118204"), (400, 84, "Invoice Date: 2026-09-14"),
+                          (400, 98, "Terms: Net 30")]  # fmt: skip
+    if supplier:
+        items.append((50, 50, ONE_ROW_SUPPLIER, 16))
+    if customer == "below":
+        items += [(50, 120, "Bill To:"), (50, 134, ONE_ROW_CUSTOMER), (50, 148, ONE_ROW_ADDRESS)]
+    elif customer == "unlabelled":
+        items += [(50, 120, ONE_ROW_CUSTOMER), (50, 134, ONE_ROW_ADDRESS)]
+    else:
+        items += [(36, 120, "Customer:"), (300, 120, ONE_ROW_CUSTOMER), (300, 134, ONE_ROW_ADDRESS)]
+    heads = ((50, "Item #"), (95, "Item Description"), (275, "QTY Billed"), (318, "QTY Ordered"), (368, "Back Order"),
+             (412, "Unit Price"), (455, "Per"), (480, "Credit"), (530, "Amount"))  # fmt: skip
+    items += [(x, 200, text, 8) for x, text in heads]
+    for y, row in zip((216, 230), ONE_ROW_ITEMS, strict=True):
+        items += [(x + (10 if 2 <= n <= 4 else 0), y, text, 8)
+                  for n, ((x, _), text) in enumerate(zip(heads, row, strict=True)) if text]  # fmt: skip
+    width = 540 / len(ONE_ROW_LABELS)
+    for n, cells in enumerate(zip(ONE_ROW_LABELS, ONE_ROW_VALUES, strict=True)):
+        for text, side, y in zip(cells, (labels, values), (300, 314), strict=True):
+            if text:
+                left, room = 36 + n * width + 2, width - 4 - pymupdf.get_text_length(text, fontsize=8)
+                items.append((left + {"left": 0, "center": room / 2, "right": room}[side], y, text, 8))
+    items.append((50, 360, f"GST/HST Registration No: {ONE_ROW_GST[:9]} {ONE_ROW_GST[9:]}", 8))
+    return text_pdf(where / name, items)
+
+
 # Three made-up receipts of one expense claim (D-216): fuel with GST, a lunch with GST and a tip, a room with HST.
 # Each row is its text, with the amount at the right after a "|". Together: 273.00 before tax, 27.80 of tax, 300.80.
 RECEIPTS = {

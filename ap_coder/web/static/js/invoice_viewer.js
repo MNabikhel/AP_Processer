@@ -10,7 +10,9 @@
    Looking at the page: zoom from 50% to 400% ("-", "+", the % (back to Fit width), Fit width, Fit page; Ctrl or Cmd +
    the wheel, or a trackpad pinch, zooms where the pointer is); the Hand (H, or Space held, or the middle button) drags
    the page about; Rotate turns the page a quarter turn to read it, on screen only (nothing is saved or sent). A page
-   zoomed in is drawn again sharper (?scale=2 or 3: 240 or 360 dpi), swapped in once it has loaded.
+   zoomed in is drawn again sharper (?scale=2 or 3: 240 or 360 dpi), swapped in once it has loaded. A file of several
+   pages shows one at a time: "1 of 3" with Previous / Next above it, and under it where a person scrolling down the
+   page ends up (B-2637).
 
    Events: {type: "select", field}, {type: "assign", field, text, boxes: [[page, x0, y0, x1, y1], ...]} (the words
    picked, in reading order), {type: "teach_cancel", field}, {type: "selection", page, rect: [x0, y0, x1, y1], x, y}
@@ -309,7 +311,12 @@ export class InvoiceViewer {
     // The frame holds the room the page takes on screen; the sheet in it is turned when the page is rotated.
     this.frame = h("div", { class: "iv-frame" }, this.sheet);
     this.empty = h("p", { class: "iv-empty", hidden: true }, "No page to show.");
-    this.stage = h("div", { class: "iv-stage", tabindex: "-1" }, this.frame, this.empty);
+    // Under a page of several: which one it is, and the way to the next, where scrolling down the page ends (B-2637).
+    this.footPrev = h("button", { type: "button", class: "iv-btn ghost", onclick: () => this.showPage(this.page - 1) }, icon("left", 15), "Previous page");
+    this.footNext = h("button", { type: "button", class: "iv-btn primary", onclick: () => this.showPage(this.page + 1) }, "Next page", icon("right", 15));
+    this.footWhere = h("span", { class: "iv-foot-where" });
+    this.pageFoot = h("nav", { class: "iv-page-foot", "aria-label": "Pages of the file", hidden: true }, this.footPrev, this.footWhere, this.footNext);
+    this.stage = h("div", { class: "iv-stage", tabindex: "-1" }, this.frame, this.pageFoot, this.empty);
     // A tag in the page's corner while the Hand is on or the page is shown turned: what a drag does now, and that
     // the turn is on screen only (D-57).
     this.modeTag = h("div", { class: "iv-mode", "aria-live": "polite" });
@@ -749,6 +756,10 @@ export class InvoiceViewer {
     replace(this.where, info ? [h("span", { class: "iv-where-word" }, "Page "), `${this.page} of ${this.pages.length}`] : "");
     this.prevBtn.disabled = this.page <= 1;
     this.nextBtn.disabled = this.page >= this.pages.length;
+    this.pageFoot.hidden = !many || !info;
+    this.footPrev.hidden = this.page <= 1;
+    this.footNext.hidden = this.page >= this.pages.length;
+    replace(this.footWhere, `Page ${this.page} of ${this.pages.length}`);
     if (!info) return;
     this.sizeSheet();
     if (newPicture || this.imgFor !== info.src) {
@@ -810,6 +821,7 @@ export class InvoiceViewer {
     const cs = window.getComputedStyle(st);
     const w = st.clientWidth - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
     let ht = st.clientHeight - parseFloat(cs.paddingTop || 0) - parseFloat(cs.paddingBottom || 0);
+    if (!this.pageFoot.hidden) ht -= this.pageFoot.offsetHeight + parseFloat(window.getComputedStyle(this.pageFoot).marginTop || 0);
     if (!this.root.classList.contains("fixed")) ht = Math.max(MIN_FIT_HEIGHT, window.innerHeight - VIEWPORT_MARGIN);
     else if (this.settledHeight) ht += this.settledHeight - this.root.offsetHeight; // as it is once stuck
     return [Math.max(0, w), Math.max(0, ht)];
@@ -1587,7 +1599,7 @@ export class InvoiceViewer {
       // Space holds the Hand with the focus on the page itself, or with the focus nowhere (the body) and the pointer
       // on the page. A box, a button or a link anywhere else keeps Space for itself, the pointer wherever it rests
       // (B-591); with neither, it scrolls the dashboard page as usual.
-      const onPage = this.stage.contains(e.target);
+      const onPage = this.stage.contains(e.target) && !this.pageFoot.contains(e.target); // (a button under the page: its own)
       // (a box the review screen focused on opening, not yet used by the clerk, counts as nowhere: D-76)
       const nowhere = !e.target || e.target === document.body || e.target === document.documentElement ||
         e.target.dataset?.autofocused === "1";

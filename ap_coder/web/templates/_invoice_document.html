@@ -4,7 +4,8 @@
 <section class="card flush inv-doc" aria-label="Document">
   <div class="inv-doc-head">
     <div class="rvw-doc-head"><b>Document</b><span class="file" title="{{ doc.file_name }}">{{ doc.file_name }}</span>
-      {% if doc.kind %}<span class="apc-pill {{ doc.kind.tone }} doc-kind" title="{{ doc.kind.title }}"><span class="ms" aria-hidden="true">{{ doc.kind.icon }}</span>{{ doc.kind.label | words }}</span>{% endif %}</div>
+      {% if doc.kind %}<span class="apc-pill {{ doc.kind.tone }} doc-kind" title="{{ doc.kind.title }}"><span class="ms" aria-hidden="true">{{ doc.kind.icon }}</span>{{ doc.kind.label | words }}</span>{% endif %}
+      {% if doc.viewer and doc.viewer.pages | length > 1 %}<span class="apc-pill doc-pages" title="Turn the pages with Next page, under the page or above it">{{ doc.viewer.pages | length }} pages</span>{% endif %}</div>
     <div class="row inv-doc-tools">
     {# The reader panel's poll, while OvisOCR2 reads it (data-reading), and on a screen in the review queue to say who
        else has it open and whether it is out of date (doc.watch, D-184): the panel is hidden when there is no
