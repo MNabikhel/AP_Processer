@@ -270,10 +270,11 @@ def similarity(a: str, b: str) -> float:
 # whatever their words ("Freight Amount", "SHIPPING & HANDLING"), as alike as CHARGE_ALIKE (D-264): two charge lines of
 # the same words, or of the same price, are still more alike.
 # The reader's line for a charge printed beside the subtotal under no label it found (``offline_coder.READ_CHARGE``,
-# B-2639) is one too.
+# B-2639) is one too. Not "courier" or "transport": a courier's own service ("Same-day document courier") is no
+# charge on goods, and its monthly invoice billed a PO's freight line.
 CHARGE = re.compile(
-    r"(?i)\b(?:freight|shipping|delivery|deliveries|cartage|courier|transport|transportation|"
-    r"livraison|fret|messagerie|expedition|expédition)\b|^charges not in the line table$"
+    r"(?i)\b(?:freight|shipping|delivery|deliveries|cartage|livraison|fret|expedition|expédition)\b"
+    r"|^charges not in the line table$"
 )
 CHARGE_ALIKE = 0.8
 

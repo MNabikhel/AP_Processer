@@ -1132,6 +1132,7 @@ def test_a_freight_line_pairs_with_the_freight_line_of_its_po_whatever_its_words
             (13, "13.000", 1),
             (14, "14.000", 1),
         ], freight
+    assert not po_mod.is_charge("Same-day document courier - downtown runs")  # a courier's service: no charge
     # Only a charge pairs with the freight line so: a line of goods of no word of any PO line matches none
     coding = _freight_invoice(freight="Artwork proof")
     coding.line_items[2].unit_price = coding.line_items[2].amount = 30.0
