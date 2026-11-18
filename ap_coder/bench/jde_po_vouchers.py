@@ -24,6 +24,7 @@ The same books give the same files."""
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
 from dataclasses import dataclass
@@ -34,7 +35,7 @@ from typing import Any
 from ..core.chart import split_account
 from ..erp.jde_prototype import prototype_settings
 from ..erp.jde_settings import AMOUNT_TAX, CHARGES_GL, JdeSettings, default_tax_map
-from .jde_company import Supplier, Truth, money
+from .jde_company import Supplier, Truth, build, money
 from .jde_exports import OpenPoLine, open_po_lines_xlsx, order_details_xlsx
 from .jde_invoices import _page, printed_name
 
@@ -416,3 +417,20 @@ def write(folder: str | Path, truth: Truth) -> list[PoCase]:
     listed = "\n".join(f"- {case.name}.pdf: {case.what} (PO {case.po}, gross {case.total:,.2f})" for case in made)
     (out / "README.txt").write_text(README.format(freight_in=FREIGHT_IN, cases=listed), encoding="utf-8")
     return made
+
+
+def add_parser(sub: Any) -> argparse.ArgumentParser:
+    """``po-vouchers``' command line, under ``python -m ap_coder.bench``."""
+    p = sub.add_parser("po-vouchers", help="made-up PO-matched invoices, their open PO lines and the voucher match "
+                       "rows expected, to try JD Edwards' Voucher Match (D-265)")  # fmt: skip
+    p.add_argument("--out", required=True, help="the folder to write the set into (made if missing)")
+    p.add_argument("--seed", type=int, default=1, help="the made-up company's seed (the demo company's: 1)")
+    p.set_defaults(run=main)
+    return p
+
+
+def main(a: argparse.Namespace) -> int:
+    made = write(a.out, build(a.seed, "small", dt.date.today().year - 1))
+    print(f"{len(made)} PO-matched invoices, their open PO lines and {EXPECTED_FILE} written to {a.out}: see "
+          f"{Path(a.out) / 'README.txt'}")  # fmt: skip
+    return 0
