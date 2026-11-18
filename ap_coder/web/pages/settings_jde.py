@@ -70,6 +70,10 @@ Confirm with your JDE team before the first live load:
   supplier + invoice number too, but E1 should be the last word.
 - **The PO match path**: whether PO-matched vouchers come in through the Z-tables at all, and the columns of
   the match file (marked *unconfirmed*).
+- **Voucher Match** (P0411, typed from the keying sheet): that its processing options allow a line on no order (a
+  charge not on the purchase order, a PST or QST its tax area does not hold); whether the tax worked out on the
+  rows may be typed over when it is a cent off the invoice's; the tax area and code for a line charged part of what
+  its area holds (GST only on a GST + PST area).
 """
 
 # (field, label, max characters, help) of the voucher header and the "More fields" group.
@@ -121,6 +125,7 @@ def jde_context(store: Store, query: Any = None) -> dict[str, Any]:
         "gl_dates": jde_settings.GL_DATES,
         "closed_periods": jde_settings.CLOSED_PERIODS,
         "remarks": jde_settings.REMARKS,
+        "po_charges": jde_settings.PO_CHARGES,
         "currencies": ", ".join(js.currencies),
         "extras": ", ".join(f"{k}={v}" for k, v in js.po_extra_columns.items()),
         "bank_rows": bank_rows(store, js),
@@ -221,6 +226,18 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
         if text("closed_period") not in jde_settings.CLOSED_PERIODS:
             return refuse("Choose what is done with a G/L date in a closed period.")
         new.closed_period = text("closed_period")
+    if "po_charges" in form:  # a PO-matched voucher's charge not on the PO (D-265)
+        if text("po_charges") not in jde_settings.PO_CHARGES:
+            return refuse("Choose what is done with a charge not on the purchase order.")
+        account = text("po_charge_account")
+        parts = account.split(".")
+        if text("po_charges") == jde_settings.CHARGES_GL and not (
+            2 <= len(parts) <= 3 and all(parts) and " " not in account
+            and len(parts[0]) <= 12 and len(parts[1]) <= 6 and len(parts[-1]) <= (8 if len(parts) == 3 else 6)
+        ):  # fmt: skip
+            return refuse("Give the account charges not on the purchase order go to as JD Edwards writes it: business "
+                          "unit.object.subsidiary, e.g. 0021061010.7420.4207.")  # fmt: skip
+        new.po_charges, new.po_charge_account = text("po_charges"), account
     if "remarks" in form:  # (D-210)
         if text("remarks") not in jde_settings.REMARKS:
             return refuse("Choose what the remarks carry.")
