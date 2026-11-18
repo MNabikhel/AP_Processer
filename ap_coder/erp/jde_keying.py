@@ -19,7 +19,9 @@ a spreadsheet opening one reads an account or a PO number as a number (B-2151).
 A PO-matched voucher (Settings → JD Edwards E1, D-264) has no G/L distribution: it is keyed in Voucher Match (P0411),
 a row for each invoice line in the screen's order (the order number, type and company, the PO line's own number, the
 quantity and amount matched, the unit of measure, the PO line's account, the tax, the remark), each line paired with
-its open PO line as the purchase orders loaded have it (``coding.po.voucher_match``). One with a line that matches no
+its open PO line as the purchase orders loaded have it (``coding.po.voucher_match``), each row's tax and the lines of
+its own (a charge not on the PO, a tax its area does not hold) as ``jde_match.keyed_match`` keys them (D-265); its
+check line is the amounts matched + the tax JD Edwards works out on them = the gross. One with a line that matches no
 PO line is not ready, with why: no PO line is guessed.
 
 Entry points: ``vouchers`` (the values), ``po_matches`` (the voucher matches of a batch's invoices), ``build_xlsx``
@@ -44,7 +46,7 @@ from ..coding import banks
 from ..coding import po as po_mod
 from ..coding.taxreturn import self_assessed_base
 from ..core.safe import neutralise_sheet, xlsx_row
-from . import jde_accounts, jde_formats, jde_remarks, jde_review, jde_settings, jde_voucher, jde_zfiles
+from . import jde_accounts, jde_formats, jde_match, jde_remarks, jde_review, jde_settings, jde_voucher, jde_zfiles
 from .exports import _sheet
 
 FORMAT = jde_settings.FORMATS[1]  # "jde_keying": the export format (``exports.FORMATS`` says what it is)
@@ -58,6 +60,7 @@ NOTE_WIDTH = 84  # characters of a note's row: the three columns beside its labe
 MATCH_COLUMNS = ["Order Number", "Or Ty", "Order Co", "Line Number", "Quantity Matched", "UM", "Amount Matched",
                  "Account Number", "Tax Y/N", "Tax Expl", "Tax Area", "Remark"]  # fmt: skip
 MATCH_WIDTHS = [16, 6, 10, 26, 10, 9, 10, 32]
+NOT_ON_PO = "Not on the PO"  # a voucher match's G/L line of its own, in its Order Number column (D-265)
 STANDARD_TYPE = "PV"  # Standard Voucher Entry's own document type: any other is said (B-2621)
 CREDIT_TERMS = "none (a credit)"  # a credit memo's Payment terms: none is typed, as the files send none (B-896)
 # Rows of a printed page under the column names (upright Letter or A4 at full size; fewer than fit, to be safe): a
@@ -111,16 +114,24 @@ class Voucher:
     lines: list[Line] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
-    # PO-matched: the voucher match rows (``jde_review.match_lines``), no G/L lines
-    matches: list[jde_review.MatchLine] = field(default_factory=list)
+    # PO-matched: the voucher match rows (``jde_match.keyed_match``), no G/L lines; the tax JD Edwards works out on
+    # them, on top of the amounts matched (D-265)
+    matches: list[jde_match.MatchLine] = field(default_factory=list)
+    match_tax: float = 0.0
 
     @property
     def lines_total(self) -> float:
         return round(sum(line.amount for line in self.lines) + sum(m.amount for m in self.matches), 2)
 
     @property
+    def added(self) -> float:
+        """What the check line adds to the lines: the tax JD Edwards recovers itself (G/L lines), or every tax it works
+        out on the voucher match rows (D-265)."""
+        return self.match_tax if self.matches else self.recovered
+
+    @property
     def balanced(self) -> bool:
-        return round(self.lines_total + self.recovered - self.gross, 2) == 0
+        return round(self.lines_total + self.added - self.gross, 2) == 0
 
 
 @dataclass
@@ -164,10 +175,11 @@ def vouchers(
     for inv, (an8, v) in zip(invoices, jde_voucher._vouchers(invoices, settings, vendor_lookup, on), strict=True):
         final = v.final
         why = list((left_out or {}).get(v.inv_id) or []) or (jde_voucher._accounts_once(v) if v.problems else [])
-        matched = None
+        keyed = None
         if v.po_matched and po_matches is not None:
             matched = po_matches.get(v.inv_id) or po_mod.voucher_match(None, str(final.get("po_number") or ""))
-            why = why or list(matched.held)
+            keyed = jde_match.keyed_match(v, matched, settings)
+            why = why or list(dict.fromkeys(keyed.held))
         if why:
             held.append(Held(v.inv_id, an8, str(final.get("vendor_name") or ""),
                              str(final.get("invoice_number") or "").strip(), str(final.get("invoice_date") or ""),
@@ -177,16 +189,12 @@ def vouchers(
         terms, _key, source = jde_voucher.terms_code(final, settings)
         if source == jde_voucher.TERMS_CREDIT:  # a credit memo goes with no terms code, as the files send it (B-896)
             terms = CREDIT_TERMS
-        warnings, notes = _said(v, settings, tax is not None, fx_rates)
+        warnings, notes = _said(v, settings, tax is not None, fx_rates, matched=keyed is not None)
         warnings = [*((warned or {}).get(v.inv_id) or []), *warnings]
-        rows = jde_review.match_lines(v, matched, settings) if matched is not None else []
-        if matched is not None:
-            _match_said(matched, warnings, notes)
-        for m in rows:  # the PO line's own tax area, typed on its row, is not the pay item's
-            if m.taxed == "Y" and m.tax_area and v.tax_area and m.tax_area != v.tax_area:
-                notes.append(f"Order {m.order_number} line {m.line}: the PO line's tax rate/area is {m.tax_area}, the "
-                             f"pay item's {v.tax_area} (where the invoice was supplied): check which JD Edwards "
-                             "should tax it at.")  # fmt: skip
+        if keyed is not None:
+            warnings += keyed.warnings
+            notes = [*keyed.notes, *notes]
+            _match_said(po_matches.get(v.inv_id) if po_matches else None, warnings, notes)
         printed = str(final.get("payment_terms") or "").strip()
         if not terms and printed:  # never the printed terms in JD Edwards' 3-character code (B-2618)
             notes.insert(0, f"Payment terms “{printed}” are printed and have no JD Edwards code (Settings → JD Edwards "
@@ -216,15 +224,16 @@ def vouchers(
                         str((gl_names or {}).get(str(e.get("gl_code") or "").strip()) or ""),
                         e["cents"] / 100, jde_remarks.line_remark(e)) for e in v.entries],
             warnings=warnings, notes=notes,
-            matches=rows,
+            matches=keyed.rows if keyed is not None else [],
+            match_tax=keyed.tax / 100 if keyed is not None else 0.0,
         ))  # fmt: skip
     return ready, held
 
 
-def po_matches(store: Any, invoices: list[dict[str, Any]]) -> dict[int, po_mod.VoucherMatch]:
+def po_matches(store: Any, invoices: list[dict[str, Any]], charge_account: str = "") -> dict[int, po_mod.VoucherMatch]:
     """{invoice: its voucher match} of the ``invoices`` that quote a PO: each line paired with its PO line as the
     purchase orders loaded have it (``po.match_invoice``, the invoice's own lines left out of what was billed
-    before)."""
+    before); ``charge_account``: where a charge the PO has no line for goes (``JdeSettings.charge_account``, D-265)."""
     from ..core.schema import InvoiceCoding
 
     out: dict[int, po_mod.VoucherMatch] = {}
@@ -234,14 +243,18 @@ def po_matches(store: Any, invoices: list[dict[str, Any]]) -> dict[int, po_mod.V
         if number:
             coding = InvoiceCoding.model_validate({k: x for k, x in final.items() if k != "gl_distribution"})
             invoice_id = int(inv.get("id") or 0)
-            out[invoice_id] = po_mod.voucher_match(po_mod.match_invoice(coding, store, invoice_id), number)
+            out[invoice_id] = po_mod.voucher_match(po_mod.match_invoice(coding, store, invoice_id), number,
+                                                   charge_account)  # fmt: skip
     return out
 
 
-def _match_said(matched: po_mod.VoucherMatch, warnings: list[str], notes: list[str]) -> None:
+def _match_said(matched: po_mod.VoucherMatch | None, warnings: list[str], notes: list[str]) -> None:
     """What a voucher match's rows need said: a quantity matched over what JD Edwards had open on its PO line
-    (``warnings``); a PO line with no quantity in the purchase orders loaded, matched by amount (``notes``)."""
-    for row in matched.rows:
+    (``warnings``: a credit gives back, never over, B-2647); a PO line with no quantity in the purchase orders loaded,
+    matched by amount, and one matched in part, left open for the rest (``notes``)."""
+    for row in matched.rows if matched is not None else []:
+        if not row.on_po:
+            continue
         where = f"Order {row.order_number} line {row.line}"
         if row.no_quantity:
             typed = (f"the invoice's {po_mod._qty(row.quantity)}" if row.quantity is not None
@@ -250,16 +263,22 @@ def _match_said(matched: po_mod.VoucherMatch, warnings: list[str], notes: list[s
                          f"({row.amount:,.2f}) and Quantity Matched is {typed}. Check the quantity JD Edwards "
                          "shows for it.")  # fmt: skip
         elif row.open_quantity is not None and row.quantity is not None and \
-                abs(row.quantity) > row.open_quantity + 1e-6:  # fmt: skip
+                row.quantity > row.open_quantity + 1e-6:  # fmt: skip
             warnings.append(f"{where}: {po_mod._qty(row.quantity)} matched, but JD Edwards had "
                             f"{po_mod._qty(row.open_quantity)} open at the purchase orders' last load: it matches no "
                             "more than is open.")  # fmt: skip
+        elif row.open_quantity is not None and row.quantity is not None and \
+                0 < row.quantity < row.open_quantity - 1e-6:  # fmt: skip
+            notes.append(f"{where}: {po_mod._qty(row.quantity)} of the {po_mod._qty(row.open_quantity)} open matched; "
+                         f"the line stays open for {po_mod._qty(row.open_quantity - row.quantity)} (do not close it "
+                         "in Voucher Match).")  # fmt: skip
 
 
 def _said(v: jde_voucher._Voucher, settings: jde_settings.JdeSettings, taxed: bool,
-          fx_rates: Mapping[str, float] | None) -> tuple[list[str], list[str]]:  # fmt: skip
+          fx_rates: Mapping[str, float] | None, matched: bool = False) -> tuple[list[str], list[str]]:  # fmt: skip
     """(warnings, notes) under a voucher: what a person typing it would otherwise have to work out, or would not
-    know to ask."""
+    know to ask. ``matched``: keyed as voucher match rows, whose tax ``jde_match`` says (no G/L lines to keep a tax
+    inside)."""
 
     def of(types: Any) -> str:  # the tax charged of these types
         cents = sum(jde_formats._units(t.get("tax_amount"), v.decimals) for t in v.charged if t["tax_type"] in types)
@@ -271,11 +290,12 @@ def _said(v: jde_voucher._Voucher, settings: jde_settings.JdeSettings, taxed: bo
     warnings = [f"{said[0].upper()}{said[1:]}."] if (said := jde_review.not_recovered(v)) else []
     notes: list[str] = []
     kept = v.expensed - {"GST", "HST"}  # the federal ones are the warning's
-    if kept:
+    if kept and not matched:
         notes.append(f"The {names(kept)} ({of(kept)}) is not recovered: it is inside the G/L lines, not in the tax "
                      "or taxable amount.")  # fmt: skip
     inside = {t["tax_type"] for t in v.charged} - v.recoverable_types - v.expensed
-    if taxed and inside:  # code C or B: the tax amount holds a tax JD Edwards does not post as recoverable
+    # code C or B: the tax amount holds a tax JD Edwards does not post as recoverable
+    if taxed and inside and not matched:
         notes.append(f"The tax amount {v.stam / 100:,.2f} is {v.recoverable / 100:,.2f} that JD Edwards recovers and "
                      f"{of(inside)} of {names(inside)} that stays inside the G/L lines (code {v.tax_code}: the tax "
                      "area's sales tax).")  # fmt: skip
@@ -310,11 +330,12 @@ def _said(v: jde_voucher._Voucher, settings: jde_settings.JdeSettings, taxed: bo
 
 
 def _check(v: Voucher) -> str:
-    """The check line's words: G/L lines (amounts matched) + recovered tax = gross."""
+    """The check line's words: G/L lines + recovered tax = gross; amounts matched + the tax JD Edwards works out on
+    them = gross (D-265)."""
     if v.po_matched and not v.matches:
         return "PO-matched voucher: JD Edwards distributes it from the receipts"
-    said = f"{v.lines_total:,.2f} + {v.recovered:,.2f} = {v.gross:,.2f}"
-    return f"{said}: balanced" if v.balanced else f"{v.lines_total:,.2f} + {v.recovered:,.2f} is not {v.gross:,.2f}"
+    said = f"{v.lines_total:,.2f} + {v.added:,.2f} = {v.gross:,.2f}"
+    return f"{said}: balanced" if v.balanced else f"{v.lines_total:,.2f} + {v.added:,.2f} is not {v.gross:,.2f}"
 
 
 Row = list[tuple[Any, str]]  # a sheet row: four (value, kind) cells
@@ -346,7 +367,7 @@ def _head(v: Voucher, title: str) -> list[Row]:
 
 def _tail(v: Voucher) -> list[Row]:
     """The check line, then the warnings and notes, each wrapped over as many rows as it needs."""
-    said = "Amounts matched + recovered tax = gross" if v.matches else "G/L lines + recovered tax = gross"
+    said = "Amounts matched + tax on the rows = gross" if v.matches else "G/L lines + recovered tax = gross"
     rows: list[Row] = [[("Check", LABEL), (said, PLAIN), (v.lines_total, MONEY), (_check(v), PLAIN)]]
     for label, texts in (("Warning", v.warnings), ("Note", v.notes)):
         for text in texts:
@@ -363,7 +384,8 @@ def _parts(v: Voucher, n: int, count: int) -> list[list[Row]]:
     title = f"Voucher {n} of {count}"
     lines: list[Row] = [[(li.account, TEXT), (li.description, PLAIN), (li.amount, MONEY), (li.remark, TEXT)]
                         for li in v.lines]  # fmt: skip
-    lines += [[(m.order_number, TEXT), (m.order_type, TEXT), (m.order_company, TEXT), (m.line, TEXT),
+    lines += [[(m.order_number, TEXT) if m.on_po else (NOT_ON_PO, LABEL), (m.order_type, TEXT),
+               (m.order_company, TEXT), (m.line, TEXT),
                (m.quantity, PLAIN), (m.uom, TEXT), (m.amount, MONEY), (m.account, TEXT), (m.taxed, TEXT),
                (m.tax_code, TEXT), (m.tax_area, TEXT), (m.remark, TEXT)] for m in v.matches]  # fmt: skip
     head, tail = _head(v, title), _tail(v)

@@ -58,7 +58,8 @@ guides, the bug log (BUGS.md), decisions (decisions.md) and the owner's to-do li
   (`JdeSettings`, `load`, `save`, `in_use`, the open period), `jde_prototype.py` (`use_prototype`),
   `jde_accounts.py` (`resolve_an8`, `account_for`), `jde_voucher.py` (one voucher: `_prepare`, tax area and code,
   terms, what holds it back), `jde_remarks.py`, `jde_zfiles.py` (columns, `voucher_rows`, `export_batch`),
-  `jde_review.py` (`voucher_findings`, `voucher_view`), `jde.py` (a batch: `validate`, `build_zip`, `dry_run`). Its
+  `jde_review.py` (`voucher_findings`, `voucher_view`), `jde_match.py` (a PO-matched voucher's rows and taxes, D-264,
+  D-265), `jde.py` (a batch: `validate`, `build_zip`, `dry_run`). Its
   AIS API: `erp/jde_ais.py`, `jde_sync.py`, `jde_post.py`; the JDE worksheet `erp/jde_worksheet.py`.
 - The review screen, one subject a module (D-223). What it shows, `web/invoice_<subject>.py`: `form` (the fields,
   `Draft`), `grid` (line and tax grids, line actions), `reading` (the page as read), `findings` (the checks' words,

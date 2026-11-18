@@ -1138,6 +1138,18 @@ FAQ: list[tuple[str, str]] = [
         "guide: an invoice over it can still be approved.",
     ),
     (
+        "How is a PO-matched invoice keyed into JD Edwards, tax and freight included?",
+        "With PO-matched vouchers on (Settings → JD Edwards E1), the keying sheet gives each invoice with a PO number "
+        "its Voucher Match rows: a row for each PO line it bills, the amount matched before tax, and the row's Tax "
+        "Y/N, tax explanation code and tax area from what the invoice charges on that line (N on an exempt or "
+        "zero-rated line). JD Edwards works the tax out of the rows, so the check line is the amounts matched plus "
+        "that tax, which must be the gross. A PST or QST kept in the expense that the province's tax area does not "
+        "hold (a GST-only area) is keyed on a line of its own on the PO line's account, Tax N. Freight, a fuel "
+        "surcharge or a fee the purchase order has no line for holds the voucher for a person, or, with "
+        "“Charges not on the purchase order” set to add them, goes on a line of its own on the account chosen "
+        "there, marked “Not on the PO”, with its tax.",
+    ),
+    (
         "How does a manager confirm the coding?",
         "On the review screen, Park then Send to manager asks the manager of the invoice's cost centers to confirm "
         "how it is coded: the lines on screen go with the request and the invoice is parked, waiting for them. On this "

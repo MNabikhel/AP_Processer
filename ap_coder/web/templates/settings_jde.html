@@ -168,6 +168,14 @@
     </div>
     <label class="check"><input type="checkbox" name="po_matched" value="1"{% if js.po_matched %} checked{% endif %}>
       PO-matched vouchers: invoices with a PO number get no G/L lines, to be matched in E1 (the keying sheet gives each one's Voucher Match rows, a row for each PO line, from the purchase orders loaded)</label>
+    <fieldset class="st-radios" data-po-charges><legend>Charges not on the purchase order</legend>
+      {% for key, text in po_charges.items() %}
+      <label class="check"><input type="radio" name="po_charges" value="{{ key }}"{% if js.po_charges == key %} checked{% endif %}> {{ text }}</label>
+      {% endfor %}
+      <label class="field">Account (BU.Object.Subsidiary)
+        <input type="text" name="po_charge_account" value="{{ js.po_charge_account }}" maxlength="28" placeholder="e.g. your freight in account" aria-label="Account for charges not on the purchase order"></label>
+      <small class="muted">On a PO-matched voucher, freight, a fuel surcharge or an environmental fee the purchase order has no line for. Held: the voucher waits on the keying sheet's "Not ready" until a person matches it by hand. Added: each is keyed as its own line in Voucher Match, marked "Not on the PO", on this account, with its tax; JD Edwards' Voucher Match must allow lines that are on no order (its processing options: ask the JD Edwards team).</small>
+    </fieldset>
 
     {{ ui.subhead("Default account rule", "when the GL code is not in the mapping below") }}
     <div class="st-grid three st-end">

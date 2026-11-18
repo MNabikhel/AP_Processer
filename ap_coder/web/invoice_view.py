@@ -339,7 +339,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     quoted = coding.po_number.strip()
     po_match = match_invoice(coding, store, inv["id"]) if quoted and store.has_purchase_orders() else None
     # A PO-matched voucher (D-264): what JD Edwards gets is its voucher match rows, or why it has none
-    voucher_match = po_mod.voucher_match(po_match, quoted) if js is not None and js.po_matched and quoted else None
+    voucher_match = (po_mod.voucher_match(po_match, quoted, js.charge_account)
+                     if js is not None and js.po_matched and quoted else None)  # fmt: skip
     taxes = invoice_taxes(coding, reference.tax) if account_lines.in_use(reference) else None  # once a draw (D-214)
     an8 = jde_accounts.resolve_an8(output, store.vendor_ids(), js) if js is not None else ""
     live = {

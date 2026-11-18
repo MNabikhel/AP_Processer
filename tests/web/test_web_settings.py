@@ -362,6 +362,28 @@ def test_jde_general_settings_are_saved_and_checked(client, store):
     assert post(client, "/settings/jde", general_form(amount_mode="both")).status_code == 400
 
 
+def test_jde_charges_not_on_the_purchase_order_are_held_until_an_account_is_chosen_for_them(client, store):
+    """D-265: what a PO-matched voucher does with a charge its PO has no line for (freight, a fuel surcharge) is
+    chosen under the PO-matched setting: held for a person (the default, as before), or each on a G/L line of its own
+    on an account typed as JD Edwards writes it; a form without the choice keeps it."""
+    text = client.get("/settings/jde").text
+    assert "Charges not on the purchase order" in text
+    assert f'name="po_charges" value="{jde_settings.CHARGES_HOLD}" checked' in text
+    assert jde_settings.load(store).charge_account == ""
+    gl = jde_settings.CHARGES_GL
+    response = post(client, "/settings/jde", general_form(po_charges=gl, po_charge_account="freight in"))
+    assert response.status_code == 400 and "business unit.object.subsidiary" in response.json()["error"]
+    follow(client, post(client, "/settings/jde", general_form(po_charges=gl, po_charge_account="0021061010.7420.4207")))
+    js = jde_settings.load(store)
+    assert (js.po_charges, js.charge_account) == (gl, "0021061010.7420.4207")
+    assert f'name="po_charges" value="{gl}" checked' in client.get("/settings/jde").text
+    follow(client, post(client, "/settings/jde", general_form()))  # (no choice in the form: kept)
+    assert jde_settings.load(store).charge_account == "0021061010.7420.4207"
+    follow(client, post(client, "/settings/jde", general_form(po_charges=jde_settings.CHARGES_HOLD)))
+    assert jde_settings.load(store).charge_account == ""  # held again
+    assert post(client, "/settings/jde", general_form(po_charges="both")).status_code == 400
+
+
 def test_jde_remarks_choice_is_saved_and_a_form_without_it_keeps_it(client, store):
     """D-210: what the vouchers' two remarks carry is chosen on the page; AP Coder's references until it is."""
     assert jde_settings.load(store).remarks == jde_settings.REMARKS_REFERENCE
