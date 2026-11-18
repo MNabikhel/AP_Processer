@@ -1035,3 +1035,134 @@ def test_a_po_read_at_each_ask_matches_its_invoices_lines_once_while_its_lines_s
     assert ask(second) == own + own and not first.kept and (str(first.store.path), KEY) in first.matched
     _plain(first.store.path, "UPDATE po_lines SET unit_price = 2.0 WHERE po_key = ? AND line_number = 1", KEY)
     assert ask(first) == own + own and ask(first) == own
+
+
+# --- JD Edwards' open PO lines and the voucher match (D-264) -------------------------------------------------------
+
+
+def _jde_pos(store, lines=None):
+    """The made-up JD Edwards open PO lines export (``jde_exports.open_po_lines_xlsx``; ``lines``: the one-row
+    invoice's PO) read and loaded with the columns the Purchase orders page finds, none picked by hand."""
+    from ap_coder.bench import jde_exports
+    from ap_coder.erp.import_specs import PURCHASE_ORDERS, check
+    from ap_coder.web.files import read_sheet
+    from tests.pdfs import one_row_po_lines
+
+    data = jde_exports.open_po_lines_xlsx(one_row_po_lines() if lines is None else lines)
+    sheet, _ = read_sheet(jde_exports.OPEN_PO_FILE, data)
+    found = check(PURCHASE_ORDERS, list(sheet.columns))
+    assert found.ok and not found.unused, found  # every column of the export read, none picked by hand
+    rows, skipped = rows_from_records(sheet.to_dict("records"), found.found)
+    assert skipped == 0
+    store.import_purchase_orders(rows)
+    return rows
+
+
+def test_a_jd_edwards_open_po_lines_export_loads_with_no_column_picked_by_hand(tmp_path):
+    """D-264: JD Edwards' open order lines (Open Order Inquiry's grid, exported) are read by their own column names:
+    the order type and company and each line's own number (12.000) are kept for the voucher match, the supplier is
+    its address number (its name from the vendor list), the account string is the business unit and the GL code."""
+    from ap_coder.bench import jde_company, jde_exports
+    from tests.pdfs import ONE_ROW_ACCOUNT, ONE_ROW_PO, ONE_ROW_SUPPLIER, ONE_ROW_SUPPLIER_NUMBER
+
+    store = Store(tmp_path / "ap.db")
+    store.import_vendor_master([{"vendor_name": ONE_ROW_SUPPLIER, "erp_id": str(ONE_ROW_SUPPLIER_NUMBER),
+                                 "status": "active"}], by_erp_id=True)  # fmt: skip
+    _jde_pos(store)
+    po = store.purchase_order(po_key(ONE_ROW_PO))
+    assert (po["order_type"], po["order_company"], po["supplier_number"]) == ("OP", "00210", "4471001")
+    assert po["vendor_name"] == ONE_ROW_SUPPLIER and po["status"] == "open"
+    assert [(li["line_number"], li["erp_line"], li["uom"], li["quantity"], li["open_quantity"], li["amount"])
+            for li in po["lines"]] == [(12, "12.000", "EA", 100, 100, 599.0), (13, "13.000", "EA", 1, 1, 57.5),
+                                       (14, "14.000", "EA", 1, 1, 32.0)]  # fmt: skip
+    business_unit, code = ONE_ROW_ACCOUNT.split(".", 1)
+    assert {(li["cost_center"], li["gl_code"]) for li in po["lines"]} == {(business_unit, code)}
+    # The made-up company's own: several orders, each with a freight line, a line received closing nothing.
+    truth = jde_company.build(1, "small", 2024)
+    lines = jde_exports.open_po_lines(truth)
+    rows = _jde_pos(store, lines)
+    assert len(rows) == len(lines) and {r["order_type"] for r in rows} == {"OP"}
+    assert all(r["status"] == "open" for r in rows) and sum(r["description"] == "FREIGHT" for r in rows) >= 3
+
+
+def test_jd_edwards_statuses_close_a_line_and_a_supplier_column_of_digits_is_its_number():
+    """D-264: next status 999 is a closed line, last status 980 a cancelled one; JD Edwards' "Supplier" column holds
+    the address number, never a name to compare with the invoice's supplier."""
+    records = [{"Order Number": "41", "Supplier": "4471001", "Description": "Toner", "Quantity Ordered": 2,
+                "Unit Cost": 40, "Next Status": nxt, "Last Status": last, "Currency": "CAD"}
+               for nxt, last in (("400", "220"), ("999", "400"), ("400", "980"))]  # fmt: skip
+    rows, _ = rows_from_records(records, map_columns(list(records[0])))
+    assert [r["status"] for r in rows] == ["open", "closed", "closed"]
+    assert {(r["vendor_name"], r["supplier_number"], r["currency"]) for r in rows} == {("", "4471001", "CAD")}
+    assert map_columns(["Or Ty", "Order Co", "UM", "Quantity Open", "Account Number", "Cur Cod"]) == {
+        "order_type": "Or Ty", "order_company": "Order Co", "open_quantity": "Quantity Open", "uom": "UM",
+        "account_number": "Account Number", "currency": "Cur Cod"}  # fmt: skip
+
+
+def _freight_invoice(**kw):
+    from tests.pdfs import ONE_ROW_PO
+
+    lines = [{"line_number": 1, "description": "CB-220 Non-Woven Lunch Cooler Bag, 2 colour", "quantity": 100,
+              "unit_price": 5.99, "amount": 599.0, "predicted_gl_code": "6420.2210",
+              "predicted_cost_center": "0312005561"},
+             {"line_number": 2, "description": "SETUP Lunch Cooler Setup", "quantity": 1, "unit_price": 57.5,
+              "amount": 57.5, "predicted_gl_code": "6420.2210", "predicted_cost_center": "0312005561"},
+             {"line_number": 3, "description": kw.pop("freight", "Freight Amount"), "quantity": 0, "unit_price": 32.0,
+              "amount": 32.0, "predicted_gl_code": "6420.2210", "predicted_cost_center": "0312005561"}]  # fmt: skip
+    return InvoiceCoding.model_validate({
+        "vendor_name": "Prairie Promo Supply Inc.", "invoice_number": "118204", "invoice_date": "2026-09-14",
+        "po_number": ONE_ROW_PO, "currency": "CAD", "subtotal": 688.5, "tax_total": 34.43, "grand_total": 722.93,
+        "confidence_score": 0.9, "line_items": lines, **kw})  # fmt: skip
+
+
+def test_a_freight_line_pairs_with_the_freight_line_of_its_po_whatever_its_words(tmp_path):
+    """D-264: the invoice's freight ("Freight Amount", "Shipping & handling", or the reader's own words for a charge
+    printed beside the subtotal) has no word of the PO's freight line ("DELIVERY CHARGE"): it was paired by its
+    price alone, or matched nothing at another price. A charge pairs with a charge, its quantity matched 1."""
+    from ap_coder.ai.offline_coder import READ_CHARGE
+
+    store = Store(tmp_path / "ap.db")
+    _jde_pos(store)
+    for freight in ("Freight Amount", "Shipping & handling", READ_CHARGE):
+        coding = _freight_invoice(freight=freight)
+        coding.line_items[2].unit_price = coding.line_items[2].amount = 30.0  # not the PO's price: words alone
+        match = match_invoice(coding, store)
+        assert [(m.po_line, m.po_erp_line, m.matched_quantity) for m in match.lines] == [
+            (12, "12.000", 100), (13, "13.000", 1), (14, "14.000", 1)], freight
+    # Only a charge pairs with the freight line so: a line of goods of no word of any PO line matches none
+    coding = _freight_invoice(freight="Artwork proof")
+    coding.line_items[2].unit_price = coding.line_items[2].amount = 30.0
+    assert match_invoice(coding, store).lines[2].po_line is None
+
+
+def test_the_voucher_match_names_each_po_line_and_guesses_none(tmp_path):
+    """D-264: the voucher match of an invoice on a JD Edwards PO, a row for each line: the order number, type and
+    company, the PO line's own number, the quantity and amount matched, its unit and account. A line that matches no
+    PO line, a PO not loaded or loaded without JD Edwards' line numbers: held, said in plain words."""
+    from tests.pdfs import ONE_ROW_ACCOUNT, ONE_ROW_PO
+
+    store = Store(tmp_path / "ap.db")
+    _jde_pos(store)
+    matched = po_mod.voucher_match(match_invoice(_freight_invoice(), store), ONE_ROW_PO)
+    assert matched.held == []
+    assert [(r.order_number, r.order_type, r.order_company, r.line, r.quantity, r.uom, r.amount, r.account)
+            for r in matched.rows] == [(ONE_ROW_PO, "OP", "00210", "12.000", 100, "EA", 599.0, ONE_ROW_ACCOUNT),
+                                       (ONE_ROW_PO, "OP", "00210", "13.000", 1, "EA", 57.5, ONE_ROW_ACCOUNT),
+                                       (ONE_ROW_PO, "OP", "00210", "14.000", 1, "EA", 32.0, ONE_ROW_ACCOUNT)]  # fmt: skip
+    odd = _freight_invoice()
+    odd.line_items[1].description, odd.line_items[1].unit_price = "Artwork proof", 45.0
+    held = po_mod.voucher_match(match_invoice(odd, store), ONE_ROW_PO)
+    assert len(held.rows) == 2 and held.held == [
+        "line 2 “Artwork proof” matches no line of PO 40917 (none is guessed): correct the line or the PO "
+        "number, or match it in JD Edwards by hand"]  # fmt: skip
+    assert po_mod.voucher_match(None, "40918").held == [
+        "PO 40918 is not in the purchase orders loaded: load its open lines from JD Edwards (Purchase orders), then "
+        "make the keying sheet again"]  # fmt: skip
+    store.import_purchase_orders([{**r, "erp_line": ""} for r in rows_from_records(
+        [{"po": ONE_ROW_PO, "desc": "LUNCH COOLER BAG NON-WOVEN 2C", "qty": 100, "price": 5.99}],
+        map_columns(["po", "desc", "qty", "price"]))[0]])  # fmt: skip
+    one = _freight_invoice()
+    one.line_items = one.line_items[:1]
+    assert po_mod.voucher_match(match_invoice(one, store), ONE_ROW_PO).held == [
+        "PO 40917 line 1 has no JD Edwards line number in the purchase orders loaded: load the PO's open lines from "
+        "JD Edwards again"]  # fmt: skip

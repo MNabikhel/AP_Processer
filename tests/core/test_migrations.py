@@ -195,13 +195,38 @@ def test_a_journal_loaded_before_its_dates_read_were_kept_says_none(tmp_path):
     assert shape(db) == shape(Store(tmp_path / "new" / "ap_coder.db").path)
 
 
+# What JD Edwards' voucher match names of a PO, kept from schema 31 (D-264).
+_JDE_PO_COLUMNS = (("purchase_orders", "order_type"), ("purchase_orders", "order_company"),
+                   ("purchase_orders", "supplier_number"), ("po_lines", "erp_line"), ("po_lines", "uom"),
+                   ("po_lines", "open_quantity"))  # fmt: skip
+
+
 def test_a_purchase_order_kept_before_pos_had_a_currency_has_none(tmp_path):
     """B-2612: a PO imported at schema 29, before a PO kept its currency, is kept with none ('': taken as CAD); the
     database is then a new one."""
     db = Store(tmp_path / "old" / "ap_coder.db").path
     with closing(sqlite3.connect(db)) as conn, conn:
-        conn.execute("ALTER TABLE purchase_orders DROP COLUMN currency")
+        for table, column in (("purchase_orders", "currency"), *_JDE_PO_COLUMNS):  # (schema 31's too: D-264)
+            conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
         conn.execute("INSERT INTO purchase_orders (po_key, po_number, updated_at) VALUES ('81', 'PO-81', '2026-11')")
         conn.execute("UPDATE settings SET value = '29' WHERE key = 'schema_version'")
     assert Store(db).purchase_order("81")["currency"] == ""
+    assert shape(db) == shape(Store(tmp_path / "new" / "ap_coder.db").path)
+
+
+def test_a_purchase_order_kept_before_the_voucher_match_names_no_jd_edwards_line(tmp_path):
+    """D-264: a PO and its line imported at schema 30, before a PO kept JD Edwards' order type, company, supplier
+    number and each line's own number, unit and quantity open, are kept with none ('' and NULL): their voucher match
+    waits for the lines loaded again. The database is then a new one."""
+    db = Store(tmp_path / "old" / "ap_coder.db").path
+    with closing(sqlite3.connect(db)) as conn, conn:
+        for table, column in _JDE_PO_COLUMNS:
+            conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+        conn.execute("INSERT INTO purchase_orders (po_key, po_number, updated_at) VALUES ('82', 'PO-82', '2026-11')")
+        conn.execute("INSERT INTO po_lines (po_key, line_number, description, quantity, unit_price, amount) VALUES "
+                     "('82', 1, 'Toner', 2, 40, 80)")  # fmt: skip
+        conn.execute("UPDATE settings SET value = '30' WHERE key = 'schema_version'")
+    po = Store(db).purchase_order("82")
+    assert (po["order_type"], po["order_company"], po["supplier_number"]) == ("", "", "")
+    assert [(li["erp_line"], li["uom"], li["open_quantity"]) for li in po["lines"]] == [("", "", None)]
     assert shape(db) == shape(Store(tmp_path / "new" / "ap_coder.db").path)
