@@ -88,6 +88,10 @@ def capture_confidence(capture: CaptureResult | None) -> dict[str, dict[str, str
         if AP_LESSON in fr.sources:  # not read: what AP set on the vendor's last invoices (D-121)
             words = "As you set it" + (f" {sure}" if status != "verified" else "")
             about = "The page does not print it: AP set it this way on this vendor's last invoices."
+        if any(r.startswith(verifier.CORRECTED_BY) for r in fr.reasons):  # its correction, the math confirming it
+            words = verifier.NAME
+            about = (f"{verifier.CORRECTED_BY}: printed on the page, and the invoice adds up with it. Check it on "
+                     "the page.")  # fmt: skip
         out[name] = {"tone": tone, "icon": icon_name, "text": words, "status": status,
                      "help": f"{about} How sure: {sure}."}  # fmt: skip
     return out

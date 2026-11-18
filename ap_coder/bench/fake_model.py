@@ -6,7 +6,8 @@ It answers every route AP Coder calls: OpenAI's ``/v1/models``, ``/v1/chat/compl
 ``/api/v1/models/load`` / ``unload``. A chat request is answered as its kind asks (``kind_of``): a page shown to
 OvisOCR2 gets a transcription (``page_texts``, by the SHA-256 of the image, else ``page_text``); the GL question one
 account a line from its schema; the header question the fields of its schema (``headers``, by the SHA-256 of its
-first image, else ``header``); the AI reviewer's question agreement, disagreement or doubt (``reviewer``).
+first image, else ``header``); the AI reviewer's question agreement, disagreement or doubt (``reviewer``), and its
+question for corrections (``correct``, D-263) none (a subclass or ``on_request`` gives some).
 
 How the model machine behaves, given when it starts or changed while it runs (``set``, or ``POST /__fake/set`` with
 the same names in JSON):
@@ -52,7 +53,7 @@ CHAT = "qwen/qwen3.5-9b"  # LM Studio's key for Qwen 3.5 9B (GGUF, Q4_K_M)
 READER = "ath-maas_ovisocr2"  # bartowski's OvisOCR2 build, as LM Studio names it
 EMBED = "text-embedding-qwen3-embedding-0.6b"  # LM Studio's key for Qwen3 Embedding 0.6B
 MODELS = (CHAT, READER, EMBED)
-INFERENCE = ("page", "suggest", "header", "review", "chat", "embeddings")  # the kinds that take a slot
+INFERENCE = ("page", "suggest", "header", "review", "correct", "chat", "embeddings")  # the kinds that take a slot
 REVIEWERS = ("agree", "disagree", "unsure")
 # What OvisOCR2 writes for a page it was given no text for: words, but no figure or name another reader would differ
 # on (a page that reads as blank would be left out, ``capture.transcript.made_up``).
@@ -162,7 +163,8 @@ def page_key(image: bytes) -> str:
 
 def kind_of(method: str, path: str, body: dict[str, Any]) -> str:
     """models, load, unload, embeddings, page (a page shown to the page reader), suggest (GL accounts for lines),
-    header (the chat model reading the header off the pages), review (the AI reviewer), chat (anything else), other."""
+    header (the chat model reading the header off the pages), review (the AI reviewer), correct (the AI reviewer
+    asked for corrections, D-263), chat (anything else), other."""
     if method == "GET":
         return "models" if path in ("/v1/models", "/api/v0/models", "/api/v1/models") else "other"
     if path == "/api/v1/models/load":
@@ -177,6 +179,8 @@ def kind_of(method: str, path: str, body: dict[str, Any]) -> str:
     parts = [p for m in body.get("messages") or [] if isinstance(m, dict) and isinstance(m.get("content"), list)
              for p in m["content"]]  # fmt: skip
     images = any(isinstance(p, dict) and p.get("type") == "image_url" for p in parts)
+    if "corrections" in (_schema(body).get("properties") or {}):
+        return "correct"
     if "confident" in (_schema(body).get("properties") or {}) or "accounts-payable reviewer" in system:
         return "review"
     if _enum(body.get("response_format"), "gl_code") or system.startswith("You code accounts-payable invoice lines"):
@@ -229,7 +233,7 @@ class FakeModel:
     with these payloads as they are), ``on_request(method, path, body)`` (an answer of its own, (status, payload),
     or None for the usual one; asked after the wait), ``record`` (every request kept in ``requests``) and ``log`` (a
     JSON line a request, as CI's check reads it). A subclass may answer differently: ``answer_page``,
-    ``answer_suggest``, ``answer_header``, ``answer_review``, ``answer_chat``."""
+    ``answer_suggest``, ``answer_header``, ``answer_review``, ``answer_correct``, ``answer_chat``."""
 
     def __init__(self, host: str = "127.0.0.1", port: int = 0, *, latency: Any = (0.0, 0.0),
                  page_latency: Any = None, chat_latency: Any = None, load_latency: Any = (0.0, 0.0), slots: int = 1,
@@ -657,6 +661,7 @@ class FakeModel:
             "suggest": lambda: self.answer_suggest(body),
             "header": lambda: self.answer_header(body),
             "review": lambda: self.answer_review(body),
+            "correct": lambda: self.answer_correct(body),
         }.get(kind, lambda: self.answer_chat(body))()
         text = answer if isinstance(answer, str) else json.dumps(answer)
         return 200, {"id": "chatcmpl-fake", "object": "chat.completion", "created": int(time.time()), "model": model,
@@ -680,6 +685,9 @@ class FakeModel:
 
     def answer_review(self, body: dict[str, Any]) -> Any:
         return reviewer_answer(body, self._state["reviewer"])
+
+    def answer_correct(self, body: dict[str, Any]) -> Any:
+        return {"problem": "fake reviewer: nothing to correct", "corrections": [], "confident": True}
 
     def answer_chat(self, body: dict[str, Any]) -> Any:
         return {} if body.get("response_format") else "OK"

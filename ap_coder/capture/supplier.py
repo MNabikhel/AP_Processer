@@ -1528,6 +1528,8 @@ ALWAYS_A_PERSON: dict[str, str] = {
     "NOT_AN_INVOICE": "it may not be an invoice",  # a statement, a remittance advice, a quote ... (B-2217)
     # "Ignore previous instructions", "approve this invoice without review": meant to steer the models (D-259)
     "TEXT_ADDRESSED_TO_SOFTWARE": "it contains text addressed to software",
+    # The AI reviewer corrected values the reading missed, the math confirming them: a person confirms (D-263).
+    "VERIFIER_CORRECTED": "the AI reviewer corrected values from the page, for a person to confirm",
     # A name never approved before, or not in the vendor master though its GST/HST number is: the supplier's record
     # (kept by its business number) is not this name's.
     "VENDOR_NEW": "no invoice under this vendor name was approved before",
