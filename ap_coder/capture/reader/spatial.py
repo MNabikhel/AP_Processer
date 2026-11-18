@@ -25,7 +25,11 @@ from ._common import (
 )
 from .labels import (
     _DISTRACT,
+    _OCR_LABEL_GAP,
+    _OCR_LABEL_ONE,
+    _OCR_LABEL_ZERO,
     _REG_WORDS,
+    _hits_at,
     _LabelHit,
 )
 from .values import (
@@ -362,6 +366,127 @@ def _column_foot(field: str, hit: _LabelHit, lines: list[Line]) -> list[Reading]
         return []
     raw = " ".join(w.text for w in words)
     return [Reading(field, foot, raw, _boxes(words), 0.95 * hit.strength * _min_conf(words), "label-column-foot")]
+
+
+TABLE_ROW_GAP = 2.5  # a totals table's row of amounts sits this close under its row of labels, in label heights
+CELL_GAP = 0.5  # in a row of headings or amounts, a space this wide (in line heights) ends a cell
+_CELL_WORD = re.compile(r"^\(?[$€£]?-?[\d.,]+\$?\)?$|^[$€£]$|^(?:CAD|USD|EUR)$")  # a word of an amount's cell
+
+
+def _level(lines: list[Line], line: Line) -> list[Line]:
+    """The lines level with ``line`` on its page (their middles less than half a line apart), left to right."""
+    return sorted((o for o in lines if o.box.page == line.box.page and abs(o.box.cy - line.box.cy)
+                   < 0.5 * max(line.box.height, o.box.height)), key=lambda o: o.box.x0)  # fmt: skip
+
+
+def _row_under(lines: list[Line], row: list[Line]) -> list[Line]:
+    """The row of lines just under ``row`` (its top within ``TABLE_ROW_GAP`` line heights of the row's foot)."""
+    height, foot, ids = max(o.box.height for o in row), max(o.box.y1 for o in row), {id(o) for o in row}
+    under = [o for o in lines if o.box.page == row[0].box.page and id(o) not in ids
+             and -0.2 * height <= o.box.y0 - foot <= TABLE_ROW_GAP * height]  # fmt: skip
+    return _level(lines, min(under, key=lambda o: o.box.y0)) if under else []
+
+
+def _heading_cells(row: list[Line]) -> list[tuple[list[_LabelHit], list[Word]]]:
+    """A row of headings split into its cells, left to right: each cell's labels (none for a heading that is no label:
+    "Credits/Discounts") and its words. A space wider than ``CELL_GAP`` starts a cell, and so does a label inside one
+    (cells set close together are one line of text: "Credits/Discounts Amount Due:"), but no weak one ("HST Tax":
+    "Tax" is HST's word)."""
+    cells: list[tuple[list[_LabelHit], list[Word]]] = []
+    for line in row:
+        text = _OCR_LABEL_ZERO.sub("o", _OCR_LABEL_ONE.sub("l", _OCR_LABEL_GAP.sub(" ", plain(line.text))))
+        if len(text) != len(line.text):
+            return []  # ("½": the words' places in the text are not the plain text's)
+        at = end = 0
+        for i, w in enumerate(line.words):
+            inside = at < end  # a word of the label before it ("Total" of "Line-Item Total")
+            wide = i == 0 or w.box.x0 - line.words[i - 1].box.x1 > CELL_GAP * line.box.height
+            hits = [] if inside else [h for h in _hits_at(line, text, [at], {at}) if wide or h.strength >= 0.8]
+            if hits or (wide and not inside):
+                cells.append((hits, [w]))
+                end = max((h.end for h in hits), default=at)
+            else:
+                cells[-1][1].append(w)
+            at += len(w.text) + 1
+    return cells
+
+
+def _amount_cells(row: list[Line]) -> list[list[Word]] | None:
+    """A row of amounts split into its cells, left to right ("722.93 CAD" is one); None when anything but amounts is
+    on it, or a cell holds two."""
+    cells: list[list[Word]] = []
+    for line in row:
+        for i, w in enumerate(line.words):
+            if not _CELL_WORD.match(w.text):
+                return None
+            if i and w.box.x0 - line.words[i - 1].box.x1 <= CELL_GAP * line.box.height:
+                cells[-1].append(w)
+            else:
+                cells.append([w])
+    texts = [" ".join(w.text for w in cell) for cell in cells]
+    return cells if cells and all(len(_amounts_in(t)) == 1 and looks_like_money(t) for t in texts) else None
+
+
+def label_row_tables(lines: list[Line], labelled: list[Line]) -> list[tuple[_LabelHit, Reading | None]]:
+    """Totals printed as a table of one row (B-2639): a row of three or more total labels ("Line-Item Total | Freight
+    Amount | GST Tax | HST Tax | Sub Total | Deposits | Credits/Discounts | Amount Due:"), nothing after them, over a
+    row of amounts with a cell left empty where there is none. Each of its labels (``labelled``: the page's lines
+    with a total's label) with the amount in its column, or None: the amount under the label, else the nearest label
+    on the side the table sets its amounts (an amount at the right of its cell, its label at the left: the amounts
+    under a label are right of its middle). Nothing when the amounts have another row of amounts under them (a summary
+    table: ``_column_foot``), an amount is in no column or two in one, or no amount is under its label to say on
+    which side they are."""
+    out: list[tuple[_LabelHit, Reading | None]] = []
+    seen: set[int] = set()
+    for line in labelled:
+        if id(line) in seen:
+            continue
+        row = _level(lines, line)
+        seen.update(id(o) for o in row)
+        cells = _heading_cells(row)
+        hits = [h for c in cells for h in c[0] if h.field in AMOUNT_FIELDS]
+        if sum(any(h.field in AMOUNT_FIELDS for h in c[0]) for c in cells) < 3 or any(
+            _value_reading(h.field, h.line, h.end, 1.0, "x") for h in hits
+        ):
+            continue
+        under = _row_under(lines, row)
+        amounts = _amount_cells(under) if under else None
+        next_row = _row_under(lines, under) if amounts else []
+        if not amounts or (next_row and _amount_cells(next_row)):
+            continue
+        spans = [union_all([w.box for w in c[1]]) for c in cells]
+        boxes = [union_all([w.box for w in a]) for a in amounts]
+        over = [[min(b.x1, s.x1) - max(b.x0, s.x0) for s in spans] for b in boxes]
+        sides = {b.cx > spans[o.index(max(o))].cx for b, o in zip(boxes, over, strict=True) if max(o) > 0}
+        column: dict[int, list[Word]] = {}
+        for a, b, o in zip(amounts, boxes, over, strict=True):
+            if max(o) > 0:
+                k = o.index(max(o))
+            elif sides == {True}:  # right of its label: the last label starting before it
+                k = max((n for n, s in enumerate(spans) if s.x0 < b.x0), default=-1)
+            elif sides == {False}:  # left of its label: the first label ending after it
+                k = min((n for n, s in enumerate(spans) if s.x1 > b.x1), default=-1)
+            else:
+                k = -1
+            if k < 0 or k in column:
+                column = {}
+                break
+            column[k] = a
+        if not column:
+            continue
+        for n, (cell_hits, _words) in enumerate(cells):
+            words = column.get(n)
+            for h in cell_hits:
+                if h.field not in AMOUNT_FIELDS:
+                    continue
+                if words is None:
+                    out.append((h, None))
+                    continue
+                raw = " ".join(w.text for w in words)
+                score = 0.95 * h.strength * _min_conf(words)
+                out.append((h, Reading(h.field, round(_amounts_in(raw)[0][0], 2), raw, _boxes(words), score,
+                                       "label-row-table")))  # fmt: skip
+    return out
 
 
 _TAX_OR_TOTAL = ("gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total")

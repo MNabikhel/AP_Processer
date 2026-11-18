@@ -25,6 +25,10 @@
       <p class="muted">Sales tax follows where the goods are delivered to you, not where the vendor is. When an invoice
         prints no ship-to and no bill-to, the sales tax check uses this province. A ship-to printed on the invoice
         always wins, then a bill-to.</p>
+      <label class="field">{% if account %}The company's names{% else %}Your company's names{% endif %}, as suppliers print them in the bill-to (one a line)
+        <textarea name="our_names" rows="2" placeholder="the legal name, and any other name invoices are addressed to">{{ our_names }}</textarea></label>
+      <p class="muted">The customer on every invoice, never its supplier: when one of these names is read as the
+        supplier, the supplier is the one whose GST/HST number is printed, or left for you to fill.</p>
       {% if uses_cost_centers or site_provinces %}
       {% set unit = "business unit" if chart else "cost center" %}{# a chart's lines carry a business unit (D-209) #}
       <label class="field">Sites in other provinces, by {{ unit }} (optional)

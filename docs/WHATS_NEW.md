@@ -10,6 +10,19 @@ Your existing data is safe. On first start the database upgrades itself (schema 
 backup of AP Coder (the database and the invoice files) is made automatically once a day (the newest 14 are
 kept).
 
+## Totals printed as one row; the supplier by its GST/HST number; your company is never the supplier (D-262)
+
+- **Totals printed as a table of one row are read.** "Line-Item Total | Freight Amount | GST Tax | HST Tax | Sub
+  Total | ... | Amount Due" over one row of amounts: each amount is read under its label, an empty cell is nothing.
+  The freight is a line of its own, taxed with the goods, as JD Edwards gets it.
+- **5% printed as "HST" where only GST is charged** (an Alberta supplier's invoice) is one warning that says it is
+  the GST under another name, claimable as GST: no longer an error to approve anyway.
+- **The GST/HST number names the supplier.** When the number printed is one supplier's in the supplier list and
+  the page names none of the list's suppliers, that supplier is proposed; a name that is another supplier's is
+  marked to check, with both names.
+- **Your company's names** (Settings → Review, one a line) are never read as the supplier: the supplier is the one
+  whose GST/HST number is printed, or left for you to fill.
+
 ## The second approval checks again; voided vouchers cancel out (D-257, D-258)
 
 - **The second approval checks the invoice again.** What changed since the first approval (the supplier put on

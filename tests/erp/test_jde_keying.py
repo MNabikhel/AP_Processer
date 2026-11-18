@@ -910,3 +910,18 @@ def test_a_tax_area_of_another_province_than_the_tax_charged_is_said_and_holds_n
     (plain,) = jde_keying.vouchers([one_line()], js, lookup)[0]  # Alberta's GST on a supply in Alberta: nothing said
     assert not any(n.startswith("Tax area") for n in plain.notes)
     assert jde_review.voucher_findings(one_line()["final_output"], js, "40417") == []
+
+
+def test_the_gst_printed_as_hst_is_no_other_tax_for_the_tax_area():
+    """B-2641: an Alberta supplier's 5% under "HST Tax" on goods and freight delivered in Alberta (656.50 + 32.00,
+    34.43 of tax) was "JD Edwards may work the tax out at the area's rate and find it different": the GST area's 5%
+    of 688.50 is the 34.43 charged. Nothing to say; the freight is a line of its own, taxed with the goods."""
+    js = jde_prototype.prototype_settings(jde_settings.JdeSettings(company="00210"))
+    inv = coded(doc([line(1, 656.5, "6420.2210", ["HST"], cc=HQ), line(2, 32.0, "6420.2210", ["HST"], cc=HQ)],
+                    [tl("HST", "AB", 0.05, 688.5, 34.43)], prov="AB", ship_to_province="AB",
+                    vendor_name="Prairie Office Supply Ltd."))  # fmt: skip
+    (v,), held = jde_keying.vouchers([inv], js, lookup)
+    assert held == [] and (v.tax_area, v.taxable, v.tax, v.gross) == ("CDNGST", 688.5, 34.43, 722.93)
+    assert [li.amount for li in v.lines] == [656.5, 32.0]
+    assert not any(n.startswith("Tax area") for n in v.notes)
+    assert jde_review.voucher_findings(inv["final_output"], js, "40417") == []

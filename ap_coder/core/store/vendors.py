@@ -337,6 +337,11 @@ class VendorsMixin:
         """Where invoices are delivered to us when they print no ship-to (Settings → Review), "" if not set."""
         return self.get_setting("our_province").strip().upper()
 
+    def our_names(self) -> list[str]:
+        """The company's own names, as suppliers print them in the bill-to (Settings → Review, one a line): the
+        customer's, never an invoice's supplier (B-2642)."""
+        return [name.strip() for name in self.get_setting("our_names").splitlines() if name.strip()]
+
     def site_provinces(self) -> dict[str, str]:
         """{cost center: province} for sites in other provinces than ours (Settings → Review: "CC400=BC" per line)."""
         out: dict[str, str] = {}

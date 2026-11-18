@@ -106,6 +106,68 @@ def apply_vendor_alias(store: Any, capture: CaptureResult | None) -> str:
     return name
 
 
+VENDOR_BY_NUMBER = "supplier list (GST/HST number)"  # a vendor name's source: the supplier its GST/HST number is
+
+
+def our_name_keys(store: Any) -> frozenset[str]:
+    """The company's own names (``Store.our_names``) as vendor keys: the customer's, never the supplier's."""
+    from ..core.memory import vendor_key
+
+    names = store.our_names() if store is not None and hasattr(store, "our_names") else []
+    return frozenset(k for k in (vendor_key(n) for n in names) if k)
+
+
+def apply_supplier_by_number(store: Any, capture: CaptureResult | None) -> str:
+    """The supplier the GST/HST number printed is: ONE supplier in use of the vendor master has it
+    (``Store.supplier_of_tax_number``, D-219), not read only in the bill-to block. A name read that another supplier
+    goes by is "check", both named; with the number read sure enough (not "check"), a name read that no supplier goes
+    by, the company's own (``Store.our_names``) or none becomes that supplier's, "likely" (B-2643). The company's own
+    name with no supplier to put in its place is taken off, for a person to fill (B-2642). In place; returns the
+    name given ("" when none)."""
+    from ..core.memory import vendor_key
+    from ..core.store.vendor_master import with_number
+    from .confidence import BILL_TO_REASON
+    from .types import CHECK, LIKELY, MISSING, FieldResult
+
+    if store is None or capture is None or not hasattr(store, "supplier_of_tax_number"):
+        return ""
+    fr = capture.fields.get("vendor_name")
+    read = str(fr.value or "").strip() if fr is not None else ""
+    own = bool(read) and vendor_key(read) in our_name_keys(store)
+    gst = capture.fields.get("gst_hst_registration_number")
+    number = gst.value if gst is not None and gst.value and BILL_TO_REASON not in gst.reasons else None
+    try:
+        one = store.supplier_of_tax_number(number) if number else None
+        found = store.find_vendor(read, number) if read and not own else None
+    except Exception as exc:  # an older store: the name as read stands
+        log.warning("supplier not looked up by its GST/HST number (%s)", exc)
+        return ""
+    if one is not None and found is None and gst.status in (CHECK, MISSING):
+        one = None  # a number in doubt names no supplier
+    if fr is not None and own and one is None:
+        fr.reasons = [*fr.reasons, f"{read} is your company's own name (Settings → Review): the customer, not the "
+                      "supplier"]  # fmt: skip
+        fr.value, fr.status, fr.confidence, fr.boxes = None, MISSING, 0.0, []
+        return ""
+    if one is None or (found is not None and found["vendor_key"] == one["vendor_key"]):
+        return ""  # no supplier by the number, or the name read is its own
+    name = with_number(one) if store.vendors_sharing(one["display_name"]) else str(one["display_name"])
+    if found is not None and fr is not None:
+        fr.status, fr.confidence = CHECK, min(fr.confidence, 0.6)
+        fr.reasons = [*fr.reasons, f"GST/HST number {gst.value} is {name}'s in the supplier list, not "
+                      f"{found['display_name']}'s: check who sent the invoice"]  # fmt: skip
+        return ""
+    if fr is None:
+        fr = capture.fields["vendor_name"] = FieldResult("vendor_name", None, 0.0, MISSING)
+    printed = f" (printed: {read})" if read else ""
+    fr.sources = {VENDOR_BY_NUMBER: name, **fr.sources}
+    fr.reasons = [*fr.reasons, f"GST/HST number {gst.value} is this supplier's in the supplier list{printed}"]
+    fr.value, fr.status, fr.confidence = name, LIKELY, 0.9
+    if own or not read:
+        fr.boxes = list(gst.boxes)  # where the page says who it is: the number
+    return name
+
+
 AP_LESSON = "AP's lesson"  # a field's source: what AP set on this vendor's last invoices (D-121)
 # Fields whose value a vendor keeps from one invoice to the next: what AP set on its last invoices is proposed on the next
 # one that does not print it. Not its tax numbers: one AP types in is no number printed on the invoice, which an input
