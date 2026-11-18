@@ -312,6 +312,19 @@ def test_saving_your_name_says_your_name_was_saved(client):
     assert "Nothing changed." in client.get(answer["redirect"]).text
 
 
+def test_the_companys_own_names_are_saved_one_a_line(client, store):
+    """B-2642: the company's own names, never an invoice's supplier, are set on Settings → Review."""
+    form = {"approval_limit": "0", "terms_days": "30", "fx_rates": "", "why_after": "3", "our_province": "",
+            "our_names": "  Maple Ridge Holdings Ltd.\n\nMaple Ridge Group  "}  # fmt: skip
+    answer = client.post("/settings/review", data=form, headers=PAGE).json()
+    from html import unescape
+
+    said = "Saved the list of your company's names: invoices read from now on use it."
+    assert said in unescape(client.get(answer["redirect"]).text)
+    assert store.our_names() == ["Maple Ridge Holdings Ltd.", "Maple Ridge Group"]
+    assert "Maple Ridge Group</textarea>" in client.get("/settings/review").text
+
+
 def test_reading_says_whether_lm_studio_runs_and_folds_the_rest_for_it(client):
     page = client.get("/settings/reading").text
     head = page.split('id="for-it"', 1)[0]

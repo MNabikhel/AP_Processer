@@ -196,6 +196,7 @@ def review_context(request: Request, stamped: bool = True) -> dict[str, Any]:
         "terms_days": store.default_terms_days(),
         "fx_rates": store.get_setting("fx_rates"),
         "our_province": store.our_province(),
+        "our_names": "\n".join(store.our_names()),
         "why_after": lessons.why_after(store),
         "why_surprise": lessons.asks_why(store),
         "site_provinces": store.get_setting("site_provinces"),
@@ -234,7 +235,7 @@ def _save_review(request: Request, form: Any) -> JSONResponse:
     approval_part = _approval_part(request, approval_limit, terms_days, fx_rates, why_after)
     if isinstance(approval_part, JSONResponse):
         return approval_part
-    supply_part = _supply_part(request, our_province, site_provinces)
+    supply_part = _supply_part(request, our_province, site_provinces, field("our_names"))
     if isinstance(supply_part, JSONResponse):
         return supply_part
     saved = name_part() + approval_part() + supply_part() + _duties_part(request, form) + _why_part(request, form)
@@ -258,6 +259,7 @@ SAVED_WORDS = {
     lessons.ASK: ("whether to ask why", False),
     "our_province": ("your province", True),
     "site_provinces": ("the sites in other provinces", True),
+    "our_names": ("the list of your company's names", True),
 }
 
 
@@ -422,10 +424,13 @@ def _approval_part(
     return save
 
 
-def _supply_part(request: Request, our_province: str | None, site_provinces: str | None) -> Any:
-    """Where invoices are delivered to us (the place of supply of an invoice that prints no ship-to): a refusal, or
-    what saves it (it returns the keys saved)."""
+def _supply_part(request: Request, our_province: str | None, site_provinces: str | None,
+                 our_names: str | None = None) -> Any:  # fmt: skip
+    """Where invoices are delivered to us (the place of supply of an invoice that prints no ship-to), and the
+    company's own names (never an invoice's supplier, B-2642): a refusal, or what saves them (it returns the keys
+    saved)."""
     store = get_store(request)
+    names = None if our_names is None else "\n".join(n.strip() for n in our_names.splitlines() if n.strip())
     province = None if our_province is None else our_province.strip().upper()
     if province and province not in PROVINCE_NAMES:
         return refuse("Choose a province from the list.")
@@ -448,6 +453,9 @@ def _supply_part(request: Request, our_province: str | None, site_provinces: str
         if sites is not None and sites != store.get_setting("site_provinces"):
             store.set_setting("site_provinces", sites, actor=reviewer())
             changed.append("site_provinces")
+        if names is not None and names != "\n".join(store.our_names()):
+            store.set_setting("our_names", names, actor=reviewer())
+            changed.append("our_names")
         if changed:
             store.log_event("settings_changed", actor=reviewer(), detail={"keys": changed})
         return changed

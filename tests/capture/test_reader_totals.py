@@ -317,3 +317,13 @@ def test_a_totals_table_of_one_row_reads_each_amount_under_its_label(tmp_path, l
     got = {n: f[n].value for n in ("subtotal", "other_charges", "hst_amount", "grand_total")}
     assert got == {"subtotal": 656.5, "other_charges": 32.0, "hst_amount": 34.43, "grand_total": 722.93}
     assert f["gst_amount"].status == "missing" and f["tax_total"].value in (None, 34.43)
+
+
+def test_the_customers_name_beside_its_label_across_the_page_is_never_the_supplier(tmp_path):
+    """B-2642: "Customer:" at the left margin and the customer's name in a column far to its right, the supplier's
+    name only in its logo (a picture): the customer, the company AP Coder works for, was read as the supplier with
+    nothing to say it is the customer. The name beside a customer's label is the customer's."""
+    from tests.pdfs import ONE_ROW_CUSTOMER, one_row_totals
+
+    cands = read_fields(build_layout(one_row_totals(tmp_path, supplier=False, customer="beside")))["vendor_name"]
+    assert ONE_ROW_CUSTOMER not in [r.value for r in cands]

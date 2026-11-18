@@ -292,6 +292,47 @@ def test_days_in_a_late_interest_clause_are_not_the_net_days():
     assert parse_terms("Net 30 days upon receipt of invoice").net_days == 30
 
 
+def _listed(store: Store, *suppliers: tuple[str, str, str]) -> None:
+    """The vendor master: (name, supplier number, GST/HST number) each."""
+    store.import_vendor_master([{"vendor_name": name, "erp_id": number, "gst": gst, "status": "active"}
+                                for name, number, gst in suppliers], by_erp_id=True)  # fmt: skip
+
+
+def test_the_gst_hst_number_of_one_supplier_on_file_names_the_supplier_the_page_does_not(tmp_path, reference):
+    """B-2643: the supplier's name only in its logo, its GST/HST number printed and read right, that number one
+    supplier's in the supplier list: the supplier was not found ("not found by name in the vendor master, but ..."
+    was only worth knowing). The number names it, for a person to see; a name read that is another supplier's in the
+    list is checked, both named."""
+    from tests.pdfs import ONE_ROW_GST, ONE_ROW_SUPPLIER, one_row_totals
+
+    pipe, store = _offline(tmp_path, reference)
+    _listed(store, (ONE_ROW_SUPPLIER, "4471001", ONE_ROW_GST), ("Foothills Print Co.", "4471002", "100000009RT0001"))
+    result = pipe.process(one_row_totals(tmp_path, "logo.pdf", supplier=False, customer="beside"))
+    fr = result.capture.fields["vendor_name"]
+    assert result.output["vendor_name"] == ONE_ROW_SUPPLIER and fr.status == "likely"
+    assert any("GST/HST number 123456782RT0001" in r for r in fr.reasons)
+    assert "VENDOR_MATCHED_BY_TAX_NUMBER" not in {i.code for i in result.report.issues}
+    _listed(store, (ONE_ROW_SUPPLIER, "4471001", "100000009RT0001"), ("Foothills Print Co.", "4471002", ONE_ROW_GST))
+    fr = pipe.process(one_row_totals(tmp_path, "named.pdf")).capture.fields["vendor_name"]
+    assert fr.value == ONE_ROW_SUPPLIER and fr.status == "check"
+    assert any("is Foothills Print Co.'s in the supplier list" in r for r in fr.reasons)
+
+
+def test_the_companys_own_name_is_never_the_supplier(tmp_path, reference):
+    """B-2642: the customer's name and address with no label over them (an envelope's window), the supplier's name
+    only in its logo: the company AP Coder works for was read as the supplier. Its own names (Settings → Review) are
+    never the supplier: the supplier its GST/HST number is, or none for a person to fill."""
+    from tests.pdfs import ONE_ROW_CUSTOMER, ONE_ROW_GST, ONE_ROW_SUPPLIER, one_row_totals
+
+    pipe, store = _offline(tmp_path, reference)
+    store.set_setting("our_names", f"{ONE_ROW_CUSTOMER.upper()}\nMaple Ridge Holdings")
+    result = pipe.process(one_row_totals(tmp_path, "ours.pdf", supplier=False, customer="unlabelled"))
+    assert not result.output["vendor_name"] and result.capture.fields["vendor_name"].status == "missing"
+    _listed(store, (ONE_ROW_SUPPLIER, "4471001", ONE_ROW_GST))
+    result = pipe.process(one_row_totals(tmp_path, "ours2.pdf", supplier=False, customer="unlabelled"))
+    assert result.output["vendor_name"] == ONE_ROW_SUPPLIER
+
+
 def test_the_freight_of_a_totals_table_of_one_row_is_a_jd_edwards_line_of_its_own(tmp_path, reference):
     """B-2639: the freight of "Line-Item Total | Freight Amount | ... | Amount Due:" over one row of amounts was not
     read, so it was on no line and JD Edwards would get 656.50 taxed. It is a line of its own, taxed with the goods:

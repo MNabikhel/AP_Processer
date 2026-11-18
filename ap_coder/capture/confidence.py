@@ -77,6 +77,7 @@ LOOK_CAP = 0.8
 LIKELY_AT = 0.85
 UNMEASURED_CAP = 0.8  # a value read only by wording the benchmark never prints (``UNMEASURED``), no check confirming
 REGISTRATION_FIELDS = ("gst_hst_registration_number", "qst_registration_number", "pst_registration_number")
+BILL_TO_REASON = "read only in the bill-to block: it may be the customer's number"
 SINGLE_READER_CAP = 0.97  # highest confidence for a value only one reader found and no check confirms
 # Values read with no label of their own (``reader``: a receipt's date and time, a date beside the title): checked.
 UNLABELLED_METHODS = ("date-time", "title-dated", "letter-dated")
@@ -809,7 +810,7 @@ def _capped(fz: _Fusion, f: str, g: _Group, conf: float, raw: float, vouched: li
         # Read only where the customer's details are printed: a valid check digit shows the number is well formed,
         # not that it is the supplier's. Only the vendor master can say it is.
         conf = min(conf, SINGLE_READER_CAP)
-        reasons.append("read only in the bill-to block: it may be the customer's number")
+        reasons.append(BILL_TO_REASON)
     if any(EITHER_TAX in r.method for r in readings):
         # Printed under "PST/QST" with nothing on the page to say which the supplier charges: the amount adds up,
         # which tax it is does not follow from that. A person says.

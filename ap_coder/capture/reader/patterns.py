@@ -189,14 +189,30 @@ _BILL_TO = re.compile(r"^(bill(?:ed)?\s*to|sold\s*to|ship\s*to|invoice\s*to|deli
 def _bill_to_regions(layout: DocLayout) -> list[Box]:
     """Rough areas holding the customer's address (below a 'Bill to'-style label)."""
     regions = []
-    for line in layout.lines():
-        if _BILL_TO.match(plain(line.text)):
+    lines = list(layout.lines())
+    for line in lines:
+        m = _BILL_TO.match(plain(line.text))
+        if m:
             b = line.box
             regions.append(Box(b.page, b.x0 - 0.01, b.y0 - 0.002, min(1.0, b.x0 + 0.42), b.y1 + 0.12))
+            if plain(line.text)[m.end() :].strip(" :#-"):
+                continue
+            # "Customer:" at the left margin, the name in a column far to its right (B-2642): the label's value is the
+            # line beside it, unless that line is a label of its own ("Ship To:", "Invoice #: 118204").
+            beside = [o for o in lines if o.box.page == b.page and o.box.x0 > b.x1
+                      and abs(o.box.cy - b.cy) < 0.5 * max(b.height, o.box.height)]  # fmt: skip
+            value = min(beside, key=lambda o: o.box.x0) if beside else None
+            if value is not None and ":" not in value.text and not _label_hits(value):
+                v = value.box
+                regions.append(Box(v.page, v.x0 - 0.01, v.y0 - 0.002, min(1.0, v.x0 + 0.42), v.y1 + 0.12))
     return regions
 
 
 _REGIONS: ContextVar[tuple[DocLayout, list[Box]] | None] = ContextVar("bill_to_regions", default=None)
+
+# The company's own names as vendor keys (``Store.our_names``): the customer's, never read as the supplier (B-2642).
+# Set by whoever reads an invoice for a store (``offline_coder.read_invoice``).
+OUR_NAMES: ContextVar[frozenset[str]] = ContextVar("our_names", default=frozenset())
 
 
 def _in_bill_to(layout: DocLayout, line: Line) -> bool:
@@ -693,6 +709,10 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
                 if o.method == "top-of-page" and o.score >= 0.6 and plain(str(o.value)).split()[:1] == first:
                     # "Contoso Billing" under "Remit to:", "CONTOSO LTD." at the top: one company, its legal name
                     r.score = min(r.score, 0.95 * o.score)
+    if ours := OUR_NAMES.get():
+        from ...core.memory import vendor_key
+
+        out = [r for r in out if vendor_key(str(r.value)) not in ours]  # the customer: the company itself
     out.sort(key=lambda r: -r.score)
     if out and out[0].method == "top-of-page" and out[0].score < WEAK_NAME:
         # No company's form, not printed larger, low on the page ("SOMETHING JOHN" over a street address, "Previous

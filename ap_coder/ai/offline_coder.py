@@ -24,12 +24,15 @@ from ..capture import analyze, build_layout
 from ..capture.bridge import TAX_FIELD, printed_taxes, said_pages, vendor_record
 from ..capture.confidence import apply_supplier_record, reading_confidence
 from ..capture.reader import us_address
+from ..capture.reader.patterns import OUR_NAMES
 from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout, Line
 from ..capture.workflow import (
     apply_header_lessons,
     apply_line_memory,
+    apply_supplier_by_number,
     apply_vendor_alias,
     local_evidence,
+    our_name_keys,
     supplier_for,
     supplier_record,
 )
@@ -140,18 +143,24 @@ def read_invoice(path: str | Path, store: Any = None, layout: DocLayout | None =
     today = today or dt.date.today()
     layout = layout or build_layout(path)
     local = local_evidence(store)
-    capture = analyze(path, layout=layout, today=today, page_text=page_text, local_evidence=local,
-                      ai_values=ai_values or None, di_raw=di_raw or None)  # fmt: skip
-    first = _values(capture)
-    key, profile = supplier_for(store, first)
-    template = (profile or {}).get("template") or None
-    vendor = vendor_record(store, first.get("vendor_name"), first.get("gst_hst_registration_number"))
-    if template or vendor:
-        capture = analyze(path, layout=layout, template=template, vendor=vendor, today=today, page_text=page_text,
-                          local_evidence=local, ai_values=ai_values or None, di_raw=di_raw or None)  # fmt: skip
+    ours = OUR_NAMES.set(our_name_keys(store))  # the company's own names: never read as the supplier (B-2642)
+    try:
+        capture = analyze(path, layout=layout, today=today, page_text=page_text, local_evidence=local,
+                          ai_values=ai_values or None, di_raw=di_raw or None)  # fmt: skip
+        first = _values(capture)
+        key, profile = supplier_for(store, first)
+        template = (profile or {}).get("template") or None
+        vendor = vendor_record(store, first.get("vendor_name"), first.get("gst_hst_registration_number"))
+        if template or vendor:
+            capture = analyze(path, layout=layout, template=template, vendor=vendor, today=today,
+                              page_text=page_text, local_evidence=local, ai_values=ai_values or None,
+                              di_raw=di_raw or None)  # fmt: skip
+    finally:
+        OUR_NAMES.reset(ours)
     if template:  # a verified value its template read: as sure as this supplier's record of it (D-89)
         apply_supplier_record(capture.fields, supplier_record(store, key))
     apply_vendor_alias(store, capture)  # a vendor name read as AP corrected it before (D-119)
+    apply_supplier_by_number(store, capture)  # the supplier its GST/HST number is, never our own name (B-2642, B-2643)
     apply_header_lessons(store, capture)  # what AP taught about its header fields, without the chat model (D-121)
     apply_line_memory(store, capture)  # its lines read as AP named them before (D-120)
     return capture, key, profile
