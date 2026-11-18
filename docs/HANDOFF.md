@@ -337,7 +337,12 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 - **PO-matched vouchers typed by hand** (D-264): JD Edwards' open order lines exported to Excel load on the
   Purchase orders page as they are (order type and company, each line's own number "12.000", unit, account); with
   *PO-matched vouchers* on, the keying sheet gives each invoice's Voucher Match rows (P0411), a row per PO line, the
-  freight too. A line on no PO line is not ready, never guessed.
+  freight too. A line on no PO line is not ready, never guessed. Each row's tax is what the invoice charges on its
+  line, and amounts matched + the tax JD Edwards works out on them = the gross under every tax area and code (D-265);
+  a PST or QST the province's area does not hold goes on a line of its own on the PO line's account. Freight or a fee
+  the PO has no line for is held, or added on an account (Settings → JD Edwards E1, *Charges not on the purchase
+  order*). To try it: `python -m ap_coder.bench po-vouchers --out DIR` (thirteen made-up invoices, their PO files and
+  the rows expected, `bench/jde_po_vouchers.py`).
 - **Not confirmed:** E1's own receipt matching (P4314, F0411Z1T) for PO-matched vouchers: the Z-files' match rows
   still name the invoice's line numbers, not the PO's.
 - **Left to expense** (D-139): the review screen's PO match shows what is left on each PO line after the invoice, from

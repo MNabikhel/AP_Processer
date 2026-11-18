@@ -152,15 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, sizes in QUICK.items():
         took = sizes["took"]
         parsers[name].add_argument("--quick", action="store_true", help=f"a small run to check a change ({took})")
-    from ap_coder.bench import (  # each adds its subcommand
-        adversarial,
-        coding_journal,
-        di_compare,
-        jde_po_vouchers,
-        load,
-        seed,
-        volume,
-    )
+    from ap_coder.bench import adversarial, coding_journal, di_compare, jde_po_vouchers, load, seed, volume  # parts
 
     for part in (load, seed, volume, coding_journal, di_compare, adversarial, jde_po_vouchers):
         part.add_parser(sub)

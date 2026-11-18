@@ -19,7 +19,9 @@ a spreadsheet opening one reads an account or a PO number as a number (B-2151).
 A PO-matched voucher (Settings → JD Edwards E1, D-264) has no G/L distribution: it is keyed in Voucher Match (P0411),
 a row for each invoice line in the screen's order (the order number, type and company, the PO line's own number, the
 quantity and amount matched, the unit of measure, the PO line's account, the tax, the remark), each line paired with
-its open PO line as the purchase orders loaded have it (``coding.po.voucher_match``). One with a line that matches no
+its open PO line as the purchase orders loaded have it (``coding.po.voucher_match``), each row's tax and the lines of
+its own (a charge not on the PO, a tax its area does not hold) as ``jde_match.keyed_match`` keys them (D-265); its
+check line is the amounts matched + the tax JD Edwards works out on them = the gross. One with a line that matches no
 PO line is not ready, with why: no PO line is guessed.
 
 Entry points: ``vouchers`` (the values), ``po_matches`` (the voucher matches of a batch's invoices), ``build_xlsx``

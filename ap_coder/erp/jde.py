@@ -50,6 +50,7 @@ this list (D-222):
   import (``gl_map_from_records``);
 * ``jde_voucher.py``: one voucher (``_prepare``, ``terms_code``, ``sent_due``) and what holds it back;
 * ``jde_remarks.py``: the remark of a G/L line and of the pay item (``line_remark``, ``voucher_remark``);
+* ``jde_match.py``: a PO-matched voucher's Voucher Match rows and the tax on them (``keyed_match``, D-265);
 * ``jde_zfiles.py``: the Z-files' columns, a voucher's rows (``voucher_rows``) and the CSVs (``export_batch``);
 * ``jde_review.py``: before approval, on the review screen (``voucher_findings``, ``voucher_view``), and the tax on
   the pay item;

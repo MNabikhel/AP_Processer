@@ -6431,3 +6431,52 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     to settle with the JD Edwards team before a batch is loaded with PO matching); receipts (3-way: Receipt Line was
     empty on the pilot's entry), retainage and the line type: not on the sheet until the pilot tester says they are
     typed.
+- **D-265** · **A PO-matched voucher's tax is keyed on its Voucher Match rows from what the invoice charges on each
+  line, under every tax area and code; the check is amounts matched + the tax JD Edwards works out on them = the
+  gross; a charge not on the PO is held or keyed on an account chosen** (`erp/jde_match.py` `keyed_match`,
+  `coding/po.py` `is_extra_charge`, Settings → JD Edwards E1 *Charges not on the purchase order*; the pilot tester,
+  18 Nov 2026: "please prepare for all situations; we will test from a set of invoices later").
+  - **Why the check changed:** JD Edwards works the tax out of each row taxed Y (the amount matched at the row's tax
+    area under its code), as it does from a gross amount: the amount matched is the line before tax and the gross is
+    the amounts plus that tax. "Amounts matched + recovered tax = gross" (D-264) was right for the GST and HST only:
+    with code C the PST JD Edwards works out on the rows is in the gross too, and is not recovered.
+  - **Each code, as the G/L-coded voucher (`jde_voucher`) has it:** V, every tax the area holds recovered (the GST,
+    an HST, the QST on an area that holds it); C, the GST recovered and the PST the area's sales tax, in the expense;
+    B (the PST not charged), the GST, JD Edwards accruing the PST on top, not in the gross (on an area that holds
+    none, AP's to book from the Self-assessment report, as before); a line charged nothing (exempt, zero-rated), Tax
+    N with the exempt code. The taxes an area holds are `jde_voucher._area_types`', its provincial tax only on an area
+    that province alone goes to (`_holds_pst`, D-227).
+  - **A tax the area does not hold** (the prototype's GST-only `CDNGST` for BC, SK, MB and QC, D-210): kept in the
+    expense by GL accounts & tax, it can't be in the amount matched (JD Edwards would work the GST out of it too), so
+    it goes on a line of its own on the PO line's account, Tax N, after the rows, each line's share as the Tax check
+    has it (`taxmath.invoice_taxes`). Said, with how to have JD Edwards work it out instead (an area that holds it,
+    code C).
+  - **The row's tax is the invoice's, not the PO line's** (this changes D-264, where the PO file's Tax Y/N, Tax Expl
+    and Tax Rate/Area won): the voucher must add up to what was charged. A PO line whose tax differs is said with what
+    to type. Only where AP Coder has no area to give, a line charged part of what its area holds (the GST and not
+    BC's PST on a GST + PST area), the PO line's own area is taken (said); without one the voucher is held.
+  - **Held, with why, never guessed:** that line with no area of its own; a tax the Tax setup recovers that the area
+    does not hold (it would go nowhere); a tax kept in the expense that the area recovers under code V; amounts and
+    tax not adding up to the gross. Warned: JD Edwards' tax at the area's rate on the rows more than a cent a row off
+    the invoice's.
+  - **Charges not on the purchase order** (new setting, under *PO-matched vouchers*): freight, delivery, a fuel
+    surcharge, an environmental, handling, recycling or small-order fee that matches no PO line (`is_extra_charge`;
+    a charge the PO has a line for still pairs with it, D-264). *Hold the voucher for a person* (the default, as
+    before) or *Add each as its own G/L line, with its tax, on this account* (BU.Object.Subsidiary): a row of the grid
+    marked "Not on the PO" on the sheet and the review screen, said under the voucher. A goods line on no PO line still
+    holds it.
+  - **Also said:** a PO line matched in part (the line stays open for the rest).
+  - **The test set** (`bench/jde_po_vouchers.py`, `python -m ap_coder.bench po-vouchers --out DIR`): thirteen made-up
+    invoices from the made-up company's suppliers (AB GST, ON HST, BC GST + PST, SK GST + PST, MB GST + RST, QC GST +
+    QST, BC self-assessed, BC zero-rated mixed, NS HST with the freight on the PO, freight and a fuel surcharge not on
+    the PO, a quantity-less PO line from the order details grid as it comes, a partial match, a credit note), their
+    open PO lines as JD Edwards exports them and the rows expected under the pilot's setup and under a tax area for
+    each province (`expected.json`); `tests/bench/test_jde_po_vouchers.py` reads each PDF end to end.
+  - **To confirm with the pilot tester / JD Edwards team** (also in the settings page's checklist): that Voucher
+    Match's processing options allow a line on no order (the charges, the PST/QST line); whether the tax worked out on
+    the rows may be typed over when a cent off; the tax area for a line charged part of its area's taxes; the code
+    for the PST not charged (B) on their areas. HST not charged by a supplier is keyed with no tax (AP Coder
+    self-assesses PST and QST only).
+  - *Not chosen:* the PST in the amount matched (JD Edwards would work the GST out of it); a tax area guessed from
+    another province's for a GST-only line (the rates agree, the reporting would not); the Z-files' match rows
+    (F0411Z1T, unchanged).
