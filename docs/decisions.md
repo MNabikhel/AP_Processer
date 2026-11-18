@@ -6384,3 +6384,37 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     the model work out an amount not printed (the 66.43 a short invoice lacks makes it add up but is on no page);
     asking every invoice (the extra minutes go only to invoices with a problem). Untested against a live Gemma 4
     model: the stand-in model server answers as scripted.
+- **D-264** · **A PO-matched invoice is keyed in JD Edwards' Voucher Match, a row for each PO line it bills, from the
+  open PO lines JD Edwards exports** (`coding/po.py` `voucher_match`, `erp/jde_keying.py`, `erp/jde_review.py`
+  `match_lines`; the pilot tester, 18 Nov 2026: most of their invoices are matched to a purchase order, keyed in
+  P0411's Voucher Match, one grid row per PO line, the freight a PO line of its own).
+  - **The PO file:** JD Edwards' open order lines (Open Order Inquiry P430301, the order detail of Work With Order
+    Headers P4310, or F4311 in Data Browser) exported to Excel are read on the Purchase orders page by their own
+    column names, none picked by hand: Order Number, Or Ty, Order Co, Line Number, Address Number (or a "Supplier"
+    column of digits), Description, Quantity Ordered, Quantity Open, Amount Open, Unit Cost, UM, Account Number
+    (business unit.object.subsidiary: the cost center and GL code), Last Status (980: cancelled), Next Status (999:
+    closed), Currency (Cur Cod), Quantity Received. Kept (schema 31): the order's type, company and supplier number
+    (its name from the vendor list), each line's own number as JD Edwards shows it (`po_lines.erp_line`, "12.000";
+    AP Coder's `line_number` stays a whole number), its unit and quantity open. The AIS sync keeps the same. A made-up
+    export: `bench/jde_exports.open_po_lines_xlsx`.
+  - **The match:** each invoice line is paired with its PO line as before (`po_lines_billed`); a charge (freight,
+    delivery, shipping; the reader's "Charges not in the line table") and a charge PO line are as alike as 0.8
+    whatever their words (`CHARGE_ALIKE`), so the freight pairs with the PO's freight line, not only by its price.
+    Quantity matched: the quantity billed; a charge, or a line with no quantity, 1 (-1 on a credit). Amount matched:
+    the line's amount before tax.
+  - **Which invoices:** the ones the existing setting *PO-matched vouchers* (Settings → JD Edwards E1) already sent
+    without G/L lines: an invoice with a PO number. Its keying sheet block has the voucher match rows in the screen's
+    order (Order Number, Or Ty, Order Co, Line Number, Quantity Matched, UM, Amount Matched, Account Number from the
+    PO line, Tax Y/N, Tax Expl, Tax Area, Remark) under the header as before, the check line "amounts matched +
+    recovered tax = gross", and a warning for a quantity over what JD Edwards had open; the sheet prints across
+    the page when it has one. An order type or company the file did not give is Settings' (the PO's). An invoice
+    with no PO number keeps its G/L distribution. On the review screen the PO match names a JD Edwards order's lines
+    by their own numbers with the quantity matched, and the JD Edwards voucher block shows the rows.
+  - **No PO line is guessed:** a line that matches none of the PO's, a PO not loaded, a PO line without JD Edwards'
+    line number (loaded before schema 31, or from a file without line numbers) or a PO in another currency hold the
+    voucher on "Not ready" with why, and say it in the voucher block on the review screen.
+  - *Not chosen:* deciding a voucher is PO-matched by the PO being loaded (a company that types its PO invoices as
+    standard vouchers would see its G/L lines go); the Z-files' F0411Z1T (it still names the invoice's line numbers:
+    to settle with the JD Edwards team before a batch is loaded with PO matching); receipts (3-way: Receipt Line was
+    empty on the pilot's entry), retainage and the line type: not on the sheet until the pilot tester says they are
+    typed.
