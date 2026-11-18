@@ -242,7 +242,6 @@ CHARGE = re.compile(
 CHARGE_ALIKE = 0.8
 
 
-@lru_cache(maxsize=4096)
 def is_charge(text: str) -> bool:
     """Whether a line's description is a charge (freight, delivery) rather than goods or a service."""
     return bool(CHARGE.search(text or ""))

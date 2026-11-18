@@ -326,3 +326,16 @@ def test_with_a_chart_imported_the_sync_leaves_the_accounts_and_business_units_a
     assert report["parts"]["gl_accounts"] == report["parts"]["business_units"] == {"chart": True}
     assert jde_sync.sync(store, parts=("gl_accounts", "business_units"))["ok"]
     assert store.account_pairs().status(cf.HOME, "5410") == chart.OK and stamp  # the pairs as they were
+
+
+def test_a_synced_po_keeps_what_the_voucher_match_names(store, ais):
+    """D-264: a PO synced from JD Edwards keeps its order type and company, its supplier's number and each line's own
+    number as JD Edwards shows it (a split line 2.500 too, its AP Coder number 2500), for the voucher match."""
+    ais.data["purchase_orders"].append({**ais.data["purchase_orders"][1], "key": "4512-OP-00001-2.5",
+                                        "line_number": "2.500", "description": "Toner, cyan"})  # fmt: skip
+    connect(store, ais)
+    assert jde_sync.sync(store)["ok"]
+    po = store.purchase_order("4512")
+    assert (po["order_type"], po["order_company"], po["supplier_number"]) == ("OP", "00001", "4001")
+    assert [(li["line_number"], li["erp_line"]) for li in po["lines"]] == [(1, "1.000"), (2, "2.000"),
+                                                                          (2500, "2.500")]  # fmt: skip
