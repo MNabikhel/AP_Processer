@@ -202,8 +202,9 @@ class MatchLine:
 
 def match_lines(v: _Voucher, matched: VoucherMatch, settings: JdeSettings) -> list[MatchLine]:
     """The voucher match rows of a PO-matched voucher (``coding.po.voucher_match``'s, as keyed): the order type and
-    company the PO file gave (else Settings'), each line's tax (Y with the voucher's explanation code and area; N with
-    the exempt code on a line that carries none) and remark."""
+    company the PO file gave (else Settings'), each line's tax (the PO line's own Tax Y/N, explanation code and rate/
+    area when the PO file gave them; else Y with the voucher's code and area, N with the exempt code on a line that
+    carries none) and remark."""
     items = {li.get("line_number"): li for li in v.final.get("line_items") or []}
     marked = any(li.get("taxes_applied") for li in items.values())  # (lines marked with their taxes: read them)
     exempt = settings.exempt_code.strip().upper()
@@ -218,9 +219,12 @@ def match_lines(v: _Voucher, matched: VoucherMatch, settings: JdeSettings) -> li
             and (bool(li.get("taxes_applied")) or not marked)
         )
         code = v.tax_code if taxed or v.tax_code in ("", exempt) else exempt
+        flag, po_code, po_area = row.tax
+        if flag:  # the PO line's own, as JD Edwards will have it on the row
+            taxed, code = flag == "Y", po_code or code
         out.append(MatchLine(row.order_number, row.order_type or settings.po_document_type.strip(),
                              row.order_company or company, row.line, row.quantity, row.uom, row.amount, row.account,
-                             "Y" if taxed else "N", code, v.tax_area, line_remark(li)))  # fmt: skip
+                             "Y" if taxed else "N", code, po_area or v.tax_area, line_remark(li)))  # fmt: skip
     return out
 
 

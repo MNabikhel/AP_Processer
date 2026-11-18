@@ -211,12 +211,14 @@ class PurchasingMixin:
                     conn.execute(
                         """INSERT INTO po_lines (po_key, line_number, description, quantity, unit_price, amount,
                            received_quantity, gl_code, cost_center, amount_only, open_amount, erp_line, uom,
-                           open_quantity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           open_quantity, tax_flag, tax_code, tax_area)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (key, number, row["description"], row["quantity"], row["unit_price"], row["amount"],
                          row.get("received_quantity"), _clean_code(row.get("gl_code")),
                          _clean_code(row.get("cost_center")), int(bool(row.get("amount_only"))),
                          row.get("open_amount"), row.get("erp_line") or "", row.get("uom") or "",
-                         row.get("open_quantity")),
+                         row.get("open_quantity"), row.get("tax_flag") or "", row.get("tax_code") or "",
+                         row.get("tax_area") or ""),
                     )  # fmt: skip
             counts = {
                 "orders": len(orders),

@@ -179,8 +179,14 @@ def vouchers(
             terms = CREDIT_TERMS
         warnings, notes = _said(v, settings, tax is not None, fx_rates)
         warnings = [*((warned or {}).get(v.inv_id) or []), *warnings]
+        rows = jde_review.match_lines(v, matched, settings) if matched is not None else []
         if matched is not None:
             _match_said(matched, warnings, notes)
+        for m in rows:  # the PO line's own tax area, typed on its row, is not the pay item's
+            if m.taxed == "Y" and m.tax_area and v.tax_area and m.tax_area != v.tax_area:
+                notes.append(f"Order {m.order_number} line {m.line}: the PO line's tax rate/area is {m.tax_area}, the "
+                             f"pay item's {v.tax_area} (where the invoice was supplied): check which JD Edwards "
+                             "should tax it at.")  # fmt: skip
         printed = str(final.get("payment_terms") or "").strip()
         if not terms and printed:  # never the printed terms in JD Edwards' 3-character code (B-2618)
             notes.insert(0, f"Payment terms “{printed}” are printed and have no JD Edwards code (Settings → JD Edwards "
@@ -210,7 +216,7 @@ def vouchers(
                         str((gl_names or {}).get(str(e.get("gl_code") or "").strip()) or ""),
                         e["cents"] / 100, jde_remarks.line_remark(e)) for e in v.entries],
             warnings=warnings, notes=notes,
-            matches=jde_review.match_lines(v, matched, settings) if matched is not None else [],
+            matches=rows,
         ))  # fmt: skip
     return ready, held
 

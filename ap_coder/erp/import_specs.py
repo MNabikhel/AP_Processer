@@ -404,6 +404,8 @@ PURCHASE_ORDERS = ImportSpec(
         "foreign_open_amount": ("Foreign open amount", "Foreign Amount To Receive"),
         "foreign_unit_price": ("Foreign unit price", "Foreign Unit Cost"),
         "foreign_amount": ("Foreign line amount", "Original Ordered Foreign Amount"),
+        "tax_flag": ("Taxable", "Tax Y/N"), "tax_code": ("Tax explanation code", "Tax Expl"),
+        "tax_area": ("Tax rate/area", "Tax Rate/Area"),
     }, {"open_amount": "what is left to expense (alone, without a quantity, price or amount: the line's amount)",
         "received_quantity": "what was received, for the match",
         "gl_code": "the account the line is coded to", "cost_center": "the cost center the line is coded to",
@@ -418,7 +420,10 @@ PURCHASE_ORDERS = ImportSpec(
         "cancelled", "base_currency": "the company's currency: an order in another has its amounts in the foreign "
         "columns", "foreign_open_amount": "a foreign order's open amount, in its currency",
         "foreign_unit_price": "a foreign order's unit price, in its currency",
-        "foreign_amount": "a foreign order's line amount, in its currency"}),
+        "foreign_amount": "a foreign order's line amount, in its currency",
+        "tax_flag": "JD Edwards' Tax Y/N of the line, typed on its voucher match row",
+        "tax_code": "the line's tax explanation code, typed on its voucher match row",
+        "tax_area": "the line's tax rate/area, typed on its voucher match row"}),
     find=_matcher(po.COLUMN_ALIASES),
 )  # fmt: skip
 
@@ -638,6 +643,11 @@ JDE_MARKS: dict[str, tuple[str, ...]] = {
     "payment_history": ("Doc Pay Item", "Payment Amount", "Discount Taken", "Doc Type-M", "Exchange Rate"),
 }  # fmt: skip
 MARKS = 3  # a file with this many of a report's marks is that report, whichever columns it lacks
+# JD Edwards' open purchase order lines (Work With Order Details, P4310, D-264): loaded on the Purchase orders page,
+# never taken for one of the reports above for the columns it shares with them (Subledger, Tax Rate/Area, Short Item
+# No: a voucher's G/L distribution's, B-2646).
+ORDER_MARKS = ("Or Ty", "Order Co", "Quantity To Receive", "Amount To Receive", "Line Description",
+               "Original Ordered Amount", "Foreign Amount To Receive", "Next Status", "Last Status")  # fmt: skip
 # The grids of one voucher in JD Edwards, as a message names them.
 VOUCHER_GRIDS = {
     "gl_distribution": "the G/L distribution of one voucher (its account lines)",
@@ -652,11 +662,14 @@ def recognise(headers: Iterable[Any]) -> str | None:
     """Which of JD Edwards' reports (a key of ``SPECS``) or a voucher's grids (``VOUCHER_GRIDS``) a file with these
     column names is, whichever columns it lacks: the one with the most of its marks (``JDE_MARKS``), when it has
     ``MARKS`` of them, or has every column it needs (``identify``) and two of them. None for any other list: a vendor
-    list of another system has a name and a number too, a cost center list a business unit."""
+    list of another system has a name and a number too, a cost center list a business unit; JD Edwards' open PO
+    lines (``ORDER_MARKS``) are the Purchase orders page's."""
     named = [_text(h) for h in headers]
     keys = {header_key(h) for h in named if h}
     counts = {key: sum(header_key(mark) in keys for mark in marks) for key, marks in JDE_MARKS.items()}
     best = max(counts, key=lambda key: counts[key])
+    if sum(header_key(mark) in keys for mark in ORDER_MARKS) >= max(MARKS, counts[best]):  # PO lines (B-2646)
+        return None
     if counts[best] >= MARKS:
         return best
     whole = identify(named)

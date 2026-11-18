@@ -6395,13 +6395,26 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     (business unit.object.subsidiary: the cost center and GL code), Last Status (980: cancelled), Next Status (999:
     closed), Currency (Cur Cod), Quantity Received. Kept (schema 31): the order's type, company and supplier number
     (its name from the vendor list), each line's own number as JD Edwards shows it (`po_lines.erp_line`, "12.000";
-    AP Coder's `line_number` stays a whole number), its unit and quantity open. The AIS sync keeps the same. A made-up
-    export: `bench/jde_exports.open_po_lines_xlsx`.
+    AP Coder's `line_number` stays a whole number), its unit, quantity open and tax (Tax Y/N, Tax Expl, Tax
+    Rate/Area). The AIS sync keeps the same. A line JD Edwards closed (999) is left out while its PO has open ones.
+  - **The pilot tester's export** is Purchase Order Inquiry's *Work With Order Details* (P4310, W4310G), both as the
+    grid comes (27 columns: no quantity, unit cost or unit of measure; "Amount To Receive"; "Client Code" and "Long
+    Description" each twice) and with the columns they added (67: Quantity To Receive, UM, Unit Cost, Original
+    Ordered Amount, the account string beside Cost Center/Obj Acct/Sub, the line's tax, the order's "Original" and
+    "Related" numbers and lines, which are other orders'). Its description is "Line Description", else the first
+    "Long Description" (`ImportSpec.first_of`: taken, not left to pick as a needed column named twice is, B-2469).
+    An order whose Curr is not its Base Curr takes its foreign columns (Foreign Unit Cost, Foreign Amount To Receive,
+    Original Ordered Foreign Amount). A line with no quantity, price or amount takes its open amount as its amount
+    and is matched by amount. Made-up: `jde_exports.order_details_xlsx` (`short=True` for the 27), and
+    `open_po_lines_xlsx` (Open Order Inquiry's columns).
   - **The match:** each invoice line is paired with its PO line as before (`po_lines_billed`); a charge (freight,
     delivery, shipping; the reader's "Charges not in the line table") and a charge PO line are as alike as 0.8
     whatever their words (`CHARGE_ALIKE`), so the freight pairs with the PO's freight line, not only by its price.
-    Quantity matched: the quantity billed; a charge, or a line with no quantity, 1 (-1 on a credit). Amount matched:
-    the line's amount before tax.
+    Quantity matched: the quantity billed; a charge, or a line with no quantity, 1 (-1 on a credit). On a PO line
+    with no quantity in the PO file (the grid as it comes): the quantity the invoice bills, or left empty when it
+    bills none, with a note under the voucher to check it in JD Edwards. Amount matched: the line's amount before
+    tax. The tax on each row: the PO line's own when the file gives it (a rate/area not the pay item's is said), else
+    the voucher's code and area, N and the exempt code on a line not taxed.
   - **Which invoices:** the ones the existing setting *PO-matched vouchers* (Settings → JD Edwards E1) already sent
     without G/L lines: an invoice with a PO number. Its keying sheet block has the voucher match rows in the screen's
     order (Order Number, Or Ty, Order Co, Line Number, Quantity Matched, UM, Amount Matched, Account Number from the

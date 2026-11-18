@@ -57,7 +57,8 @@ SCHEMA_VERSION = 31  # 19: the invoices' summary and its triggers (summary.py, `
 # five built-in roles only, so it would let nobody with a role made here do anything; it refuses the database instead
 # 30: purchase_orders.currency, the PO's currency as its file gave it ('' for none, taken as CAD, and for one
 # imported before, B-2612)
-# 31: purchase_orders.order_type, order_company and supplier_number, po_lines.erp_line, uom and open_quantity: what JD
+# 31: purchase_orders.order_type, order_company and supplier_number, po_lines.erp_line, uom, open_quantity, tax_flag,
+# tax_code and tax_area: what JD
 # Edwards' voucher match names of an order and its lines ('' and NULL for a PO imported before, D-264)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 

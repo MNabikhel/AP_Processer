@@ -86,11 +86,11 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "quantity": ("quantity", "qty", "orderedqty", "qtyordered", "quantityordered", "ordered"),
     "unit_price": ("unitprice", "price", "unitcost", "rate", "prixunitaire"),
     "amount": ("amount", "linetotal", "extendedamount", "extended", "extendedprice", "extendedcost", "total",
-               "lineamount", "netamount"),
+               "lineamount", "netamount", "originalorderedamount"),
     # Optional: what the ERP has left open on the line (JD Edwards' AOPN), for what is left to expense.
     "open_amount": ("openamount", "amountopen", "openamt", "amtopen", "aopn", "openbalance", "amounttoreceive"),
     # Optional, JD Edwards' (UOPN, UOM): the quantity left open on the line and its unit, for the voucher match.
-    "open_quantity": ("quantityopen", "openquantity", "qtyopen", "openqty", "uopn"),
+    "open_quantity": ("quantityopen", "openquantity", "qtyopen", "openqty", "uopn", "quantitytoreceive"),
     "uom": ("um", "unitofmeasure"),
     "received_quantity": ("receivedquantity", "received", "qtyreceived", "receivedqty", "quantityreceived",
                           "receipts", "recu"),
@@ -98,6 +98,10 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "cost_center": ("costcenter", "costcentre", "cc", "department", "dept"),
     # Optional: a JD Edwards account string (business unit.object.subsidiary), its parts the cost center and GL code.
     "account_number": ("accountnumber", "acctno", "accountno"),
+    # Optional, JD Edwards' (TX, EXR1, TXA1): the PO line's own tax, typed on its voucher match row.
+    "tax_flag": ("taxyn", "tx"),
+    "tax_code": ("taxexpl", "taxexplanation", "taxexplcode", "exr1"),
+    "tax_area": ("taxratearea", "taxarea", "txa1"),
     "status": ("status", "postatus", "state"),
     # Optional, JD Edwards' (NXTR, LTTR): a line whose next status is 999 is closed, one whose last is 980 cancelled.
     "next_status": ("nextstatus", "nextstat", "nxtr"),
@@ -180,8 +184,10 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
             vendor, supplier = "", vendor
         gl_code, cost_center = _text(get("gl_code")), _text(get("cost_center"))
         account = _text(get("account_number"))
-        if not gl_code and not cost_center and account:  # "business unit.object.subsidiary"; no dot: a GL code
-            cost_center, gl_code = split_account(account) if "." in account else ("", account)
+        if "." in account:  # "business unit.object.subsidiary": the account, whatever its parts' columns say
+            cost_center, gl_code = split_account(account)
+        elif account and not gl_code and not cost_center:  # no dot: a GL code
+            gl_code = account
         company = _text(get("order_company"))
         rows.append(
             {
@@ -207,6 +213,9 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
                 "gl_code": gl_code,
                 "cost_center": cost_center,
                 "status": CLOSED if _closed(get) else OPEN,
+                "tax_flag": _text(get("tax_flag")).upper()[:1],
+                "tax_code": _text(get("tax_code")).upper(),
+                "tax_area": _text(get("tax_area")).upper(),
                 "currency": currency,
             }
         )
@@ -370,6 +379,7 @@ class LineMatch:
     po_uom: str = ""
     po_account: str = ""
     po_open_quantity: float | None = None
+    po_tax: tuple[str, str, str] = ("", "", "")  # the PO line's own Tax Y/N, explanation code, rate/area ("": none)
 
 
 @dataclass
@@ -490,6 +500,7 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
             pl.get("open_quantity"),
         )
         m.po_account = join_account(pl.get("cost_center"), pl.get("gl_code"))
+        m.po_tax = (pl.get("tax_flag") or "", pl.get("tax_code") or "", pl.get("tax_area") or "")
         if m.amount_only:  # a PO line with no quantity (JD Edwards' order details give amounts only): matched by amount
             m.matched_quantity = billed_quantity(li) or None
         this_invoice[m.po_line] = this_invoice.get(m.po_line, 0.0) + m.amount
@@ -695,6 +706,7 @@ class MatchRow:
     account: str  # the PO line's: business unit.object.subsidiary ("" when the PO file had none)
     open_quantity: float | None  # what JD Edwards had open on the line at the PO import (None: not in the file)
     no_quantity: bool = False  # the PO line has no quantity in the PO file: matched by amount, its quantity to check
+    tax: tuple[str, str, str] = ("", "", "")  # the PO line's own Tax Y/N, explanation code, rate/area ("": none)
 
 
 @dataclass
@@ -732,7 +744,7 @@ def voucher_match(match: PoMatch | None, number: str) -> VoucherMatch:
             out.rows.append(MatchRow(
                 m.invoice_line, m.description, str(po.get("po_number") or number), po.get("order_type") or "",
                 po.get("order_company") or "", m.po_erp_line, m.matched_quantity, m.po_uom, m.amount, m.po_account,
-                m.po_open_quantity, m.amount_only))  # fmt: skip
+                m.po_open_quantity, m.amount_only, m.po_tax))  # fmt: skip
     return out
 
 

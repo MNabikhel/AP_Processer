@@ -198,7 +198,8 @@ def test_a_journal_loaded_before_its_dates_read_were_kept_says_none(tmp_path):
 # What JD Edwards' voucher match names of a PO, kept from schema 31 (D-264).
 _JDE_PO_COLUMNS = (("purchase_orders", "order_type"), ("purchase_orders", "order_company"),
                    ("purchase_orders", "supplier_number"), ("po_lines", "erp_line"), ("po_lines", "uom"),
-                   ("po_lines", "open_quantity"))  # fmt: skip
+                   ("po_lines", "open_quantity"), ("po_lines", "tax_flag"), ("po_lines", "tax_code"),
+                   ("po_lines", "tax_area"))  # fmt: skip
 
 
 def test_a_purchase_order_kept_before_pos_had_a_currency_has_none(tmp_path):
