@@ -58,6 +58,13 @@ REMARKS = {
     REMARKS_REFERENCE: "The pay item: AP Coder's invoice number (AP Coder #12); each G/L line: the invoice number",
     REMARKS_TYPED: "The pay item: the first line's remark; each G/L line: its own remark, as typed by hand",
 }
+# A PO-matched voucher's charge the PO has no line for (freight, a fuel surcharge, an environmental fee, D-265): held
+# for a person to match by hand (as before), or keyed as a G/L line of its own on an account chosen here.
+CHARGES_HOLD, CHARGES_GL = "hold", "gl"
+PO_CHARGES = {
+    CHARGES_HOLD: "Hold the voucher for a person to match by hand",
+    CHARGES_GL: "Add each as its own G/L line, with its tax, on this account",
+}
 # Seconds more than a voucher's wait before a lost answer's "not there" is believed (``JdeSettings.resend_seconds``).
 RESEND_MARGIN = 60.0
 
@@ -127,6 +134,8 @@ class JdeSettings:
     po_document_type: str = "OP"
     po_company: str = ""  # blank: the company above
     send_po_reference: bool = True
+    po_charges: str = CHARGES_HOLD  # a charge not on the purchase order (D-265)
+    po_charge_account: str = ""  # its account with CHARGES_GL: BU.Object.Subsidiary ("freight in")
     domestic_currency: str = "CAD"
     currencies: list[str] = field(default_factory=lambda: ["CAD", "USD"])
     header_bu: str = ""
@@ -216,6 +225,8 @@ class JdeSettings:
             out.gl_date = GL_DATE_INVOICE
         if out.remarks not in REMARKS:
             out.remarks = REMARKS_REFERENCE
+        if out.po_charges not in PO_CHARGES:
+            out.po_charges = CHARGES_HOLD
         out.open_from, out.open_to = (str(_date(d) or "") for d in (out.open_from, out.open_to))
         if out.closed_period not in CLOSED_PERIODS:
             out.closed_period = CLOSED_MOVE
@@ -243,6 +254,12 @@ class JdeSettings:
         """VLEXR1 when the tax is coded to G/L accounts: the code for no tax handling (E), to confirm with the JDE
         administrator (R04110ZA with it and no tax area posts the G/L lines as sent)."""
         return self.exempt_code.strip().upper() or "E"
+
+    @property
+    def charge_account(self) -> str:
+        """The account a PO-matched voucher's charge not on the PO goes to on a G/L line of its own (D-265); "": such
+        a charge holds the voucher for a person."""
+        return self.po_charge_account.strip() if self.po_charges == CHARGES_GL else ""
 
     @property
     def company_code(self) -> str:

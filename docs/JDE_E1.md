@@ -290,6 +290,15 @@ match. **Both the extra columns and the match file are unconfirmed**: E1's stand
 match receipts by itself, so the JDE team must say how they want PO invoices (a custom match program, P4314
 by hand, or an orchestration; see below). Invoices without a PO still get their G/L lines.
 
+Typed by hand from the **keying sheet** instead (D-264, D-265), each PO-matched voucher has its Voucher Match rows
+(P0411): a row per PO line billed, the amount matched before tax, each row's Tax Y/N, explanation code and tax area
+from what the invoice charges on its line. JD Edwards works the tax out of the rows, so the check line is *amounts
+matched + the tax on the rows = gross*: code V recovers what the area holds, code C keeps the PST as the area's sales
+tax, code B accrues the PST not charged on top, a line charged nothing is Tax N. A PST or QST kept in the expense
+that the area does not hold (a GST-only area) is a line of its own on the PO line's account, Tax N; a charge the PO
+has no line for (freight, a fuel surcharge) is held, or a line of its own on the account of *Charges not on the
+purchase order*. What can't be keyed so is on the "Not ready" sheet with why.
+
 ### PO numbers longer than 8 characters
 
 VLPO holds 8 characters, and vendors often print longer POs (`4500078813`, `MNT-2026-028`). Sent as a

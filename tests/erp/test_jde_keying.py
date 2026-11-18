@@ -979,13 +979,13 @@ def test_a_po_matched_voucher_is_keyed_as_voucher_match_rows_in_the_screens_orde
     assert [vars(m) for m in matched.matches] == [
         {"order_number": "40917", "order_type": "OP", "order_company": "00210", "line": "12.000", "quantity": 100,
          "uom": "EA", "amount": 599.0, "account": "0312005561.6420.2210", "taxed": "Y", "tax_code": "V",
-         "tax_area": area, "remark": "CB-220 Non-Woven Lunch Cooler"},
+         "tax_area": area, "remark": "CB-220 Non-Woven Lunch Cooler", "on_po": True},
         {"order_number": "40917", "order_type": "OP", "order_company": "00210", "line": "13.000", "quantity": 1,
          "uom": "EA", "amount": 57.5, "account": "0312005561.6420.2210", "taxed": "Y", "tax_code": "V",
-         "tax_area": area, "remark": "SETUP Lunch Cooler Setup"},
+         "tax_area": area, "remark": "SETUP Lunch Cooler Setup", "on_po": True},
         {"order_number": "40917", "order_type": "OP", "order_company": "00210", "line": "14.000", "quantity": 1,
          "uom": "EA", "amount": 32.0, "account": "0312005561.6420.2210", "taxed": "Y", "tax_code": "V",
-         "tax_area": area, "remark": "Charges not in the line table"},
+         "tax_area": area, "remark": "Charges not in the line table", "on_po": True},
     ]  # fmt: skip
     assert area and matched.balanced and jde_keying._check(matched) == "688.50 + 34.43 = 722.93: balanced"
 
@@ -997,7 +997,7 @@ def test_a_po_matched_voucher_is_keyed_as_voucher_match_rows_in_the_screens_orde
     assert rows[at + 2] == ["40917", "OP", "00210", "12.000", 100, "EA", 599, "0312005561.6420.2210", "Y", "V", area,
                             "CB-220 Non-Woven Lunch Cooler"]  # fmt: skip
     assert [r[3] for r in rows[at + 2 : at + 5]] == ["12.000", "13.000", "14.000"]
-    assert rows[at + 5][:3] == ["Check", "Amounts matched + recovered tax = gross", 688.5]
+    assert rows[at + 5][:3] == ["Check", "Amounts matched + tax on the rows = gross", 688.5]
     assert ["Supplier number", "4471001", "Supplier name", PROMO] in [r[:4] for r in rows]
     assert ["G/L distribution", None, None, None] in [r[:4] for r in rows]  # the voucher with no PO: as before
     assert book["Keying sheet"].page_setup.orientation == "landscape"
@@ -1088,10 +1088,12 @@ def _coding_of(inv):
     return InvoiceCoding.model_validate({k: x for k, x in inv["final_output"].items() if k != "gl_distribution"})
 
 
-def test_the_po_lines_own_tax_is_typed_on_its_voucher_match_row(tmp_path):
-    """D-264: with the PO file's Tax Y/N, Tax Expl and Tax Rate/Area (the order details grid with its columns
-    added), each voucher match row has the PO line's own tax, as JD Edwards will show it; a rate/area that is not the
-    pay item's is said, to check which JD Edwards should tax at."""
+def test_a_po_lines_own_tax_that_is_not_what_the_invoice_charges_is_said_and_the_row_keeps_the_invoices(tmp_path):
+    """D-264, D-265: with the PO file's Tax Y/N, Tax Expl and Tax Rate/Area (the order details grid with its columns
+    added), a PO line whose tax is not what the invoice charges on its line is said, with what to type: each row
+    carries the invoice's own tax (the GST charged on all three lines, Alberta's area), as JD Edwards works the tax out
+    of the rows and the voucher must add up to the gross. It took the PO line's (N on the setup, Ontario's HST area
+    on the freight), so JD Edwards would have worked out 2.88 of GST less, and 4.16 of HST more, than charged."""
     from dataclasses import replace
 
     from ap_coder.bench import jde_exports
@@ -1109,9 +1111,174 @@ def test_the_po_lines_own_tax_is_typed_on_its_voucher_match_row(tmp_path):
     js = settings(po_matched=True)
     (v,), held = jde_keying.vouchers([inv], js, promo_lookup, on=ON_DAY,
                                      po_matches=jde_keying.po_matches(store, [inv]))  # fmt: skip
-    assert held == [] and [(m.quantity, m.uom, m.taxed, m.tax_code, m.tax_area) for m in v.matches] == [
-        (100, "EA", "Y", "V", "CDNGST"), (1, "EA", "N", "E", v.tax_area), (1, "EA", "Y", "V", "ONHST")]  # fmt: skip
+    assert held == [] and v.tax_area == "AB-GST" and v.balanced
+    assert [(m.quantity, m.uom, m.taxed, m.tax_code, m.tax_area) for m in v.matches] == [
+        (100, "EA", "Y", "V", "AB-GST"), (1, "EA", "Y", "V", "AB-GST"), (1, "EA", "Y", "V", "AB-GST")]  # fmt: skip
+    said = [n for n in v.notes if n.startswith("Order 40917 line")]
+    assert said == [
+        "Order 40917 line 12.000: JD Edwards has the PO line's tax as Y, V, CDNGST; type Y, V, AB-GST as on this row, "
+        "which is what the invoice charges on it.",
+        "Order 40917 line 13.000: JD Edwards has the PO line's tax as N, E, no tax area; type Y, V, AB-GST as on this "
+        "row, which is what the invoice charges on it.",
+        "Order 40917 line 14.000: JD Edwards has the PO line's tax as Y, V, ONHST; type Y, V, AB-GST as on this row, "
+        "which is what the invoice charges on it.",
+    ]
+
+
+def test_a_credit_note_against_a_po_line_is_never_said_to_match_more_than_is_open(tmp_path):
+    """B-2647: a credit note against a PO line JD Edwards had vouchered in full (0 open) was said to match "4 matched,
+    but JD Edwards had 0 open": the quantity a credit gives back was held against what is open. A credit reduces what
+    is matched; only an invoice can match more than is open."""
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from ap_coder.core.store import Store
+    from tests.coding.test_po import _jde_pos
+    from tests.pdfs import one_row_po_lines
+
+    store = Store(tmp_path / "ap.db")
+    bags, setup, freight = one_row_po_lines()
+    _jde_pos(store, [replace(bags, vouchered=Decimal(100)), setup, freight])
+    inv = po_invoice()
+    final = inv["final_output"]
+    final["line_items"] = [{**final["line_items"][0], "quantity": -4, "amount": -23.96}]
+    final.update(subtotal=-23.96, tax_lines=[tl("GST", "", 0.05, -23.96, -1.2)], tax_total=-1.2, grand_total=-25.16)
+    (v,), held = jde_keying.vouchers([inv], settings(po_matched=True), promo_lookup, on=ON_DAY,
+                                     po_matches=jde_keying.po_matches(store, [inv]))  # fmt: skip
+    assert held == [] and [(m.line, m.quantity, m.amount) for m in v.matches] == [("12.000", -4, -23.96)]
+    assert v.balanced and not any("open" in w for w in v.warnings), v.warnings
+
+
+# --- The tax on a voucher match, and charges not on the PO (D-265) ------------------------------------------------
+
+
+def case_vouchers(tmp_path, name, js, setup=None, lines=None, items=None, grid=False, changes=None):
+    """The keying sheet's (vouchers, held) of the test set's case ``name`` (``bench.jde_po_vouchers``) as AP Coder
+    reads it, its PO loaded (``lines``: other open lines; ``grid``: from the order details grid with its tax columns),
+    coded with ``setup`` (the QST recovered by default); ``items``: {line number: changes to it}; ``changes``: to the
+    invoice's fields."""
+    from ap_coder.bench import jde_company, jde_exports, jde_po_vouchers
+    from ap_coder.coding import po
+    from ap_coder.core.schema import InvoiceCoding
+    from ap_coder.core.store import Store
+    from ap_coder.web.files import read_sheet
+
+    case = next(c for c in jde_po_vouchers.cases(jde_company.build(1, "small", 2025)) if c.name == name)
+    store = Store(tmp_path / "ap.db")
+    lines = list(case.po_lines if lines is None else lines)
+    data = jde_exports.order_details_xlsx(lines) if grid else jde_exports.open_po_lines_xlsx(lines)
+    sheet, _ = read_sheet("po.xlsx", data)
+    store.import_purchase_orders(po.rows_from_records(sheet.to_dict("records"), po.map_columns(list(sheet.columns)))[0])
+    final = {**case.coding(), **(changes or {})}
+    for n, change in (items or {}).items():
+        final["line_items"][n - 1].update(change)
+    final["gl_distribution"] = exports.build_gl_distribution(InvoiceCoding.model_validate(final), setup or _setup())
+    inv = {"id": 1, "final_output": final}
+    return jde_keying.vouchers([inv], js, lambda f: str(case.supplier.number), on=ON_DAY,
+                               po_matches=jde_keying.po_matches(store, [inv], js.charge_account))  # fmt: skip
+
+
+def test_a_charge_not_on_the_po_holds_the_voucher_unless_an_account_is_chosen_for_it(tmp_path):
+    """D-265: freight and a fuel surcharge the PO has no line for hold the voucher, as any line on no PO line (no PO
+    line is guessed), until Settings → JD Edwards E1's "Charges not on the purchase order" adds them: then each is a
+    line of its own on the account chosen, with its tax, marked "Not on the PO" on the sheet, and the voucher adds up
+    to the gross."""
+    from ap_coder.bench.jde_po_vouchers import FREIGHT_IN, pilot_settings
+
+    held_js = pilot_settings()
+    held_js.po_charges = jde_settings.CHARGES_HOLD
+    ready, held = case_vouchers(tmp_path / "a", "ab_freight_not_on_po", held_js)
+    assert ready == [] and [w.split(" (none")[0] for w in held[0].why] == [
+        "line 2 “Freight” matches no line of PO 41110",
+        "line 3 “Fuel surcharge” matches no line of PO 41110",
+    ]
+    (v,), held = case_vouchers(tmp_path / "b", "ab_freight_not_on_po", pilot_settings())
+    assert held == [] and v.balanced
+    assert [(m.on_po, m.line, m.amount, m.account, m.taxed, m.tax_code, m.tax_area) for m in v.matches] == [
+        (True, "1.000", 945.0, "0021061010.7410.4107", "Y", "V", "CDNGST"),
+        (False, "", 38.0, FREIGHT_IN, "Y", "V", "CDNGST"),
+        (False, "", 6.84, FREIGHT_IN, "Y", "V", "CDNGST"),
+    ]
+    assert jde_keying._check(v) == "989.84 + 49.49 = 1,039.33: balanced"
+    assert any(n.startswith("Line 3 “Fuel surcharge” (6.84) is not on PO 41110: it is keyed as a G/L line of its own "
+                            f"on {FREIGHT_IN}") for n in v.notes)  # fmt: skip
+    rows = [list(r) for r in openpyxl.load_workbook(io.BytesIO(jde_keying.build_xlsx([v], [])))["Keying sheet"]
+            .iter_rows(values_only=True)]  # fmt: skip
+    assert [r[:8] for r in rows if r[0] == jde_keying.NOT_ON_PO] == [
+        [jde_keying.NOT_ON_PO, None, None, None, None, None, 38, FREIGHT_IN],
+        [jde_keying.NOT_ON_PO, None, None, None, None, None, 6.84, FREIGHT_IN],
+    ]
+    assert next(r for r in rows if r[0] == "Check")[1:3] == ["Amounts matched + tax on the rows = gross", 989.84]
+
+
+def test_a_line_charged_part_of_what_its_tax_area_holds_is_held_unless_its_po_line_has_an_area_of_its_own(tmp_path):
+    """D-265: JD Edwards works out every tax its area holds on a row taxed Y: on BC's GST + PST area (code C), a line
+    charged the GST and not the PST can't be keyed on it, and no area is guessed: the voucher is held with why. When
+    the PO line has its own tax rate/area (the order details grid with its tax columns), its row takes that one, and
+    it is said."""
+    from dataclasses import replace
+
+    from ap_coder.bench import jde_company, jde_po_vouchers
+
+    js = jde_po_vouchers.area_settings()
+    exempt = {2: {"taxes_applied": ["GST"], "tax_exempt": ["PST"]}}
+    case = next(c for c in jde_po_vouchers.cases(jde_company.build(1, "small", 2025)) if c.name == "bc_gst_pst")
+    vests = case.coding()["line_items"][1]["amount"]
+    pst = round(480.0 * 0.07, 2)
+    taxes = {"tax_lines": [tl("GST", "", 0.05, 915.0, 45.75), tl("PST", "BC", 0.07, 480.0, pst)],
+             "tax_total": round(45.75 + pst, 2), "grand_total": round(915.0 + 45.75 + pst, 2)}  # fmt: skip
+
+    def vouchers(where, lines=None, grid=False):
+        return case_vouchers(tmp_path / where, "bc_gst_pst", js, lines=lines, items=exempt, grid=grid, changes=taxes)
+
+    ready, held = vouchers("a")
+    assert ready == [] and held[0].why == [
+        "line 2 “Hi-vis safety vest, class 2” is charged the GST and not the PST, but tax area BC-GSTPST (code C) has "
+        "JD Edwards work out both on its row: give its PO line a tax rate/area for the GST alone in JD Edwards and "
+        "load the purchase orders again (with their Tax Rate/Area column), or key the voucher by hand"
+    ]
+    hats, own = case.po_lines
+    (v,), held = vouchers("b", [replace(hats, tax_code="C", tax_area="BC-GSTPST"), replace(own, tax_area="BCGST")],
+                          grid=True)  # fmt: skip
+    assert held == [] and v.balanced and vests == 435.0
+    assert [(m.taxed, m.tax_code, m.tax_area) for m in v.matches] == [("Y", "C", "BC-GSTPST"), ("Y", "V", "BCGST")]
+    assert ("Order 41103 line 2.000 is charged the GST and not the PST: its row takes the PO line's own tax rate/area "
+            "BCGST (code V). Check JD Edwards works out the GST alone on it.") in v.notes  # fmt: skip
+
+
+def test_a_provincial_tax_jd_edwards_would_treat_otherwise_than_the_tax_setup_holds_the_voucher(tmp_path):
+    """D-265: on a voucher match JD Edwards posts the tax its area holds as the code says: a QST the Tax setup recovers
+    on a GST-only area (it would go nowhere), or one it keeps in the expense on Quebec's own area under code V (JD
+    Edwards would recover it), holds the voucher with why and what to set; the QST kept in the expense on the GST-only
+    area goes on a line of its own on the PO line's account (the test set's case)."""
+    from ap_coder.bench.jde_po_vouchers import area_settings, pilot_settings
+
+    ready, held = case_vouchers(tmp_path / "a", "qc_gst_qst", pilot_settings())  # the QST recovered
+    assert ready == [] and held[0].why == [
+        "the QST is recovered (GL accounts & tax), but tax area CDNGST (code V) has JD Edwards work out GST on a "
+        "voucher match, so the QST would go nowhere: give QC a tax area and code that hold it (Settings → JD Edwards "
+        "E1 → tax areas), or key the voucher by hand"
+    ]
+    expensed = _setup(QST=TaxTreatment("QST", "expense_to_line"))
+    ready, held = case_vouchers(tmp_path / "b", "qc_gst_qst", area_settings(), expensed)
+    assert ready == [] and held[0].why == [
+        "the QST is kept in the expense (GL accounts & tax), but tax area QC-GSTQST with code V has JD Edwards recover "
+        "it on a voucher match: set it to recoverable, or give QC a code that keeps it in the expense (C), in "
+        "Settings → JD Edwards E1 → tax areas"
+    ]
+    (v,), held = case_vouchers(tmp_path / "c", "qc_gst_qst", pilot_settings(), expensed)
+    assert held == [] and v.balanced and [(m.on_po, m.amount, m.taxed) for m in v.matches][-1] == (False, 66.63, "N")
+
+
+def test_jd_edwards_working_out_another_tax_than_the_invoice_charges_is_a_warning(tmp_path):
+    """D-265: JD Edwards works the tax out of the rows at the area's rate: when the invoice charges another (here a
+    dollar more GST than 5% of the lines), the sheet warns to check it, the voucher still adds up to the gross."""
+    from ap_coder.bench.jde_po_vouchers import pilot_settings
+
+    more = {"tax_lines": [tl("GST", "", 0.05, 785.8, 40.29)], "tax_total": 40.29, "grand_total": 826.09}
+    (v,), held = case_vouchers(tmp_path, "ab_gst", pilot_settings(), changes=more)
+    assert held == [] and v.balanced
     assert (
-        f"Order 40917 line 14.000: the PO line's tax rate/area is ONHST, the pay item's {v.tax_area} (where the "
-        "invoice was supplied): check which JD Edwards should tax it at."
-    ) in v.notes
+        "At tax area CDNGST's 5% (GST), JD Edwards works out 39.29 on the rows taxed Y, but the invoice charges "
+        "40.29: check the tax JD Edwards shows against the invoice before saving the voucher."
+    ) in v.warnings

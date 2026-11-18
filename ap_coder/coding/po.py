@@ -284,6 +284,20 @@ def is_charge(text: str) -> bool:
     return bool(CHARGE.search(text or ""))
 
 
+# What else a supplier adds to an invoice beside what was ordered (D-265): a surcharge or a fee. Not a charge to pair
+# with a PO's freight line (``is_charge``), but one that Settings → JD Edwards E1's "Charges not on the purchase
+# order" may key on a G/L line of its own when the PO has no line for it.
+EXTRA_CHARGE = re.compile(
+    r"(?i)\b(?:surcharges?|eco[- ]?fees?|ehf|levy|levies|supplément|frais)\b"
+    r"|\b(?:environmental|handling|small[- ]order|recycling|disposal|fuel)\b.{0,20}\b(?:fees?|charges?|levy)\b"
+)
+
+
+def is_extra_charge(text: str) -> bool:
+    """Whether a line is a charge not for goods or a service (freight, a fuel surcharge, an environmental fee)."""
+    return is_charge(text) or bool(EXTRA_CHARGE.search(text or ""))
+
+
 def _alike(description: Any, po_description: Any) -> float:
     """How much an invoice line resembles a PO line (``similarity``), a charge line and a charge line at least
     CHARGE_ALIKE: what ``_po_line`` and ``_price_decides`` both match by."""
@@ -708,6 +722,7 @@ class MatchRow:
     open_quantity: float | None  # what JD Edwards had open on the line at the PO import (None: not in the file)
     no_quantity: bool = False  # the PO line has no quantity in the PO file: matched by amount, its quantity to check
     tax: tuple[str, str, str] = ("", "", "")  # the PO line's own Tax Y/N, explanation code, rate/area ("": none)
+    on_po: bool = True  # False: a charge the PO has no line for, keyed as a G/L line of its own on ``account`` (D-265)
 
 
 @dataclass
@@ -719,9 +734,11 @@ class VoucherMatch:
     held: list[str] = field(default_factory=list)
 
 
-def voucher_match(match: PoMatch | None, number: str) -> VoucherMatch:
+def voucher_match(match: PoMatch | None, number: str, charge_account: str = "") -> VoucherMatch:
     """The voucher match of an invoice quoting PO ``number`` from its PO match (``match_invoice``; None: no purchase
-    orders loaded)."""
+    orders loaded). ``charge_account``: the account a charge the PO has no line for (freight, a fuel surcharge, an
+    environmental fee: ``is_extra_charge``) is keyed to on a G/L line of its own (Settings → JD Edwards E1, D-265);
+    "": such a charge holds the voucher, as any line on no PO line."""
     out = VoucherMatch()
     label = po_label(number)
     if match is None or not match.found or match.po is None:
@@ -733,7 +750,10 @@ def voucher_match(match: PoMatch | None, number: str) -> VoucherMatch:
                         "JD Edwards by hand")  # fmt: skip
     po = match.po
     for m in match.lines:
-        if m.po_line is None:
+        if m.po_line is None and charge_account and is_extra_charge(m.description):
+            out.rows.append(MatchRow(m.invoice_line, m.description, "", "", "", "", None, "", m.amount, charge_account,
+                                     None, on_po=False))  # fmt: skip
+        elif m.po_line is None:
             out.held.append(
                 f"line {m.invoice_line} “{_short(m.description)}” matches no line of {label} (none is "
                 "guessed): correct the line or the PO number, or match it in JD Edwards by hand"
