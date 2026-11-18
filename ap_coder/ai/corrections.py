@@ -378,17 +378,27 @@ def apply_items(output: dict[str, Any], items: list[dict[str, Any]], text: str, 
             out[kind] = amount
             subtotal_given = subtotal_given or kind == "subtotal"
     if lines_changed:
-        for t in taxes:  # a tax whose taxable amount was its lines' follows them
-            now = add_up(li["amount"] for li in lines if t.get("tax_type") in (li.get("taxes_applied") or []))
-            if abs(float(t.get("taxable_amount") or 0) - old_base.get(t.get("tax_type"), 0.0)) < 0.005:
-                t["taxable_amount"] = now
-        if not subtotal_given:  # the subtotal before tax is the lines', worked out (its total is printed)
-            was, out["subtotal"] = out.get("subtotal"), add_up(li["amount"] for li in lines)
-            if abs(float(was or 0) - out["subtotal"]) >= 0.005:
-                said.append(f"subtotal {_money(out['subtotal'])}, the lines added up (was {_money(was)})")
+        said += _follow_the_lines(out, old_base, subtotal_given)
     if taxes_changed:
         out["tax_total"] = add_up(t["tax_amount"] for t in taxes)
     return out, said, refused
+
+
+def _follow_the_lines(out: dict[str, Any], old_base: dict[Any, float], subtotal_given: bool) -> list[str]:
+    """After lines were added or changed: a tax whose taxable amount was its lines' follows them, and the subtotal
+    before tax is the lines' added up unless a correction gave it (its total is printed). Returns what was said."""
+    from ..coding.money import add_up
+
+    lines, said = out["line_items"], []
+    for t in out["tax_lines"]:
+        now = add_up(li["amount"] for li in lines if t.get("tax_type") in (li.get("taxes_applied") or []))
+        if abs(float(t.get("taxable_amount") or 0) - old_base.get(t.get("tax_type"), 0.0)) < 0.005:
+            t["taxable_amount"] = now
+    if not subtotal_given:
+        was, out["subtotal"] = out.get("subtotal"), add_up(li["amount"] for li in lines)
+        if abs(float(was or 0) - out["subtotal"]) >= 0.005:
+            said.append(f"subtotal {_money(out['subtotal'])}, the lines added up (was {_money(was)})")
+    return said
 
 
 def checked(settings: Any, store: Any, inv: dict[str, Any], corrected: dict[str, Any], *,
