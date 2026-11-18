@@ -339,18 +339,21 @@ def test_in_a_browser_duplicate_insert_copy_from_above_and_clear_a_lines_account
     description = _lines(page).first.locator("textarea[name=line_description]").input_value()
     _menu(page, _lines(page).first.locator("[data-del-row]"))
     _item(page, "duplicate").click()
+    page.wait_for_load_state("networkidle")  # (its check redraws the grid, and a menu opened meanwhile: B-2644)
     assert _lines(page).count() == n + 1
     assert _lines(page).nth(1).locator("textarea[name=line_description]").input_value() == description
     numbers = page.eval_on_selector_all("[data-grid=lines] [name=line_number]", "s => s.map(x => x.value)")
     assert numbers == [str(i + 1) for i in range(n + 1)] or len(set(numbers)) == n + 1, numbers
     _menu(page, _lines(page).first.locator("[data-del-row]"))
     _item(page, "insert").click()
+    page.wait_for_load_state("networkidle")
     assert _lines(page).count() == n + 2
     assert _lines(page).nth(1).locator("textarea[name=line_description]").input_value() == ""
     assert _gl(page, 1) == "UNASSIGNED"
     # the new line: its account from the line above, then cleared again
     _menu(page, _lines(page).nth(1).locator("[data-del-row]"))
     _item(page, "above").click()
+    page.wait_for_load_state("networkidle")
     assert _gl(page, 1) == _gl(page, 0) != "UNASSIGNED"
     assert _lines(page).nth(1).locator(".pk-input").input_value().startswith(_gl(page, 0))
     _menu(page, _lines(page).nth(1).locator("[data-del-row]"))
