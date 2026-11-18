@@ -49,7 +49,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
 - **D-18** · The AI reads, code does the arithmetic
 - **D-19** · Touchless processing is one company-wide switch, off by default, with one fixed bar every vendor must…
 - **D-20** · Touchless gates
-- **D-21** · The AI reviewer never changes a value
+- **D-21** · The AI reviewer never changes a value (narrowed by D-263: corrections the page and the math confirm)
 - **D-22** · Capture calibration is not refitted by bug fixes
 - **D-43** · A value read from the line just over its label (`label-above`, B-280, B-282, B-288
 - **D-44** · An invoice date or number read without a label of its own is a new evidence pattern, weaker than a…
@@ -6357,3 +6357,30 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     table whose amounts it cannot place (the column reader of `_column_foot` stands). Its readings' method,
     `label-row-table`, is not measured by the benchmark (it prints no such table), so they are never verified
     alone; the totals adding up confirm them as any other reading.
+- **D-263** · **The AI reviewer corrects what the page prints and the math confirms** (`ai/corrections.py`; the owner,
+  after a pilot tester's invoice whose freight and tax were missed and whose buyer was taken as the supplier; 18 Nov
+  2026). Narrows D-21: a value it only disputes is still never changed.
+  - **When it is asked:** only an invoice with a problem a reading causes (`corrections.problems`): the lines,
+    charges and taxes don't add up to the total, the lines to the subtotal, a tax to its rate (SUBTOTAL_MISMATCH,
+    TOTAL_MISMATCH, POSTING_UNBALANCED, TAX_CALC_MISMATCH, `math_check`), or, with a supplier list loaded, the
+    supplier is missing, not in it, found only by its GST/HST number, or its reading unsure. Before its review, one
+    more question, thinking on, with the page images and their text (`<document>`, DOCUMENT_IS_DATA): what is wrong,
+    and the corrected values (a charge such as freight, a line's amount, a tax, the subtotal or total, the
+    supplier). An invoice with no problem sends no extra request; one with text addressed to software is not asked.
+  - **When a correction is applied:** every amount in it is printed on the page (the PDF's text or OCR kept with the
+    invoice, and the page reader's kept transcription: `find_amounts`), nothing in it quotes text addressed to
+    software, and with all of them applied the invoice's own checks reconcile (`math_check` all OK, no totals error
+    and no error the invoice did not have, from `finalise_coding`). A supplier only when it is ONE supplier of the
+    list, by its GST/HST number printed (`supplier_of_tax_number`) or its name printed. The subtotal follows the
+    lines (the total is printed) and the tax total the taxes; a tax's rate is the one printed, else a rate in force
+    that makes the amount. A round refused is asked again with why, at most the reviewer's rounds, within half of
+    its minutes (the review has the rest), in its thread between the page reader's invoices.
+  - **What it changes and who decides:** only an invoice nobody has worked on (`replace_proposal`, not while open or
+    drafted): the coding, and each field changed marked as the reviewer's (its source, Check, the badge "AI
+    reviewer"); VERIFIER_CORRECTED (info) says what and why. It is in `ALWAYS_A_PERSON`, so a corrected invoice is
+    never touchless or bulk-approved, whatever the review then says; a person approves it. The review that follows
+    is of the corrected invoice. Refused corrections leave it as it was, with the review's warnings.
+  - *Not chosen:* applying what the model reads without the math (the reviewer's disputes stay warnings); letting
+    the model work out an amount not printed (the 66.43 a short invoice lacks makes it add up but is on no page);
+    asking every invoice (the extra minutes go only to invoices with a problem). Untested against a live Gemma 4
+    model: the stand-in model server answers as scripted.

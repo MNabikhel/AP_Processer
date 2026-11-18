@@ -62,9 +62,12 @@ invoice (PDF, scan, photo, .eml/.msg) ─► local reader: text layer or OCR ─
 
 The chat model in LM Studio reviews every invoice before it can be approved without a person: it looks at the
 page images and the values AP Coder settled on, and an invoice it disagrees with goes to a person with its reason.
-It is on by default (*Settings → Reading*); with no chat model running, invoices wait for a person. It never
-changes a value: a person decides. Models and settings:
-[docs/LM_STUDIO.md](LM_STUDIO.md).
+It is on by default (*Settings → Reading*); with no chat model running, invoices wait for a person. A value it
+only disputes is never changed: a person decides. When an invoice's amounts don't add up, or its supplier is unsure,
+it is asked what is wrong; a correction it gives (a freight charge the reading missed, a tax, the total, the
+supplier) is put in only when each amount is printed on the page and the invoice then adds up (a supplier only one
+in the supplier list), marked "AI reviewer", and the invoice still goes to a person (`VERIFIER_CORRECTED`, D-263).
+Models and settings: [docs/LM_STUDIO.md](LM_STUDIO.md).
 
 ## The finance hub feed
 

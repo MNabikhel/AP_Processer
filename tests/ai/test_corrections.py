@@ -7,6 +7,7 @@ nothing more. Against the stand-in model server, as LM Studio answers."""
 
 from __future__ import annotations
 
+import html
 import json
 
 import pytest
@@ -30,7 +31,8 @@ GEMMA = "gemma-4-12b"
 
 def _fix(kind, amount=None, label="", *, line_number=None, rate=None, gst_hst=None, printed_as=""):
     return {"kind": kind, "line_number": line_number, "label": label, "amount": amount, "rate": rate,
-            "gst_hst": gst_hst, "printed_as": printed_as or f"{label} {amount or ''}".strip(), "reason": "on the page"}  # fmt: skip
+            "gst_hst": gst_hst, "printed_as": printed_as or f"{label} {amount or ''}".strip(),
+            "reason": "on the page"}  # fmt: skip
 
 
 # What the page prints and the rule reader missed, with its one-row totals table not read (B-2639 switched off).
@@ -105,7 +107,7 @@ def _adds_up(output):
     return math_check(InvoiceCoding.model_validate({k: v for k, v in output.items() if k != "gl_distribution"}))["ok"]
 
 
-def test_the_freight_and_tax_a_reading_missed_are_corrected_and_the_invoice_adds_up(store, tmp_path, monkeypatch, stand_in):  # noqa: F811
+def test_freight_and_tax_a_reading_missed_are_corrected_and_the_invoice_adds_up(store, tmp_path, monkeypatch, stand_in):  # noqa: F811
     iid = _misread(store, tmp_path, monkeypatch)
     before = store.get_invoice(iid)["ai_output"]
     assert before["grand_total"] == 0.0 and not before["tax_lines"] and "TOTAL_MISMATCH" in _codes(store, iid)
@@ -130,6 +132,12 @@ def test_the_freight_and_tax_a_reading_missed_are_corrected_and_the_invoice_adds
     assert total["value"] == 722.93 and total["sources"][verifier.READER] == "722.93" and total["status"] == "check"
     assert any(r.startswith(verifier.CORRECTED_BY) for r in total["reasons"])
     assert inv["meta"]["verifier_corrections"]["applied"]
+    from ap_coder.web.invoice_reading import capture_confidence, capture_of
+    from tests.webclient import client_for
+
+    assert capture_confidence(capture_of(store, iid))["grand_total"]["text"] == verifier.NAME  # its badge
+    page = html.unescape(client_for(store).get(f"/review/{iid}").text)  # the review screen says what and why
+    assert "corrected what was read" in page and "added Freight Amount 32.00 as line 3" in page
     # One question about it, asked thinking, with the pages and their text as data; then the review of what it is now.
     (asked,) = model.asked("correct")
     assert asked["chat_template_kwargs"] == {"enable_thinking": True}
@@ -244,4 +252,26 @@ def test_a_correction_never_approves_an_invoice_touchless_processing_held(store,
     assert inv["ai_output"]["grand_total"] == printed and "VERIFIER_CORRECTED" in _codes(store, iid)
     assert done.status == verifier.AGREED and not done.approved and inv["status"] == REVIEW
     found = bulk_approve(store, store.reference_data(), _settings(), [iid], "Mia")
-    assert found["approved"] == [] and inv["status"] == REVIEW
+    assert found["approved"] == [] and store.get_invoice(iid)["status"] == REVIEW, found
+
+
+def test_the_corrections_keep_to_the_reviewers_rounds_and_half_its_minutes(store, tmp_path, monkeypatch, stand_in):  # noqa: F811
+    """Asked once with one round (Settings → Reading), within half of its 4 minutes; the review has the rest. An
+    answer it is not sure of changes nothing."""
+    iid = _misread(store, tmp_path, monkeypatch)
+    before = store.get_invoice(iid)["ai_output"]
+    verifier.save_settings(store, on=True, rounds=1, minutes=4)
+    model = stand_in(_answer(FREIGHT, HST, TOTAL, confident=False))
+    timeouts = []
+
+    class Timed(InvoiceCoder):
+        def _local_create(self, model, messages, schema=None, *, thinking=False, timeout=None, deadline=None):
+            timeouts.append(("corrections" in (schema or {}).get("properties", {}), timeout))
+            return super()._local_create(model, messages, schema, thinking=thinking, timeout=timeout,
+                                         deadline=deadline)  # fmt: skip
+
+    coder = Timed(local_settings(model.server.base_url), store.reference_data(), provider="local")
+    verifier.verify_one(_settings(), store, coder=coder, after_page_reader=False)
+    assert len(model.asked("correct")) == 1 and store.get_invoice(iid)["ai_output"] == before
+    (fix, fix_seconds), (review, review_seconds) = timeouts
+    assert fix and 0 < fix_seconds <= 120 and not review and 120 < review_seconds <= 240

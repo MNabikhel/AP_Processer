@@ -482,7 +482,8 @@ def issues(result: dict[str, Any] | None, output: dict[str, Any] | None = None) 
         out.append((WARNING, "VERIFIER_DISAGREES", f"the {NAME} disagrees: " + "; ".join(parts)[:900]))
     if status == UNSURE:
         what = "; ".join(parts) if parts else "it could not confirm the invoice"
-        out.append((WARNING, "VERIFIER_UNSURE", f"the {NAME} is not sure ({result.get('why') or 'not sure'}): {what}"[:900]))
+        why = result.get("why") or "not sure"
+        out.append((WARNING, "VERIFIER_UNSURE", f"the {NAME} is not sure ({why}): {what}"[:900]))
     corrected = result.get("corrections") or {}
     if corrected.get("applied"):  # what it corrected before it reviewed (D-263)
         out.append((INFO, CORRECTED_CODE, str(corrected.get("message") or "")))
@@ -703,8 +704,8 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
     from . import corrections
 
     # An invoice with a problem: its corrections first, in at most half the minutes; the review is of what it is then.
-    fixed = corrections.correct(settings, store, inv, coder, images, rounds=cfg.rounds, identity=identity,
-                                seconds_left=lambda: budget / 2 - (clock() - started), model=model, names=names)  # fmt: skip
+    fixed = corrections.correct(settings, store, inv, coder, images, rounds=cfg.rounds, identity=identity, model=model,
+                                seconds_left=lambda: budget / 2 - (clock() - started), names=names)  # fmt: skip
     if fixed and fixed.get("applied"):
         inv = store.get_invoice(iid) or inv
         output = inv.get("final_output") or inv.get("ai_output") or output
@@ -740,7 +741,8 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
     result = {**found.to_dict(), "fields": fields, "model": model, "proposal": digest(output),
               # each disputed line as it was reviewed: once the clerk changes it, it is no longer reported (B-1527)
               "lines_seen": {str(n): line_seen(output, n) for n in found.lines},
-              "at": dt.datetime.now().isoformat(timespec="seconds"), **({"corrections": fixed} if fixed else {})}  # fmt: skip
+              "at": dt.datetime.now().isoformat(timespec="seconds"),
+              **({"corrections": fixed} if fixed else {})}  # fmt: skip
     if store.restoring() or store.row_identity(iid) != identity:
         return Outcome(iid, "skipped", "not applied: a backup was restored meanwhile")
     if not _end(store, row, "done", result=result, rounds=found.rounds, seconds=found.seconds):

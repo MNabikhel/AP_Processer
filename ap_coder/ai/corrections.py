@@ -127,9 +127,10 @@ def supplier_unsure(store: Any, inv: dict[str, Any], capture: Any) -> bool:
 
 def problems(store: Any, inv: dict[str, Any], output: dict[str, Any], capture: Any) -> list[str]:
     """What is wrong with the invoice that its page can correct, in words; [] when nothing (it is not asked)."""
+    listed = store.has_vendor_master()
     said = [str(i.get("message") or i.get("code")) for i in _issues(inv)
-            if i.get("code") in PROBLEM_CODES and (i.get("code") not in SUPPLIER_CODES or store.has_vendor_master())]
-    said += _math_wrong(output)  # fmt: skip
+            if i.get("code") in PROBLEM_CODES and (i.get("code") not in SUPPLIER_CODES or listed)]  # fmt: skip
+    said += _math_wrong(output)
     if supplier_unsure(store, inv, capture) and not any(i.get("code") in SUPPLIER_CODES for i in _issues(inv)):
         field = capture.fields.get("vendor_name")
         said.append("the supplier is not sure" + (f": {field.reasons[-1]}" if field.reasons else ""))
@@ -160,7 +161,8 @@ def question(shown: dict[str, Any], wrong: list[str], text: str, earlier: dict[s
              "Find on its pages (the images below, and their text) what is wrong, and give the corrected values.",
              "What was entered (with the vendor list's record of the supplier, and the math worked out again):",
              json.dumps(entered, ensure_ascii=False, indent=1),
-             "The invoice's text, as read from its pages:", f"<document>\n{text[:DOCUMENT_CHARS]}\n</document>"]  # fmt: skip
+             "The invoice's text, as read from its pages:",
+             f"<document>\n{text[:DOCUMENT_CHARS]}\n</document>"]  # fmt: skip
     if earlier:
         parts += ["You answered before, and your corrections were not applied:",
                   json.dumps(earlier, ensure_ascii=False, indent=1),
@@ -280,7 +282,8 @@ def apply_items(output: dict[str, Any], items: list[dict[str, Any]], text: str, 
     lines: list[dict[str, Any]] = out.setdefault("line_items", [])
     taxes: list[dict[str, Any]] = out.setdefault("tax_lines", [])
     printed = [abs(v) for v, _, _ in find_amounts(text)]
-    old_base = {t.get("tax_type"): add_up(li["amount"] for li in lines if t.get("tax_type") in li.get("taxes_applied", []))
+    old_base = {t.get("tax_type"): add_up(li["amount"] for li in lines
+                                          if t.get("tax_type") in (li.get("taxes_applied") or []))
                 for t in taxes}  # fmt: skip
     said: list[str] = []
     refused: list[str] = []
@@ -321,7 +324,8 @@ def apply_items(output: dict[str, Any], items: list[dict[str, Any]], text: str, 
             lines.append({"line_number": number, "description": label, "quantity": 1.0, "unit_price": amount,
                           "amount": amount, "predicted_gl_code": UNASSIGNED, "predicted_cost_center": center,
                           "taxes_applied": sorted(common), "tax_status": "",
-                          "reasoning_justification": f"{CORRECTED_BY}: printed as {str(item.get('printed_as'))[:80]}"})  # fmt: skip
+                          "reasoning_justification": f"{CORRECTED_BY}: printed as "
+                                                     f"{str(item.get('printed_as'))[:80]}"})  # fmt: skip
             said.append(f"added {label} {_money(amount)} as line {number}")
             lines_changed = True
         elif kind == "line_amount":
