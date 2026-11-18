@@ -180,7 +180,7 @@ def vouchers(
         warnings, notes = _said(v, settings, tax is not None, fx_rates)
         warnings = [*((warned or {}).get(v.inv_id) or []), *warnings]
         if matched is not None:
-            _open_warnings(matched, warnings)
+            _match_said(matched, warnings, notes)
         printed = str(final.get("payment_terms") or "").strip()
         if not terms and printed:  # never the printed terms in JD Edwards' 3-character code (B-2618)
             notes.insert(0, f"Payment terms “{printed}” are printed and have no JD Edwards code (Settings → JD Edwards "
@@ -232,13 +232,22 @@ def po_matches(store: Any, invoices: list[dict[str, Any]]) -> dict[int, po_mod.V
     return out
 
 
-def _open_warnings(matched: po_mod.VoucherMatch, warnings: list[str]) -> None:
-    """A quantity matched over what JD Edwards had open on its PO line, said in ``warnings``."""
+def _match_said(matched: po_mod.VoucherMatch, warnings: list[str], notes: list[str]) -> None:
+    """What a voucher match's rows need said: a quantity matched over what JD Edwards had open on its PO line
+    (``warnings``); a PO line with no quantity in the purchase orders loaded, matched by amount (``notes``)."""
     for row in matched.rows:
-        if row.open_quantity is not None and abs(row.quantity) > row.open_quantity + 1e-6:
-            warnings.append(f"Order {row.order_number} line {row.line}: {po_mod._qty(row.quantity)} matched, but "
-                            f"JD Edwards had {po_mod._qty(row.open_quantity)} open at the purchase orders' last load: "
-                            "it matches no more than is open.")  # fmt: skip
+        where = f"Order {row.order_number} line {row.line}"
+        if row.no_quantity:
+            typed = (f"the invoice's {po_mod._qty(row.quantity)}" if row.quantity is not None
+                     else "left empty")  # fmt: skip
+            notes.append(f"{where} has no quantity in the purchase orders loaded: it is matched by its amount "
+                         f"({row.amount:,.2f}) and Quantity Matched is {typed}. Check the quantity JD Edwards "
+                         "shows for it.")  # fmt: skip
+        elif row.open_quantity is not None and row.quantity is not None and \
+                abs(row.quantity) > row.open_quantity + 1e-6:  # fmt: skip
+            warnings.append(f"{where}: {po_mod._qty(row.quantity)} matched, but JD Edwards had "
+                            f"{po_mod._qty(row.open_quantity)} open at the purchase orders' last load: it matches no "
+                            "more than is open.")  # fmt: skip
 
 
 def _said(v: jde_voucher._Voucher, settings: jde_settings.JdeSettings, taxed: bool,

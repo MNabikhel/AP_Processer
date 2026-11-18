@@ -1044,3 +1044,45 @@ def test_the_exports_page_keying_sheet_keys_a_po_matched_voucher_from_the_purcha
     assert ("40917", "OP", "00210", "12.000", 120, "EA", 718.8) in [r[:7] for r in rows]
     assert any(str(r[1] or "").startswith("Order 40917 line 12.000: 120 matched, but JD Edwards had 100 open")
                for r in rows if r[0] == "Warning")  # fmt: skip
+
+
+def test_a_po_line_with_no_quantity_is_matched_by_its_amount_its_quantity_left_to_check(tmp_path):
+    """D-264: JD Edwards' "Work With Order Details" grid gives each open line's amount to receive and no quantity: the
+    line is matched by its amount. Quantity Matched is the quantity the invoice bills, or left empty when it bills
+    none (the freight read as a charge with no quantity), and a note says to check it."""
+    from ap_coder.bench import jde_exports
+    from ap_coder.coding import po
+    from ap_coder.core.store import Store
+    from ap_coder.web.files import read_sheet
+    from tests.pdfs import one_row_po_lines
+
+    store = Store(tmp_path / "ap.db")
+    sheet, _ = read_sheet("order_details.xlsx", jde_exports.order_details_xlsx(one_row_po_lines()))
+    store.import_purchase_orders(po.rows_from_records(sheet.to_dict("records"), po.map_columns(list(sheet.columns)))[0])
+    inv = po_invoice()
+    inv["final_output"]["line_items"][2]["quantity"] = 0  # the freight: no quantity printed
+    js = settings(po_matched=True)
+    (v,), held = jde_keying.vouchers([inv], js, promo_lookup, on=ON_DAY,
+                                     po_matches=jde_keying.po_matches(store, [inv]))  # fmt: skip
+    assert held == [] and [(m.line, m.quantity, m.uom, m.amount) for m in v.matches] == [
+        ("12.000", 100, "", 599.0), ("13.000", 1, "", 57.5), ("14.000", None, "", 32.0)]  # fmt: skip
+    assert v.notes[-1] == ("Order 40917 line 14.000 has no quantity in the purchase orders loaded: it is matched by "
+                           "its amount (32.00) and Quantity Matched is left empty. Check the quantity JD Edwards "
+                           "shows for it.")  # fmt: skip
+    assert "Quantity Matched is the invoice's 100" in v.notes[-3]
+    data = jde_keying.build_xlsx([v], [])
+    rows = [list(r) for r in openpyxl.load_workbook(io.BytesIO(data))["Keying sheet"].iter_rows(values_only=True)]
+    assert ["40917", "OP", "00210", "14.000", None, None, 32] == next(r[:7] for r in rows if r[3] == "14.000")
+    view = jde_review.voucher_view(inv["final_output"], js, "4471001", match=po.voucher_match(
+        po.match_invoice(_coding_of(inv), store, 8), "40917"))  # fmt: skip
+    assert [m["quantity_text"] for m in view["match"]] == ["100", "1", "—"]
+    from ap_coder.web.invoice_coding import po_section  # the review screen's PO match says how it is matched
+
+    shown = po_section(store, _coding_of(inv), 8)
+    assert [r["matched"] for r in shown["rows"]][2] == "32.00 matched (no quantity on the PO)"
+
+
+def _coding_of(inv):
+    from ap_coder.core.schema import InvoiceCoding
+
+    return InvoiceCoding.model_validate({k: x for k, x in inv["final_output"].items() if k != "gl_distribution"})

@@ -81,13 +81,14 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "supplier_number": ("addressnumber", "suppliernumber", "supplierno", "an8", "vendornumber", "vendorno"),
     # Not "Item" or "Item Number": in most exports that is the part number (SKU), not the PO line.
     "line_number": ("linenumber", "line", "lineno", "linenum", "poline"),
-    "description": ("description", "desc", "itemdescription", "linedescription", "product", "service"),
+    "description": ("description", "desc", "itemdescription", "linedescription", "longdescription", "product",
+                    "service"),
     "quantity": ("quantity", "qty", "orderedqty", "qtyordered", "quantityordered", "ordered"),
     "unit_price": ("unitprice", "price", "unitcost", "rate", "prixunitaire"),
     "amount": ("amount", "linetotal", "extendedamount", "extended", "extendedprice", "extendedcost", "total",
                "lineamount", "netamount"),
     # Optional: what the ERP has left open on the line (JD Edwards' AOPN), for what is left to expense.
-    "open_amount": ("openamount", "amountopen", "openamt", "amtopen", "aopn", "openbalance"),
+    "open_amount": ("openamount", "amountopen", "openamt", "amtopen", "aopn", "openbalance", "amounttoreceive"),
     # Optional, JD Edwards' (UOPN, UOM): the quantity left open on the line and its unit, for the voucher match.
     "open_quantity": ("quantityopen", "openquantity", "qtyopen", "openqty", "uopn"),
     "uom": ("um", "unitofmeasure"),
@@ -103,6 +104,12 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "last_status": ("laststatus", "laststat", "lttr"),
     # Optional: the PO's currency (JD Edwards' CRCD); a file without one: taken as CAD (B-2612).
     "currency": ("currencycode", "currcode", "curcode", "curcod", "curr", "crcd", "ccy", "devise"),
+    # Optional, JD Edwards' (D-264): an order in another currency than the company's (its Base Curr) has its amounts
+    # and unit cost in that currency in the foreign columns; the others are the company's.
+    "base_currency": ("basecurr", "basecurrency", "basecurrencycode"),
+    "foreign_open_amount": ("foreignamounttoreceive", "foreignopenamount", "fap"),
+    "foreign_unit_price": ("foreignunitcost", "foreignunitprice", "fprc"),
+    "foreign_amount": ("originalorderedforeignamount", "foreignextendedprice", "foreignextendedcost", "fea"),
 }  # fmt: skip
 CLOSED_STATUSES = {"closed", "close", "complete", "completed", "fermé", "ferme"}
 JDE_CLOSED, JDE_CANCELLED = "999", "980"  # a JD Edwards line's next status once closed, last status once cancelled
@@ -145,6 +152,19 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
             skipped += 1
             continue
         qty, price, amount = parse_amount(get("quantity")), parse_amount(get("unit_price")), parse_amount(get("amount"))
+        opened = parse_amount(get("open_amount"))
+        currency, base = _text(get("currency")).upper(), _text(get("base_currency")).upper()
+        if currency and base and currency != base:  # an order in a foreign currency: its own amounts (D-264)
+            price, amount, opened = (
+                parse_amount(get(f)) if columns.get(f) else was
+                for f, was in (
+                    ("foreign_unit_price", price),
+                    ("foreign_amount", amount),
+                    ("foreign_open_amount", opened),
+                )
+            )
+        if qty is None and price is None and amount is None:  # (JD Edwards' order details: what is left to receive)
+            amount = opened
         if amount:  # an ERP writes 0 rather than blank for the quantity and price of a lump-sum line
             qty, price = qty or None, price or None
         amount_only = qty is None and price is None and amount is not None  # e.g. "Consulting services: 5,000"
@@ -180,17 +200,24 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
                 "unit_price": price,
                 "amount": amount,
                 "amount_only": amount_only,
-                "open_amount": parse_amount(get("open_amount")),
+                "open_amount": opened,
                 "open_quantity": parse_amount(get("open_quantity")),
                 "uom": _text(get("uom")).upper(),
                 "received_quantity": parse_amount(get("received_quantity")),
                 "gl_code": gl_code,
                 "cost_center": cost_center,
                 "status": CLOSED if _closed(get) else OPEN,
-                "currency": _text(get("currency")).upper(),
+                "currency": currency,
             }
         )
     return rows, skipped
+
+
+def open_lines(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each PO's open lines (``rows_from_records``' rows): a closed line (JD Edwards' 999) leaves while another line of
+    its PO is open, so no invoice is matched to it; with none open, every line stays and the PO is closed."""
+    open_pos = {po_key(r["po_number"]) for r in rows if r.get("status") != CLOSED}
+    return [r for r in rows if r.get("status") != CLOSED or po_key(r["po_number"]) not in open_pos]
 
 
 def _erp_line(value: Any) -> str:
@@ -335,9 +362,10 @@ class LineMatch:
     po_gl: str = ""
     po_cc: str = ""
     problems: list[str] = field(default_factory=list)
-    # For JD Edwards' voucher match (D-264): the quantity this line matches (``matched_quantity``), and the PO line's
-    # own line number ("12.000"), unit of measure, account string and quantity open as the PO file had them.
-    matched_quantity: float = 0.0
+    # For JD Edwards' voucher match (D-264): the quantity this line matches (``matched_quantity``; on a PO line with no
+    # quantity, the one the invoice bills, None when it bills none), and the PO line's own line number ("12.000"),
+    # unit of measure, account string and quantity open as the PO file had them.
+    matched_quantity: float | None = 0.0
     po_erp_line: str = ""
     po_uom: str = ""
     po_account: str = ""
@@ -462,6 +490,8 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
             pl.get("open_quantity"),
         )
         m.po_account = join_account(pl.get("cost_center"), pl.get("gl_code"))
+        if m.amount_only:  # a PO line with no quantity (JD Edwards' order details give amounts only): matched by amount
+            m.matched_quantity = billed_quantity(li) or None
         this_invoice[m.po_line] = this_invoice.get(m.po_line, 0.0) + m.amount
         if m.amount_only:
             _amount_findings(m, li, result, billed_now_amount)
@@ -659,11 +689,12 @@ class MatchRow:
     order_type: str  # "": the PO file gave none
     order_company: str  # "": the PO file gave none
     line: str  # the PO line's, as JD Edwards shows it: "12.000"
-    quantity: float  # quantity matched
+    quantity: float | None  # quantity matched; None: the PO line has none and the invoice bills none
     uom: str
     amount: float  # amount matched: the line's, before tax
     account: str  # the PO line's: business unit.object.subsidiary ("" when the PO file had none)
     open_quantity: float | None  # what JD Edwards had open on the line at the PO import (None: not in the file)
+    no_quantity: bool = False  # the PO line has no quantity in the PO file: matched by amount, its quantity to check
 
 
 @dataclass
@@ -701,7 +732,7 @@ def voucher_match(match: PoMatch | None, number: str) -> VoucherMatch:
             out.rows.append(MatchRow(
                 m.invoice_line, m.description, str(po.get("po_number") or number), po.get("order_type") or "",
                 po.get("order_company") or "", m.po_erp_line, m.matched_quantity, m.po_uom, m.amount, m.po_account,
-                m.po_open_quantity))  # fmt: skip
+                m.po_open_quantity, m.amount_only))  # fmt: skip
     return out
 
 

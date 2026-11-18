@@ -190,7 +190,7 @@ class MatchLine:
     order_type: str
     order_company: str
     line: str  # the PO line's own number: "12.000"
-    quantity: float  # quantity matched
+    quantity: float | None  # quantity matched; None (left empty): the PO line has none, the invoice bills none
     uom: str
     amount: float  # amount matched: the invoice line's, before tax
     account: str  # the PO line's, BU.Object.Subsidiary
@@ -314,5 +314,6 @@ def voucher_view(
             "terms_note": terms_note, "gl_date": day, "tax_code": v.tax_code, "tax_area": v.tax_area,
             "taxable": None if taxable is None else taxable / 100, "tax": None if tax is None else tax / 100,
             "not_ready": not_ready, "keyed": keyed, "match_held": match_held,
-            "match": [{**vars(m), "quantity_text": f"{m.quantity:,.4f}".rstrip("0").rstrip("."),
+            "match": [{**vars(m), "quantity_text": "—" if m.quantity is None
+                       else f"{m.quantity:,.4f}".rstrip("0").rstrip("."),
                        "amount_text": money(round(m.amount * 100))} for m in rows_matched]}  # fmt: skip

@@ -28,7 +28,11 @@ layouts, with their quirks, are a real E1's:
   one row per line: the order number, type and company, the line number with three decimals (12.000), the supplier by
   its address number, the quantities and amounts as numbers, the unit of measure, the account string padded as the
   chart's, the last and next status. ``open_po_lines(truth)``: a few orders of the books' suppliers that buy on POs,
-  each with its goods and a freight line (D-264). Not in ``write_all``: a test writes the lines it needs.
+  each with its goods and a freight line (D-264). Not in ``write_all``: a test writes the lines it needs;
+* ``order_details_xlsx``: the same lines as Purchase Order Inquiry's "Work With Order Details" grid (P4310, W4310G)
+  exports them, 27 columns as that grid has them by default: no quantity, unit cost (but a foreign order's) or unit of
+  measure, the open amount as "Amount To Receive", and "Client Code" and "Long Description" each twice (the second
+  description another text).
 
 Only the standard grid and report column names are kept; a company's own category-code labels are ``Cat Code NN``
 here. ``write_all(folder)`` writes every file and returns the truth they were written from; the same seed and size
@@ -158,6 +162,13 @@ OPEN_PO_HEADER = ["Order Number", "Or Ty", "Order Co", "Line Number", "Address N
                   "Quantity Ordered", "Quantity Open", "Amount Open", "Unit Cost", "UM", "Account Number",
                   "Last Status", "Next Status", "Cur Cod", "Quantity Received"]  # fmt: skip
 LINE_FORMAT, COST_FORMAT = "0.000", "#,##0.0000"
+ORDER_DETAILS_HEADER = [
+    "Line Number", "Ln Ty", "Order Co", "Order Number", "Or Ty", "Supplier Number", "Supplier Name", "Long Description",
+    "Account Number", "Amount To Receive", "Subledger", "Sub Type", "Asset ID", "Order Date", "Last Status",
+    "Next Status", "Buyer Number", "Transaction Originator", "Description Line 2", "Client Code", "Base Curr",
+    "Foreign Amount To Receive", "Curr", "Foreign Unit Cost", "Original Ordered Foreign Amount", "Client Code",
+    "Long Description",
+]  # fmt: skip
 _WRITTEN = dt.datetime(2025, 1, 14, 9, 41, 7)  # every file's "written" time, so the same books give the same bytes
 
 
@@ -587,6 +598,9 @@ class OpenPoLine:
     vouchered: Decimal = Decimal(0)  # the quantity matched on vouchers already: what is open is the rest
     order_type: str = "OP"
     currency: str = "CAD"
+    supplier_name: str = ""
+    order_date: dt.date = dt.date(2026, 9, 1)
+    closed: bool = False  # JD Edwards closed it (next status 999)
 
     @property
     def open_quantity(self) -> Decimal:
@@ -628,6 +642,27 @@ def open_po_lines_xlsx(lines: Iterable[OpenPoLine]) -> bytes:
             "510" if received else "400", li.currency, _number(li.received),
         ])  # fmt: skip
     return _workbook(OPEN_PO_HEADER, rows)
+
+
+def order_details_xlsx(lines: Iterable[OpenPoLine], base: str = "CAD", rate: Decimal = Decimal("1.35")) -> bytes:
+    """The open lines as Work With Order Details (P4310, W4310G) exports them (``ORDER_DETAILS_HEADER``): what is
+    left to receive as an amount, no quantity; a line's line type J (a G/L account line); an order in another currency
+    than ``base`` with its foreign columns filled and its base amounts at ``rate``, a domestic one with them zero. The
+    second "Long Description" is another text (the grid's item description), the first the line's."""
+    rows = []
+    for li in lines:
+        foreign = li.currency != base
+        open_amount = money(li.open_quantity * li.unit_cost)
+        status = ("999", "999") if li.closed else ("400", "510") if li.received >= li.ordered > 0 else ("220", "400")
+        rows.append([
+            (float(li.line), LINE_FORMAT), "J", li.company, li.order, li.order_type, li.supplier,
+            _text(li.supplier_name), li.description, _padded(li.account),
+            _number(money(open_amount * rate) if foreign else open_amount), BLANK, BLANK, BLANK, _date(li.order_date),
+            *status, 4400, "BUYER1", BLANK, BLANK, base, _number(open_amount if foreign else Decimal(0)),
+            li.currency, (float(li.unit_cost) if foreign else 0.0, COST_FORMAT),
+            _number(money(li.ordered * li.unit_cost) if foreign else Decimal(0)), BLANK, f"ITEM {li.order}-{li.line}",
+        ])  # fmt: skip
+    return _workbook(ORDER_DETAILS_HEADER, rows)
 
 
 def write_all(folder: str | Path, seed: int = 1, size: str = "small", year: int = 2024) -> Truth:

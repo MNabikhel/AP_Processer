@@ -139,7 +139,7 @@ def po_section(store: Store, coding: InvoiceCoding, invoice_id: int,
         left = match.left.get(m.po_line)  # (none: the PO and the invoice in two currencies, B-2612)
         rows.append({"line": m.invoice_line, "description": m.description,
                      "po_line": f"{m.po_erp_line if jde and m.po_erp_line else m.po_line} · {m.po_description}",
-                     "matched": f"{_fmt_qty(m.matched_quantity)} {m.po_uom} matched".replace("  ", " ") if jde else "",
+                     "matched": _matched(m) if jde else "",
                      "coding": " · ".join(x for x in (f"GL {m.po_gl}" if m.po_gl else "", m.po_cc) if x),
                      "qty": qty, "price": signed(m.unit_price),
                      "price_po": signed(m.po_unit_price) if "price" in m.problems else "",
@@ -165,6 +165,14 @@ def po_section(store: Store, coding: InvoiceCoding, invoice_id: int,
         "total_left": "—" if match.currencies else _left_text(match.total_left),
         "total_over": not match.currencies and match.total_left < 0,
     }  # fmt: skip
+
+
+def _matched(m: Any) -> str:
+    """What a line matches on a JD Edwards order's line (D-264): its quantity, or on a PO line with no quantity its
+    amount."""
+    if m.amount_only:
+        return f"{signed(m.amount)} matched (no quantity on the PO)"
+    return f"{_fmt_qty(m.matched_quantity)} {m.po_uom} matched".replace("  ", " ")
 
 
 def _left_text(left: float) -> str:

@@ -285,7 +285,9 @@ def _po_import(request: Request, form: Any) -> JSONResponse:
     if not rows:  # "Replace" would delete every PO (B-1406)
         return refuse(f"No row has a PO number and a description in the columns picked ({skipped} skipped): nothing "
                       "was loaded, the purchase orders are as they were.")  # fmt: skip
-    result = store.import_purchase_orders(rows, replace_all=bool(form.get("replace")), actor=reviewer())
+    # (a line closed in the ERP while its PO is open is left out: no invoice is matched to it, D-264)
+    result = store.import_purchase_orders(po_mod.open_lines(rows), replace_all=bool(form.get("replace")),
+                                          actor=reviewer())  # fmt: skip
     drop_upload(token)
     text = (
         f"Loaded: {result['added']} added, {result['updated']} updated "

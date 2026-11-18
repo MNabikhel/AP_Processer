@@ -332,8 +332,7 @@ def _open_lines(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Each PO's open lines, as a whole read lists them: a line JDE closed (999) leaves while another line of its PO
     is open (a line here has no status of its own: one kept by a later read of what changed is taken as open); with
     none open, every line stays and the PO is closed."""
-    open_pos = {po_mod.po_key(r["po_number"]) for r in rows if r.get("status") != po_mod.CLOSED}
-    return [r for r in rows if r.get("status") != po_mod.CLOSED or po_mod.po_key(r["po_number"]) not in open_pos]
+    return po_mod.open_lines(rows)
 
 
 def _purchase_orders(store: Any, found: list[dict[str, Any]], run: _Run, read: dict[str, Any]) -> None:
