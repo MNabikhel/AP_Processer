@@ -1128,7 +1128,10 @@ def test_a_freight_line_pairs_with_the_freight_line_of_its_po_whatever_its_words
         coding.line_items[2].unit_price = coding.line_items[2].amount = 30.0  # not the PO's price: words alone
         match = match_invoice(coding, store)
         assert [(m.po_line, m.po_erp_line, m.matched_quantity) for m in match.lines] == [
-            (12, "12.000", 100), (13, "13.000", 1), (14, "14.000", 1)], freight
+            (12, "12.000", 100),
+            (13, "13.000", 1),
+            (14, "14.000", 1),
+        ], freight
     # Only a charge pairs with the freight line so: a line of goods of no word of any PO line matches none
     coding = _freight_invoice(freight="Artwork proof")
     coding.line_items[2].unit_price = coding.line_items[2].amount = 30.0
@@ -1145,10 +1148,10 @@ def test_the_voucher_match_names_each_po_line_and_guesses_none(tmp_path):
     _jde_pos(store)
     matched = po_mod.voucher_match(match_invoice(_freight_invoice(), store), ONE_ROW_PO)
     assert matched.held == []
-    assert [(r.order_number, r.order_type, r.order_company, r.line, r.quantity, r.uom, r.amount, r.account)
-            for r in matched.rows] == [(ONE_ROW_PO, "OP", "00210", "12.000", 100, "EA", 599.0, ONE_ROW_ACCOUNT),
-                                       (ONE_ROW_PO, "OP", "00210", "13.000", 1, "EA", 57.5, ONE_ROW_ACCOUNT),
-                                       (ONE_ROW_PO, "OP", "00210", "14.000", 1, "EA", 32.0, ONE_ROW_ACCOUNT)]  # fmt: skip
+    assert {(r.order_number, r.order_type, r.order_company, r.uom, r.account) for r in matched.rows} == {
+        (ONE_ROW_PO, "OP", "00210", "EA", ONE_ROW_ACCOUNT)}  # fmt: skip
+    assert [(r.line, r.quantity, r.amount) for r in matched.rows] == [("12.000", 100, 599.0), ("13.000", 1, 57.5),
+                                                                       ("14.000", 1, 32.0)]  # fmt: skip
     odd = _freight_invoice()
     odd.line_items[1].description, odd.line_items[1].unit_price = "Artwork proof", 45.0
     held = po_mod.voucher_match(match_invoice(odd, store), ONE_ROW_PO)

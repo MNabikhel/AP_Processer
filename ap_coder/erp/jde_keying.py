@@ -83,24 +83,6 @@ class Line:
 
 
 @dataclass
-class MatchLine:
-    """One row of a PO-matched voucher as it is keyed in Voucher Match (P0411)."""
-
-    order_number: str
-    order_type: str
-    order_company: str
-    line: str  # the PO line's own number: "12.000"
-    quantity: float  # quantity matched
-    uom: str
-    amount: float  # amount matched: the invoice line's, before tax
-    account: str  # the PO line's, BU.Object.Subsidiary
-    taxed: str  # Tax Y/N
-    tax_code: str
-    tax_area: str
-    remark: str
-
-
-@dataclass
 class Voucher:
     """One voucher: its header and pay item fields, its G/L distribution (or, PO-matched, its voucher match rows) and
     what is said under it."""
@@ -129,7 +111,8 @@ class Voucher:
     lines: list[Line] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
-    matches: list[MatchLine] = field(default_factory=list)  # PO-matched: the voucher match rows (no G/L lines)
+    # PO-matched: the voucher match rows (``jde_review.match_lines``), no G/L lines
+    matches: list[jde_review.MatchLine] = field(default_factory=list)
 
     @property
     def lines_total(self) -> float:
@@ -196,6 +179,8 @@ def vouchers(
             terms = CREDIT_TERMS
         warnings, notes = _said(v, settings, tax is not None, fx_rates)
         warnings = [*((warned or {}).get(v.inv_id) or []), *warnings]
+        if matched is not None:
+            _open_warnings(matched, warnings)
         printed = str(final.get("payment_terms") or "").strip()
         if not terms and printed:  # never the printed terms in JD Edwards' 3-character code (B-2618)
             notes.insert(0, f"Payment terms “{printed}” are printed and have no JD Edwards code (Settings → JD Edwards "
@@ -225,7 +210,7 @@ def vouchers(
                         str((gl_names or {}).get(str(e.get("gl_code") or "").strip()) or ""),
                         e["cents"] / 100, jde_remarks.line_remark(e)) for e in v.entries],
             warnings=warnings, notes=notes,
-            matches=_match_lines(v, matched, settings, warnings) if matched is not None else [],
+            matches=jde_review.match_lines(v, matched, settings) if matched is not None else [],
         ))  # fmt: skip
     return ready, held
 
@@ -247,30 +232,13 @@ def po_matches(store: Any, invoices: list[dict[str, Any]]) -> dict[int, po_mod.V
     return out
 
 
-def _match_lines(v: jde_voucher._Voucher, matched: po_mod.VoucherMatch, settings: jde_settings.JdeSettings,
-                 warnings: list[str]) -> list[MatchLine]:  # fmt: skip
-    """The voucher match rows of a PO-matched voucher: the order type and company the PO file gave (else Settings'),
-    each line's tax (Y with the voucher's explanation code and area; N with the exempt code on a line that carries
-    none) and remark. A quantity matched over what JD Edwards had open is said in ``warnings``."""
-    items = {li.get("line_number"): li for li in v.final.get("line_items") or []}
-    marked = any(li.get("taxes_applied") for li in items.values())  # (lines marked with their taxes: read them)
-    exempt = settings.exempt_code.strip().upper()
-    company = settings.po_company.strip()
-    company = (company.zfill(5) if company.isdigit() else company) or settings.company_code
-    out = []
+def _open_warnings(matched: po_mod.VoucherMatch, warnings: list[str]) -> None:
+    """A quantity matched over what JD Edwards had open on its PO line, said in ``warnings``."""
     for row in matched.rows:
-        li = items.get(row.invoice_line) or {}
-        taxed = bool(v.charged) and li.get("tax_status") not in jde_voucher.EXEMPT_STATUSES and (
-            bool(li.get("taxes_applied")) or not marked)
-        code = v.tax_code if taxed or v.tax_code in ("", exempt) else exempt
-        out.append(MatchLine(row.order_number, row.order_type or settings.po_document_type.strip(),
-                             row.order_company or company, row.line, row.quantity, row.uom, row.amount, row.account,
-                             "Y" if taxed else "N", code, v.tax_area, jde_remarks.line_remark(li)))  # fmt: skip
         if row.open_quantity is not None and abs(row.quantity) > row.open_quantity + 1e-6:
             warnings.append(f"Order {row.order_number} line {row.line}: {po_mod._qty(row.quantity)} matched, but "
                             f"JD Edwards had {po_mod._qty(row.open_quantity)} open at the purchase orders' last load: "
                             "it matches no more than is open.")  # fmt: skip
-    return out
 
 
 def _said(v: jde_voucher._Voucher, settings: jde_settings.JdeSettings, taxed: bool,

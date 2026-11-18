@@ -642,3 +642,44 @@ def test_in_a_browser_the_tax_checks_difference_column_shows_at_1366(browser, st
     fits = page.evaluate("""() => { const t = document.querySelector('[data-tax-check]');
       return t.getBoundingClientRect().right <= t.closest('.card').getBoundingClientRect().right + 1; }""")
     assert fits and page.errors == []
+
+
+# --- A PO-matched voucher (D-264) ----------------------------------------------------------------------------------
+
+
+def test_a_po_matched_invoice_shows_each_lines_po_line_and_what_jd_edwards_gets(chart_company, chart_company_client):
+    """D-264: on a JD Edwards order the PO match names each line's PO line by JD Edwards' own number (12.000) with the
+    quantity it matches, the freight too; with PO-matched vouchers on, the JD Edwards voucher block shows the voucher
+    match rows the keying sheet will have. A line on no PO line: not ready, said where the voucher is."""
+    from tests.coding.test_po import _jde_pos
+    from tests.erp.test_jde_keying import po_invoice
+
+    store = chart_company.store
+    _jde_pos(store)
+    final = po_invoice()["final_output"]
+    invoice_id = store.add_invoice(chart_company.folder / "118204.pdf", final, {"requires_review": True})
+    page = chart_company_client.get(f"/review/{invoice_id}").text
+    match = page[page.index("data-po-match"):]
+    assert "PO 12.000 · LUNCH COOLER BAG NON-WOVEN 2C · <span data-po-matched>100 EA matched</span>" in match
+    assert "PO 14.000 · DELIVERY CHARGE · <span data-po-matched>1 EA matched</span>" in match
+    assert "data-jde-match" not in page  # PO-matched vouchers off: the voucher keeps its G/L lines
+
+    settings = jde_settings.load(store)
+    settings.po_matched = True
+    jde_settings.save(store, settings)
+    page = chart_company_client.get(f"/review/{invoice_id}").text
+    block = page[page.index("data-jde-match"):]
+    block = block[: block.index("</table>")]
+    assert "Voucher match: order 40917 OP 00210" in block
+    cells = [re.sub(r"<[^>]+>", "|", row).strip("|").split("||")[:4] for row in re.findall(r"<tr title.*?</tr>", block)]
+    assert cells == [["12.000", "100 EA", "599.00", "0312005561.6420.2210"],
+                     ["13.000", "1 EA", "57.50", "0312005561.6420.2210"],
+                     ["14.000", "1 EA", "32.00", "0312005561.6420.2210"]]  # fmt: skip
+
+    odd = po_invoice(9)["final_output"]
+    odd["line_items"][1].update(description="Artwork proof", unit_price=45.0)
+    odd_id = store.add_invoice(chart_company.folder / "118205.pdf", odd, {"requires_review": True})
+    page = chart_company_client.get(f"/review/{odd_id}").text
+    assert "Not ready to key" in page
+    held = page[page.index("data-jde-held"):]
+    assert "Line 2 “Artwork proof” matches no line of PO 40917 (none is guessed)" in held[: held.index("</ul>")]

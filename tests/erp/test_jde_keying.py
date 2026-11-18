@@ -935,8 +935,11 @@ PROMO = "Prairie Promo Supply Inc."
 def po_invoice(inv_id=8, freight="Charges not in the line table", po_number="40917"):
     """The one-row invoice of ``tests.pdfs`` as read: 100 cooler bags, their setup and the freight, GST in Alberta,
     on the made-up JD Edwards PO 40917 (``tests.pdfs.ONE_ROW_PO_LINES``)."""
-    bags = {**line(1, 599.0, "6420.2210", ["GST"], desc="CB-220 Non-Woven Lunch Cooler Bag, 2 colour", cc=HQ),
-            "quantity": 100, "unit_price": 5.99}
+    bags = {
+        **line(1, 599.0, "6420.2210", ["GST"], desc="CB-220 Non-Woven Lunch Cooler Bag, 2 colour", cc=HQ),
+        "quantity": 100,
+        "unit_price": 5.99,
+    }
     lines = [bags, line(2, 57.5, "6420.2210", ["GST"], desc="SETUP Lunch Cooler Setup", cc=HQ),
              line(3, 32.0, "6420.2210", ["GST"], desc=freight, cc=HQ)]  # fmt: skip
     d = doc(lines, [tl("GST", "", 0.05, 688.5, 34.43)], prov="AB", vendor_name=PROMO, invoice_number="118204",
@@ -993,7 +996,7 @@ def test_a_po_matched_voucher_is_keyed_as_voucher_match_rows_in_the_screens_orde
     assert rows[at + 1] == jde_keying.MATCH_COLUMNS
     assert rows[at + 2] == ["40917", "OP", "00210", "12.000", 100, "EA", 599, "0312005561.6420.2210", "Y", "V", area,
                             "CB-220 Non-Woven Lunch Cooler"]  # fmt: skip
-    assert [r[3] for r in rows[at + 2: at + 5]] == ["12.000", "13.000", "14.000"]
+    assert [r[3] for r in rows[at + 2 : at + 5]] == ["12.000", "13.000", "14.000"]
     assert rows[at + 5][:3] == ["Check", "Amounts matched + recovered tax = gross", 688.5]
     assert ["Supplier number", "4471001", "Supplier name", PROMO] in [r[:4] for r in rows]
     assert ["G/L distribution", None, None, None] in [r[:4] for r in rows]  # the voucher with no PO: as before

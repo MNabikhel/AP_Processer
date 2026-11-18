@@ -235,8 +235,10 @@ def similarity(a: str, b: str) -> float:
 # the same words, or of the same price, are still more alike.
 # The reader's line for a charge printed beside the subtotal under no label it found (``offline_coder.READ_CHARGE``,
 # B-2639) is one too.
-CHARGE = re.compile(r"(?i)\b(?:freight|shipping|delivery|deliveries|cartage|courier|transport|transportation|"
-                    r"livraison|fret|messagerie|expedition|expédition)\b|^charges not in the line table$")
+CHARGE = re.compile(
+    r"(?i)\b(?:freight|shipping|delivery|deliveries|cartage|courier|transport|transportation|"
+    r"livraison|fret|messagerie|expedition|expédition)\b|^charges not in the line table$"
+)
 CHARGE_ALIKE = 0.8
 
 
@@ -455,8 +457,11 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
         m.billed_before_amount = billed_before_amount.get(pl["line_number"], 0.0)
         m.po_amount, m.amount_only = pl["amount"], bool(pl.get("amount_only"))
         m.po_gl, m.po_cc = pl.get("gl_code") or "", (pl.get("cost_center") or "") if cost_centers else ""
-        m.po_erp_line, m.po_uom, m.po_open_quantity = pl.get("erp_line") or "", pl.get("uom") or "", pl.get(
-            "open_quantity")
+        m.po_erp_line, m.po_uom, m.po_open_quantity = (
+            pl.get("erp_line") or "",
+            pl.get("uom") or "",
+            pl.get("open_quantity"),
+        )
         m.po_account = join_account(pl.get("cost_center"), pl.get("gl_code"))
         this_invoice[m.po_line] = this_invoice.get(m.po_line, 0.0) + m.amount
         if m.amount_only:
@@ -686,8 +691,10 @@ def voucher_match(match: PoMatch | None, number: str) -> VoucherMatch:
     po = match.po
     for m in match.lines:
         if m.po_line is None:
-            out.held.append(f"line {m.invoice_line} “{_short(m.description)}” matches no line of {label} (none is "
-                            "guessed): correct the line or the PO number, or match it in JD Edwards by hand")
+            out.held.append(
+                f"line {m.invoice_line} “{_short(m.description)}” matches no line of {label} (none is "
+                "guessed): correct the line or the PO number, or match it in JD Edwards by hand"
+            )
         elif not m.po_erp_line:
             out.held.append(f"{label} line {m.po_line} has no JD Edwards line number in the purchase orders loaded: "
                             "load the PO's open lines from JD Edwards again")  # fmt: skip
