@@ -37,6 +37,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from ..core.caches import MB, Bounded, size_of
+from ..core.chart import join_account, split_account
 from ..core.headers import match_columns
 from ..core.keys import po_key
 from ..core.memory import vendor_key
@@ -72,23 +73,39 @@ Finding = tuple[str, str, str, "int | None"]
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "po_number": ("ponumber", "po", "pono", "ponum", "purchaseorder", "purchaseordernumber", "ordernumber",
                   "order", "pobr", "bondecommande"),
-    "vendor_name": ("vendorname", "vendor", "supplier", "suppliername", "fournisseur"),
+    # Optional, JD Edwards' (D-264): the order type and company that, with the number, name the order on a voucher.
+    "order_type": ("orty", "ordertype", "dcto"),
+    "order_company": ("orderco", "ordercompany", "kcoo"),
+    "vendor_name": ("vendorname", "vendor", "supplier", "suppliername", "supplierdescription", "fournisseur"),
+    # Optional: the supplier's number in the ERP (JD Edwards' address number); a supplier column of digits is one too.
+    "supplier_number": ("addressnumber", "suppliernumber", "supplierno", "an8", "vendornumber", "vendorno"),
     # Not "Item" or "Item Number": in most exports that is the part number (SKU), not the PO line.
     "line_number": ("linenumber", "line", "lineno", "linenum", "poline"),
     "description": ("description", "desc", "itemdescription", "linedescription", "product", "service"),
     "quantity": ("quantity", "qty", "orderedqty", "qtyordered", "quantityordered", "ordered"),
     "unit_price": ("unitprice", "price", "unitcost", "rate", "prixunitaire"),
-    "amount": ("amount", "linetotal", "extendedamount", "extended", "total", "lineamount", "netamount"),
+    "amount": ("amount", "linetotal", "extendedamount", "extended", "extendedprice", "extendedcost", "total",
+               "lineamount", "netamount"),
     # Optional: what the ERP has left open on the line (JD Edwards' AOPN), for what is left to expense.
     "open_amount": ("openamount", "amountopen", "openamt", "amtopen", "aopn", "openbalance"),
+    # Optional, JD Edwards' (UOPN, UOM): the quantity left open on the line and its unit, for the voucher match.
+    "open_quantity": ("quantityopen", "openquantity", "qtyopen", "openqty", "uopn"),
+    "uom": ("um", "unitofmeasure"),
     "received_quantity": ("receivedquantity", "received", "qtyreceived", "receivedqty", "quantityreceived",
                           "receipts", "recu"),
     "gl_code": ("glcode", "gl", "glaccount", "account", "accountcode", "costcode", "expenseaccount"),
     "cost_center": ("costcenter", "costcentre", "cc", "department", "dept"),
+    # Optional: a JD Edwards account string (business unit.object.subsidiary), its parts the cost center and GL code.
+    "account_number": ("accountnumber", "acctno", "accountno"),
     "status": ("status", "postatus", "state"),
+    # Optional, JD Edwards' (NXTR, LTTR): a line whose next status is 999 is closed, one whose last is 980 cancelled.
+    "next_status": ("nextstatus", "nextstat", "nxtr"),
+    "last_status": ("laststatus", "laststat", "lttr"),
     # Optional: the PO's currency (JD Edwards' CRCD); a file without one: taken as CAD (B-2612).
-    "currency": ("currencycode", "currcode", "curcode", "crcd", "ccy", "devise"),
+    "currency": ("currencycode", "currcode", "curcode", "curcod", "curr", "crcd", "ccy", "devise"),
 }  # fmt: skip
+CLOSED_STATUSES = {"closed", "close", "complete", "completed", "fermé", "ferme"}
+JDE_CLOSED, JDE_CANCELLED = "999", "980"  # a JD Edwards line's next status once closed, last status once cancelled
 REQUIRED_COLUMNS = ("po_number", "description")
 TEMPLATE_COLUMNS = (
     "po_number", "vendor_name", "line_number", "description", "quantity", "unit_price", "amount", "open_amount",
@@ -138,26 +155,56 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
         if amount is None:
             amount = round(qty * price, 2)
         line = parse_amount(get("line_number"))
-        status = _text(get("status")).lower()
+        vendor, supplier = _text(get("vendor_name")), _text(get("supplier_number"))
+        if vendor.isdigit() and not supplier:  # JD Edwards' "Supplier" column: its address number, not a name
+            vendor, supplier = "", vendor
+        gl_code, cost_center = _text(get("gl_code")), _text(get("cost_center"))
+        account = _text(get("account_number"))
+        if not gl_code and not cost_center and account:  # "business unit.object.subsidiary"; no dot: a GL code
+            cost_center, gl_code = split_account(account) if "." in account else ("", account)
+        company = _text(get("order_company"))
         rows.append(
             {
                 "po_number": number,
-                "vendor_name": _text(get("vendor_name")),
+                "vendor_name": vendor,
+                "supplier_number": supplier,
+                "order_type": _text(get("order_type")).upper(),
+                "order_company": company.zfill(5) if company.isdigit() else company,
                 "line_number": int(line) if line is not None else None,
+                # JD Edwards' own line number as its screens show it ("12.000"; a split line "12.500"), for the
+                # voucher match: AP Coder's ``line_number`` is a whole number. The sync gives it apart (``erp_line``:
+                # its ``line_number`` is already AP Coder's).
+                "erp_line": _erp_line(get("erp_line") if columns.get("erp_line") else get("line_number")),
                 "description": description,
                 "quantity": qty,
                 "unit_price": price,
                 "amount": amount,
                 "amount_only": amount_only,
                 "open_amount": parse_amount(get("open_amount")),
+                "open_quantity": parse_amount(get("open_quantity")),
+                "uom": _text(get("uom")).upper(),
                 "received_quantity": parse_amount(get("received_quantity")),
-                "gl_code": _text(get("gl_code")),
-                "cost_center": _text(get("cost_center")),
-                "status": CLOSED if status in {"closed", "close", "complete", "completed", "fermé", "ferme"} else OPEN,
+                "gl_code": gl_code,
+                "cost_center": cost_center,
+                "status": CLOSED if _closed(get) else OPEN,
                 "currency": _text(get("currency")).upper(),
             }
         )
     return rows, skipped
+
+
+def _erp_line(value: Any) -> str:
+    """A line number as JD Edwards shows it, three decimals ("12" and 12.0 are "12.000"); "" for none."""
+    number = parse_amount(value)
+    return f"{number:.3f}" if number is not None and math.isfinite(number) and number > 0 else ""
+
+
+def _closed(get: Callable[[str], Any]) -> bool:
+    """Whether a row's line is closed: its status says so, or JD Edwards' next status is 999 (closed) or its last
+    status 980 (cancelled)."""
+    if _text(get("status")).lower() in CLOSED_STATUSES:
+        return True
+    return _text(get("next_status")) == JDE_CLOSED or _text(get("last_status")) == JDE_CANCELLED
 
 
 # --- Matching ------------------------------------------------------------------------------------------
@@ -181,6 +228,32 @@ def similarity(a: str, b: str) -> float:
     overlap = len(ta & tb) / min(len(ta), len(tb))
     ratio = SequenceMatcher(None, " ".join(sorted(ta)), " ".join(sorted(tb))).ratio()
     return max(overlap * 0.9, ratio)
+
+
+# A charge rather than goods: freight and delivery. An invoice's charge line and a PO's charge line are the same line
+# whatever their words ("Freight Amount", "SHIPPING & HANDLING"), as alike as CHARGE_ALIKE (D-264): two charge lines of
+# the same words, or of the same price, are still more alike.
+# The reader's line for a charge printed beside the subtotal under no label it found (``offline_coder.READ_CHARGE``,
+# B-2639) is one too.
+CHARGE = re.compile(r"(?i)\b(?:freight|shipping|delivery|deliveries|cartage|courier|transport|transportation|"
+                    r"livraison|fret|messagerie|expedition|expédition)\b|^charges not in the line table$")
+CHARGE_ALIKE = 0.8
+
+
+@lru_cache(maxsize=4096)
+def is_charge(text: str) -> bool:
+    """Whether a line's description is a charge (freight, delivery) rather than goods or a service."""
+    return bool(CHARGE.search(text or ""))
+
+
+def _alike(description: Any, po_description: Any) -> float:
+    """How much an invoice line resembles a PO line (``similarity``), a charge line and a charge line at least
+    CHARGE_ALIKE: what ``_po_line`` and ``_price_decides`` both match by."""
+    score = similarity(description, po_description)
+    if score < CHARGE_ALIKE and isinstance(description, str) and isinstance(po_description, str) \
+            and is_charge(description) and is_charge(po_description):  # fmt: skip
+        return CHARGE_ALIKE
+    return score
 
 
 def _price_band(b: float) -> tuple[float, float]:
@@ -234,7 +307,7 @@ def _po_line(description: Any, po_lines: list[dict[str, Any]], same_price: Calla
     (``same_price(n, po_line)``, n its position) counting in its favour; None: none resembles it enough."""
     best, best_score = None, 0.0
     for n, pl in enumerate(po_lines):
-        score = similarity(description, pl.get("description", ""))
+        score = _alike(description, pl.get("description", ""))
         if same_price(n, pl):
             score += SAME_PRICE
         if score > best_score:
@@ -261,6 +334,13 @@ class LineMatch:
     po_gl: str = ""
     po_cc: str = ""
     problems: list[str] = field(default_factory=list)
+    # For JD Edwards' voucher match (D-264): the quantity this line matches (``matched_quantity``), and the PO line's
+    # own line number ("12.000"), unit of measure, account string and quantity open as the PO file had them.
+    matched_quantity: float = 0.0
+    po_erp_line: str = ""
+    po_uom: str = ""
+    po_account: str = ""
+    po_open_quantity: float | None = None
 
 
 @dataclass
@@ -359,6 +439,7 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     for li, po_line in zip(items, po_lines_billed(items, po_lines), strict=True):
         m = LineMatch(li["line_number"], li["description"], billed_quantity(li), float(li["unit_price"]))
         m.amount = float(li["amount"] or 0)
+        m.matched_quantity = matched_quantity(li)
         result.lines.append(m)
         pl = by_line.get(po_line) if po_line is not None else None
         if pl is None:
@@ -374,6 +455,9 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
         m.billed_before_amount = billed_before_amount.get(pl["line_number"], 0.0)
         m.po_amount, m.amount_only = pl["amount"], bool(pl.get("amount_only"))
         m.po_gl, m.po_cc = pl.get("gl_code") or "", (pl.get("cost_center") or "") if cost_centers else ""
+        m.po_erp_line, m.po_uom, m.po_open_quantity = pl.get("erp_line") or "", pl.get("uom") or "", pl.get(
+            "open_quantity")
+        m.po_account = join_account(pl.get("cost_center"), pl.get("gl_code"))
         this_invoice[m.po_line] = this_invoice.get(m.po_line, 0.0) + m.amount
         if m.amount_only:
             _amount_findings(m, li, result, billed_now_amount)
@@ -550,6 +634,69 @@ def billed_quantity(li: dict[str, Any]) -> float:
     quantity with a negative price or amount."""
     quantity, amount = float(li.get("quantity") or 0), float(li.get("amount") or 0)
     return -abs(quantity) if amount < 0 else quantity
+
+
+def matched_quantity(li: dict[str, Any]) -> float:
+    """The quantity a line matches on its PO line (JD Edwards' Quantity Matched): the quantity billed; a charge
+    (freight) or a line with no quantity 1, -1 on a credit."""
+    quantity = billed_quantity(li)
+    if quantity and not is_charge(str(li.get("description") or "")):
+        return quantity
+    return -1.0 if float(li.get("amount") or 0) < 0 else 1.0
+
+
+@dataclass(frozen=True)
+class MatchRow:
+    """One row of JD Edwards' voucher match (P0411, Voucher Match): an invoice line and the open PO line it bills."""
+
+    invoice_line: int
+    description: str  # the invoice line's
+    order_number: str
+    order_type: str  # "": the PO file gave none
+    order_company: str  # "": the PO file gave none
+    line: str  # the PO line's, as JD Edwards shows it: "12.000"
+    quantity: float  # quantity matched
+    uom: str
+    amount: float  # amount matched: the line's, before tax
+    account: str  # the PO line's: business unit.object.subsidiary ("" when the PO file had none)
+    open_quantity: float | None  # what JD Edwards had open on the line at the PO import (None: not in the file)
+
+
+@dataclass
+class VoucherMatch:
+    """An invoice keyed as a voucher match (D-264): a row for each of its lines, in their order; ``held``: why it can't
+    be keyed so, in plain words (empty when it can). No PO line is ever guessed: a line that matches none holds it."""
+
+    rows: list[MatchRow] = field(default_factory=list)
+    held: list[str] = field(default_factory=list)
+
+
+def voucher_match(match: PoMatch | None, number: str) -> VoucherMatch:
+    """The voucher match of an invoice quoting PO ``number`` from its PO match (``match_invoice``; None: no purchase
+    orders loaded)."""
+    out = VoucherMatch()
+    label = po_label(number)
+    if match is None or not match.found or match.po is None:
+        out.held.append(f"{label} is not in the purchase orders loaded: load its open lines from JD Edwards "
+                        "(Purchase orders), then make the keying sheet again")  # fmt: skip
+        return out
+    if match.currencies:
+        out.held.append(f"{match.currencies}: a voucher match is keyed in the order's currency, so match it in "
+                        "JD Edwards by hand")  # fmt: skip
+    po = match.po
+    for m in match.lines:
+        if m.po_line is None:
+            out.held.append(f"line {m.invoice_line} “{_short(m.description)}” matches no line of {label} (none is "
+                            "guessed): correct the line or the PO number, or match it in JD Edwards by hand")
+        elif not m.po_erp_line:
+            out.held.append(f"{label} line {m.po_line} has no JD Edwards line number in the purchase orders loaded: "
+                            "load the PO's open lines from JD Edwards again")  # fmt: skip
+        else:
+            out.rows.append(MatchRow(
+                m.invoice_line, m.description, str(po.get("po_number") or number), po.get("order_type") or "",
+                po.get("order_company") or "", m.po_erp_line, m.matched_quantity, m.po_uom, m.amount, m.po_account,
+                m.po_open_quantity))  # fmt: skip
+    return out
 
 
 def billed_by_line(
@@ -777,7 +924,7 @@ def _price_decides(
     whose price, when it is the line's, may change that): those that resemble it, at the same price, at least as much
     as the most alike does at any price, and enough to match. No other line's price can: that line is never the most
     alike, or never enough. With none of them it matches nothing; with only the most alike, itself enough, that one."""
-    alike = [similarity(description, pl.get("description", "")) for pl in po_lines]
+    alike = [_alike(description, pl.get("description", "")) for pl in po_lines]
     at_same = [score + SAME_PRICE for score in alike]  # (as ``_po_line`` adds it)
     floor = max([MATCH_THRESHOLD, *alike])
     by_price = tuple(n for n, score in enumerate(at_same) if score >= floor)

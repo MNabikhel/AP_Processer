@@ -234,7 +234,8 @@ def keying_file(store: Store, batch: int) -> tuple[bytes, str, str]:
                             gl_names=gl_names(store),
                             on=dt.date.fromisoformat(created[:10]) if created else None, left_out=left_out,
                             fx_rates=store.fx_rates(), warned=tax_id_warnings(store, invoices),
-                            bank_accounts={a["code"]: a for a in store.bank_accounts(active_only=True)})  # fmt: skip
+                            bank_accounts={a["code"]: a for a in store.bank_accounts(active_only=True)},
+                            po_matches=jde_keying.po_matches(store, invoices))  # fmt: skip
 
 
 def tax_id_warnings(store: Store, invoices: list[dict[str, Any]]) -> dict[int, list[str]]:

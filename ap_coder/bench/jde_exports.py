@@ -23,7 +23,12 @@ layouts, with their quirks, are a real E1's:
   A voucher is its coding lines, then for each pay item JDE's own payable line and (when taxed) GST line;
 * ``voucher_headers_xlsx``: the supplier ledger inquiry grid, one row per pay item, 56 columns, a totals row last;
 * ``gl_distribution_xlsx``, ``pay_items_xlsx``, ``payment_history_xlsx``: one voucher's three grids (36, 44 and 24
-  columns), the first two ending with the blank row the screen keeps for the next entry.
+  columns), the first two ending with the blank row the screen keeps for the next entry;
+* ``open_po_lines_xlsx``: the open purchase order lines (F4311, as Open Order Inquiry's grid exports them), 16 columns,
+  one row per line: the order number, type and company, the line number with three decimals (12.000), the supplier by
+  its address number, the quantities and amounts as numbers, the unit of measure, the account string padded as the
+  chart's, the last and next status. ``open_po_lines(truth)``: a few orders of the books' suppliers that buy on POs,
+  each with its goods and a freight line (D-264). Not in ``write_all``: a test writes the lines it needs.
 
 Only the standard grid and report column names are kept; a company's own category-code labels are ``Cat Code NN``
 here. ``write_all(folder)`` writes every file and returns the truth they were written from; the same seed and size
@@ -41,6 +46,7 @@ import random
 import re
 import zipfile
 from collections.abc import Iterable
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -50,7 +56,7 @@ from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font
 
 from ..core.chart import join_account, split_account
-from .jde_company import OVERHEAD_CLASS, Account, BusinessUnit, Supplier, Truth, Voucher, build
+from .jde_company import OVERHEAD_CLASS, Account, BusinessUnit, Supplier, Truth, Voucher, build, money
 
 BLANK = " "  # an empty text field of a grid's export
 DATE_FORMAT, THOUSANDS = "MM/dd/yyyy", "#,##0.00"
@@ -147,6 +153,11 @@ PAYMENTS_HEADER = [
     "Harvest Period", "Harvest Suffix", "Contract ID", "Harvest ID",
 ]  # fmt: skip
 PAY_STATUS = {"P": "Paid in Full", "A": "Approved for Payment", "H": "Held/Pending Approval"}
+OPEN_PO_FILE = "open_po_lines.xlsx"
+OPEN_PO_HEADER = ["Order Number", "Or Ty", "Order Co", "Line Number", "Address Number", "Description",
+                  "Quantity Ordered", "Quantity Open", "Amount Open", "Unit Cost", "UM", "Account Number",
+                  "Last Status", "Next Status", "Cur Cod", "Quantity Received"]  # fmt: skip
+LINE_FORMAT, COST_FORMAT = "0.000", "#,##0.0000"
 _WRITTEN = dt.datetime(2025, 1, 14, 9, 41, 7)  # every file's "written" time, so the same books give the same bytes
 
 
@@ -554,6 +565,69 @@ def example_vouchers(truth: Truth) -> dict[str, Voucher]:
         if match and label not in found:
             found[label] = match
     return found
+
+
+# --- open purchase order lines (D-264) ------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OpenPoLine:
+    """One open line of a purchase order, as JD Edwards' F4311 holds it."""
+
+    order: int
+    line: Decimal  # 12.000; a line split later 12.500
+    supplier: int  # the address number
+    description: str  # 30 characters at most
+    ordered: Decimal
+    unit_cost: Decimal
+    uom: str
+    account: str  # BusinessUnit.Object.Subsidiary
+    company: str
+    received: Decimal = Decimal(0)
+    vouchered: Decimal = Decimal(0)  # the quantity matched on vouchers already: what is open is the rest
+    order_type: str = "OP"
+    currency: str = "CAD"
+
+    @property
+    def open_quantity(self) -> Decimal:
+        return self.ordered - self.vouchered
+
+
+def open_po_lines(truth: Truth, orders: int = 4) -> list[OpenPoLine]:
+    """``orders`` purchase orders of the books' suppliers that buy on POs (the first ones in use), each with two or
+    three lines of goods on the supplier's accounts and a freight line on the first, some received; the numbers
+    follow the books' last order numbers."""
+    rng = random.Random("jde-open-po")
+    buyers = [s for s in truth.suppliers if s.purchase_orders and s.kind == "trade" and s.currency == "CAD"
+              and s.accounts and s.hold_payment == "N"][:orders]  # fmt: skip
+    out = []
+    for n, supplier in enumerate(buyers):
+        order, line = 59000 + 17 * n, 1 + rng.randrange(3)
+        for k in range(2 + rng.randrange(2)):
+            account = truth.account(supplier.accounts[k % len(supplier.accounts)])
+            ordered, cost = Decimal(rng.choice((4, 10, 24, 50, 100))), money(rng.uniform(4, 240))
+            out.append(OpenPoLine(order, Decimal(line), supplier.number, account.description[:30].upper(), ordered,
+                                  cost, rng.choice(("EA", "BX", "CS")), account.string, truth.company.number,
+                                  received=ordered if rng.random() < 0.5 else Decimal(0)))  # fmt: skip
+            line += 1
+        out.append(OpenPoLine(order, Decimal(line), supplier.number, "FREIGHT", Decimal(1), money(rng.uniform(15, 90)),
+                              "EA", supplier.accounts[0], truth.company.number))  # fmt: skip
+    return out
+
+
+def open_po_lines_xlsx(lines: Iterable[OpenPoLine]) -> bytes:
+    """The open lines as Open Order Inquiry's grid exports them: the order company and status codes as text, the line
+    number a number with three decimals, a received line at status 400 (next: voucher match, 510)."""
+    rows = []
+    for li in lines:
+        received = li.received >= li.ordered and li.received > 0
+        rows.append([
+            li.order, li.order_type, li.company, (float(li.line), LINE_FORMAT), li.supplier, li.description,
+            _number(li.ordered), _number(li.open_quantity), _number(money(li.open_quantity * li.unit_cost)),
+            (float(li.unit_cost), COST_FORMAT), li.uom, _padded(li.account), "400" if received else "220",
+            "510" if received else "400", li.currency, _number(li.received),
+        ])  # fmt: skip
+    return _workbook(OPEN_PO_HEADER, rows)
 
 
 def write_all(folder: str | Path, seed: int = 1, size: str = "small", year: int = 2024) -> Truth:

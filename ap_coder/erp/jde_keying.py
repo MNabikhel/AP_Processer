@@ -16,7 +16,14 @@ its leading zeros), amounts are numbers with two decimals and dates are dates. I
 names on each page; a voucher that fits a page is never cut, a longer one only between G/L lines. There is no CSV of it:
 a spreadsheet opening one reads an account or a PO number as a number (B-2151).
 
-Entry points: ``vouchers`` (the values), ``build_xlsx`` and ``build`` (a batch's file), ``keying_batches``.
+A PO-matched voucher (Settings → JD Edwards E1, D-264) has no G/L distribution: it is keyed in Voucher Match (P0411),
+a row for each invoice line in the screen's order (the order number, type and company, the PO line's own number, the
+quantity and amount matched, the unit of measure, the PO line's account, the tax, the remark), each line paired with
+its open PO line as the purchase orders loaded have it (``coding.po.voucher_match``). One with a line that matches no
+PO line is not ready, with why: no PO line is guessed.
+
+Entry points: ``vouchers`` (the values), ``po_matches`` (the voucher matches of a batch's invoices), ``build_xlsx``
+and ``build`` (a batch's file), ``keying_batches``.
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.pagebreak import Break
 
 from ..coding import banks
+from ..coding import po as po_mod
 from ..coding.taxreturn import self_assessed_base
 from ..core.safe import neutralise_sheet, xlsx_row
 from . import jde_accounts, jde_formats, jde_remarks, jde_review, jde_settings, jde_voucher, jde_zfiles
@@ -45,6 +53,11 @@ SHEET, NOT_READY = "Keying sheet", "Not ready"
 LINE_COLUMNS = ["Account number", "Account description", "Amount", "Explanation -Remark-"]
 WIDTHS = [26, 36, 16, 36]
 NOTE_WIDTH = 84  # characters of a note's row: the three columns beside its label
+# Voucher Match's grid (P0411), in its order: a PO-matched voucher's rows (D-264), over the sheet's columns A to L; the
+# widths of the columns after the G/L distribution's four.
+MATCH_COLUMNS = ["Order Number", "Or Ty", "Order Co", "Line Number", "Quantity Matched", "UM", "Amount Matched",
+                 "Account Number", "Tax Y/N", "Tax Expl", "Tax Area", "Remark"]  # fmt: skip
+MATCH_WIDTHS = [16, 6, 10, 26, 10, 9, 10, 32]
 STANDARD_TYPE = "PV"  # Standard Voucher Entry's own document type: any other is said (B-2621)
 CREDIT_TERMS = "none (a credit)"  # a credit memo's Payment terms: none is typed, as the files send none (B-896)
 # Rows of a printed page under the column names (upright Letter or A4 at full size; fewer than fit, to be safe): a
@@ -70,8 +83,27 @@ class Line:
 
 
 @dataclass
+class MatchLine:
+    """One row of a PO-matched voucher as it is keyed in Voucher Match (P0411)."""
+
+    order_number: str
+    order_type: str
+    order_company: str
+    line: str  # the PO line's own number: "12.000"
+    quantity: float  # quantity matched
+    uom: str
+    amount: float  # amount matched: the invoice line's, before tax
+    account: str  # the PO line's, BU.Object.Subsidiary
+    taxed: str  # Tax Y/N
+    tax_code: str
+    tax_area: str
+    remark: str
+
+
+@dataclass
 class Voucher:
-    """One voucher: its header and pay item fields, its G/L distribution and what is said under it."""
+    """One voucher: its header and pay item fields, its G/L distribution (or, PO-matched, its voucher match rows) and
+    what is said under it."""
 
     invoice_id: int
     supplier_number: str
@@ -97,10 +129,11 @@ class Voucher:
     lines: list[Line] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    matches: list[MatchLine] = field(default_factory=list)  # PO-matched: the voucher match rows (no G/L lines)
 
     @property
     def lines_total(self) -> float:
-        return round(sum(line.amount for line in self.lines), 2)
+        return round(sum(line.amount for line in self.lines) + sum(m.amount for m in self.matches), 2)
 
     @property
     def balanced(self) -> bool:
@@ -133,6 +166,7 @@ def vouchers(
     gl_names: Mapping[str, str] | None = None, on: dt.date | None = None,
     left_out: Mapping[int, list[str]] | None = None, fx_rates: Mapping[str, float] | None = None,
     warned: Mapping[int, list[str]] | None = None, bank_accounts: Mapping[str, dict[str, Any]] | None = None,
+    po_matches: Mapping[int, po_mod.VoucherMatch] | None = None,
 ) -> tuple[list[Voucher], list[Held]]:  # fmt: skip
     """(the vouchers to type, the invoices not ready) of approved ``invoices``, in their order. ``gl_names``: each GL
     code's description; ``on``: the batch's day (the G/L date, when it is the export day); ``left_out``: {invoice:
@@ -140,12 +174,17 @@ def vouchers(
     voucher's own check says here; ``fx_rates``: AP Coder's exchange rates, said on a foreign voucher; ``warned``:
     {invoice: warnings} said first under its voucher (a tax ID that differs from the supplier list's, D-219);
     ``bank_accounts``: our bank accounts by code, once one is entered: each voucher's header then carries its bank
-    account (D-220), and one in a currency none of them is in says so."""
+    account (D-220), and one in a currency none of them is in says so; ``po_matches``: {invoice: its voucher match}
+    (``po_matches``), given: a PO-matched voucher is keyed with its match rows, or not ready when it has none."""
     ready: list[Voucher] = []
     held: list[Held] = []
     for inv, (an8, v) in zip(invoices, jde_voucher._vouchers(invoices, settings, vendor_lookup, on), strict=True):
         final = v.final
         why = list((left_out or {}).get(v.inv_id) or []) or (jde_voucher._accounts_once(v) if v.problems else [])
+        matched = None
+        if v.po_matched and po_matches is not None:
+            matched = po_matches.get(v.inv_id) or po_mod.voucher_match(None, str(final.get("po_number") or ""))
+            why = why or list(matched.held)
         if why:
             held.append(Held(v.inv_id, an8, str(final.get("vendor_name") or ""),
                              str(final.get("invoice_number") or "").strip(), str(final.get("invoice_date") or ""),
@@ -186,8 +225,52 @@ def vouchers(
                         str((gl_names or {}).get(str(e.get("gl_code") or "").strip()) or ""),
                         e["cents"] / 100, jde_remarks.line_remark(e)) for e in v.entries],
             warnings=warnings, notes=notes,
+            matches=_match_lines(v, matched, settings, warnings) if matched is not None else [],
         ))  # fmt: skip
     return ready, held
+
+
+def po_matches(store: Any, invoices: list[dict[str, Any]]) -> dict[int, po_mod.VoucherMatch]:
+    """{invoice: its voucher match} of the ``invoices`` that quote a PO: each line paired with its PO line as the
+    purchase orders loaded have it (``po.match_invoice``, the invoice's own lines left out of what was billed
+    before)."""
+    from ..core.schema import InvoiceCoding
+
+    out: dict[int, po_mod.VoucherMatch] = {}
+    for inv in invoices:
+        final = inv.get("final_output") or {}
+        number = str(final.get("po_number") or "").strip()
+        if number:
+            coding = InvoiceCoding.model_validate({k: x for k, x in final.items() if k != "gl_distribution"})
+            invoice_id = int(inv.get("id") or 0)
+            out[invoice_id] = po_mod.voucher_match(po_mod.match_invoice(coding, store, invoice_id), number)
+    return out
+
+
+def _match_lines(v: jde_voucher._Voucher, matched: po_mod.VoucherMatch, settings: jde_settings.JdeSettings,
+                 warnings: list[str]) -> list[MatchLine]:  # fmt: skip
+    """The voucher match rows of a PO-matched voucher: the order type and company the PO file gave (else Settings'),
+    each line's tax (Y with the voucher's explanation code and area; N with the exempt code on a line that carries
+    none) and remark. A quantity matched over what JD Edwards had open is said in ``warnings``."""
+    items = {li.get("line_number"): li for li in v.final.get("line_items") or []}
+    marked = any(li.get("taxes_applied") for li in items.values())  # (lines marked with their taxes: read them)
+    exempt = settings.exempt_code.strip().upper()
+    company = settings.po_company.strip()
+    company = (company.zfill(5) if company.isdigit() else company) or settings.company_code
+    out = []
+    for row in matched.rows:
+        li = items.get(row.invoice_line) or {}
+        taxed = bool(v.charged) and li.get("tax_status") not in jde_voucher.EXEMPT_STATUSES and (
+            bool(li.get("taxes_applied")) or not marked)
+        code = v.tax_code if taxed or v.tax_code in ("", exempt) else exempt
+        out.append(MatchLine(row.order_number, row.order_type or settings.po_document_type.strip(),
+                             row.order_company or company, row.line, row.quantity, row.uom, row.amount, row.account,
+                             "Y" if taxed else "N", code, v.tax_area, jde_remarks.line_remark(li)))  # fmt: skip
+        if row.open_quantity is not None and abs(row.quantity) > row.open_quantity + 1e-6:
+            warnings.append(f"Order {row.order_number} line {row.line}: {po_mod._qty(row.quantity)} matched, but "
+                            f"JD Edwards had {po_mod._qty(row.open_quantity)} open at the purchase orders' last load: "
+                            "it matches no more than is open.")  # fmt: skip
+    return out
 
 
 def _said(v: jde_voucher._Voucher, settings: jde_settings.JdeSettings, taxed: bool,
@@ -244,8 +327,8 @@ def _said(v: jde_voucher._Voucher, settings: jde_settings.JdeSettings, taxed: bo
 
 
 def _check(v: Voucher) -> str:
-    """The check line's words: G/L lines + recovered tax = gross."""
-    if v.po_matched:
+    """The check line's words: G/L lines (amounts matched) + recovered tax = gross."""
+    if v.po_matched and not v.matches:
         return "PO-matched voucher: JD Edwards distributes it from the receipts"
     said = f"{v.lines_total:,.2f} + {v.recovered:,.2f} = {v.gross:,.2f}"
     return f"{said}: balanced" if v.balanced else f"{v.lines_total:,.2f} + {v.recovered:,.2f} is not {v.gross:,.2f}"
@@ -273,14 +356,15 @@ def _head(v: Voucher, title: str) -> list[Row]:
         [("Tax explanation code", LABEL), (v.tax_code, TEXT), ("Tax rate/area", LABEL), (v.tax_area, TEXT)],
         [("Tax amount", LABEL), (v.tax, MONEY), ("Taxable amount", LABEL), (v.taxable, MONEY)],
         *bank,
-        [("G/L distribution", LABEL), ("", PLAIN), ("", PLAIN), ("", PLAIN)],
+        *([[("Voucher match", LABEL), ("", PLAIN), ("", PLAIN), ("", PLAIN)], [(name, LABEL) for name in
+           MATCH_COLUMNS]] if v.matches else [[("G/L distribution", LABEL), ("", PLAIN), ("", PLAIN), ("", PLAIN)]]),
     ]  # fmt: skip
 
 
 def _tail(v: Voucher) -> list[Row]:
     """The check line, then the warnings and notes, each wrapped over as many rows as it needs."""
-    rows: list[Row] = [[("Check", LABEL), ("G/L lines + recovered tax = gross", PLAIN), (v.lines_total, MONEY),
-                        (_check(v), PLAIN)]]  # fmt: skip
+    said = "Amounts matched + recovered tax = gross" if v.matches else "G/L lines + recovered tax = gross"
+    rows: list[Row] = [[("Check", LABEL), (said, PLAIN), (v.lines_total, MONEY), (_check(v), PLAIN)]]
     for label, texts in (("Warning", v.warnings), ("Note", v.notes)):
         for text in texts:
             for n, part in enumerate(textwrap.wrap(text, NOTE_WIDTH)):
@@ -296,6 +380,9 @@ def _parts(v: Voucher, n: int, count: int) -> list[list[Row]]:
     title = f"Voucher {n} of {count}"
     lines: list[Row] = [[(li.account, TEXT), (li.description, PLAIN), (li.amount, MONEY), (li.remark, TEXT)]
                         for li in v.lines]  # fmt: skip
+    lines += [[(m.order_number, TEXT), (m.order_type, TEXT), (m.order_company, TEXT), (m.line, TEXT),
+               (m.quantity, PLAIN), (m.uom, TEXT), (m.amount, MONEY), (m.account, TEXT), (m.taxed, TEXT),
+               (m.tax_code, TEXT), (m.tax_area, TEXT), (m.remark, TEXT)] for m in v.matches]  # fmt: skip
     head, tail = _head(v, title), _tail(v)
     room = ROWS_A_PAGE - len(head) - 1  # G/L lines (and the tail) a page holds under the fields, a blank row left
     parts: list[list[Row]] = []
@@ -328,7 +415,8 @@ def build_xlsx(ready: list[Voucher], held: list[Held]) -> bytes:
                 ws.append(xlsx_row([None if value in ("", None) else value for value, _ in row]))
                 at += 1
                 pair = row[0][1] == LABEL and row[2][1] == LABEL  # the voucher's fields: read left to right
-                for cell, (_, kind) in zip(ws[at], row, strict=True):
+                for column, (_, kind) in enumerate(row, 1):
+                    cell = ws.cell(row=at, column=column)
                     if kind in (LABEL, TITLE):
                         cell.font = Font(bold=True)
                     if kind == TITLE:
@@ -343,11 +431,12 @@ def build_xlsx(ready: list[Voucher], held: list[Held]) -> bytes:
         on_page += 1
     if not ready:
         ws.append(["No voucher to type: see the sheet “Not ready”." if held else "No voucher to type."])
-    for i, width in enumerate(WIDTHS, 1):
+    for i, width in enumerate(WIDTHS + MATCH_WIDTHS, 1):
         ws.column_dimensions[get_column_letter(i)].width = width
     ws.freeze_panes = "A2"
     ws.print_title_rows = "1:1"
-    ws.page_setup.orientation = "portrait"
+    # A voucher match's twelve columns print across the page (D-264); the G/L distribution's four upright
+    ws.page_setup.orientation = "landscape" if any(v.matches for v in ready) else "portrait"
     ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.oddFooter.center.text = "Page &P of &N"
@@ -373,9 +462,11 @@ def build(
     batch: int | str = "", gl_names: Mapping[str, str] | None = None, on: dt.date | None = None,
     left_out: Mapping[int, list[str]] | None = None, fx_rates: Mapping[str, float] | None = None,
     warned: Mapping[int, list[str]] | None = None, bank_accounts: Mapping[str, dict[str, Any]] | None = None,
+    po_matches: Mapping[int, po_mod.VoucherMatch] | None = None,
 ) -> tuple[bytes, str, str]:  # fmt: skip
     """(file bytes, file name, mime type) of a batch's keying sheet."""
     ready, held = vouchers(invoices, settings, vendor_lookup, gl_names=gl_names, on=on, left_out=left_out,
-                           fx_rates=fx_rates, warned=warned, bank_accounts=bank_accounts)  # fmt: skip
+                           fx_rates=fx_rates, warned=warned, bank_accounts=bank_accounts,
+                           po_matches=po_matches)  # fmt: skip
     name = f"ap_coder_jde_keying_{batch}.xlsx" if batch != "" else "ap_coder_jde_keying.xlsx"
     return build_xlsx(ready, held), name, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

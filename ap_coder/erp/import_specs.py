@@ -381,19 +381,32 @@ VENDOR_MASTER = ImportSpec(
 PURCHASE_ORDERS = ImportSpec(
     key="purchase_orders", title="Purchase orders", page="/purchase-orders", file_types=SHEETS,
     purpose="The open purchase orders' lines, matched to the invoices that bill them.",
-    source="Your ERP's open purchase order lines, a row for each line.",
+    source="Your ERP's open purchase order lines, a row for each line. From JD Edwards: the open order lines (Open "
+           "Order Inquiry, or the order detail of Work With Order Headers) exported to Excel, every column shown.",
     report="a list of purchase order lines", one_of=("quantity", "unit_price", "amount"),
     columns=_columns(po.COLUMN_ALIASES, po.REQUIRED_COLUMNS, {
-        "po_number": ("PO number", "PO Number"), "vendor_name": ("Vendor", "Vendor"),
+        "po_number": ("PO number", "PO Number"), "order_type": ("Order type", "Or Ty"),
+        "order_company": ("Order company", "Order Co"), "vendor_name": ("Vendor", "Vendor"),
+        "supplier_number": ("Supplier number", "Address Number"),
         "line_number": ("Line number", "Line Number"), "description": ("Description", "Description"),
         "quantity": ("Quantity ordered", "Quantity"), "unit_price": ("Unit price", "Unit Price"),
         "amount": ("Line amount", "Amount"), "open_amount": ("Open amount", "Open Amount"),
+        "open_quantity": ("Quantity open", "Quantity Open"), "uom": ("Unit of measure", "UM"),
         "received_quantity": ("Quantity received", "Received Quantity"), "gl_code": ("GL account", "GL Code"),
-        "cost_center": ("Cost center", "Cost Center"), "status": ("Status", "Status"),
-        "currency": ("Currency", "Currency"),
+        "cost_center": ("Cost center", "Cost Center"), "account_number": ("Account number", "Account Number"),
+        "status": ("Status", "Status"), "next_status": ("Next status", "Next Status"),
+        "last_status": ("Last status", "Last Status"), "currency": ("Currency", "Currency"),
     }, {"open_amount": "what is left to expense", "received_quantity": "what was received, for the match",
         "gl_code": "the account the line is coded to", "cost_center": "the cost center the line is coded to",
-        "status": "open or closed", "currency": "the PO's currency (without it, CAD)"}),
+        "status": "open or closed", "currency": "the PO's currency (without it, CAD)",
+        "order_type": "JD Edwards' order type, named on a voucher match (without it, the one in Settings)",
+        "order_company": "JD Edwards' order company, named on a voucher match (without it, the one in Settings)",
+        "supplier_number": "the supplier's number (JD Edwards' address number)",
+        "open_quantity": "what JD Edwards has open on the line, for the voucher match",
+        "uom": "the line's unit of measure, for the voucher match",
+        "account_number": "the account the line is coded to, business unit.object.subsidiary",
+        "next_status": "JD Edwards' next status: 999 is closed", "last_status": "JD Edwards' last status: 980 is "
+        "cancelled"}),
     find=_matcher(po.COLUMN_ALIASES),
 )  # fmt: skip
 

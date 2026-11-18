@@ -320,7 +320,9 @@ def _with_lines_kept(rows: list[dict[str, Any]], before: dict[str, dict[str, Any
                      "description": li["description"], "quantity": li["quantity"], "unit_price": li["unit_price"],
                      "amount": li["amount"], "amount_only": bool(li.get("amount_only")),
                      "open_amount": li.get("open_amount"), "received_quantity": li["received_quantity"],
-                     "gl_code": li["gl_code"], "cost_center": li["cost_center"], "status": status}
+                     "gl_code": li["gl_code"], "cost_center": li["cost_center"], "status": status,
+                     "erp_line": li.get("erp_line") or "", "uom": li.get("uom") or "",
+                     "open_quantity": li.get("open_quantity")}
                     for li in had["lines"] if li["line_number"] not in given]  # fmt: skip
         out += lines
     return out
@@ -341,7 +343,10 @@ def _purchase_orders(store: Any, found: list[dict[str, Any]], run: _Run, read: d
         records.append({
             "po_number": _text(r.get("order_number")),
             "vendor_name": _text(r.get("supplier_name")) or names.get(_text(r.get("an8")), ""),
-            "line_number": line_number(r.get("line_number")), "description": _text(r.get("description")),
+            "supplier_number": _text(r.get("an8")), "order_type": _text(r.get("order_type")),
+            "order_company": _text(r.get("order_company")),
+            "line_number": line_number(r.get("line_number")), "erp_line": r.get("line_number"),
+            "description": _text(r.get("description")),
             "quantity": r.get("quantity"), "unit_price": r.get("unit_cost"), "amount": r.get("amount"),
             "received_quantity": r.get("received"), "gl_code": _code(r.get("object"), r.get("subsidiary")),
             "cost_center": _text(r.get("business_unit")),
