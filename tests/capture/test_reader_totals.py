@@ -302,3 +302,18 @@ def test_a_taxable_amount_below_the_subtotal_is_not_the_subtotal(tmp_path):
     cells = [(50, 50 + 16 * i, t) for i, t in enumerate(rows)]
     fields = analyze(_pdf(tmp_path / "mixed.pdf", cells), tables=False).fields
     assert fields["subtotal"].value == 120.0 and fields["grand_total"].value == 133.0
+
+
+@pytest.mark.parametrize(("labels", "values"), [("left", "right"), ("center", "center"), ("right", "left")])
+def test_a_totals_table_of_one_row_reads_each_amount_under_its_label(tmp_path, labels, values):
+    """B-2639: "Line-Item Total | Freight Amount | GST Tax | HST Tax | Sub Total | Deposits | Credits/Discounts |
+    Amount Due:" over "656.50 | 32.00 | | 34.43 | 722.93 | | | 722.93 CAD". The freight and the tax were not read (the
+    review said the total was 66.43 more than the lines): an amount at the right of its cell is under no word of its
+    label, cells set close together are one line of text, and "CAD" after the total was no amount. Each amount is
+    its column's; an empty cell is nothing, not its neighbour's amount."""
+    from tests.pdfs import one_row_totals
+
+    f = analyze(one_row_totals(tmp_path, labels=labels, values=values), tables=False).fields
+    got = {n: f[n].value for n in ("subtotal", "other_charges", "hst_amount", "grand_total")}
+    assert got == {"subtotal": 656.5, "other_charges": 32.0, "hst_amount": 34.43, "grand_total": 722.93}
+    assert f["gst_amount"].status == "missing" and f["tax_total"].value in (None, 34.43)

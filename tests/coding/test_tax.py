@@ -122,6 +122,23 @@ def test_tax_not_levied_in_province(reference):
     assert "TAX_TYPE_NOT_LEVIED" in _codes(gt, reference)
 
 
+def test_hst_at_the_gst_rate_where_only_gst_is_levied_is_one_warning_not_an_error(reference):
+    """B-2640: an Alberta supplier's 5% printed under "HST Tax" on goods delivered in Alberta was an error (HST is
+    not levied in Alberta, approved only with "Approve anyway") and a risk to the claim ("claim the GST part only"),
+    though 5% is the GST, all of it claimable. One warning says so; HST at an HST rate there is still an error."""
+    ab = _gt("chinook_AB_GST_CCO-26-10418")
+    ab["tax_lines"] = [{"tax_type": "HST", "province": "AB", "rate": 0.05, "taxable_amount": 1746.0,
+                        "tax_amount": 87.3}]  # fmt: skip
+    for li in ab["line_items"]:
+        li["taxes_applied"] = ["HST"]
+    found = check_taxes(InvoiceCoding.model_validate(ab), reference.tax, None)
+    assert [(f.severity, f.code) for f in found] == [("warning", "TAX_REGIME_MISMATCH")]
+    assert "5%, the GST rate" in found[0].message
+    ab["tax_lines"][0].update(rate=0.13, tax_amount=226.98)
+    ab["tax_total"], ab["grand_total"] = 226.98, 1972.98
+    assert {"TAX_TYPE_NOT_LEVIED", "ITC_AT_RISK"} <= _codes(ab, reference)
+
+
 def test_qst_on_gst_inclusive_amount_is_an_error(reference):
     gt = _gt(QC)
     qst = gt["tax_lines"][1]

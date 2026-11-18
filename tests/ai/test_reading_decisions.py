@@ -290,3 +290,26 @@ def test_days_in_a_late_interest_clause_are_not_the_net_days():
         assert str(payment({"payment_terms": printed, "invoice_date": "2026-01-15"}).due) == "2026-01-15"
     assert parse_terms("Net 30 days, interest 1.5% per month after 60 days").net_days == 30
     assert parse_terms("Net 30 days upon receipt of invoice").net_days == 30
+
+
+def test_the_freight_of_a_totals_table_of_one_row_is_a_jd_edwards_line_of_its_own(tmp_path, reference):
+    """B-2639: the freight of "Line-Item Total | Freight Amount | ... | Amount Due:" over one row of amounts was not
+    read, so it was on no line and JD Edwards would get 656.50 taxed. It is a line of its own, taxed with the goods:
+    the voucher has three lines, 688.50 taxed, 34.43 of tax, 722.93."""
+    from ap_coder.erp import jde_keying, jde_prototype, jde_review, jde_settings
+    from tests.erp.test_jde_gl_mode import coded
+    from tests.pdfs import one_row_totals
+
+    pipe, _store = _offline(tmp_path, reference)
+    out = dict(pipe.process(one_row_totals(tmp_path)).output)
+    assert [(li["amount"], li["taxes_applied"]) for li in out["line_items"]] == [(599.0, ["HST"]), (57.5, ["HST"]),
+                                                                              (32.0, ["HST"])]  # fmt: skip
+    out.pop("gl_distribution", None)
+    out["line_items"] = [{**li, "predicted_gl_code": "6420.2210", "predicted_cost_center": "0312005561"}
+                         for li in out["line_items"]]  # fmt: skip
+    inv, js = coded(out), jde_prototype.prototype_settings(jde_settings.JdeSettings(company="00210"))
+    (v,), held = jde_keying.vouchers([inv], js, lambda final: "40417")
+    assert held == [] and [li.amount for li in v.lines] == [599.0, 57.5, 32.0]
+    assert (v.tax_area, v.taxable, v.tax, v.gross) == ("CDNGST", 688.5, 34.43, 722.93)
+    view = jde_review.voucher_view(inv["final_output"], js, "40417")  # the review screen's JD Edwards voucher
+    assert (view["taxable"], view["tax"], view["not_ready"]) == (688.5, 34.43, [])

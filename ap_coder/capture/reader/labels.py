@@ -60,7 +60,7 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (r"amount\s*before\s*tax", 0.95), (r"montant\s*(?:avant|hors|sans)\s*taxes?", 0.95),
         (r"taxable\s*(?:amount|total)", 0.7),  # below a subtotal on a mixed invoice: the weaker label (B-1539)
         (r"net\s*total", 0.85), (r"total\s*ht\b", 0.9), (r"total\s*(?:avant|sans)\s*taxes?", 0.95),
-        (r"total\s*partiel", 0.9), (r"merchandise\s*total", 0.8), (r"total\s*services", 0.5), (r"total\s*sales?\b(?!\s*tax)(?!\s*\(?\s*incl)", 0.8),
+        (r"total\s*partiel", 0.9), (r"merchandise\s*total", 0.8), (r"line\s*-?\s*items?\s*total", 0.85), (r"total\s*services", 0.5), (r"total\s*sales?\b(?!\s*tax)(?!\s*\(?\s*incl)", 0.8),
         (r"total\s*(?:of\s*)?(?:fees|charges|services|goods|merchandise|labou?r|materials)\b", 0.65),
     ],
     "hst_amount": [(rf"(?:total\s*)?(?:[a-z]{{2}}\s*)?(?:{_A('gst')}\s*/\s*)?{_A('hst')}", 1.0), (rf"(?:{_A('tps')}\s*/\s*)?{_A('tvh')}", 1.0), (r"harmoni[sz]ed\s*sales\s*tax", 1.0)],

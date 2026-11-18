@@ -70,6 +70,7 @@ from .spatial import (
     _below,
     _labelled,
     _right_of,
+    label_row_tables,
     labels_under_values,
 )
 from .totals import (
@@ -570,6 +571,23 @@ def _tax_named_by_page(cands: dict[str, list[Reading]], text: str) -> None:
                             tax.method.split("+")[0] + "+named-by-page" + UNMEASURED)]  # fmt: skip
 
 
+def _row_tables(hits: dict[str, list[_LabelHit]], by_page: dict[int, list[Line]]) -> dict[int, Reading | None]:
+    """Totals as a table of one row (B-2639): each label of the row in ``hits`` (in place of the row's labels found
+    before), with the amount in its column or None, by the label's ``id``."""
+    tabled: dict[int, Reading | None] = {}
+    for page, page_lines in by_page.items():
+        labelled = {id(h.line): h.line for f in AMOUNT_FIELDS for h in hits.get(f, []) if h.line.box.page == page}
+        found = label_row_tables(page_lines, list(labelled.values()))
+        rows = {id(h.line) for h, _r in found}
+        for f in AMOUNT_FIELDS:
+            if f in hits:
+                hits[f] = [h for h in hits[f] if id(h.line) not in rows]
+        for h, r in found:
+            hits.setdefault(h.field, []).append(h)
+            tabled[id(h)] = r
+    return tabled
+
+
 def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
     lines = list(layout.lines())
     by_page: dict[int, list[Line]] = {}
@@ -587,6 +605,7 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
                 if in_table_head:
                     continue  # "Total" over the line-items' amount column is not the invoice total
             hits.setdefault(hit.field, []).append(hit)
+    tabled = _row_tables(hits, by_page)
     if any(h.credit_only for h in hits.get("invoice_number", [])) and not credit_titled(layout):
         hits["invoice_number"] = [h for h in hits["invoice_number"] if not h.credit_only]  # "Memo No" on an invoice
     _net_of_commission(hits, by_page)
@@ -612,7 +631,8 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         for hit in fhits:
             if hit.weak and field == "invoice_number" and _customer_line(layout, hit.line, by_page):
                 continue  # "Client / Numéro : C-4471": the customer's number, under the customer's heading
-            got = _labelled([hit], page_lines.get(hit.line.box.page, []), hit.line.box.page in under)
+            got = (([r] if (r := tabled[id(hit)]) else []) if id(hit) in tabled
+                   else _labelled([hit], page_lines.get(hit.line.box.page, []), hit.line.box.page in under))  # fmt: skip
             if hit.unmeasured or (field in _UNMEASURED_LABEL and _UNMEASURED_LABEL[field].match(hit.label_text)):
                 for r in got:
                     r.method += UNMEASURED

@@ -28,6 +28,7 @@ from .jde_voucher import (
     _distribution,
     _lines_said,
     _prepare,
+    _rates,
     _tax_amounts,
     _Voucher,
     po_not_sent,
@@ -147,7 +148,11 @@ def area_mismatch(v: _Voucher, settings: JdeSettings) -> str:
     if len(types) != 1 or due in types:
         return ""
     (other,) = types
-    amount = sum(_units(t.get("tax_amount"), v.decimals) for t in v.charged if t["tax_type"] == other) / 100
+    cents = sum(_units(t.get("tax_amount"), v.decimals) for t in v.charged if t["tax_type"] == other)
+    rate = _rates().rate_for(due, v.province, _date(v.final.get("invoice_date")))
+    if rate and v.atxa and abs(round(v.atxa * rate) - cents) <= 1:
+        return ""  # the area's rate of the taxable amount is the tax charged: the GST printed as HST (B-2641)
+    amount = cents / 100
     return (f"tax area {v.tax_area} is for a supply in {v.province}, where {due} is charged, but this invoice charges "
             f"{other} ({amount:,.2f}): JD Edwards may work the tax out at the area's rate and find it different. Check "
             "the ship-to and the tax charged before typing it (or ask the pilot tester)")  # fmt: skip
