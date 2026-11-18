@@ -167,7 +167,7 @@
       {% endfor %}
     </div>
     <label class="check"><input type="checkbox" name="po_matched" value="1"{% if js.po_matched %} checked{% endif %}>
-      PO-matched vouchers: invoices with a PO number get no G/L lines, to be matched to receipts in E1</label>
+      PO-matched vouchers: invoices with a PO number get no G/L lines, to be matched in E1 (the keying sheet gives each one's Voucher Match rows, a row for each PO line, from the purchase orders loaded)</label>
 
     {{ ui.subhead("Default account rule", "when the GL code is not in the mapping below") }}
     <div class="st-grid three st-end">
