@@ -58,6 +58,7 @@ _REFERENCE_STAMP = """SELECT
     (SELECT group_concat(key || '=' || value, char(10))
      FROM (SELECT * FROM settings WHERE key IN ('our_province', 'site_provinces', 'policy_notes', 'chart_version',
            'chart_hash', 'postable_codes', 'never_offered', 'skip_words', 'home_business_unit', 'account_labels',
+           'closed_codes', 'pilot_companies', 'jde_companies',
            'journal_payable_trade', 'journal_payable_intercompany', 'journal_tax_objects')
            ORDER BY key))"""
 

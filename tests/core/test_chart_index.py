@@ -10,7 +10,10 @@ from tests import chart_files as cf
 from tests.core.test_chart import _chart, _units
 
 SETTINGS = (ChartSettings(), ChartSettings(never_offered=("*.7701", "0731066150.*.*"), postable_codes=("", "M")),
-            ChartSettings(skip_words=("annex",), never_offered=("5410",)))  # fmt: skip
+            ChartSettings(skip_words=("annex",), never_offered=("5410",)),
+            # The companies in the pilot, and report 9 (D-272): the made-up chart's company 07310 in it, or not.
+            ChartSettings(pilot=("07310",)), ChartSettings(pilot=("00999",)), ChartSettings(companies=("00999",)),
+            ChartSettings(companies=("07310", "00999")))  # fmt: skip
 
 
 @pytest.fixture(scope="module")
@@ -38,6 +41,7 @@ def test_the_chart_asked_in_the_database_answers_as_the_chart_in_memory(loaded, 
     assert indexed.offered_codes() == memory.offered_codes()
     assert indexed.business_units() == memory.business_units()
     assert (indexed.closed_units(), indexed.skipped_units()) == (memory.closed_units(), memory.skipped_units())
+    assert indexed.unlisted_units(5) == memory.unlisted_units(5) == [cf.UNLISTED]
     assert (len(indexed), indexed.tally()) == (len(memory), memory.tally())
     assert indexed.units_of("07310") == memory.units_of("07310")
 

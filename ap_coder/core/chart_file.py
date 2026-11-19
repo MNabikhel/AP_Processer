@@ -22,6 +22,7 @@ Entry points: ``read_chart``, ``read_business_units`` (a path, or an upload's by
 
 from __future__ import annotations
 
+import codecs
 import csv
 import html
 import io
@@ -132,7 +133,7 @@ def _columns(rows: Iterator[tuple[Any, ...]], columns_of: Callable[[list[str], s
                              "the first sheet of the workbook, its column names in row 1.") from None  # fmt: skip
         if found is None:
             raise missing from None
-    about.update(header_row=number, found=found)
+    about.update(header_row=number, found=found, width=len(headers))
     return sorted((headers.index(column), column) for column in found.values())
 
 
@@ -402,30 +403,85 @@ def read_chart(source: str | Path | bytes, anyway: bool = False, sheet: str = ""
     return _read(source, chart.chart_columns, chart.chart_rows, chart.CHART_WANTS, anyway, sheet)
 
 
-def stream_chart_csv(path: str | Path, anyway: bool = False) -> tuple[chart.Rows, Iterator[chart.ChartRow]]:
-    """A chart of accounts saved as CSV (UTF-8, its column names in one of its first rows: the account master's
-    export, or the build sheet's query, D-267), read from disk a row at a time: (what was left out and the columns it
-    came without, as they are read; its clean rows, given one at a time and never held, so a chart of millions of
-    accounts is read in the memory of one). Up to ``chart.STREAMED_MOST`` rows; ``chart.ColumnsMissing`` as
-    ``read_chart``'s, unless ``anyway``; ``ChartError`` naming the file when it is no chart."""
-    name = Path(path).name
-    handle = open(path, encoding="utf-8-sig", newline="")  # noqa: SIM115  (closed by the rows once read)
+TEXT_FILES = (".csv", ".txt", ".tsv")  # a chart saved as text, streamed from disk by the command line (D-267, D-272)
+SNIFF = 1 << 20  # of a text file, the bytes its encoding is told by
+
+
+def text_encoding(path: str | Path) -> str:
+    """How a text file is encoded, by its first bytes: UTF-8 or UTF-16 (Windows' "Unicode text", ReportsNow's) with
+    or without its byte-order mark; text that is neither UTF-8 nor UTF-16 is read as Windows' own (cp1252)."""
+    with open(path, "rb") as file:
+        head = file.read(SNIFF)
+    if head.startswith(codecs.BOM_UTF8):
+        return "utf-8-sig"
+    if head.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return "utf-16"
+    odd, even = head[1::2], head[0::2]
+    if odd and odd.count(0) > len(odd) // 2:  # (letters of one byte each followed by a nought: UTF-16, low byte first)
+        return "utf-16-le"
+    if even and even.count(0) > len(even) // 2:
+        return "utf-16-be"
     try:
-        rows = (tuple(row) for row in csv.reader(handle))
+        head.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        if exc.start < len(head) - 4:  # (not merely a character cut at the end of the bytes looked at)
+            return "cp1252"
+    return "utf-8"
+
+
+def _tab_rows(handle: Any) -> Iterator[tuple[str, ...]]:
+    """A tab-delimited file's rows as JD Edwards' query tools write them: each line one row, its cells between tabs,
+    never quoted (a quotation mark in a description is text, D-272), lines ended by a line feed (a carriage return
+    before it dropped)."""
+    for line in handle:
+        yield tuple(line.rstrip("\n").rstrip("\r").split("\t"))
+
+
+def stream_chart_text(path: str | Path, anyway: bool = False) -> tuple[chart.Rows, Iterator[chart.ChartRow]]:
+    """A chart of accounts saved as text, read from disk a row at a time: CSV (its column names in one of its first
+    rows: the account master's export, or the build sheet's query, D-267) or tab-delimited (.txt, .tsv: ReportsNow's
+    text, D-272), UTF-8 or UTF-16 with or without its byte-order mark (``text_encoding``). Returns (what was read
+    and left out, with a few rows of each reason, and the columns it came without, as they are read; its clean rows,
+    given one at a time and never held, so a chart of millions of accounts is read in the memory of one). A codes'
+    leading zeros and padding come as the file has them (the store keeps them without the padding, as JD Edwards
+    compares them). A tab-delimited row whose cells do not line up with the column names (more of them, or cut short
+    before a column read) is left out, never read shifted. Up to ``chart.STREAMED_MOST`` rows;
+    ``chart.ColumnsMissing`` as ``read_chart``'s, unless ``anyway``; ``ChartError`` naming the file when it is no
+    chart, or not text."""
+    name = Path(path).name
+    handle = open(path, encoding=text_encoding(path), newline="\n")  # noqa: SIM115  (closed by the rows once read)
+    try:
+        first = handle.readline()
+        handle.seek(0)
+        tabbed = "\t" in first
+        rows = _tab_rows(handle) if tabbed else (tuple(row) for row in csv.reader(handle))
         about: dict[str, Any] = {}
-        kept = _columns(rows, chart.chart_columns, name, "CSV", about)
+        kept = _columns(rows, chart.chart_columns, name, "text", about)
         without = tuple(field for field in chart.CHART_WANTS if field not in about["found"])
         if without and not anyway:
             raise chart.ColumnsMissing(name, without)
+    except UnicodeDecodeError as exc:
+        handle.close()
+        raise ChartError(f"{name} could not be read as text, so it was not read. Save it from the query tool as "
+                         "Unicode text, or UTF-8.") from exc  # fmt: skip
     except BaseException:
         handle.close()
         raise
     out = chart.Rows(without=without)
+    width, last = about["width"], max(at for at, _column in kept)
 
-    def records() -> Iterator[dict[str, Any]]:
+    def records() -> Iterator[dict[str, Any] | None]:
         with handle:
-            for row in rows:
-                yield {column: row[at] if at < len(row) else None for at, column in kept}
+            try:
+                for row in rows:
+                    if tabbed and len(row) > 1 and (len(row) <= last or (len(row) > width and any(row[width:]))):
+                        yield None  # (cut short, or a tab inside a value: its cells would be read in the wrong columns)
+                        continue
+                    yield {column: row[at] if at < len(row) else None for at, column in kept}
+            except UnicodeDecodeError as exc:
+                raise ChartError(f"{name}: row {about['header_row'] + out.parsed + 1:,} could not be read as text, so "
+                                 "the file was not read. Save it from the query tool as Unicode text, or UTF-8, and "
+                                 "import it again.") from exc  # fmt: skip
 
     return out, chart.iter_chart_rows(records(), out, about["found"], about["header_row"], chart.STREAMED_MOST)
 

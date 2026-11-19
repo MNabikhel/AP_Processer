@@ -72,7 +72,7 @@ def test_the_charts_settings_are_set_and_shown_from_the_console(tmp_path, capsys
     assert store.events(actions=["settings_changed"])[0]["actor"] == chart_cmd.ACTOR
     code, out, _ = _run(tmp_path, capsys, action="show")
     assert code == 0 and "Chart of accounts: 32 accounts on 9 business units; 9 business units in the master." in out
-    assert "Never offered: *.7701, 2140." in out and "Accounts a line may be coded to: 15" in out
+    assert "Never offered: *.7701, 2140." in out and "Accounts a line may be coded to: 14" in out
     assert "In all, 4 accounts may be posted to but are never offered" in out
     # A setting is cleared with an empty value; a home business unit the chart does not have is refused.
     code, out, _ = _run(tmp_path, capsys, "--never-offered", "", "--skip-words", "closed", action="settings")
@@ -88,12 +88,18 @@ def test_both_files_are_imported_and_what_was_read_is_said(tmp_path, capsys):
     assert code == 0 and err == ""
     assert "Read 9 business units: 8 active, 1 not active." in out
     assert "Business units: 9 added, 0 changed, 0 removed." in out
-    assert "Read 41 rows of the chart: 32 accounts on 9 business units; 19 may be posted to." in out
-    assert "Not for posting, by posting edit code: 1 with B, 1 with I, 2 with M, 9 with N." in out
+    assert "Read 41 rows of the chart: 41 accepted, 0 rejected." in out
+    assert "  32 accounts on 9 business units; 19 may be posted to (the others are kept" in out
+    assert ("  Posting edit codes: blank 19 (posted to); B 1 (not posted to: budget only); I 1 (not posted to: "
+            "inactive); M 2 (not posted to: machine-generated postings only); N 9 (not posted to: a title, takes no "
+            "postings).") in out  # fmt: skip
     assert "Chart of accounts: 41 rows added, 0 changed, 0 removed." in out
     assert "GL accounts: 13 now (13 added, 0 changed, 0 removed)." in out
     assert "Cost centers: 8 now (8 added, 0 changed, 0 removed)." in out
-    assert "Accounts a line may be coded to: 16" in out
+    assert "Accounts a line may be coded to: 15" in out
+    assert (
+        f"  Not offered: 1 account on a business unit that is not in the business units report ({cf.UNLISTED})" in out
+    )
     assert f"Not used: 3 accounts on a business unit that is not active ({cf.CLOSED})." in out
     assert f"Never offered: business unit {cf.NOT_USED}, whose name says DO NOT USE." in out
     assert "In all, 1 account may be posted to but is never offered" in out
@@ -122,7 +128,9 @@ def test_rows_left_out_and_never_offered_accounts_are_said_with_the_reason(tmp_p
     Store(tmp_path / "ap_coder.db").set_setting("never_offered", "*.7701")
     code, out, _ = _run(tmp_path, capsys, "--chart", str(chart))
     assert code == 0
-    assert "  Left out (blank rows): 1." in out and "  Left out (rows repeating an account already read): 1." in out
+    assert "Read 43 rows of the chart: 41 accepted, 2 rejected." in out
+    assert "  Rejected (blank rows): 1 (row 43)." in out
+    assert "  Rejected (rows repeating an account already read): 1 (row 44)." in out
     assert "  Never offered: the accounts on the never-offered list (*.7701)." in out
     assert "In all, 1 account may be posted to but is never offered" in out
     assert "Not used" not in out and "whose name says" not in out  # no business unit master: none closed or named
@@ -158,7 +166,7 @@ def test_a_chart_without_its_posting_edit_column_is_imported_only_when_asked_and
     assert store.chart_accounts() == [] and store.chart_without() == ()
     code, out, _ = _run(tmp_path, capsys, "--chart", str(grid), "--anyway")
     said = "Loaded without the posting edit column (“P E”): every account is offered, titles and accounts closed"
-    assert code == 0 and said in out and "32 accounts on 9 business units; 32 may be posted to." in out
+    assert code == 0 and said in out and "32 accounts on 9 business units; 32 may be posted to" in out
     assert store.chart_without() == ("posting_edit",)
     assert store.events(actions=["accounts_imported"])[0]["detail"]["without"] == ["posting_edit"]
     assert said in _run(tmp_path, capsys, action="show")[1]  # every time the chart is shown

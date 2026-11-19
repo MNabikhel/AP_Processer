@@ -26,7 +26,8 @@ from ap_coder.core.reference_data import UNASSIGNED, ReferenceData
 LINE_ACCOUNT = "line_account"  # a line's whole account string, one box a row, posted in order
 FIX, CHECK = "fix", "check"  # a row's state: Approve is closed until it is fixed; to look at before approving
 # The chart's findings on a line's account (``coding/validation.py``): the first of a line is said on its row.
-CHART_CODES = ("ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE", "BU_INACTIVE", "ACCOUNT_RESERVED", "ACCOUNT_CONTROL")
+CHART_CODES = ("ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE", "BU_INACTIVE", "ACCOUNT_RESERVED", "ACCOUNT_CONTROL",
+               "BU_NOT_IN_UNITS_REPORT")  # fmt: skip
 NO_ACCOUNT = "No account yet: type its number or words, or pick one"
 GUESS = "The account is AP Coder's guess, not learned yet: check it"
 OFFERED_MOST = 3  # business units offered for an account its line's business unit does not have
@@ -206,6 +207,8 @@ def _view(reference: ReferenceData, row: dict[str, Any], before: dict[str, Any],
     if status in (chart.NOT_IN_CHART, chart.NOT_POSTABLE, chart.BU_INACTIVE):
         view.update(state=FIX, note=said or f"Account {view['text']} cannot be used: pick another", why="",
                     candidates=_offered(pairs, gl) if status != chart.NOT_POSTABLE else [])  # fmt: skip
+    elif status == chart.BU_UNKNOWN:  # (D-272: an error approved anyway, saying why)
+        view.update(state=FIX, note=said or f"Business unit {cc} is not in the business units report: pick another")
     elif status == chart.RESERVED:
         view.update(state=CHECK, note=said or f"Account {view['text']} is not offered for invoices: check it")
     elif same and (before.get("decided_by") or {}).get("source") == "model":

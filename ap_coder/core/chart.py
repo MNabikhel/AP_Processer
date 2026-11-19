@@ -16,6 +16,7 @@ Entry points: ``join_account``, ``split_account``, ``split_code`` and ``clean``;
 from __future__ import annotations
 
 import fnmatch
+import json
 import re
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping
@@ -67,6 +68,22 @@ def split_account(text: Any) -> tuple[str, str]:
 # budget-only (B), an inactive (I) or a machine-only (M) account has another. CONFIRM with the JD Edwards team before
 # adding one.
 POSTABLE = ("", "L", "U")
+# Every posting edit code JD Edwards has (UDC H00/PE, Oracle's "Posting Edit Code"), with what it means: a code of the
+# chart that is none of these and that no setting names is "not yet decided", never posted to until a person decides
+# (Settings → JD Edwards E1 → Accounts AP posts to, D-272).
+KNOWN_EDITS = {
+    "": "takes postings",
+    "B": "budget only",
+    "I": "inactive",
+    "K": "budget locked, takes postings",
+    "L": "a subledger and its type required",
+    "M": "machine-generated postings only",
+    "N": "a title, takes no postings",
+    "P": "takes no postings, the job may be purged",
+    "S": "a subledger and its type required, posted in summary",
+    "U": "units required",
+    "X": "the subledger must be blank",
+}
 BLANK_ONLY = "blank"  # the setting saved for blank alone: saved blank, it is ``POSTABLE``
 HEADER_EDIT = "N"  # the posting edit code of a title account: the accounts under it roll up into it
 # The business unit master's status of a business unit that takes postings; blank: the file gives no status.
@@ -81,7 +98,16 @@ SKIP_WORDS_SAVED = ", ".join(SKIP_WORDS)
 LABELS = ("Business unit", "Object", "Subsidiary")  # the three parts' names (job costing: job, cost type, cost code)
 # The settings' keys (plain ``settings`` rows: ``ChartSettings.read``), and the count of the chart's imports the
 # reference data is kept by (``Store.account_pairs``).
-SETTING_KEYS = ("postable_codes", "never_offered", SKIP_WORDS_SETTING, "home_business_unit", "account_labels")
+SETTING_KEYS = (
+    "postable_codes",
+    "never_offered",
+    SKIP_WORDS_SETTING,
+    "home_business_unit",
+    "account_labels",
+    "closed_codes",
+    "pilot_companies",
+)
+COMPANIES_KEY = "jde_companies"  # report 9 as loaded (``coding/companies.COMPANIES_SETTING``): read, never saved here
 VERSION_KEY = "chart_version"
 # The objects of the lines JD Edwards adds to a voucher itself, as the past coding says them (``core/store/journal``'s
 # settings, the Learning page's boxes): the trade and the intercompany payable objects, the tax ones. Control accounts
@@ -105,7 +131,10 @@ class ChartSettings:
     ``home_business_unit``: where a line is suggested to go when nothing says otherwise. ``account_labels``: what
     the three parts are called. ``control``: the control accounts the past coding gives (``CONTROL_KEYS``: (object,
     what it is) each), held back as the accounts never offered are (``held_back``, D-269); a person adds others
-    (retainage payable) to ``never_offered``."""
+    (retainage payable) to ``never_offered``. ``closed_codes``: posting edit codes a person decided are never posted
+    to (an unknown code is closed until decided either way: ``undecided``). ``pilot``: the companies in the pilot
+    (none: every company); ``companies``: report 9's, read with the settings (never saved with them): an account of
+    a company outside them is never offered (``company_held``, D-272)."""
 
     postable_codes: tuple[str, ...] = POSTABLE
     never_offered: tuple[str, ...] = ()
@@ -113,6 +142,27 @@ class ChartSettings:
     home_business_unit: str = ""
     account_labels: tuple[str, ...] = LABELS
     control: tuple[tuple[str, str], ...] = ()
+    closed_codes: tuple[str, ...] = ()
+    pilot: tuple[str, ...] = ()
+    companies: tuple[str, ...] = ()
+
+    def undecided(self, codes: Iterable[str]) -> list[str]:
+        """The posting edit codes of ``codes`` AP Coder does not know (``KNOWN_EDITS``) and no setting names, in
+        order: closed to posting until a person decides (D-272)."""
+        decided = {*KNOWN_EDITS, *self.postable_codes, *self.closed_codes}
+        return sorted({code for code in codes if code not in decided})
+
+    def company_held(self, company: str) -> str:
+        """Why an account of ``company`` (its business unit's in the business units report, else its own) is never
+        offered, in words ("" when it may be): with companies in the pilot, one outside them, or not known; else one
+        report 9 does not list, when it is loaded (D-272)."""
+        if self.pilot:
+            if not company:
+                return "its company is not known, and only the companies in the pilot are offered"
+            return "" if company in self.pilot else f"its company {company} is not in the pilot"
+        if self.companies and company and company not in self.companies:
+            return f"its company {company} is not in JD Edwards' companies (report 9)"
+        return ""
 
     @property
     def held_back(self) -> tuple[str, ...]:
@@ -141,6 +191,10 @@ class ChartSettings:
         blank_only = str(saved.get("postable_codes") or "").strip().lower() == BLANK_ONLY
         control = {obj.upper(): said for key, said in CONTROL_KEYS.items()
                    for obj in _listed(str(saved.get(key) or "").replace(" ", ","))}  # fmt: skip
+        try:
+            table = json.loads(saved.get(COMPANIES_KEY) or "{}")
+        except ValueError:
+            table = {}
         return cls(
             postable_codes=tuple(dict.fromkeys(("", *codes))) if codes or blank_only else POSTABLE,
             never_offered=tuple(p.upper() for p in _listed(saved.get("never_offered"))),
@@ -148,6 +202,9 @@ class ChartSettings:
             home_business_unit=clean(saved.get("home_business_unit")),
             account_labels=labels if len(labels) == len(LABELS) else LABELS,
             control=tuple(control.items()),
+            closed_codes=tuple(dict.fromkeys(c.upper() for c in _listed(saved.get("closed_codes")))),
+            pilot=tuple(sorted({company_code(c) for c in _listed(saved.get("pilot_companies")) if company_code(c)})),
+            companies=tuple(sorted(company_code(c) for c in table)) if isinstance(table, dict) else (),
         )
 
     def saved(self) -> dict[str, str]:
@@ -158,6 +215,8 @@ class ChartSettings:
             "skip_words": ", ".join(self.skip_words),
             "home_business_unit": self.home_business_unit,
             "account_labels": ", ".join(self.account_labels),
+            "closed_codes": ", ".join(self.closed_codes),
+            "pilot_companies": ", ".join(self.pilot),
         }
 
 
@@ -272,6 +331,7 @@ class ChartRow:
     posting_edit: str = ""
     category: str = ""
     company: str = ""  # its company (F0901's GMCO, ``keys.company_code``; "" when the file gave none, D-267)
+    line: int = field(default=0, compare=False, repr=False)  # the row of the file it was read from (0: not read)
 
     @property
     def code(self) -> str:
@@ -293,17 +353,26 @@ class BuRow:
     status: str = ""
 
 
+EXAMPLES = 5  # the rows of the file named for each reason rows were left out
+
+
 @dataclass
 class Rows:
-    """An export's rows as cleaned (``ChartRow`` or ``BuRow``), the rows left out: {why: how many}, and the columns
-    of ``CHART_WANTS`` the export did not have (``without``: read anyway, because a person asked)."""
+    """An export's rows as cleaned (``ChartRow`` or ``BuRow``), the rows left out: {why: how many} and {why: the first
+    ``EXAMPLES`` rows of the file} (``examples``), the columns of ``CHART_WANTS`` the export did not have
+    (``without``: read anyway, because a person asked), and how many rows under the column names were read
+    (``parsed``)."""
 
     rows: list[Any] = field(default_factory=list)
     skipped: dict[str, int] = field(default_factory=dict)
     without: tuple[str, ...] = ()
+    examples: dict[str, list[int]] = field(default_factory=dict)
+    parsed: int = 0
 
-    def skip(self, why: str) -> None:
+    def skip(self, why: str, row: int = 0) -> None:
         self.skipped[why] = self.skipped.get(why, 0) + 1
+        if row and len(seen := self.examples.setdefault(why, [])) < EXAMPLES:
+            seen.append(row)
 
 
 FILE = "This file"  # how a message names the file when its caller gives no name
@@ -428,6 +497,10 @@ class _Rows:
             )
 
 
+REPEATED = "rows repeating an account already read"
+MISALIGNED = "rows whose cells do not line up with the column names (a tab inside a value, or the row cut short)"
+
+
 def chart_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] | None = None,
                header_row: int = 1) -> Rows:  # fmt: skip
     """The account master's export as clean rows, in the file's order. ``records``: each row as {header: cell};
@@ -454,11 +527,15 @@ def iter_chart_rows(records: Iterable[Mapping[str, Any]], out: Rows, columns: Ma
     last_bu = None
     for record in records:
         row = count.next()
+        out.parsed += 1
+        if record is None:  # (a row of a tab-delimited file whose cells do not line up with the column names)
+            out.skip(MISALIGNED, row)
+            continue
         if columns is None:
             columns = chart_columns(record)
         cell = {name: record.get(column) for name, column in columns.items()}
         if TOTAL_ROW.match(clean(cell["business_unit"])):
-            out.skip("total rows")
+            out.skip("total rows", row)
             continue
         if not count.text(cell["business_unit"], cell["object"], cell.get("subsidiary")):
             continue
@@ -467,13 +544,13 @@ def iter_chart_rows(records: Iterable[Mapping[str, Any]], out: Rows, columns: Ma
         _held(row, "object account", obj, OBJECT_MOST)
         _held(row, "subsidiary", subsidiary, SUBSIDIARY_MOST, plain=False)
         if not bu:
-            out.skip("blank rows" if not obj and not subsidiary else "rows with no business unit")
+            out.skip("blank rows" if not obj and not subsidiary else "rows with no business unit", row)
             continue
         if subsidiary and not obj:
-            out.skip("rows with a subsidiary but no object account")
+            out.skip("rows with a subsidiary but no object account", row)
             continue
         if seen is not None and (bu, obj, subsidiary) in seen:
-            out.skip("rows repeating an account already read")
+            out.skip(REPEATED, row)
             continue
         if seen is not None:
             seen.add((bu, obj, subsidiary))
@@ -487,7 +564,7 @@ def iter_chart_rows(records: Iterable[Mapping[str, Any]], out: Rows, columns: Ma
         if lod and obj and edit == HEADER_EDIT:
             titles.append((lod, description))
         yield ChartRow(bu, obj, subsidiary, description, lod, edit, category,
-                       company_code(cell.get("company"))[:BU_MOST])  # fmt: skip
+                       company_code(cell.get("company"))[:BU_MOST], row)  # fmt: skip
     count.end()
 
 
@@ -563,6 +640,7 @@ def account_lists(
 # --- Which pairs exist and may be posted to ----------------------------------------------------------------------
 
 OK, NOT_IN_CHART, NOT_POSTABLE, BU_INACTIVE, RESERVED = "ok", "not_in_chart", "not_postable", "bu_inactive", "reserved"
+BU_UNKNOWN = "bu_unknown"  # its business unit is not in the business units report, with one loaded (D-272)
 
 
 class AccountPairs:
@@ -573,17 +651,21 @@ class AccountPairs:
     def __init__(self, rows: Iterable[ChartRow], units: Iterable[BuRow] = (),
                  settings: ChartSettings | None = None) -> None:  # fmt: skip
         self.settings = settings or ChartSettings()
-        self._accounts: dict[str, dict[str, tuple[str, str]]] = {}  # business unit: {code: (description, edit code)}
+        # business unit: {code: (description, edit code, company)}
+        self._accounts: dict[str, dict[str, tuple[str, str, str]]] = {}
         self._names: dict[str, str] = {}
         self._closed: set[str] = set()  # the business units the master says take no postings
         self._company: dict[str, str] = {}  # business unit: its company (F0006's Co, D-267)
+        self._listed: set[str] = set()  # the business units of the business units report (none: not loaded)
         self._of_company: dict[str, frozenset[str]] | None = None  # (``units_of``, made at its first ask)
         for row in rows:
             if row.is_header:
                 self._names.setdefault(row.bu, row.description)
             else:
-                self._accounts.setdefault(row.bu, {})[row.code] = (row.description, row.posting_edit)
+                self._accounts.setdefault(row.bu, {})[row.code] = (row.description, row.posting_edit,
+                                                                   company_code(row.company))  # fmt: skip
         for unit in units:
+            self._listed.add(unit.code)
             if unit.name:
                 self._names[unit.code] = unit.name
             if unit.company:
@@ -630,15 +712,20 @@ class AccountPairs:
         """The business units never offered for their name: {business unit: the word its name carries}."""
         return dict(sorted(self._skipped.items()))
 
-    def _found(self, business_unit: Any, code: Any) -> tuple[str, str, tuple[str, str] | None]:
+    def unlisted_units(self, most: int) -> list[str]:
+        """The first ``most`` business units with accounts that the business units report, loaded, does not have."""
+        return sorted(bu for bu in self._accounts if self._listed and bu not in self._listed)[:most]
+
+    def _found(self, business_unit: Any, code: Any) -> tuple[str, str, tuple[str, str, str] | None]:
         bu, code = _code(business_unit), _gl(code)
         return bu, code, self._accounts.get(bu, {}).get(code)
 
     def status(self, business_unit: Any, code: Any) -> str:
         """What a line coded to the pair is: ``OK``; ``BU_INACTIVE`` (the business unit master says the business unit
         takes no postings); ``NOT_IN_CHART`` (that business unit has no such account); ``NOT_POSTABLE`` (a title, an
-        inactive or a machine-only account: its posting edit code); ``RESERVED`` (it may be posted to but is never
-        offered: ``why_reserved``)."""
+        inactive or a machine-only account, or one of a code not decided: its posting edit code); ``BU_UNKNOWN`` (the
+        business units report, loaded, does not have its business unit: D-272); ``RESERVED`` (it may be posted to but
+        is never offered: ``why_reserved``)."""
         bu, code, found = self._found(business_unit, code)
         if bu in self._closed:
             return BU_INACTIVE
@@ -646,6 +733,8 @@ class AccountPairs:
             return NOT_IN_CHART
         if found[1] not in self.settings.postable_codes:
             return NOT_POSTABLE
+        if self._listed and bu not in self._listed:
+            return BU_UNKNOWN
         return RESERVED if self.why_reserved(bu, code) else OK
 
     def why_reserved(self, business_unit: Any, code: Any) -> str:
@@ -658,7 +747,10 @@ class AccountPairs:
         if pattern:
             return self.settings.why_held(pattern)
         word = self._skipped.get(bu)
-        return f"the name of business unit {bu} says {word}" if word else ""
+        if word:
+            return f"the name of business unit {bu} says {word}"
+        held = self.settings.company_held(self._company.get(bu) or found[2])
+        return f"business unit {bu}: {held}" if held else ""
 
     def offered(self, business_unit: Any, code: Any) -> bool:
         """Whether the pair may be suggested or listed: it exists, may be posted to and nothing holds it back."""

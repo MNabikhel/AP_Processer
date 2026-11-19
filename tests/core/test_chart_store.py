@@ -146,7 +146,7 @@ def test_a_business_unit_closed_since_leaves_the_lists(store):
     assert "5450" not in _gl(store) and OTHER not in _cc(store) and "5410" in _gl(store)
     pairs = store.account_pairs()
     assert pairs.status(OTHER, "5450") == pairs.status(CLOSED, "5410") == BU_INACTIVE
-    assert pairs.status(UNLISTED, "5470") == OK and pairs.status(NOT_USED, "5410") == RESERVED
+    assert pairs.status(UNLISTED, "5470") == chart.BU_UNKNOWN and pairs.status(NOT_USED, "5410") == RESERVED
 
 
 def test_a_file_that_would_leave_no_account_is_refused_and_nothing_changes(store):
@@ -157,7 +157,7 @@ def test_a_file_that_would_leave_no_account_is_refused_and_nothing_changes(store
     _loaded(store)
     before = (store.chart_accounts(), store.business_units(), _gl(store), _cc(store), store.chart_version())
     with pytest.raises(ValueError) as refused:
-        store.import_chart([chart.ChartRow(HOME, "5400", "", "Office and General Costs", 5, "N")])
+        store.import_chart([chart.ChartRow(HOME, "5400", "", "Office and General Costs", 5, "N")], anyway=True)
     assert str(refused.value) == NO_ACCOUNT and "nothing was changed" in NO_ACCOUNT
     every_one_closed = [(code, name, co, kind, "INA") for code, name, co, kind, _ in cf.UNITS]
     with pytest.raises(ValueError, match="nothing was changed"):
@@ -198,7 +198,9 @@ def test_the_accounts_a_line_may_be_offered_are_said_in_one_place(store, referen
     store.set_tax_treatment("GST", "recoverable", "2310")
     store.set_setting("never_offered", "*.7701, 2140")
     with_chart = store.reference_data()
-    offered = sorted(set(cf.GL_ACCOUNTS) - {"2310", "5410.7701", "2140", "2140.QC"})
+    offered = sorted(
+        set(cf.GL_ACCOUNTS) - {"2310", "5410.7701", "2140", "2140.QC", "5470"}
+    )  # (5470: on UNLISTED alone)
     assert with_chart.line_accounts() == schema.line_gl_codes(with_chart) == offered
     assert "5410.7701" in with_chart.chart_of_accounts.codes  # still an account: a line coded to it by hand is checked
     options = invoice_grid.gl_options(with_chart, [{"predicted_gl_code": "5410.7701"}])
@@ -214,7 +216,7 @@ def test_a_business_unit_named_do_not_use_is_not_in_the_lists_offered(store, ref
     assert dataclasses.replace(reference, cost_centers=None).line_cost_centers() is None
     _loaded(store)
     with_chart = store.reference_data()
-    offered = sorted(set(cf.COST_CENTERS) - {NOT_USED})
+    offered = sorted(set(cf.COST_CENTERS) - {NOT_USED, UNLISTED})  # (UNLISTED: not in the business units, D-272)
     assert NOT_USED in with_chart.cost_centers.codes and with_chart.line_cost_centers() == offered
     assert with_chart.line_cost_centers() == with_chart.pairs.business_units()
     line = schema.build_json_schema(with_chart)["properties"]["line_items"]["items"]["properties"]
@@ -224,5 +226,5 @@ def test_a_business_unit_named_do_not_use_is_not_in_the_lists_offered(store, ref
     assert kept[-1] == (NOT_USED, f"{NOT_USED} · ****DO NOT USE**** Old Annex")  # a line that has it still shows it
     assert NOT_USED not in with_chart.to_prompt_context() and HOME in with_chart.to_prompt_context()
     # A business unit all of whose accounts are never offered is not offered either.
-    store.set_setting("never_offered", "0731066177.*.*")
-    assert UNLISTED not in store.reference_data().line_cost_centers()
+    store.set_setting("never_offered", f"{OTHER}.*.*")
+    assert OTHER not in store.reference_data().line_cost_centers()

@@ -269,6 +269,9 @@ def finalise_coding(
         if not coding.company.strip():
             company_said.append(companies.unknown_finding(decision, store))
         else:
+            outside = companies.pilot_finding(store, coding.company)  # (D-272: held, whoever approves it)
+            if outside is not None:
+                company_said.append(outside)
             canadian_tax, why = companies.canadian(store, coding.company)
             if not canadian_tax:
                 company_said.append(companies.us_tax_finding(companies.company_code(coding.company), why))

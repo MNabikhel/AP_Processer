@@ -455,6 +455,15 @@ CHECKS: dict[str, CheckHelp] = {
         "Pick the company in the Company box on the review screen. A trade name of yours that would decide it can be "
         "added in Settings → Review, Your company's names, written \"name = company\".",
     ),
+    "COMPANY_NOT_IN_PILOT": CheckHelp(
+        ERP, "Company not in the pilot",
+        "Settings → JD Edwards E1 → Accounts AP posts to names the companies in the pilot, and this invoice is for "
+        "another one. It is held: no approval, single, bulk, touchless or second, can pass it, and Approve anyway "
+        "does not cover it.",
+        "If the company is wrong, pick the right one in the Company box. If this company should be in the pilot, "
+        "someone who may change the settings adds it to Companies in the pilot (the change is kept in the activity "
+        "log); else reject the invoice here and process it in JD Edwards as before.",
+    ),
     "US_TAX_NOT_CHECKED": CheckHelp(
         TAX, "Tax not checked for this company",
         "The invoice is for a company that is not checked for Canadian tax: only a company whose country is CA and "
@@ -666,8 +675,20 @@ CHECKS: dict[str, CheckHelp] = {
         CODING, "Account does not take postings",
         f"{CHART_LOADED}: the chart marks this account as one that cannot be posted to (its posting edit code): a "
         "title over other accounts, an inactive account, or one kept for budgets or for entries JD Edwards makes "
-        "itself.",
-        "Pick the account under it that takes postings. If it should take postings, ask the JD Edwards team.",
+        "itself. A posting edit code AP Coder does not know is closed too until someone decides it on Settings → "
+        "JD Edwards E1 → Accounts AP posts to.",
+        "Pick the account under it that takes postings. If it should take postings, ask the JD Edwards team; a code "
+        "not decided yet is ticked (or left closed) on Settings → JD Edwards E1 → Accounts AP posts to.",
+    ),
+    # A business unit the business units report does not have (D-272).
+    "BU_NOT_IN_UNITS_REPORT": CheckHelp(
+        CODING, "Business unit not in the business units report",
+        f"{CHART_LOADED}: the account is in the chart, but its business unit is not in the business units report "
+        "loaded with it (JD Edwards files, card 2), so AP Coder can't tell whether it is active or which company it "
+        "belongs to. Its accounts are never suggested.",
+        "Pick an account on a business unit of the report. If the business unit is right (it was added in JD Edwards "
+        "since), load the business units report again, or approve anyway saying why: the reason, who and when are "
+        "kept in the invoice's history.",
     ),
     "BU_INACTIVE": CheckHelp(
         CODING, "Business unit not active",

@@ -295,6 +295,23 @@
       {% for code, said in posting.codes %}<label class="check"><input type="checkbox" name="code" value="{{ code }}"{% if code in posting.ticked %} checked{% endif %}> {{ code }}: {{ said }}</label>
       {% endfor %}<label class="field">Other codes (commas between; ask the JD Edwards team first: N is a title, B budget only, I inactive, M machine only)
         <input type="text" name="other_codes" value="{{ posting.others }}" autocomplete="off" spellcheck="false"></label>
+      {% if posting.undecided or posting.closed %}
+      <div class="stack" id="posting-undecided">
+        {% if posting.undecided %}<p>{{ ui.pill("To decide", "warn") }} Codes found in the chart, not yet decided:
+          {% for c in posting.undecided %}{{ c.code }} ({{ c.accounts | plural("account") }}){% if not loop.last %}, {% endif %}{% endfor %}.
+          JD Edwards' own list does not have them, so their accounts are not posted to until you decide: type a code
+          in Other codes above to post to it, or leave it closed.</p>{% endif %}
+        {% for c in posting.undecided %}<label class="check"><input type="checkbox" name="closed" value="{{ c.code }}"> Leave {{ c.code }} closed: never post to it</label>
+        {% endfor %}{% for c in posting.closed %}<label class="check"><input type="checkbox" name="closed" value="{{ c.code }}" checked> {{ c.code }} decided closed ({{ c.accounts | plural("account") }}): never post to it</label>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </fieldset>
+    <fieldset class="stack"><legend>Companies in the pilot</legend>
+      <label class="field">Company numbers, commas between (empty: every company). An invoice of another company is held: no
+        approval can pass it. Only these companies' accounts are suggested and offered in the Account box{% if posting.companies %}
+        (JD Edwards' companies: {% for c in posting.companies %}{{ c.code }} {{ c.name }}{% if not loop.last %}, {% endif %}{% endfor %}){% endif %}.
+        <input type="text" name="pilot_companies" value="{{ posting.pilot }}" autocomplete="off" spellcheck="false"></label>
     </fieldset>
     <fieldset class="stack"><legend>Control accounts: never suggested, and a warning on a line coded to one</legend>
       {% if posting.control %}<p>From the past invoice coding (the payable and tax lines JD Edwards adds; change them on <a href="/learning">Learning</a>):

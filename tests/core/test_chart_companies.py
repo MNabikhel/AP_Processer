@@ -80,7 +80,8 @@ def test_a_chart_saved_as_csv_is_streamed_from_disk_a_company_at_a_time(store, t
     first.write_text(header + "".join(f"00210,  21001{n:02d},5110,,Cost,7,\n00210,  21001{n:02d},5110,,Cost,7,\n"
                                       for n in range(5)), encoding="utf-8")  # fmt: skip
     said = chart_cmd.import_files(store, first, every=4)
-    assert "Read 10 rows of the chart: 10 accounts on 5 business units; 10 may be posted to." in said
+    assert "Read 10 rows of the chart: 5 accepted, 5 rejected." in said
+    assert "  Rejected (rows repeating an account already read): 5 (rows 3, 5, 7, 9, 11)." in said
     assert "  4 rows read..." in capsys.readouterr().out
     assert len(store.account_pairs()) == 5  # (each account given twice is kept once)
     second = tmp_path / "chart_00310.csv"

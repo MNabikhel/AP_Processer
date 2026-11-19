@@ -127,7 +127,8 @@ FIELD_FLAGS: dict[str, tuple[str, str | None]] = {
 
 # The checks shown under the field they are about (their own words), besides FIELD_FLAGS' notes: {code: field}.
 CODE_FIELDS = {
-    "COMPANY_UNKNOWN": "company", "DUPLICATE_OTHER_COMPANY": "company", "DUPLICATE_INVOICE_OTHER_COMPANY": "company",
+    "COMPANY_UNKNOWN": "company", "COMPANY_NOT_IN_PILOT": "company", "DUPLICATE_OTHER_COMPANY": "company",
+    "DUPLICATE_INVOICE_OTHER_COMPANY": "company",
     "MISSING_VENDOR": "vendor_name", "VENDOR_NOT_IN_MASTER": "vendor_name", "VENDOR_ADDED_HERE": "vendor_name",
     "VENDOR_ON_HOLD": "vendor_name", "VENDOR_CHANGED_FROM_HELD": "vendor_name", "JDE_NO_AN8": "vendor_name",
     "JDE_BAD_AN8": "vendor_name",
@@ -275,8 +276,9 @@ HARD_CODES = frozenset({
     "ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE", "BU_INACTIVE",
     # A vendor on hold: the hold is lifted first (the Vendors page, or JD Edwards), or the invoice rejected (B-1544).
     "VENDOR_ON_HOLD",
-    # With several companies, the voucher's company: picked first (D-267).
-    "COMPANY_UNKNOWN",
+    # With several companies, the voucher's company: picked first (D-267); and one of the companies in the pilot: an
+    # invoice of another is no invoice of the pilot's, whoever approves it (D-272).
+    "COMPANY_UNKNOWN", "COMPANY_NOT_IN_PILOT",
 })  # fmt: skip
 
 
