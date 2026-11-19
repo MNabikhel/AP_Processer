@@ -133,6 +133,29 @@ def test_a_companys_name_on_the_page_decides_but_never_the_suppliers_own(group, 
     assert {"maple ridge holdings", "cascade line", "maple ridge builders", "fraser bend civil"} <= our_name_keys(group)
 
 
+def test_a_companys_name_inside_the_suppliers_own_never_decides(group, reference, ground_truth):
+    """B-2680: a company's short name (Settings → Review, "Fraser Bend = 230") printed only inside the supplier's own
+    name ("Fraser Bend Aggregates Ltd.", a supplier of its own) decided the invoice was 00230's, a Canadian company,
+    whatever it was billed to: never held to pick the company, and approved in bulk or touchless under it."""
+    group.set_setting("our_names", "Fraser Bend = 230")
+    supplier = "Fraser Bend Aggregates Ltd."
+    coding = _coding(ground_truth, vendor_name=supplier)
+    page = f"{supplier.upper()}\n12 Quarry Rd, Abbotsford BC\nBill to: MRB Inc., Spokane WA\n"
+    output, codes, _report = _check(group, reference, coding, page)
+    assert "company" not in output and "COMPANY_UNKNOWN" in codes
+    # the company it is billed to decides, as for any supplier
+    page = f"{supplier}\nBill to: MAPLE RIDGE CONSTRUCTORS LTD, 400 Pine St\n"
+    output, _codes, report = _check(group, reference, coding, page)
+    assert output["company"] == "00220" and report.checks["company"]["how"] == "name"
+    # report 9's own name inside a supplier's likewise; printed elsewhere on the page too, it decides
+    coding = _coding(ground_truth, vendor_name="Fraser Bend Civil Testing Inc.")
+    output, codes, _report = _check(group, reference, coding, "Fraser Bend Civil Testing Inc.\nBill to: MRB Inc.\n")
+    assert "company" not in output and "COMPANY_UNKNOWN" in codes
+    page = "Fraser Bend Civil Testing Inc.\nBill to: Fraser Bend Civil Ltd., 9 River Rd\n"
+    output, _codes, _report = _check(group, reference, coding, page)
+    assert output["company"] == "00230"
+
+
 def test_the_suppliers_history_decides_when_it_only_ever_billed_one_company(group, reference, ground_truth):
     voucher = {"key": "00230-PV-700101-001", "vendor_name": "Northwind IT Solutions Inc.", "invoice_number": "N-1",
                "total": 10.0, "invoice_date": "2026-01-02", "an8": "", "document": "700101"}  # fmt: skip

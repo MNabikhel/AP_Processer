@@ -203,11 +203,23 @@ def _one(found: Iterable[str]) -> str:
     return codes.pop() if len(codes) == 1 else ""
 
 
+def _at(words: str, key: str) -> list[tuple[int, int]]:
+    """Where ``key``'s words are in ``words`` (its words between spaces): (start, end) of each."""
+    found, start = [], words.find(f" {key} ")
+    while start >= 0:
+        found.append((start, start + len(key) + 2))
+        start = words.find(f" {key} ", start + 1)
+    return found
+
+
 def _named(text: str, names: dict[str, str], supplier: str) -> set[str]:
     """The companies whose names (``names``: {vendor key: company}) are printed in ``text``, the supplier's own left
-    out; of two names one inside the other ("maple ridge" in "maple ridge us"), the longer."""
+    out, and a name printed only inside the supplier's ("fraser bend" in "Fraser Bend Aggregates Ltd.", B-2680); of
+    two names one inside the other ("maple ridge" in "maple ridge us"), the longer."""
     words = f" {' '.join(re.findall(r'[a-z0-9]+', plain(text).replace('&', ' and ')))} "
-    hits = [key for key in names if key and key != supplier and f" {key} " in words]
+    theirs = _at(words, supplier) if supplier else []
+    hits = [key for key in names if key and key != supplier
+            and any(not any(s <= a and b <= e for s, e in theirs) for a, b in _at(words, key))]  # fmt: skip
     longest = [key for key in hits if not any(key != other and f" {key} " in f" {other} " for other in hits)]
     return {names[key] for key in longest}
 
