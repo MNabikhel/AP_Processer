@@ -6695,16 +6695,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     loaded"). The page has no `--anyway`: its refusal names the command line. *Not chosen:* a share other than half
     (to confirm); comparing files by name (a company's file is named anew at each export: the count of files is
     compared).
-  - **Measured** (`python -m ap_coder.bench companies --full-chart 3500000`, `jde_group.write_full_chart`: 20
-    companies, 129,620 business units, 3,499,740 rows, 205 MB of tab-delimited UTF-8, half the accounts not posted to,
-    one in 26 of a code not decided, one business unit in 997 missing from report 2; a shared 4-core machine). The
-    first load by the command line 45 s, its process at 162 MB at most (as first built: 61 s, 199 MB); a refresh read and staged in 31 s (no write lock),
-    swapped in in 9.5 s unchanged (21 s as first built: the two lists worked out twice, two passes for what changed)
-    and 18 s with 64,810 accounts changed and 43,747 gone (29 s: every row written again and hashed: the chart's mark
-    is now random, `chart_hash`, and only new and changed rows are written); its summary under 1 ms. What the chart
-    holds (the chart card) 3.4 s once for a chart and its settings, then 0.06 s (8.9 s at every view as first built:
-    each account's status in Python, now counted by SQLite, `IndexedPairs.tally`); the JD Edwards files page 1 s;
+  - **Measured** (`python -m ap_coder.bench companies --full-chart 3500000`, `jde_group.write_full_chart`: 20 companies,
+    129,620 business units, 3,499,740 rows, 205 MB of tab-delimited UTF-8, half the accounts not posted to, one in 26 of
+    a code not decided, one business unit in 997 missing from report 2; a shared 4-core machine). The first load by the
+    command line 45 s, its process at 162 MB at most (as first built: 61 s, 199 MB); a refresh read and staged in 31 s
+    (no write lock), swapped in in 9.5 s unchanged (21 s as first built: the two lists worked out twice, two passes for
+    what changed) and 18 s with 64,810 accounts changed and 43,747 gone (29 s: every row written again and hashed: the
+    chart's mark is now random, `chart_hash`, and only new and changed rows are written); its summary under 1 ms. What
+    the chart holds (the chart card) 3.4 s once for a chart and its settings, then 0.06 s (8.9 s at every view as first
+    built: each account's status in Python, now counted by SQLite, `IndexedPairs.tally`); the JD Edwards files page 1 s;
     the Accounts AP posts to card 0.9 s once a chart. A line's account check 13 µs; a search 17 ms, 70 ms within one
     company, 0.6 s for words found nowhere; the reference data 0.2 s. The database 361 MB. *Left as it is:* the
-    staging's 31 s (a row's Python, outside the lock); the swap's 9 to 18 s under the write lock (the dashboard's
-    writes wait, up to their 30 s); the search for words found nowhere (a scan, as D-267).
+    staging's 31 s (a row's Python, outside the lock); the swap's 9 to 18 s under the write lock (the dashboard's writes
+    wait, up to their 30 s); the search for words found nowhere (a scan, as D-267).
