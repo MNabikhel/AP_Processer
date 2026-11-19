@@ -446,8 +446,8 @@ def stream_chart_text(path: str | Path, anyway: bool = False) -> tuple[chart.Row
     leading zeros and padding come as the file has them (the store keeps them without the padding, as JD Edwards
     compares them). A tab-delimited row whose cells do not line up with the column names (more or fewer of them: a
     tab or a line break inside a value, the file cut short) is left out, never read shifted. Up to
-    ``chart.STREAMED_MOST`` rows; ``chart.ColumnsMissing`` as ``read_chart``'s, unless ``anyway``; ``ChartError`` naming the file when it is no
-    chart, or not text."""
+    ``chart.STREAMED_MOST`` rows; ``chart.ColumnsMissing`` as ``read_chart``'s, unless ``anyway``; ``ChartError``
+    naming the file when it is no chart, or not text."""
     name = Path(path).name
     handle = open(path, encoding=text_encoding(path), newline="\n")  # noqa: SIM115  (closed by the rows once read)
     try:
