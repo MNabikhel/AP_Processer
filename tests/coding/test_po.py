@@ -1194,3 +1194,62 @@ def test_an_account_in_another_format_is_read_from_its_cost_center_object_and_su
     rows, skipped = po_mod.rows_from_records(records, po_mod.map_columns(head))
     assert skipped == 0 and [(r["cost_center"], r["gl_code"]) for r in rows] == [
         ("21061010", "7200.01"), ("21061010", "7210"), ("0021061010", "7410")]  # fmt: skip
+
+
+def _subcontract_lines():
+    """A made-up subcontract (OS) of two lump-sum lines holding back 10% of each billing, and a PO (OP) line, as the
+    build sheet's report 6 gives them (D-273)."""
+    import datetime as dt
+    from decimal import Decimal
+
+    from ap_coder.bench.jde_exports import OpenPoLine
+
+    def line(order, n, words, amount, kind="OS", retainage="10", billed="0"):
+        return OpenPoLine(order, Decimal(n), 541706, words, Decimal(0), Decimal(0), "", "0021061022.7330.3207",
+                          "00210", vouchered=Decimal(billed), order_type=kind, supplier_name="WESTMEADOW",
+                          order_date=dt.date(2026, 9, 1), lump_sum=Decimal(amount),
+                          retainage=Decimal(retainage) if retainage else None)  # fmt: skip
+
+    return [line(41201, 1, "SITE WORK", "100000"), line(41201, 2, "CONCRETE FOUNDATIONS", "150000", billed="60000"),
+            line(41299, 1, "SNOW CLEARING SEASON", "8000", kind="OP", retainage="")]  # fmt: skip
+
+
+def test_a_subcontracts_lines_and_their_retainage_percent_load_from_the_build_sheets_report():
+    """D-273: report 6 of the build sheet (F4311 in ReportsNow) holds subcontracts (Or Ty OS) beside the purchase
+    orders, each line's retainage percent in its "Retainage %" column (JD Edwards' PDPCRT): read by its own name, none
+    picked by hand, kept with the line; a lump-sum line (no quantity, no unit cost) is matched by its amount, its open
+    amount what JD Edwards has not vouchered of it."""
+    from ap_coder.bench import jde_exports
+    from ap_coder.erp.import_specs import PURCHASE_ORDERS, check
+    from ap_coder.web.files import read_sheet
+
+    sheet, _ = read_sheet("report6.xlsx", jde_exports.po_lines_report_xlsx(_subcontract_lines()))
+    found = check(PURCHASE_ORDERS, list(sheet.columns))
+    assert found.ok and not found.guessed and found.found["retainage"] == "Retainage %"
+    rows, skipped = rows_from_records(sheet.to_dict("records"), found.found)
+    assert skipped == 0
+    assert [(r["order_type"], r["erp_line"], r["amount"], r["open_amount"], r["amount_only"], r["retainage"])
+            for r in rows] == [("OS", "1.000", 100000.0, 100000.0, True, 10.0),
+                               ("OS", "2.000", 150000.0, 90000.0, True, 10.0),
+                               ("OP", "1.000", 8000.0, 8000.0, True, None)]  # fmt: skip
+
+
+def test_a_retainage_percent_is_read_by_any_of_its_names_as_a_percent_and_never_from_a_rule_code(tmp_path):
+    """D-273: "Retainage %", "Retention %", "Holdback %", "Retainage Percent", JD Edwards' PDPCRT (PCRT, F4311.PDPCRT,
+    the header's PHPCRT) name it; 10, 10.000, "10%" and the fraction 0.1 are 10%; nothing, 0, a code (the Retainage
+    Rule, PDRTNR, is no percent and no name of it) or over 100 is none. Kept with the line, it makes the PO a
+    subcontract, as JD Edwards' order type OS does."""
+    for name in ("Retainage %", "Retention %", "Holdback %", "Retainage Percent", "Percent - Retainage", "PDPCRT",
+                 "PCRT", "F4311.PDPCRT", "PHPCRT"):  # fmt: skip
+        assert map_columns(["Order Number", "Description", "Amount", name]).get("retainage") == name, name
+    assert "retainage" not in map_columns(["Order Number", "Description", "Amount", "PDRTNR"])
+    values = [10, "10.000", "10%", 0.1, "5", None, "", 0, "A", 150, -10]
+    records = [{"po": "41", "desc": "Site work", "amount": 1000, "Retainage %": v} for v in values]
+    rows, _ = rows_from_records(records, map_columns(["po", "desc", "amount", "Retainage %"]))
+    assert [r["retainage"] for r in rows] == [10.0, 10.0, 10.0, 10.0, 5.0, None, None, None, None, None, None]
+    store = Store(tmp_path / "ap.db")
+    store.import_purchase_orders(rows[:1] + [{**rows[5], "po_number": "42"}])
+    assert [li["retainage"] for li in store.purchase_order("41")["lines"]] == [10.0]
+    assert po_mod.is_subcontract(store.purchase_order("41"))
+    assert not po_mod.is_subcontract(store.purchase_order("42"))
+    assert po_mod.is_subcontract({"order_type": "OS", "lines": []})

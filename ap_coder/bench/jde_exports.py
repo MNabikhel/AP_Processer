@@ -231,7 +231,8 @@ BUILD_SHEET: dict[str, tuple[tuple[str, str], ...]] = {
                         ("PDSUB", "Sub"), ("PDTX", "Tax Y/N"), ("PDEXR1", "Tax Expl"), ("PDTXA1", "Tax Rate/Area"),
                         ("PDLTTR", "Last Status"), ("PDNXTR", "Next Status"), ("PDCRCD", "Curr"),
                         ("PDFRRC", "Foreign Unit Cost"), ("PDFAP", "Foreign Amount To Receive"),
-                        ("PDTRDJ", "Order Date"), ("PDSBL", "Subledger"), ("PDSBLT", "Sub Type")),
+                        ("PDTRDJ", "Order Date"), ("PDSBL", "Subledger"), ("PDSBLT", "Sub Type"),
+                        ("PDPCRT", "Retainage %")),
     "payment_terms": (("PNPTC", "Payment Terms Code"), ("PNPTD", "Payment Terms Description"),
                       ("PNDCP", "Discount Percent"), ("PNDCD", "Discount Days"), ("PNNDTP", "Net Days to Pay")),
     "tax_areas": (("TATXA1", "Tax Rate/Area"), ("TADL01", "Description"),
@@ -240,6 +241,9 @@ BUILD_SHEET: dict[str, tuple[tuple[str, str], ...]] = {
                   ("TAEFDJ", "Effective Date"), ("TAEFTJ", "Expired Date")),
     "companies": (("CCCO", "Company"), ("CCNAME", "Company Name"), ("CCCRCD", "Currency Code"), ("ALCTR", "Country")),
 }  # fmt: skip
+# The order types report 6 (the open PO lines, F4311) is queried for: purchase orders and, for their progress billings
+# with retainage, subcontracts (D-273; the pilot tester's query had OP alone).
+BUILD_SHEET_ORDER_TYPES = ("OP", "OS")
 # The master workbook's sheets: (title, report); two of the supplier ledger and of the G/L lines, by half year.
 MASTER_SHEETS = (("Accounts", "chart"), ("BUs", "units"), ("Suppliers", "supplier_master"),
                  ("Ledger Jan-Jun", "vouchers"), ("Ledger Jul-Dec", "vouchers"), ("GL lines H1", "gl_lines"),
@@ -715,10 +719,25 @@ class OpenPoLine:
     tax_flag: str = "Y"  # its Tax Y/N, explanation code and rate/area as the PO has them
     tax_code: str = "V"
     tax_area: str = "CDNGST"
+    # A subcontract's line (order type OS, D-273): the percent held back of each progress billing (PDPCRT); its lump
+    # sum when it has no quantity or unit cost (``ordered`` and ``unit_cost`` 0), and what was vouchered of it
+    lump_sum: Decimal | None = None
+    retainage: Decimal | None = None
 
     @property
     def open_quantity(self) -> Decimal:
         return self.ordered - self.vouchered
+
+    @property
+    def ordered_amount(self) -> Decimal:
+        return self.lump_sum if self.lump_sum is not None else money(self.ordered * self.unit_cost)
+
+    @property
+    def open_amount(self) -> Decimal:
+        """What is open: a lump sum less what was vouchered of it (``vouchered``, an amount then)."""
+        if self.lump_sum is not None:
+            return self.lump_sum - self.vouchered
+        return money(self.open_quantity * self.unit_cost)
 
 
 def open_po_lines(truth: Truth, orders: int = 4) -> list[OpenPoLine]:
@@ -927,18 +946,26 @@ def _master_po_lines(lines: Iterable[OpenPoLine]) -> list[list[Any]]:
         business_unit, code = split_account(li.account)
         obj, _, sub = code.partition(".")
         received = li.received >= li.ordered > 0
+        lump = li.lump_sum is not None  # (a subcontract's lump sum: no quantity, no unit cost, D-273)
         records.append({"PDDOCO": li.order, "PDDCTO": li.order_type, "PDKCOO": li.company,
                         "PDLNID": (float(li.line), LINE_FORMAT), "PDAN8": li.supplier,
                         "ABALPH": li.supplier_name or None, "PDDSC1": li.description, "PDLNTY": "J", "PDUOM": li.uom,
-                        "PDUORG": _number(li.ordered), "PDUOPN": _number(li.open_quantity),
+                        "PDUORG": _number(li.ordered), "PDUOPN": _number(Decimal(0) if lump else li.open_quantity),
                         "PDUREC": _number(li.received), "PDPRRC": (float(li.unit_cost), COST_FORMAT),
-                        "PDAEXP": _number(money(li.ordered * li.unit_cost)),
-                        "PDAOPN": _number(money(li.open_quantity * li.unit_cost)), "PDANI": li.account,
+                        "PDAEXP": _number(li.ordered_amount), "PDAOPN": _number(li.open_amount), "PDANI": li.account,
                         "PDOMCU": _unit(business_unit), "PDOBJ": obj, "PDSUB": sub or None, "PDTX": li.tax_flag,
                         "PDEXR1": li.tax_code, "PDTXA1": li.tax_area, "PDLTTR": "400" if received else "220",
                         "PDNXTR": "510" if received else "400", "PDCRCD": li.currency,
-                        "PDTRDJ": _date(li.order_date)})  # fmt: skip
+                        "PDTRDJ": _date(li.order_date),
+                        "PDPCRT": _number(li.retainage) if li.retainage is not None else None})  # fmt: skip
     return _rows_of("purchase_orders", records)
+
+
+def po_lines_report_xlsx(lines: Iterable[OpenPoLine]) -> bytes:
+    """The open PO lines as the build sheet's report 6 gives them (F4311 queried in ReportsNow, titled as
+    ``BUILD_SHEET`` says), its order types only (``BUILD_SHEET_ORDER_TYPES``: purchase orders and subcontracts)."""
+    kept = [li for li in lines if li.order_type in BUILD_SHEET_ORDER_TYPES]
+    return _workbook(_titles("purchase_orders"), _master_po_lines(kept))
 
 
 def master_workbook_xlsx(truth: Truth, lines: Iterable[OpenPoLine] | None = None,

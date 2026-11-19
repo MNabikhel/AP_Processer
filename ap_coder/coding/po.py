@@ -118,6 +118,12 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     # code is L requires: the invoice line billing it takes them.
     "subledger": ("subledger", *_pd("SBL")),
     "subledger_type": ("subtype", "subledgertype", *_pd("SBLT")),
+    # Optional, a subcontract's (D-273): the percent of each progress billing on the line held back until the work is
+    # done, JD Edwards' Percent - Retainage (PCRT, of the order header F4301 too); never its Retainage Rule (RTNR, a
+    # code). "Retainage %", "Retention %", "Holdback %".
+    "retainage": ("retainage", "retainagepercent", "retainagepercentage", "retainagepct", "retainagerate",
+                  "percentretainage", "retention", "retentionpercent", "retentionpercentage", "holdback",
+                  "holdbackpercent", "holdbackpercentage", *_pd("PCRT"), *jde_names("F4301", "PH", "PCRT")),
     "status": ("status", "postatus", "state"),
     # Optional, JD Edwards' (NXTR, LTTR): a line whose next status is 999 is closed, one whose last is 980 cancelled.
     "next_status": ("nextstatus", "nextstat", *_pd("NXTR")),
@@ -136,6 +142,7 @@ CLOSED_STATUSES = {"closed", "close", "complete", "completed", "fermé", "ferme"
 # business unit.object.subsidiary, so the line's cost center, object and subsidiary columns are read instead.
 _OTHER_FORMATS = ("*", "/")
 JDE_CLOSED, JDE_CANCELLED = "999", "980"  # a JD Edwards line's next status once closed, last status once cancelled
+SUBCONTRACT = "OS"  # JD Edwards' order type of a subcontract (Subcontract Management, system 44; D-273)
 REQUIRED_COLUMNS = ("po_number", "description")
 TEMPLATE_COLUMNS = (
     "po_number", "vendor_name", "line_number", "description", "quantity", "unit_price", "amount", "open_amount",
@@ -240,10 +247,28 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
                 "tax_area": _text(get("tax_area")).upper(),
                 "subledger": _text(get("subledger")).upper()[:8],
                 "subledger_type": _text(get("subledger_type")).upper()[:1],
+                "retainage": retainage_percent(get("retainage")),
                 "currency": currency,
             }
         )
     return rows, skipped
+
+
+def retainage_percent(value: Any) -> float | None:
+    """A PO line's retainage as a percent: 10 (JD Edwards' 10.000), "10%", or a fraction 0.1 written so; None for none,
+    0, or what can't be one (over 100, below 0, words: a Retainage Rule's code)."""
+    number = parse_amount(_text(value).replace("%", "").strip()) if not _blank(value) else None
+    if number is None or not math.isfinite(number) or number <= 0 or number > 100:
+        return None
+    return round(number * 100 if number < 1 else number, 4)
+
+
+def is_subcontract(po: dict[str, Any]) -> bool:
+    """Whether a PO (``Store.purchase_order``'s) is a subcontract (D-273): JD Edwards' order type OS, or a line of it
+    holds back a retainage percent of what it bills."""
+    return str(po.get("order_type") or "").upper() == SUBCONTRACT or any(
+        pl.get("retainage") for pl in po.get("lines") or []
+    )
 
 
 def open_lines(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
