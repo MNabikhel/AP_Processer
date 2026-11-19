@@ -187,6 +187,7 @@ def workbook(scale: Scale) -> dict[str, float]:
                     seconds[f"load {sheet['title']}"], _ = _timed(
                         lambda k=key, s=sheet: jde_workbook._load_sheet(store, k, content, "group.xlsx", s)
                     )
+        store.forget_reference()  # (its chart's connections closed: Windows removes no folder with the file open)
     return seconds
 
 
@@ -279,6 +280,8 @@ def full_chart(rows: int, companies: int = 20) -> dict[str, Any]:
             _median_us(lambda k: pairs.search("qqqq zzzz"), 5) / 1000, 1
         )
         out["database MB"] = round(db.stat().st_size / 1e6, 1)
+        pairs.close()  # (Windows removes no folder with the database open: WinError 32, B-2653)
+        store.forget_reference()
     return out
 
 
@@ -295,6 +298,7 @@ def run(share: float, invoices: int, workbook_share: float, out: str, full_rows:
         report["loads_at_full_size"] = {name: round(s / share, 1) if name != "companies" else round(s, 2)
                                         for name, s in loads.items()}  # fmt: skip
         report["per_invoice_ms"] = per_invoice(store, scale, invoices)
+        store.forget_reference()  # (its chart's connections closed: Windows removes no folder with the file open)
     report["workbook"] = {name: round(s, 2) for name, s in workbook(full.scaled(workbook_share)).items()}
     report["workbook_share"] = workbook_share
     if full_rows:

@@ -13,7 +13,9 @@ string, name or business unit's name has every word typed, found by the business
 ``SEARCH_MOST``.
 
 It is the chart for every size (measured, D-267: 10,000 accounts as fast as in memory for a line's check, 3,000,000
-without holding them): ``Store.account_pairs`` gives one, kept with the reference data.
+without holding them): ``Store.account_pairs`` gives one, kept with the reference data. Each thread asks on a
+connection of its own, kept open; ``close`` closes them all (the reference data built again, a restore: Windows
+refuses to replace or remove a database file a connection holds, B-2653).
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import weakref
 from collections import Counter, OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -63,6 +66,16 @@ def _globbed(patterns: tuple[str, ...]) -> tuple[str, list[str]] | None:
             [p.replace("[!", "[^") for p in patterns])  # fmt: skip
 
 
+class _Own:
+    """A thread's own connection to the chart (``IndexedPairs._reader``): how many of its questions are asked on it
+    now, and whether ``close`` was asked meanwhile (then it is closed once they are answered)."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self.conn: sqlite3.Connection | None = conn
+        self.asking = 1
+        self.closing = False
+
+
 class IndexedPairs:
     """The chart of ``store`` as the checks and the suggestions ask it (``AccountPairs``' answers), with its settings
     ``settings``. Shared by the threads of a process: read it, don't change it."""
@@ -72,6 +85,8 @@ class IndexedPairs:
         self._store = store
         self._lock = threading.Lock()
         self._local = threading.local()  # (each thread's own connection, when it holds no session)
+        # Every thread's own connection open now, for ``close`` (one of a thread that has ended is closed with it).
+        self._own: weakref.WeakSet[_Own] = weakref.WeakSet()
         self._kept: OrderedDict[tuple[str, str], tuple[str, str, str] | None] = OrderedDict()
         self._units: tuple[dict[str, str], set[str], dict[str, str], dict[str, str], set[str]] | None = None
         self._offered: tuple[frozenset[str], tuple[str, ...]] | None = None
@@ -88,10 +103,44 @@ class IndexedPairs:
             with self._store._conn() as conn:
                 yield conn
             return
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = self._local.conn = self._store._open()
-        yield conn
+        with self._lock:
+            own = getattr(self._local, "own", None)
+            conn = own.conn if own is not None else None
+            if own is not None and conn is not None:
+                own.asking += 1
+        if own is None or conn is None:  # this thread's first question, or the first since ``close``
+            conn = self._store._open(any_thread=True)  # (``close`` closes it from whichever thread)
+            with self._lock:
+                own = self._local.own = _Own(conn)
+                self._own.add(own)
+        try:
+            yield conn
+        finally:
+            with self._lock:
+                own.asking -= 1
+                done = own.conn if own.closing and not own.asking else None
+                if done is not None:
+                    own.conn, own.closing = None, False
+                    self._own.discard(own)
+            if done is not None:
+                done.close()
+
+    def close(self) -> None:
+        """Close the connection each thread opened to ask the chart; one a question is asked on now is closed by its
+        thread once the question is answered. Then nothing of it holds the database file open. A question asked
+        after opens one again (an invoice being checked with the reference data this belonged to, replaced
+        meanwhile, still finishes); what was read once (the business units, the codes offered) is kept."""
+        idle: list[sqlite3.Connection] = []
+        with self._lock:
+            for own in list(self._own):
+                if own.asking:
+                    own.closing = True
+                elif own.conn is not None:
+                    idle.append(own.conn)
+                    own.conn = None
+                    self._own.discard(own)
+        for conn in idle:
+            conn.close()
 
     # --- What is read once: the business units, and the codes and units offered ------------------------------------
 

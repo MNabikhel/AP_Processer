@@ -884,6 +884,7 @@ class BackupsMixin:
                 postings = saved_postings(conn)  # the JD Edwards vouchers: never forgotten by a restore (D-105)
             sign_in = self.get_setting(SIGN_IN) if keep_accounts else ""  # its accounts' (D-243)
             restored_dir = self._rules_first(copy, accounts, keep_accounts, sign_in)
+            self.forget_reference()  # (made of the database replaced now; its connections let go of the file)
             source = sqlite3.connect(copy)
             target = sqlite3.connect(self.path)
             try:
