@@ -529,7 +529,7 @@ def test_in_a_browser_a_shuffled_chart_is_shown_then_loaded_and_one_without_a_co
             page.locator("#chart .imp-upload button[type=submit]").click()
             page.wait_for_selector("#chart-summary")
             assert "every column it needs is here." in page.locator("#chart-summary").inner_text()
-            assert page.locator("#chart-summary .imp-check li.ok").count() == 6
+            assert page.locator("#chart-summary .imp-check li.ok").count() == 7  # (and its Company column: D-267)
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), width
             if width == 390:
                 assert store.chart_accounts() == []
