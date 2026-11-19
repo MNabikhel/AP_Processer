@@ -765,8 +765,10 @@ def _coding_findings(m: LineMatch, li: dict[str, Any], result: PoMatch) -> None:
         )
 
 
-def po_findings(coding: InvoiceCoding, store: Store, exclude_invoice_id: int | None = None) -> list[Finding]:
-    """The checks for ``validate_coding`` (empty when no purchase orders are loaded)."""
+def po_findings(coding: InvoiceCoding, store: Store, exclude_invoice_id: int | None = None,
+                match: PoMatch | None = None) -> list[Finding]:  # fmt: skip
+    """The checks for ``validate_coding`` (empty when no purchase orders are loaded); ``match``: the invoice's
+    ``match_invoice``, made already."""
     if not store.has_purchase_orders():
         return []
     if not (coding.po_number or "").strip():
@@ -775,7 +777,7 @@ def po_findings(coding: InvoiceCoding, store: Store, exclude_invoice_id: int | N
             listed = ", ".join(po_label(n) for n in open_pos[:3]) + ("…" if len(open_pos) > 3 else "")
             return [(INFO, "PO_NOT_QUOTED", f"no PO number on the invoice; this vendor has open {listed}", None)]
         return []
-    result = match_invoice(coding, store, exclude_invoice_id)
+    result = match if match is not None else match_invoice(coding, store, exclude_invoice_id)
     return result.findings if result else []
 
 
@@ -823,6 +825,9 @@ class VoucherMatch:
 
     rows: list[MatchRow] = field(default_factory=list)
     held: list[str] = field(default_factory=list)
+    # Of ``held``, what the PO match's own checks say already (a PO not in the list or of several orders, in another
+    # currency, a line on no PO line): not said again before approval (``jde_review.match_findings``, B-2667)
+    said: list[str] = field(default_factory=list)
 
 
 def voucher_match(match: PoMatch | None, number: str, charge_account: str = "") -> VoucherMatch:
@@ -836,14 +841,17 @@ def voucher_match(match: PoMatch | None, number: str, charge_account: str = "") 
         out.held.append(f"{label} is {len(match.orders)} purchase orders ({orders_named(match.orders)}), none of them "
                         "told by the invoice's supplier and company: pick the invoice's company, or match it in JD "
                         "Edwards by hand")  # fmt: skip
+        out.said = list(out.held)  # (PO_AMBIGUOUS)
         return out
     if match is None or not match.found or match.po is None:
         out.held.append(f"{label} is not in the purchase orders loaded: load its open lines from JD Edwards "
                         "(Purchase orders), then make the keying sheet again")  # fmt: skip
+        out.said = list(out.held) if match is not None else []  # (PO_UNKNOWN; with no POs loaded, no PO check)
         return out
     if match.currencies:
         out.held.append(f"{match.currencies}: a voucher match is keyed in the order's currency, so match it in "
                         "JD Edwards by hand")  # fmt: skip
+        out.said.append(out.held[-1])  # (PO_CURRENCY_DIFFERS)
     po = match.po
     for m in match.lines:
         if m.po_line is None and charge_account and is_extra_charge(m.description):
@@ -854,6 +862,7 @@ def voucher_match(match: PoMatch | None, number: str, charge_account: str = "") 
                 f"line {m.invoice_line} “{_short(m.description)}” matches no line of {label} (none is "
                 "guessed): correct the line or the PO number, or match it in JD Edwards by hand"
             )
+            out.said.append(out.held[-1])  # (PO_LINE_NOT_ON_PO)
         elif not m.po_erp_line:
             out.held.append(f"{label} line {m.po_line} has no JD Edwards line number in the purchase orders loaded: "
                             "load the PO's open lines from JD Edwards again")  # fmt: skip

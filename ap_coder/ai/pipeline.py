@@ -34,7 +34,7 @@ from ..capture.layout import PDF_LOCK, CannotRead
 from ..capture.workflow import AUTONOMOUS_REVIEWER, WAITING_FOR_PAGE_READER, autonomy_decision, capture_invoice
 from ..coding import banks, companies, posting_edits
 from ..coding.claim import claim_findings
-from ..coding.po import po_findings
+from ..coding.po import match_invoice, po_findings, voucher_match
 from ..coding.remark import fill_remarks
 from ..coding.rules import apply as apply_rules
 from ..coding.tax import PLACE_OF_SUPPLY, SUPPLY_OURS, SUPPLY_SITE, build_gl_distribution, supply_source
@@ -309,8 +309,14 @@ def finalise_coding(
     output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
     # JD Edwards in use: what its batch would hold back, asked before approval (D-75).
     erp_findings: list[tuple[str, str, str, int | None]] = []
+    po_match = None
     if js is not None:
-        erp_findings = jde_review.voucher_findings(output, js, jde_accounts.resolve_an8(output, store.vendor_ids(), js))
+        an8 = jde_accounts.resolve_an8(output, store.vendor_ids(), js)
+        erp_findings = jde_review.voucher_findings(output, js, an8)
+        if js.po_matched and (quoted := coding.po_number.strip()):  # its voucher match rows, as the sheet keys them
+            po_match = match_invoice(coding, store, exclude_invoice_id)
+            erp_findings += jde_review.match_findings(output, js, an8,
+                                                      voucher_match(po_match, quoted, js.charge_account))  # fmt: skip
     report = validate_coding(
         coding,
         reference,
@@ -327,7 +333,7 @@ def finalise_coding(
             vendor_terms=store.vendor_terms(key or vendor_key(coding.vendor_name)) if store is not None else "",
             received=received,
         ),
-        po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
+        po_findings=po_findings(coding, store, exclude_invoice_id, po_match) if store is not None else None,
         erp_findings=erp_findings,
         remarks_typed=remarks_typed,
         erp_posts_tax=jde_review.taxes_e1_posts(output, js) if js is not None else frozenset(),

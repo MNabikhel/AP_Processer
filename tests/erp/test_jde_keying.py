@@ -1388,3 +1388,47 @@ def test_what_a_keying_sheet_matches_on_one_po_line_is_held_against_what_is_open
     assert said([bags(1, 30), bags(2, 30)])[1] == ([], [
         "Order 40917 line 12.000: 30 of the 100 open matched, 60 with the 30 above on this sheet; the line stays open "
         "for 40 (do not close it in Voucher Match)."])  # fmt: skip
+
+
+def test_a_voucher_match_the_keying_sheet_would_hold_is_a_check_before_approval(tmp_path):
+    """B-2667: a PO-matched voucher's rows the keying sheet can't make for a reason no PO check gives (here a BC line
+    charged the GST and not the PST on BC's GST + PST area, its PO line with no area of its own, D-265) were said only
+    in the voucher block on the review screen: no check, so the invoice was approved, touchless too, and was then on
+    the keying sheet's "Not ready" sheet (what D-75 says never happens). It is the check PO_VOUCHER_MATCH, a warning
+    (keyed by hand, it is approved anyway); what a PO check says already (a line on no PO line) is not said twice."""
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.bench import jde_company, jde_exports, jde_po_vouchers
+    from ap_coder.coding import po
+    from ap_coder.core.config import Settings
+    from ap_coder.core.schema import InvoiceCoding
+    from ap_coder.core.store import Store
+    from ap_coder.web.files import read_sheet
+
+    case = next(c for c in jde_po_vouchers.cases(jde_company.build(1, "small", 2025)) if c.name == "bc_gst_pst")
+    store = Store(tmp_path / "ap.db")
+    sheet, _ = read_sheet("po.xlsx", jde_exports.open_po_lines_xlsx(case.po_lines))
+    store.import_purchase_orders(po.rows_from_records(sheet.to_dict("records"), po.map_columns(list(sheet.columns)))[0])
+    codes = {li["predicted_gl_code"] for li in case.coding()["line_items"]} | {"2310", "2320"}
+    store.import_accounts("gl_accounts", [{"code": code} for code in sorted(codes)], "code", None)
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
+    jde_settings.save(store, jde_po_vouchers.area_settings())
+    final = case.coding()
+    final["line_items"][1].update(taxes_applied=["GST"], tax_exempt=["PST"])
+    pst = round(480.0 * 0.07, 2)
+    final.update(tax_lines=[tl("GST", "", 0.05, 915.0, 45.75), tl("PST", "BC", 0.07, 480.0, pst)],
+                 tax_total=round(45.75 + pst, 2), grand_total=round(915.0 + 45.75 + pst, 2))  # fmt: skip
+
+    def issues(coding):
+        _, report = finalise_coding(InvoiceCoding.model_validate(coding), store.reference_data(), Settings(),
+                                    store=store)  # fmt: skip
+        return {i.code: (i.severity, i.message) for i in report.issues if i.code.startswith("PO_")}
+
+    found = issues(final)
+    assert found["PO_VOUCHER_MATCH"] == ("warning", (
+        "JD Edwards' voucher match can't be keyed from the keying sheet: line 2 “Hi-vis safety vest, class 2” is "
+        "charged the GST and not the PST, but tax area BC-GSTPST (code C) has JD Edwards work out both on its row: "
+        "give its PO line a tax rate/area for the GST alone in JD Edwards and load the purchase orders again (with "
+        "their Tax Rate/Area column), or key the voucher by hand"))  # fmt: skip
+    odd = {**final, "line_items": [final["line_items"][0], {**final["line_items"][1], "description": "Artwork proof"}]}
+    assert "PO_VOUCHER_MATCH" not in issues(odd) and "PO_LINE_NOT_ON_PO" in issues(odd)  # (said by the PO check)
+    assert "PO_VOUCHER_MATCH" not in issues(case.coding())  # (keyed: nothing to say)
