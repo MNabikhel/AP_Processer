@@ -360,9 +360,11 @@ class Planner:
         return invoice
 
     def duplicate(self, category: str, k: int) -> DayInvoice:
-        """An invoice of a past voucher: its number and lines (the same company, or the supplier's other one)."""
+        """An invoice of a past voucher: its number and lines (the same company, or the supplier's other one); one in
+        three already in JD Edwards is a US company's (its voucher in US dollars)."""
         other = category == "dup_other_company"
-        pool = [s for s in self.of_kind("office", companies=CANADIAN, two=other) if s.code[0] in "67"
+        companies = ("00310",) if not other and k % 3 == 2 else CANADIAN
+        pool = [s for s in self.of_kind("office", companies=companies, two=other) if s.code[0] in "67"
                 and s.number != 4410900]  # fmt: skip
         s = pool[k % len(pool)]
         past = [v for v in self.books.vouchers if v.supplier == s.number and v.company == s.companies[0]
@@ -762,7 +764,8 @@ def load_files(app: App, books: G.GroupBooks, folder: Path) -> list[str]:
         raise Failed(f"the workbook was not taken: {up}")
     shown = plain(app.get(f"/jde-files?workbook={token.group(1)}"))
     said.append(shown[shown.find("jde_reports.xlsx ·") :][:160])
-    said.append(said_on(app.follow(app.post("/jde-files/workbook/load", {"token": token.group(1)}))))
+    loaded = plain(app.follow(app.post("/jde-files/workbook/load", {"token": token.group(1)})))
+    said.append(loaded[loaded.find("Loaded ") :][:3000])
     chart = folder / "F0901 all companies.txt"
     G.write_chart_text(chart, books)
     env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2]), "AP_PRIVATE_DIR": str(app.data)}

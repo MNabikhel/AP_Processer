@@ -26,6 +26,7 @@ from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from ap_coder.coding import companies
 from ap_coder.core import ui
 from ap_coder.core.reference_data import short_name
 from ap_coder.core.store import Store
@@ -773,9 +774,11 @@ def jde_vouchers(store: Store, df: Any) -> tuple[list[dict[str, Any]], dict[str,
 def named_vouchers(store: Store, records: list[dict[str, Any]],
                    columns: dict[str, str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:  # fmt: skip
     """The voucher list's pay items (``records``, in its ``columns``: ``registers.voucher_columns``) as the
-    register's vouchers and what was read, their suppliers named from the vendor master by their number."""
+    register's vouchers and what was read, their suppliers named from the vendor master by their number, each
+    company's own currency JD Edwards' companies' (report 9, D-267)."""
     names = {v["erp_id"]: v["display_name"] for v in store.master_vendors() if v.get("erp_id")}
-    return registers.vouchers_from_pay_items(records, columns, names)
+    home = {code: c.currency for code, c in companies.companies(store).items() if c.currency}
+    return registers.vouchers_from_pay_items(records, columns, names, home)
 
 
 CUT_SHORT_REPLACE = (
