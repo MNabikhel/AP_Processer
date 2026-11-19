@@ -460,7 +460,8 @@ CHECKS: dict[str, CheckHelp] = {
         "Settings → JD Edwards E1 → Accounts AP posts to names the companies in the pilot, and this invoice is for "
         "another one. It is held: no approval, single, bulk, touchless or second, can pass it, and Approve anyway "
         "does not cover it.",
-        "If the company is wrong, pick the right one in the Company box. If this company should be in the pilot, "
+        "If the company is wrong, pick the right one in the Company box (without JD Edwards' companies loaded, every "
+        "invoice is the company of Settings → JD Edwards E1: set it there). If this company should be in the pilot, "
         "someone who may change the settings adds it to Companies in the pilot (the change is kept in the activity "
         "log); else reject the invoice here and process it in JD Edwards as before.",
     ),

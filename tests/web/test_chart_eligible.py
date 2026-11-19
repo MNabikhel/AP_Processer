@@ -232,3 +232,24 @@ def test_an_invoice_outside_the_pilot_is_never_touchless_nor_left_out_of_a_perso
     found = [{"severity": "error", "code": "COMPANY_NOT_IN_PILOT"}]
     assert touchless_gates(found) == ["its company is not in the pilot"]
     assert needs_a_person("error", "COMPANY_NOT_IN_PILOT") and needs_a_person("error", "BU_NOT_IN_UNITS_REPORT")
+
+
+def test_with_one_company_an_invoice_is_held_when_settings_company_is_not_in_the_pilot(
+    chart_company, chart_company_client, monkeypatch
+):
+    """B-2683: without JD Edwards' companies (report 9 not loaded yet, or one company), every voucher is keyed under
+    Settings → JD Edwards E1's company, and the pilot was never asked of it: with 00310 alone in the pilot, the
+    made-up company's invoice (Settings' company 00210) was approved in one click over a warning, outside the pilot.
+    It is held as with several companies, whoever approves it; the company added to the pilot, it is approved."""
+    store, client = chart_company.store, chart_company_client
+    page, _courier = _one_line(chart_company, client)
+    _pilot(store, client, "310")
+    assert not page.check()["allow"] and "COMPANY_NOT_IN_PILOT" in page.findings
+    said = page.findings["COMPANY_NOT_IN_PILOT"]
+    assert "Company 00210 is not in the pilot" in said and "Settings → JD Edwards E1" in said
+    assert page.approve(anyway="it is ours")["ok"] is False and store.get_invoice(page.id)["status"] == REVIEW
+    result = bulk_approve(store, store.reference_data(), web_settings(), [page.id], "Sam")
+    assert result["approved"] == [] and store.get_invoice(page.id)["status"] == REVIEW
+    _pilot(store, client, "00210, 00310")
+    assert page.check()["allow"] and page.approve()["ok"] is not False
+    assert store.get_invoice(page.id)["status"] == APPROVED

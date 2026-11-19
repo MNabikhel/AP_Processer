@@ -294,6 +294,10 @@ def finalise_coding(
         from ..erp import jde_accounts, jde_review, jde_settings
 
         js = jde_settings.load(store) if jde_settings.in_use(store) else None
+        if js is not None and decision is None:  # fewer than two companies: every voucher is Settings' (B-2683)
+            outside = companies.pilot_finding(store, js.company_code, settings_company=True)
+            if outside is not None:
+                company_said.append(outside)
     remarks_typed = js is not None and js.remarks == jde_settings.REMARKS_TYPED
     fill_remarks(coding, store, reference, wanted=reference.pairs is not None or remarks_typed)
     posting_edits.fill(coding, store, reference, exclude_invoice_id)  # an account's subledger or units (D-268)
