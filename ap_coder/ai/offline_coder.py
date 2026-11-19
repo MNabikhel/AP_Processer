@@ -723,7 +723,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     the evidence is strong enough (``Suggestion.auto``); the others stay UNASSIGNED and the review screen suggests
     accounts for them. The weak match of each line left blank is kept in ``CodingResult.hints`` (its place on the
     invoice, from 1 -> account), for the chat model's answer to be compared with (``pipeline._local_accounts``)."""
-    values, progress = _progress_values(_values(capture), layout)  # a progress billing's own (D-273)
+    values, progress = _progress_values(_values(capture), layout)  # a progress billing's own (D-274)
     vendor = str(values.get("vendor_name") or "")
     readings = [li for li in capture.line_items if li.amount is not None]
     # No subtotal found: the lines read are the subtotal (not a charge that cancels them all).
@@ -994,7 +994,7 @@ def local_extraction(path: str | Path, layout: DocLayout | None = None) -> Extra
     ocr_conf = [w.conf for w in words if w.source == "ocr"]
     content = f"\n\n{PAGE_BREAK}\n\n".join("\n".join(line.text for line in page.lines) for page in layout.pages)
     return ExtractionResult(
-        progress=read_progress(layout_rows(layout)),  # a progress billing's amounts (D-273)
+        progress=read_progress(layout_rows(layout)),  # a progress billing's amounts (D-274)
         source=str(path),
         model_id=f"local-{layout.source}",
         content=content,

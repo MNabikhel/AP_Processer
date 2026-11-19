@@ -414,26 +414,40 @@ def po_lines_billed(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str
         description, price = li.get("description", ""), li.get("unit_price")
         key = (description, price) if matched is not None else None
         try:
-            if key is not None and key in matched:  # type: ignore[operator]
-                out.append(matched[key])  # type: ignore[index]
-                continue
+            found = matched[key] if key is not None and key in matched else _UNKNOWN  # type: ignore[index,operator]
         except TypeError:  # (a description or price that can't be a key: worked out each time)
-            key = None
-        found = _po_line(description, po_lines, lambda _, pl, price=price: _same_price(
-            float(price or 0), float(pl.get("unit_price") or 0)))  # fmt: skip
-        if key is not None:
-            matched[key] = found  # type: ignore[index]
-        out.append(found if found is not None else _by_amount(li, po_lines))
+            key, found = None, _UNKNOWN
+        if found is _UNKNOWN:
+            found = _po_line(description, po_lines, lambda _, pl, price=price: _same_price(
+                float(price or 0), float(pl.get("unit_price") or 0)))  # fmt: skip
+            if key is not None:
+                matched[key] = found  # type: ignore[index]
+        out.append(found if found is not None or not _retains(po_lines, matched) else _by_amount(li, po_lines))
     return out
+
+
+_UNKNOWN: Any = object()  # (a line's PO line not worked out yet)
+_RETAINS = ("retains",)  # ``matched``'s entry of whether the PO's lines hold back a percent (its other keys are pairs)
+
+
+def _retains(po_lines: list[dict[str, Any]], matched: dict[Any, int | None] | None) -> bool:
+    """Whether a line of the PO holds back a retainage percent (a subcontract's, D-273): asked of its lines once for
+    all the invoices billing it (kept in ``matched``)."""
+    if matched is not None and _RETAINS in matched:
+        return bool(matched[_RETAINS])
+    found = any(pl.get("retainage") for pl in po_lines)
+    if matched is not None:
+        matched[_RETAINS] = int(found)
+    return found
 
 
 def _by_amount(li: dict[str, Any], po_lines: list[dict[str, Any]]) -> int | None:
     """The line of a subcontract (its lines holding back a retainage percent, D-273) that an invoice line resembling
     none of them bills by its amount: the subcontract's only line, else the only one open for as much (its open
-    amount, else its amount, 2% over allowed); None for any other PO, a charge or a credit, or none or several
-    lines open for it (never guessed)."""
+    amount, else its amount, 2% over allowed); None for a charge or a credit, or none or several lines open for it
+    (never guessed)."""
     amount = float(li.get("amount") or 0)
-    if amount <= 0 or is_charge(str(li.get("description") or "")) or not any(pl.get("retainage") for pl in po_lines):
+    if amount <= 0 or is_charge(str(li.get("description") or "")):
         return None
     if len(po_lines) == 1:
         return int(po_lines[0]["line_number"])
@@ -1032,9 +1046,11 @@ def _share_texts(rows: Iterable[dict[str, Any] | None], texts: dict[str, str]) -
                 lines[n] = {shared(k): shared(v) for k, v in li.items()}  # type: ignore[index]
 
 
-def _matched_to(po: dict[str, Any]) -> tuple[tuple[Any, Any, Any], ...]:
-    """What matching an invoice's lines to ``po``'s reads of each of its lines (``_po_line``), in order."""
-    return tuple((pl.get("description", ""), pl.get("unit_price"), pl.get("line_number")) for pl in po["lines"])
+def _matched_to(po: dict[str, Any]) -> tuple[tuple[Any, Any, Any, Any], ...]:
+    """What matching an invoice's lines to ``po``'s reads of each of its lines (``_po_line``; ``_retains``), in
+    order."""
+    return tuple((pl.get("description", ""), pl.get("unit_price"), pl.get("line_number"), pl.get("retainage"))
+                 for pl in po["lines"])  # fmt: skip
 
 
 def po_billing(store: Store, key: str, po: dict[str, Any]) -> PoBilling:

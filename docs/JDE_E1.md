@@ -299,6 +299,21 @@ that the area does not hold (a GST-only area) is a line of its own on the PO lin
 has no line for (freight, a fuel surcharge) is held, or a line of its own on the account of *Charges not on the
 purchase order*. What can't be keyed so is on the "Not ready" sheet with why.
 
+**Subcontracts' progress billings** (order type OS, D-273, D-274; off until the JD Edwards team confirms them:
+*Subcontract progress billings* in Settings). Report 6 (F4311) is queried for OP and OS, with each line's retainage
+percent (*Retainage %*, PDPCRT, Percent - Retainage; also read as "Retention %", "Holdback %", PCRT; never the
+Retainage Rule PDRTNR, a code). A progress billing (a G702-style application for payment, or an invoice with "Less
+holdback 10%" under its subtotal) is read for its work this period, before and to date, its holdback and its amount
+due; its line bills the subcontract's line it resembles, else the only one open for its amount (a lump sum, matched
+by amount: Quantity Matched empty). Each row's **Retained Amount** is the holdback the invoice prints (its line's
+percent of the amount matched when they agree; a holdback other than the subcontract's percent is warned, with what
+the subcontract's would retain), and the check line is *amounts matched − retained + the tax on the rows = the amount
+due*. The tax is worked out on the whole amount matched (the holdback in it, as most Canadian billings charge the
+GST) or on it less the retained, as Voucher Match's Retainage tab says (*Tax on a subcontract row that retains a
+holdback*); a billing charged the other way is held, so is a **holdback release** (it pays out a retainage JD Edwards
+releases itself) and any billing holding back while the setting is off. The work billed before is compared with
+what JD Edwards had vouchered on the lines (and AP Coder's invoices not in it yet): said when they differ.
+
 ### PO numbers longer than 8 characters
 
 VLPO holds 8 characters, and vendors often print longer POs (`4500078813`, `MNT-2026-028`). Sent as a

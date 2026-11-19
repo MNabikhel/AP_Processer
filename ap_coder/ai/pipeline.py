@@ -221,7 +221,7 @@ def duplicates_known(store: Store, others: list[int], invoice_id: int | None) ->
 
 
 def _progress_billing(extraction: ExtractionResult | None) -> dict[str, Any]:
-    """What is kept beside the coding of a progress billing: its amounts as printed (D-273); nothing for another."""
+    """What is kept beside the coding of a progress billing: its amounts as printed (D-274); nothing for another."""
     return {PROGRESS_BILLING: extraction.progress} if extraction is not None and extraction.progress else {}
 
 

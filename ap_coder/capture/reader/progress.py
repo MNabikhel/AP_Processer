@@ -1,5 +1,5 @@
 # ruff: noqa: E501  (label tables read best one per line)
-"""A progress billing (D-273): a contractor's application for payment on a subcontract, read from the page's lines by
+"""A progress billing (D-274): a contractor's application for payment on a subcontract, read from the page's lines by
 their labels: the work completed to date, the work billed before, the work this period, the holdback taken off it
 (and its percent), the taxes, the total before the holdback and the amount due; and whether it releases a holdback
 held before. Each amount is the last printed on its label's row of the page ("6. Less holdback 10%   (7,500.00)",
