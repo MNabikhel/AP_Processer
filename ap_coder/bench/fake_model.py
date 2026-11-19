@@ -7,7 +7,8 @@ It answers every route AP Coder calls: OpenAI's ``/v1/models``, ``/v1/chat/compl
 OvisOCR2 gets a transcription (``page_texts``, by the SHA-256 of the image, else ``page_text``); the GL question one
 account a line from its schema; the header question the fields of its schema (``headers``, by the SHA-256 of its
 first image, else ``header``); the AI reviewer's question agreement, disagreement or doubt (``reviewer``), and its
-question for corrections (``correct``, D-263) none (a subclass or ``on_request`` gives some).
+question for corrections (``correct``, D-263) none (a subclass or ``on_request`` gives some). A request whose body
+never came whole (its client went away while sending it) is noted as ``cut`` and dropped, as no model saw it.
 
 How the model machine behaves, given when it starts or changed while it runs (``set``, or ``POST /__fake/set`` with
 the same names in JSON):
@@ -461,13 +462,22 @@ class FakeModel:
     def _handle(self, h: BaseHTTPRequestHandler, method: str) -> None:
         path = h.path.split("?", 1)[0]
         body: dict[str, Any] = {}
+        cut = False
         if method == "POST":
             try:
-                raw = h.rfile.read(int(h.headers.get("Content-Length") or 0))
+                length = int(h.headers.get("Content-Length") or 0)
+                raw = h.rfile.read(length)
+                cut = len(raw) < length
                 found = json.loads(raw or b"{}")
                 body = found if isinstance(found, dict) else {}
-            except (ValueError, OSError):
+            except OSError:
+                cut = True
+            except ValueError:
                 body = {}
+            if cut:  # its client went away while it sent it (AP Coder shut down): no request a model saw (B-2651)
+                self._note(method, path, "cut", {}, [])
+                self._drop(h)
+                return
         if path.startswith(CONTROL):
             self._control(h, method, path, body)
             return
