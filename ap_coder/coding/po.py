@@ -186,6 +186,8 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
                     ("foreign_open_amount", opened),
                 )
             )
+        if amount is None and not qty and not price and opened is not None:  # (JD Edwards keeps 0, not blank, B-2660)
+            qty = price = None
         if qty is None and price is None and amount is None:  # (JD Edwards' order details: what is left to receive)
             amount = opened
         if amount:  # an ERP writes 0 rather than blank for the quantity and price of a lump-sum line

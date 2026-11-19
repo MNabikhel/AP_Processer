@@ -1194,3 +1194,29 @@ def test_an_account_in_another_format_is_read_from_its_cost_center_object_and_su
     rows, skipped = po_mod.rows_from_records(records, po_mod.map_columns(head))
     assert skipped == 0 and [(r["cost_center"], r["gl_code"]) for r in rows] == [
         ("21061010", "7200.01"), ("21061010", "7210"), ("0021061010", "7410")]  # fmt: skip
+
+
+def test_a_lump_sum_line_jd_edwards_exports_with_a_quantity_and_cost_of_0_is_matched_by_its_open_amount(tmp_path):
+    """B-2660: JD Edwards keeps 0, never blank, for the quantity and unit cost of a PO line entered as an amount (a
+    service, a lump sum), and Open Order Inquiry's export gives it so with its Amount Open alone. The line was read as
+    0 ordered at $0.00: its invoice was warned over the PO price (+100%), over the quantity ordered and over the PO
+    total, and its voucher match row "1 matched, but JD Edwards had 0 open". It is a line of an amount, its open one."""
+    from tests.pdfs import ONE_ROW_PO
+
+    head = ["Order Number", "Or Ty", "Order Co", "Line Number", "Address Number", "Description", "Quantity Ordered",
+            "Quantity Open", "Amount Open", "Unit Cost", "UM", "Account Number", "Cur Cod"]  # fmt: skip
+    records = [dict(zip(head, row, strict=True)) for row in (
+        [ONE_ROW_PO, "OP", "00210", 12.0, 4471001, "LUNCH COOLER BAG NON-WOVEN 2C", 100, 100, 599.0, 5.99, "EA",
+         "0312005561.6420.2210", "CAD"],
+        [ONE_ROW_PO, "OP", "00210", 13.0, 4471001, "COOLER BAG SETUP", 0, 0, 57.5, 0, "", "0312005561.6420.2210",
+         "CAD"],
+        [ONE_ROW_PO, "OP", "00210", 14.0, 4471001, "DELIVERY CHARGE", 1, 1, 32.0, 32.0, "EA", "0312005561.6420.2210",
+         "CAD"])]  # fmt: skip
+    rows, _ = rows_from_records(records, map_columns(head))
+    assert [(r["quantity"], r["unit_price"], r["amount"], r["amount_only"]) for r in rows][1] == (1.0, 57.5, 57.5, True)
+    store = Store(tmp_path / "ap.db")
+    store.import_purchase_orders(rows)
+    match = match_invoice(_freight_invoice(), store)
+    assert [f[1] for f in match.findings] == ["PO_MATCHED"], match.findings
+    matched = po_mod.voucher_match(match, ONE_ROW_PO)
+    assert [(r.line, r.quantity, r.amount, r.no_quantity) for r in matched.rows][1] == ("13.000", 1, 57.5, True)
