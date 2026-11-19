@@ -66,3 +66,15 @@ def test_the_two_lists_are_worked_out_by_sqlite_as_from_the_rows(loaded, setting
 
     with loaded._conn() as conn:
         assert _lists(conn, settings) == chart.account_lists(_chart().rows, _units().rows, settings)
+
+
+def test_a_search_finds_the_accounts_offered_past_a_thousand_that_are_not(tmp_path):
+    """B-2652: the Account box's search read the first 1,000 accounts matching the words (50 x 20) and kept those
+    offered: a group's chart is half accounts AP does not post to (titles, budget, inactive), so a word they share
+    found nothing offered past them. What may be posted to is asked of SQLite with the words."""
+    from ap_coder.core.chart import ChartRow
+
+    store = Store(tmp_path / "ap.db")
+    titles = [ChartRow(f"1{n:05d}", "5110", "", "Widget costs", 5, "N") for n in range(1100)]
+    store.import_chart([*titles, ChartRow("200000", "5110", "", "Widget costs", 6, "")])
+    assert [row[0] for row in store.account_pairs().search("widget")] == ["200000.5110"]
