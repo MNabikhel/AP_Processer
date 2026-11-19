@@ -285,8 +285,9 @@ class IndexedPairs:
         clauses, params = [], []
         for word in words:
             if any(c.isdigit() for c in word):
-                clauses.append("(bu LIKE ? OR object LIKE ? OR subsidiary LIKE ?)")
-                params += [f"{word}%"] * 3
+                clauses.append("(bu LIKE ? OR object LIKE ? OR subsidiary LIKE ? OR object || subsidiary LIKE ? OR "
+                               "bu || object || subsidiary LIKE ?)")  # (typed without its dots: "14509309")
+                params += [f"{word}%"] * 5
             else:
                 named = sorted(bu for bu, name in names.items() if word in name.upper())[:500]
                 marks = ", ".join("?" * len(named)) or "''"

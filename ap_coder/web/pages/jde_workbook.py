@@ -5,9 +5,10 @@ Each sheet is told by its column names (``import_specs.workbook_report``: its he
 read a row at a time within the workbook reader's bounds (``core/chart_file``). The page shows, before anything is
 kept, each sheet with the report it was recognised as, its rows (and how many of each company), the columns found
 and the ones missing (``look``); a sheet that is none of the reports is listed and never guessed at, and two sheets of
-a report that is replaced whole (the chart, the business units, the payment terms, the tax areas) are both left out,
-said. Several sheets of a report that adds up (the supplier ledger, the G/L lines, the PO lines, split by company or
-year) are loaded one after the other, an overlap counted once.
+a report that is replaced whole (the payment terms, the tax areas, the companies) are both left out, said. Several
+sheets of a report that adds up (the supplier ledger, the G/L lines, the PO lines, split by company or year) are
+loaded one after the other, an overlap counted once; so are the chart's and the business units' split by company
+(each replaces its companies' rows, D-267: a company in two of them leaves both out).
 
 "Load all" loads every sheet that can be, in the order the cards depend on each other (``ORDER``), through each card's
 own loader (``jde_files``, ``ops/chart_cmd``, ``ops/journal_cmd``); a sheet that cannot be loaded is said, and the
