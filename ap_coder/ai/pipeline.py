@@ -205,8 +205,8 @@ def discover_inputs(paths: list[str | Path]) -> list[Path]:
 def duplicates_known(store: Store, others: list[int], invoice_id: int | None) -> list[dict[str, Any]]:
     """What DUPLICATE_INVOICE says of each other invoice with this vendor and invoice number
     (``validation.duplicate_message``): whether it was received before this one (``invoice_id``; None: this one is
-    coming in now), where it stands, when it was approved, and its company ("" for none decided, D-270). Read as the checks run, so each of a pair says the
-    other's state as its screen is drawn (B-2101)."""
+    coming in now), where it stands, when it was approved, and its company ("" for none decided, D-270). Read as the
+    checks run, so each of a pair says the other's state as its screen is drawn (B-2101)."""
     from ..core.store import APPROVED
 
     known = []

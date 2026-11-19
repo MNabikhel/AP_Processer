@@ -300,7 +300,7 @@
       {% if posting.control %}<p>From the past invoice coding (the payable and tax lines JD Edwards adds; change them on <a href="/learning">Learning</a>):
         {% for c in posting.control %}<span class="apc-pill">{{ c.object }} · {{ c.said }}</span> {% endfor %}</p>
       {% else %}<p class="muted">The payable and tax objects come from the past invoice coding once it is loaded (Learning).</p>{% endif %}
-      <label class="field">Other control accounts and accounts never offered: an object (2150 retainage payable), object.subsidiary, or business unit.object.subsidiary (commas between; * stands for any characters, so *.7701 is that subsidiary of any object)
+      <label class="field">Other control accounts (retainage payable, for example) and accounts never offered: an object, object.subsidiary, or business unit.object.subsidiary (commas between; * stands for any characters, so *.7701 is that subsidiary of any object)
         <input type="text" name="never_offered" value="{{ posting.never_offered }}" autocomplete="off" spellcheck="false"></label>
     </fieldset>
     <div class="row"><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save the accounts AP posts to</button></div>
