@@ -20,7 +20,7 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-from ..keys import po_key
+from ..keys import order_key, po_key
 from ..memory import AUTONOMOUS_REVIEWER, CODED, CORRECTED, VENDOR_KEY_RULES, vendor_key
 from ..reference_data import UNASSIGNED
 from . import dialect
@@ -228,6 +228,26 @@ def _v31_po_jde(store: Any, conn: sqlite3.Connection) -> None:
                                 ("po_lines", "tax_area", "TEXT NOT NULL DEFAULT ''")):  # fmt: skip
         if column not in dialect.columns(conn, table):
             dialect.add_column(conn, table, column, kind)
+
+
+def _v32_order_keys(store: Any, conn: sqlite3.Connection) -> None:
+    """A purchase order is its company, order type and number (D-267): each PO keeps its number as people mean it
+    (``number_key``), and one its file gave a type or company for is kept again, lines and all, under its identity
+    (``keys.order_key``); one without either keeps its key, its number."""
+    if "number_key" not in dialect.columns(conn, "purchase_orders"):
+        dialect.add_column(conn, "purchase_orders", "number_key", "TEXT NOT NULL DEFAULT ''")
+    rows = conn.execute("SELECT po_key, po_number, order_type, order_company FROM purchase_orders").fetchall()
+    for key, number, kind, company in rows:
+        identity = order_key(number, kind, company) or key
+        if identity != key:
+            conn.execute("UPDATE po_lines SET po_key = ? WHERE po_key = ?", (identity, key))
+        conn.execute("UPDATE purchase_orders SET po_key = ?, number_key = ? WHERE po_key = ?",
+                     (identity, po_key(number) or key, key))  # fmt: skip
+
+
+def _order_number_index(store: Any, conn: sqlite3.Connection) -> None:
+    """The purchase orders by their number (its column: the step to 32): every order an invoice's PO number may be."""
+    conn.execute("CREATE INDEX IF NOT EXISTS purchase_orders_number ON purchase_orders (number_key)")
 
 
 # --- The steps whatever the version ---------------------------------------------------------------------------------
@@ -509,6 +529,8 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (28, _v28_journal_dates),
     (30, _v30_po_currency),
     (31, _v31_po_jde),
+    (32, _v32_order_keys),
+    (EVERY_TIME, _order_number_index),
 )
 MIGRATIONS: dict[int, Step] = {number: step for number, step in STEPS if number is not EVERY_TIME}
 

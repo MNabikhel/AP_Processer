@@ -1162,7 +1162,9 @@ def test_the_voucher_match_names_each_po_line_and_guesses_none(tmp_path):
     assert po_mod.voucher_match(None, "40918").held == [
         "PO 40918 is not in the purchase orders loaded: load its open lines from JD Edwards (Purchase orders), then "
         "make the keying sheet again"]  # fmt: skip
-    store.import_purchase_orders([{**r, "erp_line": ""} for r in rows_from_records(
+    # (the same order, D-267: its company and type, loaded again without JD Edwards' line numbers)
+    store.import_purchase_orders([{**r, "erp_line": "", "order_type": "OP", "order_company": "00210"}
+                                  for r in rows_from_records(
         [{"po": ONE_ROW_PO, "desc": "LUNCH COOLER BAG NON-WOVEN 2C", "qty": 100, "price": 5.99}],
         map_columns(["po", "desc", "qty", "price"]))[0]])  # fmt: skip
     one = _freight_invoice()

@@ -437,6 +437,14 @@ CHECKS: dict[str, CheckHelp] = {
         "The invoice quotes a purchase order that is not in the Purchase orders list.",
         "Check the PO number for typos, or import the latest open POs from the ERP.",
     ),
+    "PO_AMBIGUOUS": CheckHelp(
+        PO, "PO number of several orders",
+        "The PO number on the invoice is the number of more than one purchase order (two companies, or two order "
+        "types, use the same number) and neither its supplier nor its company tells which one it bills. AP Coder "
+        "never guesses: it is not matched to either, and never approved without a person.",
+        "Pick the invoice's company on the review screen; if both orders are in that company, ask the buyer which "
+        "one it bills.",
+    ),
     "PO_CLOSED": CheckHelp(
         PO, "PO is closed",
         "The purchase order quoted on the invoice has been closed.",

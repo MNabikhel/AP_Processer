@@ -1539,6 +1539,7 @@ ALWAYS_A_PERSON: dict[str, str] = {
     **dict.fromkeys(
         (
             "PO_UNKNOWN",
+            "PO_AMBIGUOUS",
             "PO_CLOSED",
             "PO_VENDOR_MISMATCH",
             "PO_LINE_NOT_ON_PO",

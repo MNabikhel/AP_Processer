@@ -538,6 +538,9 @@ class InvoiceCoding(BaseModel):
     original_invoice_number: str = ""
     remit_bank_account: str = ""  # the vendor's banking details as printed: evidence for the fraud check, never paid to
     pay_from_account: str = ""  # the code of OUR bank account it is paid from (coding/banks.py, D-66)
+    # The JD Edwards company it is ours under ("00210"), with several companies (D-267): AP Coder's answer
+    # (``coding/company.py``) or a person's pick; "" when none is decided (one company: always).
+    company: str = ""
     subtotal: float
     tax_lines: list[TaxLine] = Field(default_factory=list)
     tax_total: float
@@ -599,9 +602,11 @@ class InvoiceCoding(BaseModel):
         return province_code(value)
 
     def to_output(self) -> dict[str, Any]:
-        """The target schema; ``pay_from_account`` only when one is chosen (it is ours, not read from the invoice:
-        an invoice coded without bank accounts set up keeps the target schema exactly, D-66)."""
+        """The target schema; ``pay_from_account`` and ``company`` only when one is chosen (they are ours, not read
+        from the invoice: an invoice coded without bank accounts or several companies keeps the target schema exactly,
+        D-66, D-267)."""
         out = self.model_dump()
-        if not out.get("pay_from_account"):
-            out.pop("pay_from_account", None)
+        for name in ("pay_from_account", "company"):  # (ours, only when chosen: D-66, D-267)
+            if not out.get(name):
+                out.pop(name, None)
         return out

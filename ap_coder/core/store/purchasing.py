@@ -10,8 +10,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
-from ...coding.po import CLOSED, OPEN, positive_lines
-from ..keys import po_key
+from ...coding.po import CLOSED, OPEN, pick_order, positive_lines
+from ..keys import company_code, order_key_of, po_key
 from ..memory import vendor_key
 from . import dialect
 from ._base import (
@@ -84,6 +84,19 @@ BILLING_FORMAT = "billing-2"
 # decoded at once).
 _KEPT_FACTS = f"SELECT vendor_key, id, facts FROM billing_facts WHERE {dialect.in_list('vendor_key')}"
 _STAMP = "SELECT kept, logged, counted FROM billing_vendors WHERE vendor_key = ?"
+
+
+# What ``po.pick_order`` reads of each order of a number (D-267).
+_ORDERS = (
+    "SELECT po_key, number_key, po_number, vendor_name, vendor_key, supplier_number, order_type, "
+    "order_company, status, currency FROM purchase_orders"
+)
+# The company each of these invoices (a JSON list of ids) is coded to (its coding's, the approved one else AP Coder's).
+_COMPANIES = f"""
+SELECT id, CASE WHEN {dialect.json_valid("doc")} THEN json_extract(doc, '$.company') END FROM
+(SELECT id, COALESCE(NULLIF(final_output, ''), NULLIF(ai_output, ''), '{{}}') AS doc FROM invoices
+ WHERE {_in_list("id")})
+"""
 
 
 @dataclass
@@ -163,7 +176,7 @@ class PurchasingMixin:
         ``log``: the import's event (the JD Edwards sync logs one for all its pages, D-181)."""
         orders: dict[str, dict[str, Any]] = {}
         for row in rows:
-            key = po_key(row["po_number"])
+            key = order_key_of(row)  # (the same number in two companies: two orders, D-267)
             if not key:
                 continue
             order = orders.setdefault(key, {"row": row, "lines": []})
@@ -192,14 +205,16 @@ class PurchasingMixin:
                 name = head.get("vendor_name") or named.get(supplier) or ""
                 conn.execute(
                     """INSERT INTO purchase_orders (po_key, po_number, vendor_name, vendor_key, status, updated_at,
-                       currency, order_type, order_company, supplier_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       currency, order_type, order_company, supplier_number, number_key)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(po_key) DO UPDATE SET
                        po_number = excluded.po_number, vendor_name = excluded.vendor_name,
                        vendor_key = excluded.vendor_key, status = excluded.status, updated_at = excluded.updated_at,
                        currency = excluded.currency, order_type = excluded.order_type,
-                       order_company = excluded.order_company, supplier_number = excluded.supplier_number""",
-                    (key, head["po_number"], name, vendor_key(name), status, now, currency, order_type, company,
-                     supplier),
+                       order_company = excluded.order_company, supplier_number = excluded.supplier_number,
+                       number_key = excluded.number_key""",
+                    (key, head["po_number"], name, vendor_key(name), status, now, currency, order_type,
+                     company_code(company), supplier, po_key(head["po_number"])),
                 )  # fmt: skip
                 conn.execute("DELETE FROM po_lines WHERE po_key = ?", (key,))
                 used: set[int] = set()
@@ -240,11 +255,15 @@ class PurchasingMixin:
             return int(conn.execute("SELECT COUNT(*) FROM purchase_orders WHERE status = 'open'").fetchone()[0])
 
     def purchase_order(self, key: str) -> dict[str, Any] | None:
-        """One PO with its lines and total (``key`` is ``po.po_key``)."""
+        """One PO with its lines and total (``key``: its ``keys.order_key``, or its number as people mean it when that
+        is one order's alone, D-267)."""
         with self._conn() as conn:
             head = conn.execute("SELECT * FROM purchase_orders WHERE po_key = ?", (key,)).fetchone()
             if head is None:
-                return None
+                found = conn.execute("SELECT * FROM purchase_orders WHERE number_key = ? LIMIT 2", (key,)).fetchall()
+                if len(found) != 1:
+                    return None
+                head, key = found[0], found[0]["po_key"]
             lines = [
                 dict(r) for r in conn.execute("SELECT * FROM po_lines WHERE po_key = ? ORDER BY line_number", (key,))
             ]
@@ -266,6 +285,47 @@ class PurchasingMixin:
                 rows = lines.get(key, [])
                 found[key] = {**heads[key], "lines": rows, "total": round(sum(li["amount"] for li in rows), 2)}
         return found
+
+    def orders_numbered(self, number: str) -> list[dict[str, Any]]:
+        """The purchase orders (their heads) with this number as people mean it (``keys.po_key``), by key: one, or
+        several when two companies or order types share it (D-267)."""
+        with self._conn() as conn:
+            return fetch_rows(conn, f"{_ORDERS} WHERE number_key = ? ORDER BY po_key", (number,))
+
+    def _order_owners(self, conn: Any, rows: list[tuple[int, str, str]]) -> dict[int, str | None]:
+        """{invoice id: the order it bills (its key), None when its number is several orders' and none is the one
+        (``po.pick_order``: by its supplier, then its company)} of ``rows`` ((id, the number it quotes, its vendor
+        key)), those whose number is an order's; on ``conn``. One query for all the orders, and one for the companies
+        of the invoices whose number is shared."""
+        numbers = sorted({number for _, number, _ in rows if number})
+        if not numbers:
+            return {}
+        orders: dict[str, list[dict[str, Any]]] = {}
+        for order in fetch_rows(conn, f"{_ORDERS} WHERE {_in_list('number_key')} ORDER BY po_key",
+                                (json.dumps(numbers),)):  # fmt: skip
+            orders.setdefault(order["number_key"], []).append(order)
+        shared = [n for n, number, _ in rows if len(orders.get(number, ())) > 1]
+        companies = dict(conn.execute(_COMPANIES, (json.dumps(shared),)).fetchall()) if shared else {}
+        ids = self.vendor_ids() if shared else {}
+        owners: dict[int, str | None] = {}
+        for n, number, vendor in rows:
+            found = orders.get(number)
+            if found:
+                picked = pick_order(found, vendor, ids.get(vendor, ""), companies.get(n) or "")
+                owners[n] = picked["po_key"] if picked else None
+        return owners
+
+    def _billing_number(self, conn: Any, key: str) -> tuple[str, set[int] | None]:
+        """(the number invoices quote the order ``key`` by, the ids of those of them that bill it: None for all, its
+        number no other order's), on ``conn``."""
+        head = conn.execute("SELECT number_key FROM purchase_orders WHERE po_key = ?", (key,)).fetchone()
+        number = (head[0] if head else "") or key
+        if not head or conn.execute("SELECT COUNT(*) FROM purchase_orders WHERE number_key = ?",
+                                    (number,)).fetchone()[0] < 2:  # fmt: skip
+            return number, None
+        quoting = [tuple(r) for r in conn.execute("SELECT id, po_key, vendor_key FROM invoices WHERE po_key = ?",
+                                                  (number,))]  # fmt: skip
+        return number, {n for n, owner in self._order_owners(conn, quoting).items() if owner == key}
 
     def received_po_keys(self) -> list[str]:
         """The POs month-end accrues lines of (not closed, a line received), in ``purchase_orders``' order."""
@@ -325,12 +385,17 @@ class PurchasingMixin:
         ``summary_id``), from the invoices' summary in one read: most invoices, read in order, not by an index. Inside
         ``billing_moment``, which brings the summary up to date. What month-end reads of each: ``billing_lines``."""
         with self._conn() as conn:
+            numbers = [r[0] for r in conn.execute(f"SELECT DISTINCT number_key FROM purchase_orders WHERE "
+                                                  f"{_in_list('po_key')}", (json.dumps(po_keys),))]  # fmt: skip
             rows = [tuple(r) for r in conn.execute(
                 f"SELECT id, invoice_date, po_key, vendor_key FROM invoice_summary WHERE +status IN {_ACTIVE_IN} AND "
                 "(+po_key IN (SELECT value FROM json_each(?)) OR (+po_key = '' AND +vendor_key IN (SELECT value FROM "
                 "json_each(?)))) ORDER BY id",
-                (*ACTIVE_STATUSES, json.dumps(list(po_keys)), json.dumps([k for k in vendor_keys if k])),
+                (*ACTIVE_STATUSES, json.dumps(numbers), json.dumps([k for k in vendor_keys if k])),
             )]  # fmt: skip
+            # each by the order it bills (``po_key``: its key; None: its number several orders' and none the one)
+            owners = self._order_owners(conn, [(r[0], r[2], r[3]) for r in rows if r[2]])
+            rows = [(*r[:2], owners.get(r[0]), r[3]) if r[2] else r for r in rows]  # fmt: skip
             vendors = sorted({r[3] for r in rows if r[3] is not None})
             counts = dict(conn.execute(
                 "SELECT substr(key, 16), value FROM settings WHERE key IN (SELECT 'changes/vendor/' || value FROM "
@@ -455,18 +520,26 @@ class PurchasingMixin:
             billed: dict[str, dict[str, Any]] = {}
             ordered = {r["po_key"]: r["currency"] or "CAD" for r in rows}  # each PO's currency (none: CAD)
             self._summary_fresh(conn)  # each invoice's subtotal billed, from the invoices' summary (D-110)
-            for r in conn.execute(
-                "SELECT id, po_key, status, po_billed, broken, currency FROM invoice_summary WHERE po_key != '' AND "
-                "status IN "
+            quoting = fetch_rows(
+                conn,
+                "SELECT id, po_key, vendor_key, status, po_billed, broken, currency FROM invoice_summary WHERE "
+                "po_key != '' AND status IN "
                 + _ACTIVE_IN
-                + " AND po_key IN (SELECT po_key FROM purchase_orders) ORDER BY id",  # a PO we have
+                + " AND po_key IN (SELECT number_key FROM purchase_orders) ORDER BY id",  # a PO we have
                 ACTIVE_STATUSES,
-            ):
-                entry = billed.setdefault(r["po_key"], {"billed": 0.0, "invoices": 0, "in_review": 0,
-                                                        "other_currency": 0})  # fmt: skip
+            )
+            # The order each bills: its number's, or of a number several orders share, the one of its supplier and
+            # company (none: not counted on any, D-267).
+            owners = self._order_owners(conn, [(r["id"], r["po_key"], r["vendor_key"]) for r in quoting])
+            for r in quoting:
+                owner = owners.get(r["id"])
+                if owner not in ordered:
+                    continue
+                entry = billed.setdefault(owner, {"billed": 0.0, "invoices": 0, "in_review": 0,
+                                                  "other_currency": 0})  # fmt: skip
                 entry["invoices"] += 1
                 entry["in_review"] += r["status"] == REVIEW
-                if ((r["currency"] or "").strip().upper() or "CAD") != ordered[r["po_key"]]:
+                if ((r["currency"] or "").strip().upper() or "CAD") != ordered[owner]:
                     entry["other_currency"] += 1  # in another currency: never added to this one (B-2613)
                     continue
                 amount = r["po_billed"]
@@ -499,10 +572,11 @@ class PurchasingMixin:
         check of one of them (D-199). The match and the PO page keep a big PO's in each process (``po.po_billing``,
         D-202), brought up to date by ``po_invoices_since``."""
         with self._conn() as conn:
-            rows = conn.execute(_PO_INVOICES, (key, *ACTIVE_STATUSES)).fetchall()
+            quoted, owned = self._billing_number(conn, key)  # (its number another order's too: those billing it)
+            rows = conn.execute(_PO_INVOICES, (quoted, *ACTIVE_STATUSES)).fetchall()
         out = []
         for n, status, number, date, batch, facts, doc in rows:
-            if n == exclude_id:
+            if n == exclude_id or (owned is not None and n not in owned):
                 continue
             out.append(_po_row(n, status, number, date, batch, json.loads(facts) if doc is None else None, doc))
         return out
@@ -523,8 +597,9 @@ class PurchasingMixin:
             if conn.in_transaction:
                 return None
             with one_snapshot(conn):
-                summary_id, first, last, quoting = conn.execute(_PO_MOMENT, (key,)).fetchone()
-                quoting = sorted(json.loads(quoting))
+                quoted, owned = self._billing_number(conn, key)  # (its number another order's too, D-267)
+                summary_id, first, last, quoting = conn.execute(_PO_MOMENT, (quoted,)).fetchone()
+                quoting = sorted(n for n in json.loads(quoting) if owned is None or n in owned)
                 todo = quoting
                 if since is not None and since[0] == summary_id and since[1] >= (first or 1) - 1:
                     named, logged = set(), dict.fromkeys(since[2], 0)

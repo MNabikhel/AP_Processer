@@ -6522,3 +6522,14 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     guessed; two sheets of a report replaced whole (chart, business units, terms, tax areas) both left out, said.
     "Load all" loads in order: chart, business units, terms, tax areas, suppliers, ledger, past coding, PO lines, each
     through its card's loader; one that fails is said and the rest load.
+- **D-267** · **Every JD Edwards company at once: a PO is its number, type and company; duplicates, the invoice's
+  company and what follows from it are per company** (the pilot tester: a construction group of many companies,
+  Canadian and US).
+  - **A purchase order is its number, order type and order company** (`keys.order_key`: "00210-OP-4512"; a file that
+    names neither keeps the number as its key, as before). `purchase_orders.number_key` keeps the number as people
+    mean it (schema 32 keeps each JD Edwards PO loaded before under its identity, lines and all). The same number in
+    two companies is two orders whose lines never mix. An invoice quotes a number only: it bills the one order of
+    that number, else the one of its supplier (name or supplier number), else of those the one of its company
+    (`po.pick_order`); none of these giving one answer is `PO_AMBIGUOUS` (never approved without a person), matched
+    to neither and billing neither (the PO page's totals, the billing of each PO, month-end's accruals:
+    `Store._order_owners`). `Store.purchase_order` still takes a number that is one order's alone.
