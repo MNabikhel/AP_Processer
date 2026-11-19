@@ -6751,3 +6751,29 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     say later: the rules change as files are loaded, and a person may have picked it. A company not in report 9 is a
     warning (`US_TAX_NOT_CHECKED`), not an error: the pilot may name one (D-272). An invoice approved before report 9
     and not reopened is exported under Settings' company, as approved.
+- **D-275** · **A pilot day: the pilot tester's day, end to end through the app, on a made-up construction group,
+  scored against the truth each invoice should end at** (`python -m ap_coder.bench pilotday [--quick]`,
+  `bench/pilot_day.py`; the group's books `jde_group.construction_books`).
+  - **The group:** seven companies (three Canadian ones in Alberta, British Columbia and Ontario, two US ones, a USD
+    company whose address says CA, one with no country), five in the pilot; 42 business units, two closed jobs a
+    company; a chart of 602 accounts with every kind of posting edit code (L and U posted to, Z and Q undecided);
+    26 suppliers, one an old "(DNU)" record of another, one a company of the group; a year of vouchers (the ledger and
+    the past coding, the GST lines kept, subledgers and units on the L and U accounts); 12 open orders of each PO
+    supplier in each of its companies, a freight line on two in three, subledgers on the equipment rentals.
+  - **Loading as the guide says**, in a new laptop data folder (`web.core.first_run`): one master workbook of the
+    build sheet's reports (report 9 titled as ReportsNow titles it by default, long titles wrapped over two lines, the
+    payment terms by JD Edwards' field names), *Load all*; the chart as ReportsNow's Unicode text (UTF-16 with its byte
+    order mark, quotation marks in descriptions, business units right-aligned) by `chart import --chart`; the settings
+    on their pages: the province and the companies' names, PO-matched vouchers, the companies in the pilot, the tax
+    areas (British Columbia's code C: the PST in the expense).
+  - **The day:** 200 invoices (35 with `--quick`) in 24 categories (`CATEGORIES`), 10% scans, chosen 25 at a time on
+    Add invoices; the stand-in LM Studio proposes no account, so what is proposed is AP Coder's own (the past coding,
+    the POs). Each measure per category: the company, the supplier's number, the PO lines matched, the accounts (a
+    wrong one, a closed job, or none where the history or the PO is sure is a miss; none where a person picks is
+    not), the taxes read (the GST and the HST as one: what is recovered), the findings that must and must not appear,
+    Approve open or held as it arrives; then a person's work (blanks filled as the truth says, the company picked, the
+    copies and the bills already in JD Edwards rejected), approved through the routes, and the keying sheet's voucher
+    (supplier, company, gross, tax area and amount, each G/L line or each PO line matched). Every miss is listed.
+  - **Why a bench:** the misses are small things that show only together, on a group's data; each real one is then
+    pinned by a test (B-2720, B-2721). The same seed and day give the same invoices (dated the days before today);
+    `--quick` takes under a minute, a full run 4 to 5 minutes on a shared 4-core machine.

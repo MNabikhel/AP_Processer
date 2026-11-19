@@ -259,3 +259,30 @@ def test_a_pay_item_listed_twice_counts_once_and_its_extension_tells_another():
     rows, read = registers.vouchers_from_pay_items(listed, registers.voucher_columns(columns), {})
     assert [r["total"] for r in rows] == [14.00] and read["repeated"] == 1
     assert "1 pay item listed twice (counted once)" in registers.vouchers_said(read)
+
+
+def test_a_us_companys_vouchers_in_its_own_currency_are_not_said_kept_in_canadian_dollars(tmp_path):
+    """B-2722: with JD Edwards' companies loaded (report 9, D-267), a US company's vouchers are in US dollars, their
+    gross its domestic amount; the voucher list said each was "kept at its gross amount in Canadian dollars: it will
+    not match an invoice's USD total", which it does (its duplicate is found). Only a voucher in another currency than
+    its company's own, with no foreign amount, is said so."""
+    import json
+
+    from ap_coder.coding import companies
+    from ap_coder.web.pages.exports import named_vouchers
+
+    store = Store(tmp_path / "a.db")
+    store.set_setting(companies.COMPANIES_SETTING, json.dumps({
+        "00210": {"name": "Maple Ridge Holdings Ltd.", "currency": "CAD", "country": "CA"},
+        "00310": {"name": "Maple Ridge Builders Inc.", "currency": "USD", "country": "US"}}))  # fmt: skip
+    head = ["Document Number", "Doc Type", "Doc Co", "Pay Item", "Supplier Number", "Supplier Number Desc",
+            "Invoice Number", "Gross Amount", "Curr Code"]  # fmt: skip
+    cascade = ("4420201", "CASCADE BEARING & DRIVE INC")
+    listed = [dict(zip(head, row, strict=True)) for row in (
+        ["700101", "PV", "00310", "001", *cascade, "CA-1", "1250.00", "USD"],
+        ["700102", "PV", "00310", "001", *cascade, "CA-2", "300.00", "USD"],
+        ["700103", "PV", "00210", "001", *cascade, "CA-3", "1700.00", "USD"])]  # fmt: skip
+    rows, read = named_vouchers(store, listed, registers.voucher_columns(head))
+    assert [r["total"] for r in rows] == [1250.0, 300.0, 1700.0]
+    assert read["domestic"] == {"USD": 1}, read["domestic"]
+    assert "1 voucher in USD kept at its gross amount in Canadian dollars" in registers.vouchers_said(read)

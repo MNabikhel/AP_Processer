@@ -15,6 +15,7 @@ import re
 from typing import Any
 
 from ..core.headers import jde_names, match_columns
+from ..core.keys import company_code
 from ..core.safe import parse_amount
 from ..core.ui import plural
 from .statements import day_first_order, read_date
@@ -108,7 +109,7 @@ def voucher_columns(headers: list[str]) -> dict[str, str]:
 
 
 def vouchers_from_pay_items(
-    records: list[dict[str, Any]], columns: dict[str, str], names: dict[str, str]
+    records: list[dict[str, Any]], columns: dict[str, str], names: dict[str, str], home: dict[str, str] | None = None
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """JD Edwards' voucher list (``voucher_columns``) as (the register's vouchers, what was read). The pay items of
     one voucher (the same document number, type and company) are one voucher: its gross is their sum (a negative
@@ -120,10 +121,12 @@ def vouchers_from_pay_items(
 
     What was read also says what the list could not tell (B-2165): ``by_supplier``, the list has no document company
     or type column, so a voucher is told by its document number and its supplier; ``domestic``, the vouchers in
-    another currency kept at their gross in Canadian dollars for want of a foreign amount. And what it covers
-    (B-2164): ``voided``, the keys of the vouchers it shows adding up to nothing; ``complete``, its totals row is the
-    sum of its rows (a file cut short has none, or one that is not); ``covers``, {"<company>-<type>-": (the first
-    G/L date of its rows, the last)}: the period it covers, when the person says the grid was not filtered."""
+    another currency than their company's own (``home``: {company: its currency}, JD Edwards' companies, D-267; else
+    Canadian dollars) kept at their gross for want of a foreign amount: a US company's in US dollars are at their own
+    (B-2722). And what it covers (B-2164): ``voided``, the keys of the vouchers it shows adding up to nothing;
+    ``complete``, its totals row is the sum of its rows (a file cut short has none, or one that is not); ``covers``,
+    {"<company>-<type>-": (the first G/L date of its rows, the last)}: the period it covers, when the person says the
+    grid was not filtered."""
     column = columns.get("invoice_date")
     order = day_first_order([str(rec.get(column) or "") for rec in records]) if column else None
     by_supplier = "company" not in columns or "doc_type" not in columns
@@ -168,7 +171,7 @@ def vouchers_from_pay_items(
         read["named"] += row.pop("named")
         if row.pop("in_foreign"):
             read["foreign"][row["currency"]] = read["foreign"].get(row["currency"], 0) + 1
-        elif row["currency"] not in ("", HOME_CURRENCY):
+        elif row["currency"] not in ("", (home or {}).get(company_code(key[0]) if key[0] else "", HOME_CURRENCY)):
             read["domestic"][row["currency"]] = read["domestic"].get(row["currency"], 0) + 1
         rows.append(row)
     return rows, read
