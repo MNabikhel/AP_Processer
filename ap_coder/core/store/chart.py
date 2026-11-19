@@ -11,15 +11,15 @@ the lists is set aside (``chart_set_aside``) and put back when the code is in th
 
 Which pairs exist and may be posted to (``account_pairs``) is built once for a chart and its settings, and kept with
 the reference data: ``accounts._REFERENCE_STAMP`` reads the settings, ``chart_version`` (the count of changes) and
-``chart_hash`` (what the two tables hold, written with them: another chart never passes for the one kept, B-2125).
+``chart_hash`` (a random mark written with each change: another chart never passes for the one kept, B-2125, D-272).
 A database with no chart imported has none: nothing of this is used.
 """
 
 from __future__ import annotations
 
-import hashlib
 import itertools
 import json
+import secrets
 import sqlite3
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
@@ -581,9 +581,12 @@ class ChartMixin:
                 conn.execute(f"DELETE FROM chart_accounts WHERE {scope} AND NOT EXISTS (SELECT 1 FROM temp.chart_load "
                              f"l WHERE {_SAME})")  # fmt: skip
                 sets = ", ".join(f"{c} = excluded.{c}" for c in CHART_COLUMNS[3:])
-                conn.execute(f"INSERT INTO chart_accounts ({', '.join(CHART_COLUMNS)}) SELECT "
-                             f"{', '.join(CHART_COLUMNS)} FROM temp.chart_load WHERE 1 ON CONFLICT (bu, object, "
-                             f"subsidiary) DO UPDATE SET {sets}")  # fmt: skip
+                differs = " OR ".join(f"c.{col} IS NOT l.{col}" for col in CHART_COLUMNS[3:])
+                conn.execute(f"INSERT INTO chart_accounts ({', '.join(CHART_COLUMNS)}) SELECT "  # (the new and changed)
+                             f"{', '.join('l.' + c for c in CHART_COLUMNS)} FROM temp.chart_load l LEFT JOIN "
+                             "chart_accounts c ON c.bu = l.bu AND c.object = l.object AND c.subsidiary = l.subsidiary "
+                             f"WHERE c.bu IS NULL OR {differs} ON CONFLICT (bu, object, subsidiary) DO UPDATE SET "
+                             f"{sets}")  # fmt: skip
             conn.execute("DROP TABLE temp.chart_load")
             _keep_parts(conn, staged, scope == "1")
             result["rows"] = _count(conn)
@@ -691,20 +694,17 @@ class ChartMixin:
 
     @staticmethod
     def _chart_stamped(conn: sqlite3.Connection) -> None:
-        """One more change to the chart (``chart_version``) and what its tables now hold (``chart_hash``): the
-        reference data and the checks are worked out again. An import's, a rebuild's, and a row changed by hand
-        (``by_hand``, which records its own event)."""
+        """One more change to the chart (``chart_version``) and a mark of it never written before (``chart_hash``):
+        the reference data and the checks are worked out again. An import's, a rebuild's, and a row changed by hand
+        (``by_hand``, which records its own event). The mark is random, not a hash of every row (D-272: 9 s of 3,500,000
+        accounts under the write lock): another chart, after a backup restored and the same count of changes, still
+        never passes for the one a process kept (B-2125)."""
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?, '1') "
             "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1",
             (VERSION_KEY,),
         )
-        held = hashlib.sha256()  # (a row at a time: a chart of millions is never held, D-267)
-        for row in conn.execute(f"SELECT {', '.join(CHART_COLUMNS)} FROM chart_accounts ORDER BY bu, object, "
-                                "subsidiary"):  # fmt: skip
-            held.update(repr(tuple(row)).encode("utf-8"))
-        held.update(repr(_units(conn)).encode("utf-8"))
-        _put(conn, HASH_KEY, held.hexdigest()[:20])
+        _put(conn, HASH_KEY, secrets.token_hex(10))
 
     def _rebuild_account_lists(self, conn: sqlite3.Connection, was: dict[str, tuple[str, str]],
                                given: tuple[dict[str, tuple[str, str]], dict[str, str]] | None = None

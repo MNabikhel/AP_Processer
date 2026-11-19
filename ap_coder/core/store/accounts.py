@@ -45,7 +45,7 @@ _REFERENCE: dict[str, tuple[tuple[Any, ...], ReferenceData]] = {}
 _REFERENCE_LOCK = threading.Lock()
 REFERENCE_KEPT, WITH_PAIRS_KEPT = 8, 2
 # Everything ``reference_data`` is built from, in one query: compared, it says whether the one kept still holds. The
-# chart of accounts' pairs (D-209) by the count of its changes, what its tables hold (``chart_hash``, written with
+# chart of accounts' pairs (D-209) by the count of its changes, a mark of each change (``chart_hash``, written with
 # them: B-2125) and its settings (``chart.SETTING_KEYS``, and the control accounts of the past coding: ``CONTROL_KEYS``,
 # D-269), not by its rows.
 _REFERENCE_STAMP = """SELECT
