@@ -821,8 +821,12 @@ def test_jde_a_posting_edit_code_not_decided_yet_is_listed_with_its_accounts_unt
     typed among the codes AP posts to. The companies in the pilot are set on the same card."""
     from ap_coder.core.chart import ChartRow
 
-    store.import_chart([ChartRow("0731066120", "", "", "Head Office", 3, "N"),
-                        *(ChartRow("0731066120", f"54{n}0", "", f"Cost {n}", 6, "Z" if n < 3 else "") for n in range(5))])
+    store.import_chart(
+        [
+            ChartRow("0731066120", "", "", "Head Office", 3, "N"),
+            *(ChartRow("0731066120", f"54{n}0", "", f"Cost {n}", 6, "Z" if n < 3 else "") for n in range(5)),
+        ]
+    )
     card = client.get("/settings/jde").text.split('id="posting"', 1)[1].split("</section>", 1)[0]
     assert "Codes found in the chart, not yet decided:" in card and "Z (3 accounts)" in card
     assert 'name="closed" value="Z">' in card
