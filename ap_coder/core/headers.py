@@ -19,6 +19,12 @@ def header_key(value: Any) -> str:
     return re.sub(r"[^a-z0-9]", "", text)
 
 
+def jde_names(table: str, prefix: str, *items: str) -> tuple[str, ...]:
+    """The titles a column of one of JD Edwards' tables has in a query tool (ReportsNow, D-266): each data item as is
+    ("MCU"), with the table's prefix ("GMMCU") and with the table too ("F0901.GMMCU", read as "f0901gmmcu")."""
+    return tuple(name for item in items for name in (item, prefix + item, f"{table}.{prefix}{item}"))
+
+
 def match_columns(headers: list[str], aliases: dict[str, Any]) -> dict[str, str]:
     """{field: the file's column} for each field whose name or an alias is one of ``headers`` (compared as
     ``header_key``); a column is used for one field only, the first field listed that names it."""

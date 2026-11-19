@@ -27,12 +27,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..ai import history
-from ..coding import banks, po, vendor_info
+from ..coding import banks, po, terms, vendor_info
 from ..coding.vendors import MASTER_ALIASES
 from ..core import chart
-from ..core.headers import header_key, match_columns
+from ..core.headers import header_key, jde_names, match_columns
 from ..core.reference_data import MEALS_HEADERS, meals_column
-from . import jde_worksheet, journal, registers, statements
+from . import jde_settings, jde_worksheet, journal, registers, statements
 from .jde_accounts import GL_MAP_ALIASES
 
 XLSX, CSV, XLS, TXT = ".xlsx", ".csv", ".xls", ".txt"
@@ -266,6 +266,41 @@ JOURNAL = ImportSpec(
     find=_journal_find,
 )  # fmt: skip
 
+# The past invoice coding as a table (the account ledger, F0911, D-266): a row for each G/L line of a voucher.
+GL_LINES = ImportSpec(
+    key="gl_lines", card="4. Past invoice coding", title="Past invoice coding (G/L lines)", jde=True,
+    page="/jde-files#journal",
+    purpose="The G/L lines of the invoices already posted in JD Edwards, a row for each with one signed amount: the "
+            "same learning as the Transaction Journal's.",
+    source="A query of JD Edwards' account ledger (F0911) in ReportsNow or a like tool, ledger type AA, the "
+           "vouchers' document types, exported to Excel (.xlsx) or CSV; split by company or year into several files "
+           "if it is large.",
+    more="The lines of one document (company, type and number) are one voucher. The payable lines JD Edwards adds may "
+         "be left out of the export: a voucher without them is read as complete. Lines of another company than "
+         "JD Edwards' company in Settings are left out. A second file adds to the first: a voucher in both counts "
+         "once.",
+    report="the G/L lines of JD Edwards' vouchers (its account ledger, F0911, as a table)", file_types=(XLSX, CSV),
+    fix="Add the column to the query, export it again and load that file.", one_of=("account", "object"),
+    columns=_columns(journal.FLAT_ALIASES, journal.FLAT_NEEDS, {
+        "document": ("Document number", "Document Number"), "doc_type": ("Document type", "Doc Type"),
+        "company": ("Document company", "Doc Co"), "gl_date": ("G/L date", "G/L Date"),
+        "line": ("Line number", "Line Number"), "line_ext": ("Line extension", "Line Ext"),
+        "account": ("Account number", "Account Number"), "business_unit": ("Business unit", "Business Unit"),
+        "object": ("Object account", "Object Account"), "subsidiary": ("Subsidiary", "Subsidiary"),
+        "description": ("Account description", "Account Description"), "amount": ("Amount", "Amount"),
+        "remark": ("Remark", "Remark"), "explanation": ("Explanation", "Explanation"),
+        "supplier": ("Supplier number", "Supplier Number"), "name": ("Supplier name", "Supplier Name"),
+        "invoice": ("Invoice number", "Invoice Number"), "po": ("Purchase order", "Purchase Order"),
+        "currency": ("Currency", "Curr Code"),
+    }, {"document": "with the company and type, the voucher each line is of", "amount": "the line's amount, a "
+        "debit plus and a credit minus", "supplier": "the supplier each voucher was for", "account": "the account "
+        "string each line was coded to (business unit.object.subsidiary)", "object": "with the business unit and "
+        "subsidiary, the account each line was coded to (instead of the account number)",
+        "remark": "AP's words on each line, learned with it", "company": "lines of another company are left out",
+        "doc_type": "tells two vouchers of one number apart"}),
+    find=_matcher(journal.FLAT_ALIASES),
+)  # fmt: skip
+
 _VOUCHER_LABELS = {
     "document": ("Document number", "Document Number"), "doc_type": ("Document type", "Doc Type"),
     "company": ("Document company", "Doc Co"), "pay_item": ("Pay item", "Pay Item"),
@@ -273,7 +308,7 @@ _VOUCHER_LABELS = {
     "invoice_number": ("Invoice number", "Invoice Number"), "invoice_date": ("Invoice date", "Invoice Date"),
     "gl_date": ("G/L date", "G/L Date"), "gross": ("Gross amount", "Gross Amount"),
     "foreign": ("Foreign amount", "Foreign Amount"), "currency": ("Currency", "Curr Code"),
-    "batch": ("Batch number", "Batch Number"),
+    "batch": ("Batch number", "Batch Number"), "pay_ext": ("Pay item extension", "Pay Ext"),
 }  # fmt: skip
 
 VOUCHERS = ImportSpec(
@@ -286,12 +321,46 @@ VOUCHERS = ImportSpec(
     report="JD Edwards' voucher list (the supplier ledger inquiry's grid)", file_types=(XLSX, CSV), fix=JDE_FIX,
     columns=_columns(registers.VOUCHER_ALIASES, registers.VOUCHER_REQUIRED, _VOUCHER_LABELS, {
         "doc_type": "tells two vouchers of one number apart", "company": "tells two vouchers of one number apart",
+        "pay_ext": "with the pay item, tells a pay item listed twice (two files that overlap) from another",
         "supplier_name": "the supplier's name when it is not in the supplier list", "invoice_date": "the invoice's "
         "date, shown with a duplicate", "gl_date": "the period the list covers", "foreign": "a voucher in another "
         "currency compared by its own amount", "currency": "the voucher's currency", "batch": "the batch it was "
         "entered in",
     }),
     find=_matcher(registers.VOUCHER_ALIASES),
+)  # fmt: skip
+
+PAYMENT_TERMS = ImportSpec(
+    key="payment_terms", card="7. Payment terms", title="Payment terms", jde=True, page="/jde-files#terms",
+    purpose="What each of JD Edwards' payment terms codes means: a supplier's code (N, for instance) counts as its "
+            "discount and net days.",
+    source="A query of JD Edwards' payment terms (F0014) in ReportsNow or a like tool, exported to Excel (.xlsx).",
+    more="Optional. A newer file replaces the table whole.", report="JD Edwards' payment terms (F0014)",
+    file_types=(XLSX, CSV), fix="Add the column to the query, export it again and load that file.",
+    columns=_columns(terms.JDE_TERMS_ALIASES, terms.JDE_TERMS_NEEDS, {
+        "code": ("Payment terms code", "Payment Terms Code"),
+        "description": ("Description", "Payment Terms Description"),
+        "discount_pct": ("Discount percent", "Discount Percent"), "discount_days": ("Discount days", "Discount Days"),
+        "net_days": ("Net days to pay", "Net Days to Pay"),
+    }, {"code": "the code a supplier has", "net_days": "when an invoice of the code is due",
+        "discount_pct": "the early-payment discount", "discount_days": "until when the discount is offered"}),
+    find=_matcher(terms.JDE_TERMS_ALIASES),
+)  # fmt: skip
+
+TAX_AREAS = ImportSpec(
+    key="tax_areas", card="8. Tax areas", title="Tax areas", jde=True, page="/jde-files#areas",
+    purpose="JD Edwards' tax areas and their rates, compared with the tax area Settings gives each province.",
+    source="A query of JD Edwards' tax areas (F4008) in ReportsNow or a like tool, exported to Excel (.xlsx).",
+    more="Optional. Only the areas in force today are kept; a newer file replaces them whole.",
+    report="JD Edwards' tax areas (F4008)", file_types=(XLSX, CSV),
+    fix="Add the column to the query, export it again and load that file.",
+    columns=_columns(jde_settings.TAX_AREA_ALIASES, jde_settings.TAX_AREA_NEEDS, {
+        "area": ("Tax area", "Tax Rate/Area"), "description": ("Description", "Description"),
+        **{f"authority{n}": (f"Tax authority {n}", f"Tax Authority {n}") for n in range(1, 6)},
+        **{f"rate{n}": (f"Tax rate {n}", f"Tax Rate {n}") for n in range(1, 6)},
+        "effective": ("Effective date", "Effective Date"), "expired": ("Expired date", "Expired Date"),
+    }, {"area": "the tax area a voucher names", "rate1": "with the other rates, the area's rate"}),
+    find=_matcher(jde_settings.TAX_AREA_ALIASES),
 )  # fmt: skip
 
 # --- The imports of any ERP's lists, on their own pages -----------------------------------------------------------
@@ -383,6 +452,7 @@ VENDOR_MASTER = ImportSpec(
 
 PURCHASE_ORDERS = ImportSpec(
     key="purchase_orders", title="Purchase orders", page="/purchase-orders", file_types=SHEETS,
+    card="6. Open purchase order lines",
     purpose="The open purchase orders' lines, matched to the invoices that bill them.",
     source="Your ERP's open purchase order lines, a row for each line. From JD Edwards: the open order lines (Open "
            "Order Inquiry, or the order detail of Work With Order Headers) exported to Excel, every column shown.",
@@ -398,6 +468,7 @@ PURCHASE_ORDERS = ImportSpec(
         "open_quantity": ("Quantity open", "Quantity Open"), "uom": ("Unit of measure", "UM"),
         "received_quantity": ("Quantity received", "Received Quantity"), "gl_code": ("GL account", "GL Code"),
         "cost_center": ("Cost center", "Cost Center"), "account_number": ("Account number", "Account Number"),
+        "subsidiary": ("Subsidiary", "Sub"),
         "status": ("Status", "Status"), "next_status": ("Next status", "Next Status"),
         "last_status": ("Last status", "Last Status"), "currency": ("Currency", "Curr"),
         "base_currency": ("Base currency", "Base Curr"),
@@ -408,7 +479,9 @@ PURCHASE_ORDERS = ImportSpec(
         "tax_area": ("Tax rate/area", "Tax Rate/Area"),
     }, {"open_amount": "what is left to expense (alone, without a quantity, price or amount: the line's amount)",
         "received_quantity": "what was received, for the match",
-        "gl_code": "the account the line is coded to", "cost_center": "the cost center the line is coded to",
+        "gl_code": "the account the line is coded to (JD Edwards' object account)",
+        "cost_center": "the cost center the line is coded to (JD Edwards' business unit)",
+        "subsidiary": "the subsidiary of the object account",
         "status": "open or closed", "currency": "the PO's currency (without it, CAD)",
         "order_type": "JD Edwards' order type, named on a voucher match (without it, the one in Settings)",
         "order_company": "JD Edwards' order company, named on a voucher match (without it, the one in Settings)",
@@ -500,8 +573,9 @@ JDE_WORKSHEET = ImportSpec(
 )  # fmt: skip
 
 SPECS: dict[str, ImportSpec] = {spec.key: spec for spec in (
-    CHART, UNITS, SUPPLIER_MASTER, VENDOR_INFO, JOURNAL, VOUCHERS, GL_ACCOUNTS, COST_CENTERS, BANK_ACCOUNTS,
-    VENDOR_MASTER, PURCHASE_ORDERS, STATEMENTS, ERP_REGISTER, PAST_CODING, GL_MAP, JDE_WORKSHEET,
+    CHART, UNITS, SUPPLIER_MASTER, VENDOR_INFO, JOURNAL, GL_LINES, VOUCHERS, PAYMENT_TERMS, TAX_AREAS, GL_ACCOUNTS,
+    COST_CENTERS, BANK_ACCOUNTS, VENDOR_MASTER, PURCHASE_ORDERS, STATEMENTS, ERP_REGISTER, PAST_CODING, GL_MAP,
+    JDE_WORKSHEET,
 )}  # fmt: skip
 JDE_REPORTS = tuple(key for key, spec in SPECS.items() if spec.jde)
 
@@ -621,19 +695,49 @@ def identify(headers: Iterable[Any], keys: Iterable[str] = JDE_REPORTS) -> Impor
 
 # --- JD Edwards' own reports, told by the headers only JD Edwards writes --------------------------------------------
 
+
+def _fields(table: str, prefix: str, *items: str) -> tuple[str, ...]:
+    """JD Edwards' fields of a report's own table as a query tool titles them, with the table's prefix ("GMOBJ") or
+    the table too ("F0901.GMOBJ"): no other table's (D-266)."""
+    return tuple(name for name in jde_names(table, prefix, *items) if name not in items)
+
+
 # Headers JD Edwards' grid of each report writes and another system's list does not (none a column of another report
 # here), compared as ``header_key``; besides its reports, the grids of one voucher's screens, which nothing loads.
+# Then each report as a query tool exports its table (ReportsNow, D-266): the build sheet's titles that are no other
+# report's, its fields with their table's prefix, and the data items no other report here has, as a field alone.
 JDE_MARKS: dict[str, tuple[str, ...]] = {
     "chart": ("Object Account", "L D", "P E", "Account ID", "Business Unit Description", "M C", "Taxable Account",
-              "Posting Edit Code", "Level of Detail", "WCI Code", "Rt Cd"),
+              "Posting Edit Code", "Level of Detail", "WCI Code", "Rt Cd", "Posting Edit", "Account Level of Detail",
+              *_fields("F0901", "GM", "MCU", "OBJ", "SUB", "DL01", "LDA", "PEC", "AID", "CO", "CRCD"),
+              "OBJ", "LDA", "PEC", "AID"),
     "units": ("Job Number", "Job Name", "BU Ty", "Job Sts", "Related BU", "Related Bu Description",
-              "Address Number1"),
+              "Address Number1", "Business Unit Type", "Posting Edit - Business Unit",
+              *_fields("F0006", "MC", "MCU", "DL01", "CO", "STYL", "PECC", "LDM", "ADDS"), "STYL", "PECC", "LDM"),
     "supplier_master": ("Address Number", "Alpha Name", "Hold Payment Code", "Individual Tax ID", "Long Address",
-                        "Industry Class", "Hold Orders Code", "C M"),
-    "vendor_info": ("Internal Supplier Number", "Complete Address", "City - CTY1", "Cur Cod", "Check/ Itm Date",
-                    "JDE email address", "Total Payment Count", "Pmt Trm", "Payment Terms - A/P", "DUNS Number"),
+                        "Industry Class", "Hold Orders Code", "C M", "Additional Tax ID",
+                        "Additional Individual Tax ID", *_fields("F0101", "AB", "AN8", "ALPH", "TAX", "TX2", "AT1"),
+                        *_fields("F0401", "A6", "HDPY", "CRRP", "TRAP", "TXA2", "EXR2"),
+                        *_fields("F0116", "AL", "ADD1", "ADD2", "ADD3", "ADD4", "CTY1", "ADDS", "ADDZ", "CTR"),
+                        *_fields("F01151", "EA", "EMAL"), "TX2", "AT1", "HDPY", "CRRP", "TRAP", "TXA2", "EXR2",
+                        "ADD1", "ADD2", "CTY1", "ADDZ", "EMAL"),
+    # (not "Cur Cod" or "Payment Terms - A/P": the build sheet titles the supplier master's columns so, D-266)
+    "vendor_info": ("Internal Supplier Number", "Complete Address", "City - CTY1", "Check/ Itm Date",
+                    "JDE email address", "Total Payment Count", "Pmt Trm", "DUNS Number"),
     "vouchers": ("Doc Co", "Pay Item", "Supplier Number Desc", "Pay Stat", "Pay Status Code", "Batch Number",
-                 "Batch Type", "Batch Type Desc", "Foreign Open", "Doc Co (PO)", "PO Doc Type", "Pay Ext"),
+                 "Batch Type", "Batch Type Desc", "Foreign Open", "Doc Co (PO)", "PO Doc Type", "Pay Ext",
+                 *_fields("F0411", "RP", "DOC", "DCT", "KCO", "SFX", "SFE", "AN8", "ALPH", "VINV", "DIVJ", "DGJ",
+                          "DDJ", "AG", "AAP", "ACR", "CRCD", "ICU", "PST", "PO", "PDCT", "PKCO", "MCU"),
+                 "SFX", "SFE", "DIVJ", "DDJ", "AAP", "ACR", "ICU", "PDCT", "PKCO"),
+    "gl_lines": (*_fields("F0911", "GL", "DOC", "DCT", "KCO", "DGJ", "JELN", "EXTL", "ANI", "MCU", "OBJ", "SUB",
+                          "AA", "EXA", "EXR", "AN8", "VINV", "PO", "CRCD"), "JELN", "EXTL", "EXA", "EXR"),
+    "payment_terms": ("Payment Terms Description", "Discount Percent", "Discount Days", "Net Days to Pay",
+                      "Description - Payment Terms", "Days - Net Days to Pay",
+                      *_fields("F0014", "PN", "PTC", "PTD", "DCP", "DCD", "NDTP"), "PTC", "PTD", "DCP", "DCD", "NDTP"),
+    "tax_areas": (*(f"Tax Authority {n}" for n in range(1, 6)), *(f"Tax Rate {n}" for n in range(1, 6)),
+                  *_fields("F4008", "TA", "TXA1", "DL01", "EFDJ", "EFTJ", *(f"TA{n}" for n in range(1, 6)),
+                           *(f"TXR{n}" for n in range(1, 6))),
+                  "EFDJ", "EFTJ", *(f"TXR{n}" for n in range(1, 6))),
     "gl_distribution": ("Explanation -Remark-", "Sub- ledger", "Subledger Description", "JE Line Number",
                         "Tax ExpCode", "TaxRate Area", "Track Taxes", "Alternate Home Business Unit",
                         "Employee Pool Grouping Code", "Job Pool Grouping Code", "Short Item No"),
@@ -643,11 +747,16 @@ JDE_MARKS: dict[str, tuple[str, ...]] = {
     "payment_history": ("Doc Pay Item", "Payment Amount", "Discount Taken", "Doc Type-M", "Exchange Rate"),
 }  # fmt: skip
 MARKS = 3  # a file with this many of a report's marks is that report, whichever columns it lacks
-# JD Edwards' open purchase order lines (Work With Order Details, P4310, D-264): loaded on the Purchase orders page,
-# never taken for one of the reports above for the columns it shares with them (Subledger, Tax Rate/Area, Short Item
-# No: a voucher's G/L distribution's, B-2646).
+# JD Edwards' open purchase order lines (Work With Order Details, P4310, D-264; F4311 as a query exports it, D-266):
+# loaded on the Purchase orders page and on JD Edwards files (card 6), never taken for one of the reports above for
+# the columns it shares with them (Subledger, Tax Rate/Area, Short Item No: a voucher's G/L distribution's, B-2646).
 ORDER_MARKS = ("Or Ty", "Order Co", "Quantity To Receive", "Amount To Receive", "Line Description",
-               "Original Ordered Amount", "Foreign Amount To Receive", "Next Status", "Last Status")  # fmt: skip
+               "Original Ordered Amount", "Foreign Amount To Receive", "Next Status", "Last Status",
+               *_fields("F4311", "PD", "DOCO", "DCTO", "KCOO", "LNID", "AN8", "DSC1", "DSC2", "LNTY", "UOM", "UORG",
+                        "UOPN", "UREC", "PRRC", "AEXP", "AOPN", "ANI", "OMCU", "MCU", "OBJ", "SUB", "TX", "EXR1",
+                        "TXA1", "LTTR", "NXTR", "CRCD", "FRRC", "FAP", "FEA", "TRDJ"),
+               "DOCO", "DCTO", "KCOO", "LNID", "DSC1", "LNTY", "UORG", "UOPN", "UREC", "PRRC", "AEXP", "AOPN",
+               "LTTR", "NXTR", "FRRC", "TRDJ", "OMCU")  # fmt: skip
 # The grids of one voucher in JD Edwards, as a message names them.
 VOUCHER_GRIDS = {
     "gl_distribution": "the G/L distribution of one voucher (its account lines)",
@@ -674,6 +783,26 @@ def recognise(headers: Iterable[Any]) -> str | None:
         return best
     whole = identify(named)
     return whole.key if whole is not None and counts.get(whole.key, 0) >= 2 else None
+
+
+def order_lines(headers: Iterable[Any]) -> bool:
+    """Whether a file with these column names is JD Edwards' open purchase order lines (``ORDER_MARKS``)."""
+    keys = {header_key(_text(h)) for h in headers if _text(h)}
+    return sum(header_key(mark) in keys for mark in ORDER_MARKS) >= MARKS
+
+
+def workbook_report(headers: Iterable[Any]) -> str | None:
+    """Which report a sheet of the master workbook is, by its column names (D-266): one of JD Edwards' reports
+    (``recognise``: by their own headers; a voucher's grid too, which nothing loads), its open purchase order lines
+    ("purchase_orders": ``order_lines``), or the G/L lines of its vouchers titled as the build sheet titles them,
+    none a grid's (every column the account ledger's reader needs: ``journal.flat_header``); None for anything
+    else, never a guess."""
+    named = [_text(h) for h in headers]
+    if (key := recognise(named)) is not None:
+        return key
+    if order_lines(named):
+        return "purchase_orders"
+    return "gl_lines" if journal.flat_header([named])[1] is not None else None
 
 
 def elsewhere(key: str, card: str = "") -> str:

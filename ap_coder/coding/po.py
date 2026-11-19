@@ -37,8 +37,8 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from ..core.caches import MB, Bounded, size_of
-from ..core.chart import join_account, split_account
-from ..core.headers import match_columns
+from ..core.chart import code_of, join_account, split_account
+from ..core.headers import jde_names, match_columns
 from ..core.keys import po_key
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
@@ -69,53 +69,68 @@ MATCHED_MOST = 6 * MB
 
 Finding = tuple[str, str, str, "int | None"]
 
-# Column names people use in ERP exports, normalised (lower case, letters and digits only).
+
+def _pd(*items: str) -> tuple[str, ...]:
+    return jde_names("F4311", "PD", *items)
+
+
+# Column names people use in ERP exports, normalised (lower case, letters and digits only); then JD Edwards' fields
+# of the order detail table (F4311) as a query tool titles them (ReportsNow, D-266: "DOCO", "PDDOCO", "F4311.PDDOCO").
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "po_number": ("ponumber", "po", "pono", "ponum", "purchaseorder", "purchaseordernumber", "ordernumber",
-                  "order", "pobr", "bondecommande"),
+                  "order", "pobr", "bondecommande", *_pd("DOCO")),
     # Optional, JD Edwards' (D-264): the order type and company that, with the number, name the order on a voucher.
-    "order_type": ("orty", "ordertype", "dcto"),
-    "order_company": ("orderco", "ordercompany", "kcoo"),
-    "vendor_name": ("vendorname", "vendor", "supplier", "suppliername", "supplierdescription", "fournisseur"),
+    "order_type": ("orty", "ordertype", *_pd("DCTO")),
+    "order_company": ("orderco", "ordercompany", *_pd("KCOO")),
+    "vendor_name": ("vendorname", "vendor", "supplier", "suppliername", "supplierdescription", "fournisseur",
+                    *jde_names("F0101", "AB", "ALPH")[1:], "alphaname"),
     # Optional: the supplier's number in the ERP (JD Edwards' address number); a supplier column of digits is one too.
-    "supplier_number": ("addressnumber", "suppliernumber", "supplierno", "an8", "vendornumber", "vendorno"),
+    "supplier_number": ("addressnumber", "suppliernumber", "supplierno", "vendornumber", "vendorno", *_pd("AN8")),
     # Not "Item" or "Item Number": in most exports that is the part number (SKU), not the PO line.
-    "line_number": ("linenumber", "line", "lineno", "linenum", "poline"),
+    "line_number": ("linenumber", "line", "lineno", "linenum", "poline", *_pd("LNID")),
     "description": ("description", "desc", "itemdescription", "linedescription", "longdescription", "product",
-                    "service"),
-    "quantity": ("quantity", "qty", "orderedqty", "qtyordered", "quantityordered", "ordered"),
-    "unit_price": ("unitprice", "price", "unitcost", "rate", "prixunitaire"),
+                    "service", *_pd("DSC1")),
+    "quantity": ("quantity", "qty", "orderedqty", "qtyordered", "quantityordered", "ordered", *_pd("UORG")),
+    "unit_price": ("unitprice", "price", "unitcost", "rate", "prixunitaire", *_pd("PRRC")),
     "amount": ("amount", "linetotal", "extendedamount", "extended", "extendedprice", "extendedcost", "total",
-               "lineamount", "netamount", "originalorderedamount"),
+               "lineamount", "netamount", "originalorderedamount", *_pd("AEXP")),
     # Optional: what the ERP has left open on the line (JD Edwards' AOPN), for what is left to expense.
-    "open_amount": ("openamount", "amountopen", "openamt", "amtopen", "aopn", "openbalance", "amounttoreceive"),
+    "open_amount": ("openamount", "amountopen", "openamt", "amtopen", "openbalance", "amounttoreceive", *_pd("AOPN")),
     # Optional, JD Edwards' (UOPN, UOM): the quantity left open on the line and its unit, for the voucher match.
-    "open_quantity": ("quantityopen", "openquantity", "qtyopen", "openqty", "uopn", "quantitytoreceive"),
-    "uom": ("um", "unitofmeasure"),
+    "open_quantity": ("quantityopen", "openquantity", "qtyopen", "openqty", "quantitytoreceive", "unitsopen",
+                      *_pd("UOPN")),
+    "uom": ("um", "unitofmeasure", *_pd("UOM")),
     "received_quantity": ("receivedquantity", "received", "qtyreceived", "receivedqty", "quantityreceived",
-                          "receipts", "recu"),
-    "gl_code": ("glcode", "gl", "glaccount", "account", "accountcode", "costcode", "expenseaccount"),
-    "cost_center": ("costcenter", "costcentre", "cc", "department", "dept"),
+                          "receipts", "recu", "unitsreceived", *_pd("UREC")),
+    "gl_code": ("glcode", "gl", "glaccount", "account", "accountcode", "costcode", "expenseaccount", "objacct",
+                "objectaccount", *_pd("OBJ")),
+    # (JD Edwards' cost business unit of a line, OMCU; the order's own business unit, MCU)
+    "cost_center": ("costcenter", "costcentre", "cc", "department", "dept", "businessunit", *_pd("OMCU", "MCU")),
+    # Optional, JD Edwards' (SUB): the subsidiary of the account, with the cost center and object (``gl_code``).
+    "subsidiary": ("subsidiary", "sub", *_pd("SUB")),
     # Optional: a JD Edwards account string (business unit.object.subsidiary), its parts the cost center and GL code.
-    "account_number": ("accountnumber", "acctno", "accountno"),
+    "account_number": ("accountnumber", "acctno", "accountno", *_pd("ANI")),
     # Optional, JD Edwards' (TX, EXR1, TXA1): the PO line's own tax, typed on its voucher match row.
-    "tax_flag": ("taxyn", "tx"),
-    "tax_code": ("taxexpl", "taxexplanation", "taxexplcode", "exr1"),
-    "tax_area": ("taxratearea", "taxarea", "txa1"),
+    "tax_flag": ("taxyn", *_pd("TX")),
+    "tax_code": ("taxexpl", "taxexplanation", "taxexplcode", "taxexplanationcode", *_pd("EXR1")),
+    "tax_area": ("taxratearea", "taxarea", *_pd("TXA1")),
     "status": ("status", "postatus", "state"),
     # Optional, JD Edwards' (NXTR, LTTR): a line whose next status is 999 is closed, one whose last is 980 cancelled.
-    "next_status": ("nextstatus", "nextstat", "nxtr"),
-    "last_status": ("laststatus", "laststat", "lttr"),
+    "next_status": ("nextstatus", "nextstat", *_pd("NXTR")),
+    "last_status": ("laststatus", "laststat", *_pd("LTTR")),
     # Optional: the PO's currency (JD Edwards' CRCD); a file without one: taken as CAD (B-2612).
-    "currency": ("currencycode", "currcode", "curcode", "curcod", "curr", "crcd", "ccy", "devise"),
+    "currency": ("currencycode", "currcode", "curcode", "curcod", "curr", "ccy", "devise", *_pd("CRCD")),
     # Optional, JD Edwards' (D-264): an order in another currency than the company's (its Base Curr) has its amounts
     # and unit cost in that currency in the foreign columns; the others are the company's.
     "base_currency": ("basecurr", "basecurrency", "basecurrencycode"),
-    "foreign_open_amount": ("foreignamounttoreceive", "foreignopenamount", "fap"),
-    "foreign_unit_price": ("foreignunitcost", "foreignunitprice", "fprc"),
-    "foreign_amount": ("originalorderedforeignamount", "foreignextendedprice", "foreignextendedcost", "fea"),
+    "foreign_open_amount": ("foreignamounttoreceive", "foreignopenamount", *_pd("FAP")),
+    "foreign_unit_price": ("foreignunitcost", "foreignunitprice", "fprc", *_pd("FRRC")),
+    "foreign_amount": ("originalorderedforeignamount", "foreignextendedprice", "foreignextendedcost", *_pd("FEA")),
 }  # fmt: skip
 CLOSED_STATUSES = {"closed", "close", "complete", "completed", "fermé", "ferme"}
+# An account written in JD Edwards' other formats (its short ID after "*", its third number after "/", D-266): not
+# business unit.object.subsidiary, so the line's cost center, object and subsidiary columns are read instead.
+_OTHER_FORMATS = ("*", "/")
 JDE_CLOSED, JDE_CANCELLED = "999", "980"  # a JD Edwards line's next status once closed, last status once cancelled
 REQUIRED_COLUMNS = ("po_number", "description")
 TEMPLATE_COLUMNS = (
@@ -183,8 +198,11 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
         if vendor.isdigit() and not supplier:  # JD Edwards' "Supplier" column: its address number, not a name
             vendor, supplier = "", vendor
         gl_code, cost_center = _text(get("gl_code")), _text(get("cost_center"))
+        if gl_code and (subsidiary := _text(get("subsidiary"))):  # (the object and its subsidiary, JD Edwards' SUB)
+            gl_code = code_of(gl_code, subsidiary)
         account = _text(get("account_number"))
-        if "." in account:  # "business unit.object.subsidiary": the account, whatever its parts' columns say
+        if "." in account and not account.startswith(_OTHER_FORMATS):
+            # "business unit.object.subsidiary": the account, whatever its parts' columns say
             cost_center, gl_code = split_account(account)
         elif account and not gl_code and not cost_center:  # no dot: a GL code
             gl_code = account

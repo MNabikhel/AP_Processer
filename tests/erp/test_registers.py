@@ -244,3 +244,18 @@ def test_a_voucher_voided_since_it_was_imported_leaves_the_register(tmp_path):
     rows, read = _read([pay_item(810200, "001", 0.00, *coffee, "INV-0050")])
     assert rows == [] and store.erp_vouchers_left(read["voided"], {}, []) == 1
     assert store.in_erp(coffee[1], "INV-0050", 55.00) == []
+
+
+def test_a_pay_item_listed_twice_counts_once_and_its_extension_tells_another():
+    """D-266: two files of the supplier ledger (split by year or company) may overlap; a pay item is its document's
+    company, type and number with its pay item and extension: the same one again counts once, another extension
+    adds."""
+    courier = (410002, "QUICKSHIP COURIER CANADA LTD")
+    items = [pay_item(800401, "001", 10.00, *courier, "A-1"), pay_item(800401, "001", 10.00, *courier, "A-1"),
+             {**pay_item(800401, "001", 4.00, *courier, "A-1"), "Pay Ext": "001"}]  # fmt: skip
+    for item in items[:2]:
+        item["Pay Ext"] = "000"
+    columns, listed = records("v.xlsx", voucher_headers(items, [*VOUCHER_HEAD, "Pay Ext"]))
+    rows, read = registers.vouchers_from_pay_items(listed, registers.voucher_columns(columns), {})
+    assert [r["total"] for r in rows] == [14.00] and read["repeated"] == 1
+    assert "1 pay item listed twice (counted once)" in registers.vouchers_said(read)

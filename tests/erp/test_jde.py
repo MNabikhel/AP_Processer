@@ -1428,3 +1428,30 @@ def test_a_line_with_a_remark_of_its_own_is_sent_with_it_fitted_to_30_characters
     )
     assert [r["VNEXR"] for r in typed[jde_zfiles.DIST_FILE]][: len(expected)] == expected
     assert typed[jde_zfiles.HEADER_FILE][0]["VLRMK"] == "May janitorial 410 Elm"
+
+
+def test_jd_edwards_tax_areas_are_compared_with_the_ones_settings_names():
+    """D-266: JD Edwards' tax areas (F4008) loaded: an area Settings gives a province that JD Edwards does not have,
+    or whose rates add up to another rate than the province's taxes, is said; the expired rows are left out."""
+    from ap_coder.core.headers import match_columns
+    from ap_coder.erp import jde_settings
+
+    head = ["Tax Rate/Area", "Description", "Tax Rate 1", "Tax Rate 2", "Effective Date", "Expired Date"]
+    rows = [
+        dict(zip(head, row, strict=True))
+        for row in (
+            ("ON-HST", "Ontario", "13", "", "2010-07-01", "2040-12-31"),
+            ("BC-GSTPST", "BC", "5", "7", "2013-04-01", ""),
+            ("AB-GST", "Alberta", "6", "", "", ""),
+            ("QC-GSTQST", "Old", "5", "8.5", "2010-01-01", "2012-12-31"),
+        )
+    ]
+    table, left = jde_settings.tax_area_table(rows, match_columns(head, jde_settings.TAX_AREA_ALIASES),
+                                              today=dt.date(2026, 11, 1))  # fmt: skip
+    assert left == 1 and table == {"ON-HST": {"description": "Ontario", "rate": 13.0},
+                                   "BC-GSTPST": {"description": "BC", "rate": 12.0},
+                                   "AB-GST": {"description": "Alberta", "rate": 6.0}}  # fmt: skip
+    said = jde_settings.tax_areas_compared(table, jde_settings.JdeSettings(), on=dt.date(2026, 11, 1))
+    assert "AB: the tax area AB-GST adds up to 6% in JD Edwards, and AB's taxes to 5%." in said
+    assert "QC: the tax area QC-GSTQST in Settings is not one of JD Edwards' tax areas." in said
+    assert not [line for line in said if line.startswith(("ON:", "BC:"))]

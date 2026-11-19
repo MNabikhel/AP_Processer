@@ -13,8 +13,12 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from ..coding.tax import OUTSIDE_CANADA, PROVINCES
+from ..coding.tax import OUTSIDE_CANADA, PROVINCES, regime_on
+from ..core.headers import jde_names
 from ..core.memory import refresh_vendor_key
+from ..core.parsing import parse_date
+from ..core.safe import parse_amount
+from ..core.tax_setup import TaxRateTable
 from .jde_formats import _date
 
 SETTING_KEY = "jde_e1"
@@ -93,6 +97,70 @@ def default_tax_map() -> dict[str, TaxArea]:
             out[p] = TaxArea(f"{p}-GST", "V")
     out[OUTSIDE_CANADA] = TaxArea("", "")
     return out
+
+
+# JD Edwards' tax areas (F4008), loaded on JD Edwards files (D-266) and compared with ``tax_map``: kept whole in a
+# setting, {area: {"description", "rate"}}, the rate the sum of its authorities' (a percent).
+TAX_AREAS_SETTING = "jde_tax_areas"
+
+
+def _ta(*items: str) -> tuple[str, ...]:
+    return jde_names("F4008", "TA", *items)
+
+
+TAX_AREA_ALIASES: dict[str, tuple[str, ...]] = {
+    "area": ("Tax Rate/Area", "Tax Area", *_ta("TXA1")),
+    "description": ("Description", "Tax Area Description", *_ta("DL01")),
+    **{f"authority{n}": (f"Tax Authority {n}", f"Tax Auth {n}", *_ta(f"TA{n}")) for n in range(1, 6)},
+    **{f"rate{n}": (f"Tax Rate {n}", *_ta(f"TXR{n}")) for n in range(1, 6)},
+    "effective": ("Effective Date", "Date - Effective", *_ta("EFDJ")),
+    "expired": ("Expired Date", "Date - Expired", *_ta("EFTJ")),
+}  # fmt: skip
+TAX_AREA_NEEDS = ("area", "rate1")
+
+
+def tax_area_table(records: list[dict[str, Any]], columns: dict[str, str],
+                   today: dt.date | None = None) -> tuple[dict[str, dict[str, Any]], int]:  # fmt: skip
+    """(the tax areas in force: {area: {"description", "rate"}}, how many rows were left out: no area, no rate that
+    reads, or expired) of the F4008 export's rows under ``columns`` ({field: header}). An area listed again for a
+    later effective date: the row that took effect last of those in force."""
+    today = today or dt.date.today()
+    found: dict[str, tuple[dt.date, dict[str, Any]]] = {}
+    left = 0
+    for record in records:
+        cell = {f: "" if record.get(h) is None else str(record.get(h)).strip() for f, h in columns.items()}
+        rates = [parse_amount(cell.get(f"rate{n}")) for n in range(1, 6) if cell.get(f"rate{n}")]
+        start = parse_date(cell.get("effective", "")[:10]) or dt.date.min
+        end = parse_date(cell.get("expired", "")[:10])
+        if not cell.get("area") or not rates or None in rates or start > today or (end is not None and end < today):
+            left += any(cell.values())
+            continue
+        total = sum(rate or 0.0 for rate in rates)
+        area = cell["area"].upper()
+        if area not in found or found[area][0] <= start:
+            found[area] = (start, {"description": cell.get("description", ""),
+                                   "rate": round(total * 100 if 0 < total < 1 else total, 4)})  # fmt: skip
+    return {area: row for area, (_start, row) in found.items()}, left
+
+
+def tax_areas_compared(table: Mapping[str, Mapping[str, Any]], settings: JdeSettings,
+                       rates: TaxRateTable | None = None, on: dt.date | None = None) -> list[str]:  # fmt: skip
+    """What JD Edwards' tax areas (``tax_area_table``) say of the ones Settings gives each province (``tax_map``), a
+    line each: an area JD Edwards does not have, or whose rates add up to another rate than the province's taxes."""
+    rates, on = rates or TaxRateTable.load(), on or dt.date.today()
+    said = []
+    for province, area in sorted(settings.tax_map.items()):
+        if not area.tax_area or province == OUTSIDE_CANADA:
+            continue
+        row = table.get(area.tax_area.strip().upper())
+        if row is None:
+            said.append(f"{province}: the tax area {area.tax_area} in Settings is not one of JD Edwards' tax areas.")
+            continue
+        due = 100 * sum(rates.rate_for(t, province, on) or 0.0 for t in regime_on(province, on, rates))
+        if due and abs(row["rate"] - due) > 0.005:
+            said.append(f"{province}: the tax area {area.tax_area} adds up to {row['rate']:g}% in JD Edwards, and "
+                        f"{province}'s taxes to {due:g}%.")  # fmt: skip
+    return said
 
 
 # Payment terms → JD Edwards payment terms code (VLPTC, D-91): example rows, offered pre-filled in Settings → JD Edwards

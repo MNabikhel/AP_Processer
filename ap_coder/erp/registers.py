@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..core.headers import match_columns
+from ..core.headers import jde_names, match_columns
 from ..core.safe import parse_amount
 from ..core.ui import plural
 from .statements import day_first_order, read_date
@@ -64,20 +64,32 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
 # --- JD Edwards' voucher list: Supplier Ledger Inquiry's grid, one row per pay item (B-2084) -------------------------
 # The grid has no vendor name column: the supplier's number, and its name cut at 30 characters. Each caption is one
 # of the grid's own ("Doc Type" is the code, "Document Type" its words; "Doc Co" the voucher's company).
+# The supplier ledger's columns as its grid names them, then its table's fields (F0411) as a query tool titles them
+# (ReportsNow, D-266), and their names in JD Edwards' data dictionary.
 VOUCHER_ALIASES: dict[str, tuple[str, ...]] = {
-    "document": ("documentnumber", "docnumber"),
-    "doc_type": ("doctype", "docty"),
-    "company": ("docco", "documentcompany"),
-    "pay_item": ("payitem", "payitm"),
-    "an8": ("suppliernumber", "supplierno"),
-    "supplier_name": ("suppliernumberdesc", "suppliername"),
-    "invoice_number": ("invoicenumber", "supplierinvoicenumber"),
-    "invoice_date": ("invoicedate",),
-    "gl_date": ("gldate",),
-    "gross": ("grossamount",),
-    "foreign": ("foreignamount",),
-    "currency": ("currcode", "currencycode", "currency"),
-    "batch": ("batchnumber", "batchno"),
+    "document": ("documentnumber", "docnumber", *jde_names("F0411", "RP", "DOC")),
+    # (not "Document Type": the grid's column of the type's name, beside "Doc Type")
+    "doc_type": ("doctype", "docty", *jde_names("F0411", "RP", "DCT")),
+    "company": ("docco", "documentcompany", *jde_names("F0411", "RP", "KCO")),
+    "pay_item": ("payitem", "payitm", "documentpayitem", *jde_names("F0411", "RP", "SFX")),
+    # (with the pay item, a pay item's own key: a row given twice, two files of a list overlapping, counts once)
+    "pay_ext": ("payext", "payitemextensionnumber", *jde_names("F0411", "RP", "SFE")),
+    "an8": ("suppliernumber", "supplierno", *jde_names("F0411", "RP", "AN8"), "addressnumber"),
+    "supplier_name": (
+        "suppliernumberdesc",
+        "suppliername",
+        *jde_names("F0411", "RP", "ALPH"),
+        *jde_names("F0101", "AB", "ALPH")[1:],
+        "alphaname",
+        "namealpha",
+    ),
+    "invoice_number": ("invoicenumber", "supplierinvoicenumber", *jde_names("F0411", "RP", "VINV")),
+    "invoice_date": ("invoicedate", *jde_names("F0411", "RP", "DIVJ")),
+    "gl_date": ("gldate", *jde_names("F0411", "RP", "DGJ")),
+    "gross": ("grossamount", "amountgross", *jde_names("F0411", "RP", "AG")),
+    "foreign": ("foreignamount", "amountcurrency", *jde_names("F0411", "RP", "ACR")),
+    "currency": ("currcode", "currencycode", "currency", *jde_names("F0411", "RP", "CRCD")),
+    "batch": ("batchnumber", "batchno", *jde_names("F0411", "RP", "ICU")),
 }
 VOUCHER_REQUIRED = ("document", "pay_item", "an8", "invoice_number", "gross")
 NO_INVOICE_NUMBER, NO_SUPPLIER, NO_AMOUNT, NOTHING, NO_FOREIGN = (
@@ -118,6 +130,7 @@ def vouchers_from_pay_items(
     read: dict[str, Any] = {"pay_items": 0, "vouchers": 0, "added_up": 0, "totals_rows": 0, "named": 0,
                             "foreign": {}, "skipped": {}, "by_supplier": by_supplier, "domestic": {},
                             "complete": False, "covers": {}, "voided": []}  # fmt: skip
+    items_seen: set[tuple[str, ...]] = set()
     vouchers: dict[tuple[str, ...], list[dict[str, str]]] = {}
     listed_total, gross_sum = None, 0.0
     for rec in records:
@@ -127,9 +140,16 @@ def vouchers_from_pay_items(
                 read["totals_rows"] += 1
                 listed_total = parse_amount(item["gross"])
             continue
+        key = (item.get("company", ""), item.get("doc_type", ""), item["document"])
+        own = (*key, item["pay_item"], item.get("pay_ext", ""))
+        if (
+            not by_supplier and item["pay_item"] and own in items_seen
+        ):  # (the same pay item of a document again: counted once, D-266)
+            read["repeated"] = read.get("repeated", 0) + 1
+            continue
+        items_seen.add(own)
         read["pay_items"] += 1
         gross_sum += parse_amount(item["gross"]) or 0.0
-        key = (item.get("company", ""), item.get("doc_type", ""), item["document"])
         vouchers.setdefault((*key, item["an8"]) if by_supplier else key, []).append(item)
         _covered(read["covers"], key, iso_date(item.get("gl_date", ""), order), by_supplier)
     read["complete"] = read["totals_rows"] == 1 and listed_total is not None and abs(listed_total - gross_sum) < 0.005
@@ -225,6 +245,8 @@ def vouchers_said(read: dict[str, Any]) -> str:
     out = ["the totals row"] if read["totals_rows"] == 1 else out
     out += [f"{plural(vouchers, 'voucher')} {why} ({plural(items, 'pay item')})"
             for why, (vouchers, items) in read["skipped"].items()]  # fmt: skip
+    if read.get("repeated"):
+        out.append(f"{plural(read['repeated'], 'pay item')} listed twice (counted once)")
     return said + (f" Left out: {'; '.join(out)}." if out else "") + _period_said(read)
 
 

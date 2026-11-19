@@ -310,3 +310,28 @@ def test_net_twelve_months_is_twelve_calendar_months():
 )  # fmt: skip
 def test_a_date_beside_the_net_is_never_a_discount(text):
     assert parse_terms(text).discount_pct is None
+
+
+def test_jd_edwards_terms_codes_count_as_their_terms_once_the_table_is_loaded(store):
+    """D-266: a supplier's terms from JD Edwards are a code ("N"), which AP Coder could not read: the invoice was due
+    by the default days. With JD Edwards' payment terms table (F0014) loaded, a code is its discount and net days."""
+    from ap_coder.coding.terms import JDE_TERMS_ALIASES, JDE_TERMS_SETTING, jde_meaning, jde_table
+    from ap_coder.core.headers import match_columns
+    from ap_coder.core.memory import vendor_key
+
+    head = ["Payment Terms Code", "Payment Terms Description", "Discount Percent", "Discount Days", "Net Days to Pay"]
+    rows = [dict(zip(head, row, strict=True)) for row in (
+        ("N", "Net 30", ".00", "0", "30"), ("T", "2% 10, Net 15", ".02", "10", "15"), ("Z", "Due now", "", "", "0"),
+        ("", "", "", "", ""), ("Q", "Quarterly", "", "", "soon"))]  # fmt: skip
+    table, left = jde_table(rows, match_columns(head, JDE_TERMS_ALIASES))
+    assert left == 1 and set(table) == {"N", "T", "Z"} and table["T"]["discount_pct"] == 2.0
+    assert [jde_meaning(code, table) for code in ("N", "t", "Z", "Net 45", "")] == [
+        "Net 30", "2/10 Net 15", "Due on receipt", "Net 45", ""]  # fmt: skip
+    store.import_vendor_master([{"vendor_name": "Acme Ltd", "erp_id": "41001", "terms": "T", "gst": "",
+                                 "status": "active"}])  # fmt: skip
+    key = vendor_key("Acme Ltd")
+    assert store.vendor_terms(key) == "T"
+    store.set_setting(JDE_TERMS_SETTING, json.dumps(table))
+    assert store.vendor_terms(key) == "2/10 Net 15" and store.all_vendor_terms()[key] == "2/10 Net 15"
+    due = payment({"invoice_date": "2026-03-02", "grand_total": 100}, 30, store.vendor_terms(key))
+    assert due.due == dt.date(2026, 3, 17) and due.discount_by == dt.date(2026, 3, 12)

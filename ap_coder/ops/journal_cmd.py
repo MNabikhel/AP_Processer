@@ -38,7 +38,9 @@ NAMES = {"trade": "trade payable", "intercompany": "intercompany payable", "tax"
 ORIGINS = {"given": "as given", "saved": "as saved with the last journal loaded",
            "guessed": "worked out from this file"}  # fmt: skip
 NOT_A_JOURNAL = ("This file is not a Transaction Journal (report R09321) saved as CSV: its first cell is not R09321 "
-                 "and it has no header row with Account Number and Remark.")  # fmt: skip
+                 "and it has no header row with Account Number and Remark. Nor is it the G/L lines of the vouchers "
+                 "(F0911) as a table: it has no Document Number, Amount and Supplier Number columns with the "
+                 "account.")  # fmt: skip
 STATUS_WORDS = {chart.NOT_IN_CHART: "not in the chart", chart.NOT_POSTABLE: "may not be posted to",
                 chart.BU_INACTIVE: "on a business unit that is not active",
                 chart.RESERVED: "never offered"}  # fmt: skip
@@ -219,7 +221,9 @@ def _brief(
     totals = journal.totals
     read = (f"Read {plural(totals.vouchers, 'voucher')} with {plural(totals.lines, 'line')}, G/L dates "
             f"{totals.first_date} to {totals.last_date}")  # fmt: skip
-    if totals.file_debit is None:
+    if journal.flat:
+        read += "."
+    elif totals.file_debit is None:
         read += ": the file has no Grand Total row to check them against."
     elif totals.differ:
         read += ": they do not add up to the report's Grand Total."
@@ -279,7 +283,7 @@ def _state(store: Store, digest: str, journal: jr.Journal, objects: dict[str, tu
         return REFUSED, ("This file was saved through Excel and lost its leading zeros: export it again from JD "
                          "Edwards and load that file without opening it in Excel. "
                          f"{plural(len(cut), 'account')} cut short: {_first(cut)}.")  # fmt: skip
-    if not _trade_lines(journal, objects):
+    if not _trade_lines(journal, objects) and not jr.payable_left_out(journal):
         named = f" ({', '.join(objects['trade'])})" if objects["trade"] else ""
         return REFUSED, (f"No line of this file has a trade payable object{named}, so JD Edwards' own lines would be "
                          "taken for AP's coding. Name the trade payable object.")  # fmt: skip
@@ -296,7 +300,7 @@ def look(store: Store, data: bytes, name: str, *, trade: Any = None, intercompan
     None to take the saved ones or, with none saved, those worked out from the file."""
     digest = hashlib.sha256(data).hexdigest()
     none: dict[str, tuple[str, ...]] = dict.fromkeys(NAMES, ())
-    if not jr.looks_like_journal(data):
+    if not jr.looks_like_journal(data) and not jr.is_gl_lines(data):
         return Look(name, digest, None, none, (), REFUSED, NOT_A_JOURNAL)
     try:
         journal, objects, taken = _read(store, data, {"trade": trade, "intercompany": intercompany, "tax": tax})
@@ -305,7 +309,10 @@ def look(store: Store, data: bytes, name: str, *, trade: Any = None, intercompan
     learned = jr.coding_lines(journal)
     state, problem = _state(store, digest, journal, objects)
     otherwise = None if state == SAME_FILE else _dated_otherwise(store, journal)
-    said = [f"{name}: JD Edwards' Transaction Journal (R09321).", *journal.notes, *taken,
+    what = (
+        "the G/L lines of JD Edwards' vouchers (F0911)" if journal.flat else "JD Edwards' Transaction Journal (R09321)"
+    )
+    said = [f"{name}: {what}.", *journal.notes, *taken,
             *_kept_said(store, journal, learned, state == SAME_FILE, otherwise)]  # fmt: skip
     if learned:
         said += [_suppliers_said(store, learned), *_accounts_said(store, learned)]

@@ -1170,3 +1170,25 @@ def test_the_voucher_match_names_each_po_line_and_guesses_none(tmp_path):
     assert po_mod.voucher_match(match_invoice(one, store), ONE_ROW_PO).held == [
         "PO 40917 line 1 has no JD Edwards line number in the purchase orders loaded: load the PO's open lines from "
         "JD Edwards again"]  # fmt: skip
+
+
+ACCOUNT_PARTS = [
+    ("Cost Center", "Obj Acct", "Sub"),
+    ("Business Unit", "Object Account", "Subsidiary"),
+    ("Business Unit", "Obj Acct", "Sub"),
+]
+
+
+@pytest.mark.parametrize("parts", ACCOUNT_PARTS)
+def test_an_account_in_another_format_is_read_from_its_cost_center_object_and_subsidiary(parts):
+    """D-266: F4311's account number is as the line was entered (a short account ID after "*", for one); the build
+    sheet adds the line's cost center, object and subsidiary, which are read then. One written as business
+    unit.object.subsidiary is read as before."""
+    head = ["Order Number", "Line Description", "Amount To Receive", "Account Number", *parts]
+    records = [dict(zip(head, row, strict=True)) for row in (
+        ["59000", "TONER", "40.00", "*00123456", "   21061010", "7200", "01"],
+        ["59000", "PAPER", "10.00", "", "   21061010", "7210", ""],
+        ["59001", "FREIGHT", "15.00", "0021061010.7410", "   21061010", "7200", "01"])]  # fmt: skip
+    rows, skipped = po_mod.rows_from_records(records, po_mod.map_columns(head))
+    assert skipped == 0 and [(r["cost_center"], r["gl_code"]) for r in rows] == [
+        ("21061010", "7200.01"), ("21061010", "7210"), ("0021061010", "7410")]  # fmt: skip

@@ -35,6 +35,13 @@ layouts, with their quirks, are a real E1's:
   the line's tax, and "Client Code" and "Long Description" each twice (the second description another text); with
   ``short``, the 27 the grid has by default: no quantity, unit cost (but a foreign order's) or unit of measure.
 
+* ``master_workbook_xlsx``: every report of the build sheet the pilot tester queries JD Edwards' tables by in ReportsNow
+  (D-266) in one workbook, a sheet each, each column titled as the build sheet says (``BUILD_SHEET``): the chart, the
+  business units, the suppliers with their tax IDs and addresses, the supplier ledger and the vouchers' G/L lines
+  (each in two sheets, by half year; the G/L lines without the payable lines, as the build sheet asks), the open
+  purchase order lines, the payment terms and the tax areas; one sheet's header under a title row, and a sheet of
+  notes that is no report.
+
 Only the standard grid and report column names are kept; a company's own category-code labels are ``Cat Code NN``
 here. ``write_all(folder)`` writes every file and returns the truth they were written from; the same seed and size
 give the same bytes.
@@ -188,6 +195,65 @@ ORDER_DETAILS_SHORT = [
 _WRITTEN = dt.datetime(2025, 1, 14, 9, 41, 7)  # every file's "written" time, so the same books give the same bytes
 
 
+# The build sheet (D-266): for each report, its JD Edwards fields (with their table's prefix) and the column title the
+# pilot tester gives each, in its order. "Account Number" of the G/L lines is made of GLMCU, GLOBJ and GLSUB.
+BUILD_SHEET: dict[str, tuple[tuple[str, str], ...]] = {
+    "chart": (("GMCO", "Company"), ("GMMCU", "Business Unit"), ("GMOBJ", "Object Account"), ("GMSUB", "Subsidiary"),
+              ("GMDL01", "Account Description"), ("GMLDA", "L D"), ("GMPEC", "P E"), ("GMAID", "Account ID"),
+              ("GMCRCD", "Currency Code")),
+    "units": (("MCMCU", "Job Number"), ("MCDL01", "Job Name"), ("MCCO", "Co"), ("MCSTYL", "BU Ty"),
+              ("MCPECC", "Job Sts"), ("MCLDM", "LOD"), ("MCADDS", "State")),
+    "supplier_master": (("ABAN8", "Address Number"), ("ABALPH", "Alpha Name"), ("ABTAX", "Tax ID"),
+                        ("ABTX2", "Additional Tax ID"), ("ABAT1", "Sch Typ"), ("A6HDPY", "Hold Payment Code"),
+                        ("A6CRRP", "Cur Cod"), ("A6TRAP", "Payment Terms - A/P"), ("A6TXA2", "Tax Rate/Area"),
+                        ("A6EXR2", "Tax Expl"), *((f"ALADD{n}", f"Address Line {n}") for n in range(1, 5)),
+                        ("ALCTY1", "City"), ("ALADDS", "State"), ("ALADDZ", "Postal Code"), ("ALCTR", "Country"),
+                        ("EAEMAL", "JDE Email Address")),
+    "vouchers": (("RPDOC", "Document Number"), ("RPDCT", "Doc Type"), ("RPKCO", "Doc Co"), ("RPSFX", "Pay Item"),
+                 ("RPSFE", "Pay Ext"), ("RPAN8", "Supplier Number"), ("RPALPH", "Supplier Number Desc"),
+                 ("RPVINV", "Invoice Number"), ("RPDIVJ", "Invoice Date"), ("RPDGJ", "G/L Date"),
+                 ("RPDDJ", "Due Date"), ("RPAG", "Gross Amount"), ("RPAAP", "Open Amount"),
+                 ("RPACR", "Foreign Amount"), ("RPCRCD", "Curr Code"), ("RPICU", "Batch Number"),
+                 ("RPPST", "Pay Stat"), ("RPPO", "Purchase Order"), ("RPPDCT", "PO Doc Type"),
+                 ("RPPKCO", "Doc Co (PO)"), ("RPMCU", "Business Unit")),
+    "gl_lines": (("GLDOC", "Document Number"), ("GLDCT", "Doc Type"), ("GLKCO", "Doc Co"), ("GLDGJ", "G/L Date"),
+                 ("GLJELN", "Line Number"), ("GLANI", "Account Number"), ("GMDL01", "Account Description"),
+                 ("GLAA", "Amount"), ("GLEXA", "Explanation"), ("GLEXR", "Remark"), ("GLAN8", "Supplier Number"),
+                 ("ABALPH", "Supplier Name"), ("GLVINV", "Invoice Number"), ("GLPO", "Purchase Order"),
+                 ("GLCRCD", "Curr Code")),
+    "purchase_orders": (("PDDOCO", "Order Number"), ("PDDCTO", "Or Ty"), ("PDKCOO", "Order Co"),
+                        ("PDLNID", "Line Number"), ("PDAN8", "Supplier Number"), ("ABALPH", "Supplier Name"),
+                        ("PDDSC1", "Line Description"), ("PDDSC2", "Description Line 2"), ("PDLNTY", "Ln Ty"),
+                        ("PDUOM", "UM"), ("PDUORG", "Quantity Ordered"), ("PDUOPN", "Quantity To Receive"),
+                        ("PDUREC", "Quantity Received"), ("PDPRRC", "Unit Cost"),
+                        ("PDAEXP", "Original Ordered Amount"), ("PDAOPN", "Amount To Receive"),
+                        ("PDANI", "Account Number"), ("PDOMCU", "Cost Center"), ("PDOBJ", "Obj Acct"),
+                        ("PDSUB", "Sub"), ("PDTX", "Tax Y/N"), ("PDEXR1", "Tax Expl"), ("PDTXA1", "Tax Rate/Area"),
+                        ("PDLTTR", "Last Status"), ("PDNXTR", "Next Status"), ("PDCRCD", "Curr"),
+                        ("PDFRRC", "Foreign Unit Cost"), ("PDFAP", "Foreign Amount To Receive"),
+                        ("PDTRDJ", "Order Date")),
+    "payment_terms": (("PNPTC", "Payment Terms Code"), ("PNPTD", "Payment Terms Description"),
+                      ("PNDCP", "Discount Percent"), ("PNDCD", "Discount Days"), ("PNNDTP", "Net Days to Pay")),
+    "tax_areas": (("TATXA1", "Tax Rate/Area"), ("TADL01", "Description"),
+                  *((f"TATA{n}", f"Tax Authority {n}") for n in range(1, 6)),
+                  *((f"TATXR{n}", f"Tax Rate {n}") for n in range(1, 6)),
+                  ("TAEFDJ", "Effective Date"), ("TAEFTJ", "Expired Date")),
+}  # fmt: skip
+# The master workbook's sheets: (title, report); two of the supplier ledger and of the G/L lines, by half year.
+MASTER_SHEETS = (("Accounts", "chart"), ("BUs", "units"), ("Suppliers", "supplier_master"),
+                 ("Ledger Jan-Jun", "vouchers"), ("Ledger Jul-Dec", "vouchers"), ("GL lines H1", "gl_lines"),
+                 ("GL lines H2", "gl_lines"), ("Open POs", "purchase_orders"), ("Terms", "payment_terms"),
+                 ("Tax areas", "tax_areas"))  # fmt: skip
+MASTER_FILE = "jde_reports.xlsx"
+# The payment terms codes (F0014) of ``VENDOR_TERMS``: (code, description, discount %, discount days, net days).
+TERMS_TABLE = (("N", "Net 30", ".02", 0, 30), ("F", "Net 45", "0", 0, 45), ("T", "2% 10, Net 15", ".02", 10, 15),
+               ("E", "End of next month", "0", 0, 45))  # fmt: skip
+# The tax areas (F4008) of the default tax map (``jde_settings.default_tax_map``): (area, description, rates).
+TAX_AREA_ROWS = (("AB-GST", "Alberta GST", (5,)), ("BC-GSTPST", "British Columbia GST and PST", (5, 7)),
+                 ("ON-HST", "Ontario HST", (13,)), ("QC-GSTQST", "Quebec GST and QST", (5, 9.975)),
+                 ("CDNGST", "GST only", (5,)))  # fmt: skip
+
+
 # --- cells ---------------------------------------------------------------------------------------
 
 
@@ -236,6 +302,34 @@ def _workbook(header: list[str], rows: Iterable[list[Any]]) -> bytes:
                 cells.append(value)
         sheet.append(cells)
     book.properties.creator = "Apache POI"  # what E1's export writes
+    book.properties.created = _WRITTEN
+    buffer = io.BytesIO()
+    book.save(buffer)
+    return _steady(buffer.getvalue())
+
+
+def _book(sheets: Iterable[tuple[str, list[str], Iterable[list[Any]], list[str] | None]]) -> bytes:
+    """A workbook of several sheets, as ``_workbook`` writes one: (title, header, rows, a title row above the header
+    or None)."""
+    book = Workbook(write_only=True)
+    bold = Font(bold=True)
+    for title, header, rows, above in sheets:
+        sheet = book.create_sheet(title)
+        if above:
+            sheet.append(above)
+        names = [WriteOnlyCell(sheet, value=name) for name in header]
+        for cell in names:
+            cell.font = bold
+        sheet.append(names)
+        for row in rows:
+            cells = []
+            for value in row:
+                cell = value
+                if isinstance(value, tuple):
+                    cell = WriteOnlyCell(sheet, value=value[0])
+                    cell.number_format = value[1]
+                cells.append(cell)
+            sheet.append(cells)
     book.properties.created = _WRITTEN
     buffer = io.BytesIO()
     book.save(buffer)
@@ -740,6 +834,132 @@ def order_details_xlsx(lines: Iterable[OpenPoLine], base: str = "CAD", rate: Dec
             seen.add(name)
         rows.append(row)
     return _workbook(ORDER_DETAILS_SHORT if short else ORDER_DETAILS_HEADER, rows)
+
+
+# --- the master workbook (D-266) -------------------------------------------------------------------
+
+
+def _titles(key: str) -> list[str]:
+    return [title for _field, title in BUILD_SHEET[key]]
+
+
+def _rows_of(key: str, records: Iterable[dict[str, Any]]) -> list[list[Any]]:
+    """Each record ({field: value}) as a row of the build sheet's columns for ``key`` (a field not given: blank)."""
+    return [[record.get(field) for field, _title in BUILD_SHEET[key]] for record in records]
+
+
+def _master_chart(truth: Truth) -> list[list[Any]]:
+    return _rows_of("chart", ({"GMCO": truth.company.number, "GMMCU": _unit(a.business_unit), "GMOBJ": a.object,
+                               "GMSUB": a.subsidiary or None, "GMDL01": a.description[:30], "GMLDA": str(a.level),
+                               "GMPEC": a.posting_edit or None, "GMAID": a.account_id, "GMCRCD": "CAD"}
+                              for a in truth.accounts))  # fmt: skip
+
+
+def _master_units(truth: Truth) -> list[list[Any]]:
+    return _rows_of("units", ({"MCMCU": _unit(u.number), "MCDL01": u.name, "MCCO": truth.company.number,
+                               "MCSTYL": u.kind, "MCPECC": None if u.status == "ACT" else "N", "MCLDM": u.level,
+                               "MCADDS": "AB"} for u in truth.business_units))  # fmt: skip
+
+
+def _master_suppliers(truth: Truth) -> list[list[Any]]:
+    """The books' suppliers with what the vendor information list says of each (its tax ID, currency, terms code,
+    address and e-mail), by address number."""
+    info = {row[0]: [cell[0] if isinstance(cell, tuple) else cell for cell in row] for row in _vendor_rows(truth)}
+    records = []
+    for s in truth.suppliers:
+        row = info[s.number]  # number, name, complete, address 1-4, city, state, country, postal, tax ID, currency,
+        records.append({"ABAN8": s.number, "ABALPH": s.name, "ABTAX": row[11], "ABAT1": "V",  # paid, e-mail, ...
+                        "A6HDPY": s.hold_payment, "A6CRRP": row[12], "A6TRAP": row[16],
+                        **{f"ALADD{n}": row[2 + n] for n in range(1, 5)}, "ALCTY1": row[7], "ALADDS": row[8],
+                        "ALADDZ": row[10], "ALCTR": row[9], "EAEMAL": row[14]})  # fmt: skip
+    return _rows_of("supplier_master", records)
+
+
+def _master_ledger(truth: Truth, half: int) -> list[list[Any]]:
+    """The supplier ledger's pay items of the vouchers with a G/L date in the first half year (``half`` 1) or the
+    second (2)."""
+    company, records = truth.company, []
+    for v in truth.vouchers:
+        if (v.gl_date.month > 6) + 1 != half:
+            continue
+        supplier = truth.supplier(v.supplier)
+        for item in v.pay_items:
+            records.append({"RPDOC": v.document, "RPDCT": "PV", "RPKCO": company.number, "RPSFX": item.number,
+                            "RPSFE": 0, "RPAN8": supplier.number, "RPALPH": supplier.name,
+                            "RPVINV": v.invoice_number, "RPDIVJ": _date(v.invoice_date), "RPDGJ": _date(v.gl_date),
+                            "RPDDJ": _date(item.due_date), "RPAG": _number(item.gross),
+                            "RPAAP": _number(item.gross if item.status != "P" else Decimal(0)),
+                            "RPACR": _number(item.foreign_gross or Decimal(0)), "RPCRCD": v.currency,
+                            "RPICU": v.batch, "RPPST": item.status, "RPPO": v.purchase_order or None,
+                            "RPPDCT": "OP" if v.purchase_order else None,
+                            "RPPKCO": company.number if v.purchase_order else None,
+                            "RPMCU": _unit(v.business_unit)})  # fmt: skip
+    return _rows_of("vouchers", records)
+
+
+def _master_gl_lines(truth: Truth, half: int) -> list[list[Any]]:
+    """The vouchers' G/L lines of a half year, one signed amount each, the account as business unit.object.subsidiary:
+    the coding lines and the GST lines, without the payable lines (left out, as the build sheet asks)."""
+    company, records = truth.company, []
+    payables = {company.payable_object, company.intercompany_object}
+    for v in truth.vouchers:
+        if (v.gl_date.month > 6) + 1 != half:
+            continue
+        supplier = truth.supplier(v.supplier)
+        number = 0
+        for account, description, debit, credit, remark, named in _journal_lines(truth, v):
+            if split_account(account)[1].partition(".")[0] in payables:
+                continue
+            number += 1
+            records.append({"GLDOC": v.document, "GLDCT": "PV", "GLKCO": company.number, "GLDGJ": _date(v.gl_date),
+                            "GLJELN": float(number), "GLANI": account, "GMDL01": description,
+                            "GLAA": float((debit or 0) - (credit or 0)), "GLEXA": supplier.name, "GLEXR": remark,
+                            "GLAN8": supplier.number if named else None, "ABALPH": supplier.name if named else None,
+                            "GLVINV": v.invoice_number, "GLPO": v.purchase_order or None,
+                            "GLCRCD": v.currency})  # fmt: skip
+    return _rows_of("gl_lines", records)
+
+
+def _master_po_lines(lines: Iterable[OpenPoLine]) -> list[list[Any]]:
+    records = []
+    for li in lines:
+        business_unit, code = split_account(li.account)
+        obj, _, sub = code.partition(".")
+        received = li.received >= li.ordered > 0
+        records.append({"PDDOCO": li.order, "PDDCTO": li.order_type, "PDKCOO": li.company,
+                        "PDLNID": (float(li.line), LINE_FORMAT), "PDAN8": li.supplier,
+                        "ABALPH": li.supplier_name or None, "PDDSC1": li.description, "PDLNTY": "J", "PDUOM": li.uom,
+                        "PDUORG": _number(li.ordered), "PDUOPN": _number(li.open_quantity),
+                        "PDUREC": _number(li.received), "PDPRRC": (float(li.unit_cost), COST_FORMAT),
+                        "PDAEXP": _number(money(li.ordered * li.unit_cost)),
+                        "PDAOPN": _number(money(li.open_quantity * li.unit_cost)), "PDANI": li.account,
+                        "PDOMCU": _unit(business_unit), "PDOBJ": obj, "PDSUB": sub or None, "PDTX": li.tax_flag,
+                        "PDEXR1": li.tax_code, "PDTXA1": li.tax_area, "PDLTTR": "400" if received else "220",
+                        "PDNXTR": "510" if received else "400", "PDCRCD": li.currency,
+                        "PDTRDJ": _date(li.order_date)})  # fmt: skip
+    return _rows_of("purchase_orders", records)
+
+
+def master_workbook_xlsx(truth: Truth, lines: Iterable[OpenPoLine] | None = None) -> bytes:
+    """Every report of the build sheet in one workbook, a sheet each (``MASTER_SHEETS``), titled as the build sheet
+    says; the open PO lines ``lines`` (``open_po_lines`` when None). The chart's header is under a title row; a last
+    sheet of notes is no report."""
+    lines = open_po_lines(truth) if lines is None else lines
+    terms = [{"PNPTC": code, "PNPTD": words, "PNDCP": pct, "PNDCD": days, "PNNDTP": net}
+             for code, words, pct, days, net in TERMS_TABLE]  # fmt: skip
+    areas = [{"TATXA1": area, "TADL01": words, **{f"TATA{n}": 9000 + n for n, _r in enumerate(rates, 1)},
+              **{f"TATXR{n}": rate for n, rate in enumerate(rates, 1)}, "TAEFDJ": _date(dt.date(2013, 4, 1)),
+              "TAEFTJ": _date(dt.date(2040, 12, 31))} for area, words, rates in TAX_AREA_ROWS]  # fmt: skip
+    rows = {"chart": _master_chart(truth), "units": _master_units(truth), "supplier_master": _master_suppliers(truth),
+            "purchase_orders": _master_po_lines(lines), "payment_terms": _rows_of("payment_terms", terms),
+            "tax_areas": _rows_of("tax_areas", areas)}  # fmt: skip
+    halves = {"Ledger Jan-Jun": _master_ledger(truth, 1), "Ledger Jul-Dec": _master_ledger(truth, 2),
+              "GL lines H1": _master_gl_lines(truth, 1), "GL lines H2": _master_gl_lines(truth, 2)}  # fmt: skip
+    sheets = [(title, _titles(key), halves.get(title) or rows[key],
+               [f"{truth.company.name}: account master (F0901)"] if key == "chart" else None)
+              for title, key in MASTER_SHEETS]  # fmt: skip
+    sheets.append(("Notes", ["Note"], [["Queried in ReportsNow from the build sheet."]], None))
+    return _book(sheets)
 
 
 def write_all(folder: str | Path, seed: int = 1, size: str = "small", year: int = 2024) -> Truth:

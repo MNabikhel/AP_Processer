@@ -13,6 +13,7 @@ import pytest
 from ap_coder.bench import jde_exports as made
 from ap_coder.bench.jde_company import build
 from ap_coder.coding import vendor_info
+from ap_coder.coding.tax import OUTSIDE_CANADA
 from ap_coder.coding.vendors import master_columns, master_rows
 from ap_coder.core.keys import same_tax_number
 from ap_coder.web.files import read_sheet
@@ -241,3 +242,34 @@ def test_the_two_business_unit_columns_are_told_apart_by_what_they_hold_not_thei
         (by_number[r["erp_id"]]["business_unit"], by_number[r["erp_id"]]["business_unit_name"]) for r in read["rows"]
     ]
     assert read["rows"][1]["business_unit"] == made.OTHER_UNIT[0]
+
+
+def test_the_supplier_master_queried_with_its_address_book_carries_the_vendor_information_too():
+    """D-266: the build sheet's suppliers report (F0101 with F0401, F0116, F01151) has the supplier master's number,
+    name and hold, and the vendor information list's tax ID, currency, terms, address and e-mail: both are read of it.
+    Only a tax ID that reads as a Canadian business number is the GST/HST number; the additional tax ID gives it when
+    the tax ID does not, or the QST number."""
+    head = [title for _field, title in made.BUILD_SHEET["supplier_master"]]
+    assert vendor_info.in_master(made.SUPPLIERS_HEADER) == {}  # (the screen's grid: no vendor information)
+    found = vendor_info.in_master(head)
+    assert set(found) == {"tax_id", "tax_id2", "currency", "terms", "address1", "address2", "address3", "address4",
+                          "city", "state", "country", "postal_code", "email"}  # fmt: skip
+    assert vendor_info.in_master(["ABAN8", "ABALPH", "ABTAX", "A6CRRP", "EAEMAL"]).keys() == {"tax_id", "currency",
+                                                                                               "email"}  # fmt: skip
+    records = [dict(zip(head, row, strict=False)) for row in (
+        ["41001", "ACME LTD", "70412 9930 RT0001", "", "V", "N", "CAD", "N"],
+        ["41002", "CASCADE BEARING INC", "91-4402718", "", "V", "Y", "USD", "F"],
+        ["41003", "BEAUSEJOUR INC", "", "1234567890TQ0001", "V", "N", "CAD", "N"],
+        ["41004", "PRAIRIE SHARPENING", "N/A", "704129930", "V", "N", "CAD", ""])]  # fmt: skip
+    for record, province in zip(records, ("AB", "WA", "QC", "SK"), strict=True):
+        record.update({"State": province, "Country": "US" if province == "WA" else "CA"})
+    columns = master_columns(head)
+    rows = master_rows(records, columns)
+    where = {"erp_id": head.index(columns["erp_id"]), "vendor_name": head.index(columns["vendor_name"]),
+             **{field: head.index(header) for field, header in found.items()}}  # fmt: skip
+    info, _left = vendor_info.rows_of([tuple(r.get(h, "") for h in head) for r in records], where)
+    out = vendor_info.with_master(rows, info)
+    assert [(r["erp_id"], r["gst"], r["qst"], r["province"], r["hold"], r["terms"]) for r in out] == [
+        ("41001", "70412 9930 RT0001", "", "AB", "N", "N"), ("41002", "", "", OUTSIDE_CANADA, "Y", "F"),
+        ("41003", "", "1234567890TQ0001", "QC", "N", "N"), ("41004", "704129930", "", "SK", "N", "")]  # fmt: skip
+    assert [r["tax_id"] for r in info] == ["70412 9930 RT0001", "91-4402718", "", "N/A"]

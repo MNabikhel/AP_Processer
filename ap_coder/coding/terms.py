@@ -5,8 +5,13 @@ Terms are read as printed ("Net 30", "2/10 Net 30", "1% 15 days, net 45", "Due o
 otherwise the invoice date plus the net days of the terms, otherwise the organisation's default
 (Settings, 30 days unless changed).
 
+JD Edwards gives a supplier's terms as a code ("N"). Its payment terms table (F0014, loaded on JD Edwards files, D-266)
+says what each code means: its discount and net days, read as the words they stand for (``jde_words``: "2/10 Net
+30"), so a supplier's code counts as JD Edwards counts it (``jde_meaning``; the store reads it so: ``vendor_terms``).
+
 Entry points: ``parse_terms``, ``payment`` (due date and discount), ``payment_findings`` (the checks),
-``describe`` and ``terms_key`` (the standard wording, the key of the JD Edwards terms table).
+``describe`` and ``terms_key`` (the standard wording, the key of the JD Edwards terms table); ``JDE_TERMS_ALIASES``,
+``jde_table`` (the F0014 export read), ``jde_meaning``.
 """
 
 from __future__ import annotations
@@ -14,10 +19,13 @@ from __future__ import annotations
 import calendar
 import datetime as dt
 import functools
+import json
 import re
 from dataclasses import dataclass, replace
 from typing import Any
 
+from ..core.headers import jde_names
+from ..core.safe import parse_amount
 from .money import times
 
 DEFAULT_TERMS_DAYS = 30
@@ -433,3 +441,63 @@ def payment_findings(
                          f"dated {invoice_date}, more than a year before it was received: check the date on the "
                          "page"))  # fmt: skip
     return findings
+
+
+# --- JD Edwards' payment terms table (F0014, D-266) ---------------------------------------------------------------
+
+JDE_TERMS_SETTING = "jde_payment_terms"  # the table as loaded: JSON {code: {description, discount_pct, ...}}
+# Its columns: the build sheet's titles, JD Edwards' data dictionary's names, the fields.
+JDE_TERMS_ALIASES: dict[str, tuple[str, ...]] = {
+    "code": ("Payment Terms Code", "Pmt Trm", *jde_names("F0014", "PN", "PTC")),
+    "description": ("Payment Terms Description", "Description - Payment Terms", *jde_names("F0014", "PN", "PTD")),
+    "discount_pct": ("Discount Percent", "Discount %", "Percent - Discount", *jde_names("F0014", "PN", "DCP")),
+    "discount_days": ("Discount Days", "Days - Discount", *jde_names("F0014", "PN", "DCD")),
+    "net_days": ("Net Days to Pay", "Days - Net Days to Pay", "Net Days", *jde_names("F0014", "PN", "NDTP")),
+}  # fmt: skip
+JDE_TERMS_NEEDS = ("code", "net_days")
+
+
+def jde_table(records: list[dict[str, Any]], columns: dict[str, str]) -> tuple[dict[str, dict[str, Any]], int]:
+    """(the table: {code: {"description", "discount_pct", "discount_days", "net_days"}}, how many rows were left
+    out: no code, or net days that are no number) of the F0014 export's rows under ``columns`` ({field: header}).
+    A discount as JD Edwards keeps it, a fraction (.02), is read as the percent it is (2)."""
+    table: dict[str, dict[str, Any]] = {}
+    left = 0
+    for record in records:
+        cell = {f: "" if record.get(h) is None else str(record.get(h)).strip() for f, h in columns.items()}
+        net = parse_amount(cell.get("net_days"))
+        if not cell.get("code") or net is None:
+            left += any(cell.values())
+            continue
+        pct = parse_amount(cell.get("discount_pct")) or 0.0
+        table[cell["code"].upper()] = {
+            "description": cell.get("description", ""), "net_days": int(net),
+            "discount_pct": round(pct * 100 if 0 < pct < 1 else pct, 3),
+            "discount_days": int(parse_amount(cell.get("discount_days")) or 0),
+        }  # fmt: skip
+    return table, left
+
+
+def jde_words(row: dict[str, Any]) -> str:
+    """A code's terms as the words AP Coder reads ("2/10 Net 30", "Net 45", "Due on receipt")."""
+    pct, days, net = row.get("discount_pct") or 0, row.get("discount_days") or 0, row.get("net_days") or 0
+    if pct and days:
+        return f"{pct:g}/{days} Net {net}"
+    return f"Net {net}" if net else "Due on receipt"
+
+
+def jde_meaning(text: Any, table: dict[str, dict[str, Any]]) -> str:
+    """A supplier's terms as AP Coder reads them: a code of JD Edwards' table (``jde_table``) as the words it stands
+    for (``jde_words``), anything else as written."""
+    written = str(text or "").strip()
+    row = table.get(written.upper()) if written else None
+    return jde_words(row) if row else written
+
+
+def jde_table_of(text: str | None) -> dict[str, dict[str, Any]]:
+    """The table as its setting keeps it ({} for none)."""
+    try:
+        table = json.loads(text or "{}")
+    except ValueError:
+        return {}
+    return table if isinstance(table, dict) else {}

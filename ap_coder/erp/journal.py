@@ -16,8 +16,15 @@ Nothing is stored and nothing is refused here: ``Journal.notes`` says in plain w
 left out, and ``Journal.totals.differ`` that the lines do not add up to the file's ``Grand Total`` row (the caller
 decides what to do about it).
 
-Entry points: ``read_journal`` (a ``Journal``), ``looks_like_journal``, ``coding_lines`` and ``suggest_objects``
-(which objects are the payable and tax ones, worked out from the file itself).
+The same lines come as a table too (D-266): JD Edwards' account ledger (F0911) as a query tool exports it (ReportsNow:
+the build sheet's tab 5), a row for each G/L line with its document number and one signed amount (``FLAT_ALIASES``),
+read by ``read_journal`` as well (``is_gl_lines`` tells it). A voucher is the lines of one document (company, type and
+number), in any order. Such an export may leave out the payable lines JD Edwards adds (the build sheet asks for that
+when it can be done): a voucher with no payable line whose lines do not add up to nothing is read as one whose
+payable line was left out (``Voucher.payable_left_out``): complete, the supplier owed the sum of its lines.
+
+Entry points: ``read_journal`` (a ``Journal``), ``looks_like_journal``, ``is_gl_lines``, ``sheet_csv``,
+``coding_lines`` and ``suggest_objects`` (which objects are the payable and tax ones, worked out from the file itself).
 """
 
 from __future__ import annotations
@@ -28,12 +35,13 @@ import csv
 import datetime as dt
 import io
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
-from ..core.chart import SEPARATOR, clean, join_account, split_account, split_code
+from ..core.chart import SEPARATOR, clean, code_of, join_account, split_account, split_code
 from ..core.csvio import sniff_delimiter
-from ..core.headers import header_key
+from ..core.headers import header_key, jde_names, match_columns
 from ..core.parsing import infer_day_first, parse_amount, parse_date
 from ..core.ui import plural
 
@@ -51,6 +59,41 @@ _HEAD = ("doc_type", "company", "gl_date")  # filled on a voucher's first row, b
 HEADER_ROWS = 30  # the header is looked for in the first rows only
 _HEAD_BYTES = 16384  # enough of a file to recognise it by
 SHOWN = 5  # how many rows or vouchers a note names before "and N more"
+
+
+def _gl(*items: str) -> tuple[str, ...]:
+    return jde_names("F0911", "GL", *items)
+
+
+# The columns of the account ledger exported as a table (F0911, D-266): the build sheet's titles first, then the grids'
+# and JD Edwards' data dictionary's names, then the fields. A line's account is its "Account Number" (business
+# unit.object.subsidiary), or its business unit, object and subsidiary when the export has them (the account number's
+# format is the one the line was entered in).
+FLAT_ALIASES: dict[str, tuple[str, ...]] = {
+    "document": ("Document Number", "Doc Number", "Document (Voucher, Invoice, etc.)", *_gl("DOC")),
+    "doc_type": ("Doc Type", "Doc Ty", *_gl("DCT")),  # (not "Document Type": a grid's column of its name)
+    "company": ("Doc Co", "Document Company", *_gl("KCO")),
+    "gl_date": ("G/L Date", "Date - For G/L (and Voucher) - Julian", *_gl("DGJ")),
+    "line": ("Line Number", "JE Line Number", "Journal Entry Line Number", *_gl("JELN")),
+    "line_ext": ("Line Ext", "Line Extension", "Line Extension Code", *_gl("EXTL")),
+    "account": ("Account Number", "Account Number - Input (Mode Unknown)", *_gl("ANI")),
+    "business_unit": ("Business Unit", "Cost Center", *_gl("MCU")),
+    "object": ("Object Account", "Obj Acct", *_gl("OBJ")),
+    "subsidiary": ("Subsidiary", "Sub", *_gl("SUB")),
+    "description": ("Account Description", *jde_names("F0901", "GM", "DL01")[1:]),
+    "amount": ("Amount", *_gl("AA")),
+    "remark": ("Remark", "Explanation - Remark", "Name - Remark Explanation", *_gl("EXR")),
+    "explanation": ("Explanation", "Explanation - Name Alpha", "Name - Alpha Explanation", *_gl("EXA")),
+    "supplier": ("Supplier Number", "Address Number", *_gl("AN8")),
+    "name": ("Supplier Name", "Alpha Name", "Name - Alpha", *jde_names("F0101", "AB", "ALPH")[1:]),
+    "invoice": ("Invoice Number", "Supplier Invoice Number", *_gl("VINV")),
+    "po": ("Purchase Order", *_gl("PO")),
+    "currency": ("Curr Code", "Currency Code", *_gl("CRCD")),
+}  # fmt: skip
+# The columns that make a table the account ledger: these, and its account number or its business unit and object.
+FLAT_NEEDS = ("document", "amount", "supplier")
+FLAT_ACCOUNT = (("account",), ("business_unit", "object"))
+_NOWHERE = 1 << 30  # the column of a field a table does not have: every row's cell there is blank
 # ``suggest_objects``: a payable object closes at least this share of the vouchers it is looked for in; a tax object
 # is on at least TAX_ON of the vouchers (and TAX_VOUCHERS of them), the same share of the rest of the voucher, to the
 # nearest percent and no more than TAX_MOST, on TAX_STEADY of those it is on.
@@ -99,6 +142,9 @@ class Voucher:
     credit: bool  # the gross is negative
     balanced: bool  # debits = credits within a cent
     both_columns: bool  # a line has an amount in the debit and in the credit column
+    # (the account ledger as a table, D-266) it has no payable line and its lines do not add up to nothing: the
+    # export left JD Edwards' payable lines out. Read as balanced, the supplier owed the sum of its lines.
+    payable_left_out: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +173,7 @@ class Journal:
     notes: tuple[str, ...]  # for a person: what was read, what was left out and why
     totals: Totals
     day_first: bool = False  # its G/L dates that read two ways read day first (03/04/2026: 3 April, B-2543)
+    flat: bool = False  # the account ledger as a table (``FLAT_ALIASES``), not the printed report (D-266)
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +247,8 @@ def _positions(rows: list[list[str]], loose: bool = False) -> tuple[dict[str, in
     before the account is the document type's, the one after it the supplier number's. With no header: the standard
     positions, and None."""
     for at, row in enumerate(rows[:HEADER_ROWS]):
+        if _flat_columns(row):  # (the account ledger as a table names an account number and a remark too)
+            continue
         keys = [header_key(cell) for cell in row]
         found = {name: keys.index(word) for name, word in HEADER_WORDS.items() if word in keys}
         named = set(_NEEDED) & set(found)
@@ -215,6 +264,25 @@ def _positions(rows: list[list[str]], loose: bool = False) -> tuple[dict[str, in
             found["supplier"] = after[-1]
         return {**POSITIONS, **found}, at
     return dict(POSITIONS), None
+
+
+def _flat_columns(row: Sequence[Any]) -> dict[str, int]:
+    """{field: its column} of a row that is the header of the account ledger as a table (it names each of
+    ``FLAT_NEEDS``); {} for any other row."""
+    cells = ["" if cell is None else str(cell).strip() for cell in row]
+    found = match_columns([cell for cell in cells if cell], FLAT_ALIASES)
+    if not all(name in found for name in FLAT_NEEDS) or not any(set(names) <= set(found) for names in FLAT_ACCOUNT):
+        return {}
+    return {name: cells.index(header) for name, header in found.items()}
+
+
+def flat_header(rows: Sequence[Sequence[Any]]) -> tuple[dict[str, int], int | None]:
+    """({field: its column}, the header row's index) of the account ledger as a table, its header within the first
+    ``HEADER_ROWS`` (under a title); ({}, None) for any other file."""
+    for at, row in enumerate(rows[:HEADER_ROWS]):
+        if found := _flat_columns(row):
+            return found, at
+    return {}, None
 
 
 def header_lacks(row: list[str]) -> list[str]:
@@ -263,15 +331,16 @@ def _not_data(row: list[str], pos: dict[str, int], seen: _Seen) -> None:
         seen.titles += 1
 
 
-def _voucher(draft: _Draft, intercompany: frozenset[str]) -> Voucher:
-    gross = -sum(round(line.amount * 100) for line in draft.lines if line.kind == PAYABLE)
+def _voucher(draft: _Draft, intercompany: frozenset[str], flat: bool = False) -> Voucher:
+    left_out = flat and abs(draft.net) > 1 and not any(line.kind == PAYABLE for line in draft.lines)
+    gross = draft.net if left_out else -sum(round(line.amount * 100) for line in draft.lines if line.kind == PAYABLE)
     tax = sum(round(line.amount * 100) for line in draft.lines if line.kind == TAX)
     return Voucher(
         row=draft.row, doc_type=draft.doc_type, company=draft.company, gl_date=draft.gl_date,
         supplier_number=draft.supplier_number, supplier_name=draft.supplier_name, lines=tuple(draft.lines),
-        gross=gross / 100, tax=tax / 100, credit=gross < 0, balanced=abs(draft.net) <= 1,
+        gross=gross / 100, tax=tax / 100, credit=gross < 0, balanced=left_out or abs(draft.net) <= 1,
         affiliate=any(line.kind == PAYABLE and line.object in intercompany for line in draft.lines),
-        both_columns=draft.both_columns,
+        both_columns=draft.both_columns, payable_left_out=left_out,
     )  # fmt: skip
 
 
@@ -306,20 +375,23 @@ def _date_order(rows: list[list[str]], pos: dict[str, int]) -> tuple[bool, str]:
 
 
 def read_journal(data: bytes, *, payable_objects: PayableObjects, tax_objects: Iterable[str]) -> Journal:
-    """The vouchers of a Transaction Journal saved as CSV. ``payable_objects`` and ``tax_objects``: the objects of
-    the lines AP did not choose (trade and intercompany payable; the GST clearing account). Every voucher is kept,
-    also one that does not balance or pays an affiliate: it is marked, and ``coding_lines`` leaves it out.
-    Raises ValueError when the file is not a CSV at all."""
+    """The vouchers of a Transaction Journal saved as CSV, or of the account ledger as a table. ``payable_objects``
+    and ``tax_objects``: the objects of the lines AP did not choose (trade and intercompany payable; the GST clearing
+    account). Every voucher is kept, also one that does not balance or pays an affiliate: it is marked, and
+    ``coding_lines`` leaves it out. Raises ValueError when the file is not a CSV at all."""
     rows = _rows(data)
+    intercompany = frozenset(clean(o) for o in payable_objects.intercompany)
+    kinds = {clean(o): TAX for o in tax_objects}
+    kinds |= {clean(o): PAYABLE for o in (*payable_objects.trade, *intercompany)}
+    flat, at = flat_header(rows)
+    if at is not None:
+        return _read_flat(rows, at, flat, kinds, intercompany)
     pos, header = _positions(rows, loose=True)
     if header is not None and (lacks := header_lacks(rows[header])):  # (never read by position: B-2407)
         named = " and ".join(f"“{name}”" for name in lacks)
         raise ValueError(f"The report's header row has no {named} column{'s' if len(lacks) > 1 else ''}, so its "
                          "lines cannot be read: run report R09321 again and save it as CSV as it comes.")  # fmt: skip
     start = 0 if header is None else header + 1
-    intercompany = frozenset(clean(o) for o in payable_objects.intercompany)
-    kinds = {clean(o): TAX for o in tax_objects}
-    kinds |= {clean(o): PAYABLE for o in (*payable_objects.trade, *intercompany)}
     seen = _Seen(titles=sum(1 for row in rows[:start] if any(cell.strip() for cell in row)), no_header=header is None)
     drafts: list[_Draft] = []
     day_first, seen.dates = _date_order(rows[start:], pos)
@@ -349,6 +421,59 @@ def read_journal(data: bytes, *, payable_objects: PayableObjects, tax_objects: I
     return Journal(vouchers, tuple(_notes(vouchers, totals, seen)), totals, day_first)
 
 
+def _flat_account(row: list[str], where: dict[str, int], parts: bool) -> str:
+    """A table row's account string: of its business unit, object and subsidiary when the table has them (``parts``)
+    and the row an object, else its account number as written."""
+    if parts and _cell(row, where["object"]):
+        code = code_of(_cell(row, where["object"]), _cell(row, where["subsidiary"]))
+        return join_account(_cell(row, where["business_unit"]), code)
+    return _cell(row, where["account"])
+
+
+def _read_flat(rows: list[list[str]], at: int, pos: dict[str, int], kinds: dict[str, str],
+               intercompany: frozenset[str]) -> Journal:  # fmt: skip
+    """The vouchers of the account ledger as a table, its header on row ``at``: a voucher is the lines of one document
+    (company, type and number) wherever they are; a line's account is its business unit, object and subsidiary when
+    the table has them, else its account number. A row with no account is a total (an amount alone) or a title."""
+    where = {name: pos.get(name, _NOWHERE) for name in (*FLAT_ALIASES, *POSITIONS)}
+    parts = "business_unit" in pos and "object" in pos
+    seen = _Seen(titles=sum(1 for row in rows[:at] if any(cell.strip() for cell in row)))
+    data = rows[at + 1 :]
+    accounts = [_flat_account(row, where, parts) for row in data]
+    dated = [[account, _cell(row, where["gl_date"])] for account, row in zip(accounts, data, strict=True)]
+    day_first, seen.dates = _date_order(dated, {"account": 0, "gl_date": 1})
+    drafts: dict[tuple[str, str, str], _Draft] = {}
+    for n, (row, account) in enumerate(zip(data, accounts, strict=True), start=at + 2):
+        cents = _cents(_cell(row, where["amount"]))
+        if SEPARATOR not in account:
+            if any(cell.strip() for cell in row):
+                seen.total_rows += cents is not None and bool(_cell(row, where["amount"]))
+                seen.titles += cents is None or not _cell(row, where["amount"])
+            continue
+        document = _cell(row, where["document"])
+        business_unit, code = split_account(account)
+        obj, subsidiary = split_code(code)
+        if cents is None or not document or not obj:
+            seen.unreadable.append(n)
+            continue
+        key = (_cell(row, where["company"]), _cell(row, where["doc_type"]), document)
+        draft = drafts.get(key)
+        if draft is None:
+            date = _gl_date(_cell(row, where["gl_date"]), day_first=day_first)
+            draft = drafts[key] = _Draft(n, key[1], key[0], date.isoformat() if date else "")
+        draft.lines.append(Line(n, join_account(business_unit, code), business_unit, obj, subsidiary,
+                                _cell(row, where["description"]), cents / 100, _cell(row, where["remark"]),
+                                kinds.get(obj, CODING)))  # fmt: skip
+        draft.net += cents
+        draft.supplier_number = draft.supplier_number or _cell(row, where["supplier"])
+        draft.supplier_name = draft.supplier_name or _cell(row, where["name"]) or _cell(row, where["explanation"])
+        seen.debit += max(cents, 0)
+        seen.credit += max(-cents, 0)
+    vouchers = tuple(_voucher(draft, intercompany, flat=True) for draft in drafts.values())
+    totals = _totals(vouchers, seen)
+    return Journal(vouchers, tuple(_notes(vouchers, totals, seen, flat=True)), totals, day_first, flat=True)
+
+
 def _totals(vouchers: tuple[Voucher, ...], seen: _Seen) -> Totals:
     kinds = [line.kind for voucher in vouchers for line in voucher.lines]
     dates = sorted(voucher.gl_date for voucher in vouchers if voucher.gl_date)
@@ -369,7 +494,7 @@ def _first(items: list[str]) -> str:
     return ", ".join(items[:SHOWN]) + (f" and {more:,} more" if more > 0 else "")
 
 
-def _notes(vouchers: tuple[Voucher, ...], totals: Totals, seen: _Seen) -> list[str]:
+def _notes(vouchers: tuple[Voucher, ...], totals: Totals, seen: _Seen, flat: bool = False) -> list[str]:
     """What a person should know about the file before it is used, in plain words."""
     notes = []
     if seen.no_header:
@@ -380,6 +505,16 @@ def _notes(vouchers: tuple[Voucher, ...], totals: Totals, seen: _Seen) -> list[s
         f"The lines by kind: {totals.coding:,} coding (what AP chose), {totals.payable:,} payable and "
         f"{totals.tax:,} tax (what JD Edwards added)."
     )
+    companies = Counter(voucher.company for voucher in vouchers if voucher.company)
+    if flat and companies:  # (every company's vouchers are kept, each with its company, D-266)
+        notes.append("Vouchers by company: " + ", ".join(f"{company} {count:,}" for company, count in
+                                                         sorted(companies.items())) + ".")  # fmt: skip
+    left_out = sum(voucher.payable_left_out for voucher in vouchers)
+    if left_out:
+        notes.append(
+            f"{plural(left_out, 'voucher')} with no payable line (the export left out the payable lines JD "
+            "Edwards adds): each is read as complete, what the supplier is owed the sum of its lines."
+        )
     if seen.titles or seen.total_rows:
         notes.append(
             f"Skipped: {plural(seen.titles, 'title or page header row')} and {plural(seen.total_rows, 'total row')}."
@@ -414,12 +549,14 @@ def _notes(vouchers: tuple[Voucher, ...], totals: Totals, seen: _Seen) -> list[s
             f"{plural(len(rows), 'row')} left out, because the account, the amount or the voucher it belongs to "
             f"could not be read: row {_first(rows)}."
         )
-    notes.append(_control_note(totals))
+    notes.append(_control_note(totals, flat))
     return notes
 
 
-def _control_note(totals: Totals) -> str:
+def _control_note(totals: Totals, flat: bool = False) -> str:
     read = f"debits {totals.debit:,.2f} and credits {totals.credit:,.2f}"
+    if flat and totals.file_debit is None:
+        return f"The lines read: {read}. A table of G/L lines has no Grand Total row to check them against."
     if totals.file_debit is None:
         return (
             f"The file has no Grand Total row, so the lines read ({read}) could not be checked against the report's "
@@ -450,6 +587,36 @@ def looks_like_journal(data: bytes) -> bool:
         return False
     named = any(_cell(row, 0).upper() == REPORT for row in rows[:1])
     return named or _positions(rows)[1] is not None
+
+
+def is_gl_lines(data: bytes) -> bool:
+    """True for the account ledger as a table saved as CSV (``FLAT_ALIASES``): its header is in the start of the
+    file."""
+    try:
+        rows = _rows(data[:_HEAD_BYTES])
+    except ValueError:
+        return False
+    return flat_header(rows)[1] is not None
+
+
+def sheet_csv(rows: Iterable[Sequence[Any]]) -> bytes:
+    """A sheet's rows (a workbook's cells: text, numbers, dates) as the CSV the journal's reader reads: a whole number
+    without its ".0", a date as YYYY-MM-DD, nothing as blank."""
+    text = io.StringIO()
+    writer = csv.writer(text, lineterminator="\r\n")
+    for row in rows:
+        writer.writerow(["" if cell is None else cell.date().isoformat() if isinstance(cell, dt.datetime)
+                         else cell.isoformat() if isinstance(cell, dt.date)
+                         else str(int(cell)) if isinstance(cell, float) and cell.is_integer() else str(cell)
+                         for cell in row])  # fmt: skip
+    return text.getvalue().encode("utf-8-sig")
+
+
+def payable_left_out(journal: Journal) -> bool:
+    """Whether the account ledger as a table came without its payable lines: every voucher of it whose lines add up
+    to nothing has none (none needs a trade payable object to tell its payable lines from AP's coding)."""
+    return journal.flat and any(v.payable_left_out for v in journal.vouchers) and not any(
+        v.balanced and not v.payable_left_out for v in journal.vouchers)  # fmt: skip
 
 
 def cut_by_excel(journal: Journal, units: Iterable[str] = (), objects: Iterable[str] = ()) -> list[str]:
@@ -534,7 +701,11 @@ def _tax_shares(vouchers: Iterable[Voucher], payable: set[str]) -> tuple[Counter
         cents: Counter[str] = Counter()
         for line in voucher.lines:
             cents[line.object] += round(line.amount * 100)
-        gross = -sum(amount for obj, amount in cents.items() if obj in payable)
+        gross = (
+            sum(cents.values())
+            if voucher.payable_left_out
+            else -sum(amount for obj, amount in cents.items() if obj in payable)
+        )
         for obj, amount in cents.items():
             rest = gross - amount
             if obj in payable or not gross or not rest:
@@ -606,10 +777,13 @@ def suggest_objects(
 
     A guess that cannot be made is left empty and said. Raises ValueError when the file is not a CSV at all."""
     journal = read_journal(data, payable_objects=PayableObjects(()), tax_objects=())
-    balanced = [v for v in journal.vouchers if v.balanced and all(_side_objects(v))]
+    balanced = [v for v in journal.vouchers if v.balanced and all(_side_objects(v)) and not v.payable_left_out]
     objects, why = _payable_guess(balanced)
-    if not objects.trade:
+    left_out = [v for v in journal.vouchers if v.payable_left_out]
+    if not objects.trade and not payable_left_out(journal):
         return objects, (), tuple(why)
+    if not objects.trade:
+        why = ["Trade payable: none is needed, the file has no payable lines (the export left them out)."]
     lines = Counter(line.object for voucher in journal.vouchers for line in voucher.lines)
     mapped = tuple(dict.fromkeys(o for o in (clean(o) for o in tax_setup_objects) if o in lines))
     if mapped:
@@ -617,6 +791,6 @@ def suggest_objects(
                 for obj in mapped]  # fmt: skip
         return objects, mapped, tuple(why)
     payable = {*objects.trade, *objects.intercompany}
-    closed = [v for v in balanced if any(line.object in payable for line in v.lines)]
+    closed = [v for v in balanced if any(line.object in payable for line in v.lines)] + left_out
     tax, said = _tax_guess(closed, payable)
     return objects, tax, tuple(why + said)
