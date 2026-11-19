@@ -1292,7 +1292,8 @@ def test_a_progress_billing_bills_the_subcontract_line_it_can_be_by_its_amount_a
         None]  # fmt: skip
     rows = po_mod.voucher_match(by_words, "41201").rows
     assert [(r.order_type, r.line, r.amount, r.retainage, r.billed_before, r.quantity) for r in rows] == [
-        ("OS", "2.000", 30000.0, 10.0, 60000.0, 1.0)]  # fmt: skip
+        ("OS", "2.000", 30000.0, 10.0, 60000.0, None)
+    ]  # fmt: skip (a lump sum's: matched by its amount alone)
     # A one-line subcontract: its line, whatever the billing's words; a PO's (no retainage) never by its amount
     store.import_purchase_orders([{"po_number": "41202", "description": "ELECTRICAL", "line_number": 1,
                                    "quantity": 1.0, "unit_price": 50000.0, "amount": 50000.0, "amount_only": True,

@@ -24,6 +24,8 @@ from ...core.parsing import find_amounts
 from ..types import DocLayout
 from ._common import plain
 
+# The line a progress billing printed without a line table is coded as (a G702-style application: ``ai/offline_coder``)
+PROGRESS_LINE = "Work completed this period"
 # Before a label: a G702's line number ("5.", "6 a)").
 _NUMBERED = r"\W*(?:\d{1,2}\s*[.)]\s*)?(?:[a-h]\s*[.)]\s*)?"
 _PCT = r"\(?\s*\d{1,2}(?:[.,]\d{1,2})?\s*%\s*\)?"

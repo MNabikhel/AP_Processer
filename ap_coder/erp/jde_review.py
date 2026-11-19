@@ -274,4 +274,14 @@ def voucher_view(
             "not_ready": not_ready, "keyed": keyed, "match_held": match_held,
             "match": [{**vars(m), "quantity_text": "—" if m.quantity is None
                        else f"{m.quantity:,.4f}".rstrip("0").rstrip("."),
-                       "amount_text": money(round(m.amount * 100))} for m in rows_matched]}  # fmt: skip
+                       "amount_text": money(round(m.amount * 100)),
+                       "retained_text": money(round(m.retained * 100))} for m in rows_matched],
+            "retainage": _retainage_said(keyed_rows, money)}  # fmt: skip
+
+
+def _retainage_said(keyed: Any, money: Any) -> dict[str, Any] | None:
+    """A subcontract's progress billing's voucher match (D-273), for the review screen: what its rows retain, the
+    amount due now, and what is said of it; None for any other."""
+    if keyed is None or not keyed.retained or keyed.due is None:
+        return None
+    return {"retained": money(keyed.retained), "due": money(keyed.due), "said": keyed.retainage_said}

@@ -25,7 +25,7 @@ from ..capture.bridge import TAX_FIELD, printed_taxes, said_pages, vendor_record
 from ..capture.confidence import apply_supplier_record, reading_confidence
 from ..capture.reader import us_address
 from ..capture.reader.patterns import OUR_NAMES
-from ..capture.reader.progress import layout_rows, read_progress
+from ..capture.reader.progress import PROGRESS_LINE, layout_rows, read_progress
 from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout, Line
 from ..capture.workflow import (
     apply_header_lessons,
@@ -832,10 +832,6 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     )
     return CodingResult(coding=coding, raw_response="", model=MODEL_NAME, attempts=0, hints=hints,
                         offered=offered)  # fmt: skip
-
-
-# The line of a progress billing printed without a line table (a G702-style application, D-273).
-PROGRESS_LINE = "Work completed this period"
 
 
 def _progress_values(values: dict[str, Any], layout: DocLayout | None) -> tuple[dict[str, Any], dict[str, Any] | None]:

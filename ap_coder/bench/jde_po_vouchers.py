@@ -20,6 +20,13 @@ key a charge not on the PO on a G/L line of its own on ``FREIGHT_IN``.
   ``order_details.xlsx``), ``expected.json`` (each case's rows under each setup) and ``README.txt``: to load into the
   made-up company's data folder (``python -m ap_coder demo --company``) and try.
 
+Beside them, a subcontractor's progress billings on the made-up company's subcontracts (order type OS, each line
+holding back 10%, D-273: ``PROGRESS_NAMES``, ``progress_cases``): a first G702-style application for payment, a later
+progress invoice (Ontario's HST, work billed before), a billing holding back 5% where its subcontract says 10%, an
+application charging the GST on the work less the holdback, and a holdback release; their subcontract lines as report
+6 of the build sheet gives them, and the rows with their Retained Amounts each setup should give
+(``write_progress``).
+
 The same books give the same files."""
 
 from __future__ import annotations
@@ -32,11 +39,12 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
+from ..capture.reader.progress import PROGRESS_LINE
 from ..core.chart import split_account
 from ..erp.jde_prototype import prototype_settings
 from ..erp.jde_settings import AMOUNT_TAX, CHARGES_GL, JdeSettings, default_tax_map
 from .jde_company import Supplier, Truth, build, money
-from .jde_exports import OpenPoLine, open_po_lines_xlsx, order_details_xlsx
+from .jde_exports import OpenPoLine, open_po_lines_xlsx, order_details_xlsx, po_lines_report_xlsx
 from .jde_invoices import _page, printed_name
 
 NAMES = ("ab_gst", "on_hst", "bc_gst_pst", "sk_gst_pst", "mb_gst_rst", "qc_gst_qst", "bc_self_assessed",
@@ -336,10 +344,11 @@ def _rate(rate: Decimal) -> str:
     return f"{rate * 100:.3f}".rstrip("0").rstrip(".") + "%"
 
 
-def pdf(case: PoCase, truth: Truth) -> bytes:
+def pdf(case: PoCase, truth: Truth, holdback: Decimal | None = None) -> bytes:
     """The invoice set out plainly, as ``jde_invoices.printed_cases``: the supplier, the numbers and the PO, who it
     is billed and shipped to, the lines (description, quantity, unit price, amount) and the totals, each tax with
-    what it is charged on when some lines carry none."""
+    what it is charged on when some lines carry none. ``holdback``: a percent of the subtotal taken off under the
+    total, then the balance due (B-2700)."""
     us = printed_name(truth.company.name)
     rows = [(50, 60, printed_name(case.supplier.name)), (50, 76, FROM[case.supplier_from]),
             (400, 76, f"{'Credit Note' if case.credit else 'Invoice'} No: {case.number}"),
@@ -358,8 +367,12 @@ def pdf(case: PoCase, truth: Truth) -> bytes:
         label = f"{TAX_NAMES.get(case.province, 'PST') if tax == 'PST' else tax} {_rate(rate)}"
         totals.append((label if base == case.subtotal else f"{label} on {_amount(base)}", amount))
     totals.append(("Total", case.total))
+    if holdback:
+        held = money(case.subtotal * holdback / 100)
+        totals += [(f"Less {holdback:g}% holdback", -held), ("Balance due", case.total - held)]
     for n, (label, value) in enumerate(totals):
-        rows += [(330, y + 16 * n, label), (500, y + 16 * n, _amount(value))]
+        rows += [(330, y + 16 * n, label), (500, y + 16 * n, f"({_amount(-value)})" if value < 0
+                                                             else _amount(value))]  # fmt: skip
     rows.append((50, y + 16 * len(totals) + 40, "GST/HST No. 814275533 RT0001"))
     return _page(*rows, title=(400, 58, "CREDIT NOTE" if case.credit else "INVOICE"))
 
@@ -400,12 +413,19 @@ To try them:
 
 The invoices:
 {cases}
+
+Subcontracts' progress billings (D-273): to try them, also load subcontract_lines.xlsx (report 6 of the build
+sheet: the subcontracts' lines, order type OS, each with its Retainage %), and in Settings -> JD Edwards E1 tick
+"Subcontract progress billings". Compare each voucher's rows and its Retained Amounts with progress_billings.json
+("pilot_whole": the prototype's tax areas, Voucher Match working the tax out on the whole amount matched; "_net": on
+it less the retained; no rows: held, with why, on the sheet "Not ready").
+{progress}
 """
 
 
 def write(folder: str | Path, truth: Truth) -> list[PoCase]:
     """The set in ``folder`` (made if missing): each invoice's PDF, the PO files, ``expected.json`` and
-    ``README.txt``. Returns the cases."""
+    ``README.txt`` (the progress billings beside them: ``write_progress``). Returns the cases."""
     made = cases(truth)
     out = Path(folder)
     out.mkdir(parents=True, exist_ok=True)
@@ -415,7 +435,285 @@ def write(folder: str | Path, truth: Truth) -> list[PoCase]:
         (out / name).write_bytes(data)
     (out / EXPECTED_FILE).write_text(json.dumps(expected_json(made), indent=1), encoding="utf-8")
     listed = "\n".join(f"- {case.name}.pdf: {case.what} (PO {case.po}, gross {case.total:,.2f})" for case in made)
-    (out / "README.txt").write_text(README.format(freight_in=FREIGHT_IN, cases=listed), encoding="utf-8")
+    progress = "\n".join(f"- {case.name}.pdf: {case.what} (subcontract {case.po}, amount due {case.due:,.2f})"
+                         for case in write_progress(out, truth))  # fmt: skip
+    (out / "README.txt").write_text(README.format(freight_in=FREIGHT_IN, cases=listed, progress=progress),
+                                    encoding="utf-8")  # fmt: skip
+    return made
+
+
+# --- subcontracts' progress billings (D-273) -----------------------------------------------------------------------
+
+PROGRESS_NAMES = ("first_billing", "later_billing", "holdback_differs", "gst_on_net", "holdback_release")
+SUBCONTRACT_FILE, PROGRESS_FILE = "subcontract_lines.xlsx", "progress_billings.json"
+APPLICATION, PROGRESS_INVOICE = "application", "invoice"  # the two layouts: a G702-style application, an invoice
+WHOLE, NET = "whole", "net"  # the tax on the work with the holdback in it, or on it less the holdback
+
+
+@dataclass(frozen=True)
+class Billed:
+    """A progress billing's line: the work billed this period on a subcontract line ("1.000")."""
+
+    description: str
+    amount: Decimal
+    po_line: str
+
+
+@dataclass(frozen=True)
+class ProgressRow:
+    """A subcontract's voucher match row as the keying sheet should give it: its Retained Amount beside its amount
+    matched, no quantity (a lump sum's, matched by its amount)."""
+
+    order_number: str
+    order_type: str
+    order_company: str
+    line: str
+    quantity: float | None
+    amount: float
+    retained: float
+    account: str
+    taxed: str
+    tax_code: str
+    tax_area: str
+
+
+@dataclass(frozen=True)
+class ProgressCase:
+    """A made-up progress billing of the subcontractor on one of the made-up company's subcontracts (order type OS),
+    in one of the two layouts; ``holdback_pct``: the holdback it prints (its subcontract's ``retainage`` may differ);
+    ``tax_on``: the base its tax is charged on; ``release``: it pays out a holdback held before."""
+
+    name: str
+    what: str
+    supplier: Supplier
+    province: str  # the site: the province of supply
+    number: str
+    application: int  # its billing's number
+    date: dt.date
+    po: int
+    layout: str
+    items: tuple[Billed, ...]
+    po_lines: tuple[OpenPoLine, ...]
+    holdback_pct: Decimal
+    tax_on: str = WHOLE
+    previous: Decimal | None = None  # the work billed before, as printed (None: not printed)
+    release: bool = False
+
+    @property
+    def tax_type(self) -> str:
+        return "HST" if self.province in ("ON", "NS") else "GST"
+
+    @property
+    def rate(self) -> Decimal:
+        return RATES[(self.tax_type, "" if self.tax_type == "GST" else self.province)]
+
+    @property
+    def this_period(self) -> Decimal:
+        return sum((item.amount for item in self.items), Decimal(0))
+
+    @property
+    def holdback(self) -> Decimal:
+        return Decimal(0) if self.release else money(self.this_period * self.holdback_pct / 100)
+
+    @property
+    def tax_base(self) -> Decimal:
+        return self.this_period - (self.holdback if self.tax_on == NET else Decimal(0))
+
+    @property
+    def tax(self) -> Decimal:
+        return (self.tax_base * self.rate).quantize(CENT, ROUND_HALF_UP)
+
+    @property
+    def due(self) -> Decimal:
+        return self.this_period - self.holdback + self.tax
+
+    def held(self, retainage_tax: str) -> str:
+        """Why the keying sheet holds it ("": it is keyed), Voucher Match working the tax out as ``retainage_tax``."""
+        if self.release:
+            return "a holdback release"
+        if self.tax_on != retainage_tax:
+            return "the invoice charges its tax on the work"
+        return ""
+
+    def expected(self, setup: str) -> list[ProgressRow]:
+        """The voucher match rows under ``setup`` (``SETUPS``): each line on its subcontract line, its holdback the
+        invoice's (shared as the lines' percents would share it), taxed under the province's code and area."""
+        area = {PILOT: {"AB": "CDNGST", "ON": "ONHST"}, AREAS: {"AB": "AB-GST", "ON": "ON-HST"}}[setup][self.province]
+        by_line = {f"{pl.line:.3f}": pl for pl in self.po_lines}
+        due = [money(item.amount * (by_line[item.po_line].retainage or 0) / 100) for item in self.items]
+        weights = due if sum(due) else [item.amount for item in self.items]
+        shares = [money(self.holdback * w / sum(weights)) for w in weights]
+        shares[max(range(len(shares)), key=lambda i: shares[i])] += self.holdback - sum(shares)
+        return [ProgressRow(str(self.po), "OS", self.po_lines[0].company, item.po_line, None, float(item.amount),
+                            float(share), by_line[item.po_line].account, "Y", "V", area)
+                for item, share in zip(self.items, shares, strict=True)]  # fmt: skip
+
+    def progress(self) -> dict[str, Any]:
+        """What AP Coder should read of it as a progress billing (``capture.reader.progress``), kept beside its
+        coding."""
+        before = self.previous if self.layout == APPLICATION or self.previous is not None else None
+        return {"this_period": float(self.this_period), "previous": None if before is None else float(before),
+                "to_date": None if before is None else float(before + self.this_period),
+                "holdback": float(self.holdback), "holdback_rate": None if self.release else float(self.holdback_pct),
+                "taxes": {self.tax_type: float(self.tax)}, "amount_due": float(self.due), "release": self.release,
+                "adds_up": True}  # fmt: skip
+
+    def coding(self) -> dict[str, Any]:
+        """The invoice as AP Coder should read it: the work this period its subtotal (a line of each, or the one line
+        of an application), the tax as printed on its base, the total before the holdback."""
+        accounts = {f"{pl.line:.3f}": pl.account for pl in self.po_lines}
+        items = self.items if self.layout == PROGRESS_INVOICE else (
+            Billed(PROGRESS_LINE, self.this_period, self.items[0].po_line),)  # fmt: skip
+        lines = []
+        for n, item in enumerate(items, 1):
+            unit, code = split_account(accounts[item.po_line])
+            lines.append({"line_number": n, "description": item.description, "quantity": 1.0,
+                          "unit_price": float(item.amount), "amount": float(item.amount), "predicted_gl_code": code,
+                          "predicted_cost_center": unit, "taxes_applied": [self.tax_type], "tax_exempt": [],
+                          "tax_status": ""})  # fmt: skip
+        return {
+            "vendor_name": printed_name(self.supplier.name), "invoice_number": self.number,
+            "invoice_date": self.date.isoformat(), "currency": "CAD", "po_number": str(self.po),
+            "supplier_province": "AB", "ship_to_province": self.province, "subtotal": float(self.this_period),
+            "tax_lines": [{"tax_type": self.tax_type, "province": "" if self.tax_type == "GST" else self.province,
+                           "rate": float(self.rate), "taxable_amount": float(self.tax_base),
+                           "tax_amount": float(self.tax)}],
+            "tax_total": float(self.tax), "grand_total": float(self.this_period + self.tax), "confidence_score": 1.0,
+            "payment_terms": "Net 30", "line_items": lines,
+        }  # fmt: skip
+
+
+def progress_cases(truth: Truth) -> list[ProgressCase]:
+    """The cases of ``PROGRESS_NAMES``, in that order: the made-up subcontractor's billings on four subcontracts of
+    the made-up company (each line holding back 10%), one billing released later."""
+    company = truth.company.number
+    repairs, equipment = "0021061022.7330.3207", "0021061010.7540.5421"
+    for account in (repairs, equipment):
+        truth.account(account)
+    builder = _supplier(truth, "WESTMEADOW")
+
+    def contract(order: int, *lines: tuple[str, str, str, str]) -> tuple[OpenPoLine, ...]:
+        """Subcontract ``order``'s lines: each (line, description, lump sum, vouchered before), 10% held back."""
+        return tuple(OpenPoLine(order, Decimal(line), builder.number, words, Decimal(0), Decimal(0), "", repairs
+                                if "ELECTRICAL" not in words else equipment, company, vouchered=Decimal(before),
+                                order_type="OS", supplier_name=builder.name, order_date=ORDER_DATE,
+                                lump_sum=Decimal(amount), retainage=Decimal(10), tax_area="")
+                     for line, words, amount, before in lines)  # fmt: skip
+
+    day = dt.date(2026, 10, 31)
+    renovation = contract(41201, ("1", "OFFICE RENOVATION PHASE 1", "250000", "0"))
+    mechanical = contract(41202, ("1", "MECHANICAL ROUGH-IN", "400000", "120000"))
+    site = contract(41203, ("1", "SITE WORK", "100000", "0"), ("2", "CONCRETE FOUNDATIONS", "150000", "0"))
+    electrical = contract(41204, ("1", "ELECTRICAL ROUGH-IN", "180000", "40000"))
+    ten, five = Decimal(10), Decimal(5)
+    made = [
+        ProgressCase("first_billing", "a first application for payment (G702-style), 10% held back", builder, "AB",
+                     "WBS-P-0101", 1, day, 41201, APPLICATION,
+                     (Billed("Office renovation, phase 1", Decimal(45000), "1.000"),), renovation, ten,
+                     previous=Decimal(0)),
+        ProgressCase("later_billing", "a third progress invoice (Ontario's HST), 120,000.00 billed before", builder,
+                     "ON", "WBS-P-0102", 3, day, 41202, PROGRESS_INVOICE,
+                     (Billed("Mechanical rough-in - work this period", Decimal(80000), "1.000"),), mechanical, ten,
+                     previous=Decimal(120000)),
+        ProgressCase("holdback_differs", "a billing of two lines holding back 5%, its subcontract 10%", builder, "AB",
+                     "WBS-P-0103", 2, day, 41203, PROGRESS_INVOICE,
+                     (Billed("Site work - work this period", Decimal(20000), "1.000"),
+                      Billed("Concrete foundations - work this period", Decimal(30000), "2.000")), site, five),
+        ProgressCase("gst_on_net", "an application charging the GST on the work less the holdback", builder, "AB",
+                     "WBS-P-0104", 2, day, 41204, APPLICATION,
+                     (Billed("Electrical rough-in", Decimal(60000), "1.000"),), electrical, ten, tax_on=NET,
+                     previous=Decimal(40000)),
+        ProgressCase("holdback_release", "a holdback release: the 10% held back paid out (held for a person)",
+                     builder, "AB", "WBS-P-0105", 9, day, 41201, PROGRESS_INVOICE,
+                     (Billed("Holdback release - office renovation, phase 1", Decimal(25000), "1.000"),), renovation,
+                     ten, release=True),
+    ]  # fmt: skip
+    assert tuple(c.name for c in made) == PROGRESS_NAMES
+    return made
+
+
+def _application_rows(case: ProgressCase, y: int) -> list[tuple[str, Decimal | None, str]]:
+    """A G702-style application's numbered lines from ``y``: the contract, the work to date, before and this period,
+    the holdback, the net, the tax and the payment due."""
+    contract = sum((pl.ordered_amount for pl in case.po_lines), Decimal(0))
+    before = case.previous or Decimal(0)
+    rows = [("Original contract sum", contract), ("Net change by change orders", Decimal(0)),
+            ("Contract sum to date", contract), ("Total completed to date", before + case.this_period),
+            ("Less previous applications", before), ("Work completed this period", case.this_period),
+            (f"Less holdback {case.holdback_pct:g}%", -case.holdback),
+            ("Net amount this period", case.this_period - case.holdback),
+            (f"{case.tax_type} {_rate(case.rate)} on {_amount(case.tax_base)}", case.tax),
+            ("Current payment due", case.due)]  # fmt: skip
+    return [(f"{n}. {label}", value, "") for n, (label, value) in enumerate(rows, 1)]
+
+
+def progress_pdf(case: ProgressCase, truth: Truth) -> bytes:
+    """The billing set out as its layout has it: an application's numbered summary, or an invoice's line table (what
+    was billed to date and before above it) with the holdback taken off under its subtotal."""
+    us = printed_name(truth.company.name)
+    title = "APPLICATION FOR PAYMENT" if case.layout == APPLICATION else "INVOICE"
+    rows = [(50, 60, printed_name(case.supplier.name)), (50, 76, FROM["AB"]),
+            (400, 76, f"Invoice No: {case.number}"), (400, 92, f"Date: {case.date.isoformat()}"),
+            (400, 108, f"PO Number: {case.po}"), (400, 124, "Terms: Net 30"),
+            (50, 124, f"Bill to: {us}, {SITES['AB']}"), (50, 140, f"Ship to: {us}, {SITES[case.province]}"),
+            (50, 170, f"{'Application for Payment' if case.layout == APPLICATION else 'Progress billing'} No. "
+                      f"{case.application}, period to {case.date.isoformat()}")]  # fmt: skip
+    if case.layout == APPLICATION:
+        rows.append((50, 186, f"Project: {case.items[0].description}"))
+        for n, (label, value, _) in enumerate(_application_rows(case, 220)):
+            rows += [(50, 220 + 16 * n, label), (450, 220 + 16 * n, f"({_amount(-value)})" if value < 0
+                                                                     else _amount(value))]  # fmt: skip
+    else:
+        y = 186
+        if case.previous is not None:
+            rows += [(50, 186, "Billed to date"), (250, 186, _amount(case.previous + case.this_period)),
+                     (50, 202, "Previously billed"), (250, 202, _amount(case.previous))]  # fmt: skip
+            y = 218
+        rows += [(50, y + 24, "Description"), (500, y + 24, "Amount")]
+        for n, item in enumerate(case.items):
+            rows += [(50, y + 42 + 16 * n, item.description), (500, y + 42 + 16 * n, _amount(item.amount))]
+        at = y + 42 + 16 * len(case.items) + 30
+        totals = [("Subtotal", _amount(case.this_period))]
+        if case.holdback:
+            totals.append((f"Less holdback {case.holdback_pct:g}%", f"({_amount(case.holdback)})"))
+        totals += [(f"{case.tax_type} {_rate(case.rate)} on {_amount(case.tax_base)}", _amount(case.tax)),
+                   ("Amount due", _amount(case.due))]  # fmt: skip
+        for n, (label, value) in enumerate(totals):
+            rows += [(330, at + 16 * n, label), (500, at + 16 * n, value)]
+    rows.append((50, 700, "GST/HST No. 814275533 RT0001"))
+    return _page(*rows, title=(400, 58, title))
+
+
+def subcontract_settings(base: JdeSettings | None = None, retainage_tax: str = WHOLE,
+                         setup: str = PILOT) -> JdeSettings:  # fmt: skip
+    """``setup``'s settings (``pilot_settings``, ``area_settings``) with subcontract progress billings on, Voucher
+    Match working a retaining row's tax out on ``retainage_tax``."""
+    out = (pilot_settings if setup == PILOT else area_settings)(base)
+    out.po_subcontracts, out.retainage_tax = True, retainage_tax
+    return out
+
+
+def progress_json(made: list[ProgressCase]) -> dict[str, Any]:
+    """{case: what it shows, its amounts, and under each setup its rows (none when held), by the tax setting}."""
+    return {case.name: {"what": case.what, "invoice": f"{case.name}.pdf", "po": str(case.po),
+                        "this_period": float(case.this_period), "holdback": float(case.holdback),
+                        "tax": float(case.tax), "amount_due": float(case.due),
+                        **{f"{setup}_{tax}": [] if case.held(tax) else [vars(r) for r in case.expected(setup)]
+                           for setup in SETUPS for tax in (WHOLE, NET)}}
+            for case in made}  # fmt: skip
+
+
+def write_progress(folder: str | Path, truth: Truth) -> list[ProgressCase]:
+    """The progress billings in ``folder`` (made if missing): each PDF, their subcontracts' lines as report 6 of the
+    build sheet gives them (``jde_exports.po_lines_report_xlsx``) and ``PROGRESS_FILE``. Returns the cases."""
+    made = progress_cases(truth)
+    out = Path(folder)
+    out.mkdir(parents=True, exist_ok=True)
+    for case in made:
+        (out / f"{case.name}.pdf").write_bytes(progress_pdf(case, truth))
+    lines = list({(pl.order, pl.line): pl for case in made for pl in case.po_lines}.values())
+    (out / SUBCONTRACT_FILE).write_bytes(po_lines_report_xlsx(lines))
+    (out / PROGRESS_FILE).write_text(json.dumps(progress_json(made), indent=1), encoding="utf-8")
     return made
 
 
@@ -431,6 +729,7 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
 
 def main(a: argparse.Namespace) -> int:
     made = write(a.out, build(a.seed, "small", dt.date.today().year - 1))
-    print(f"{len(made)} PO-matched invoices, their open PO lines and {EXPECTED_FILE} written to {a.out}: see "
+    print(f"{len(made)} PO-matched invoices and {len(PROGRESS_NAMES)} subcontract progress billings, their open PO "
+          f"lines, {EXPECTED_FILE} and {PROGRESS_FILE} written to {a.out}: see "
           f"{Path(a.out) / 'README.txt'}")  # fmt: skip
     return 0

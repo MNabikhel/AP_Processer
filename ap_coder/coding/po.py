@@ -599,6 +599,7 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     cost_centers = bool(store.list_accounts("cost_centers"))
     po_lines = po["lines"]
     by_line = {pl["line_number"]: pl for pl in po_lines}
+    subcontract = is_subcontract(po)
     live = po_billing(store, key, po)
     others = [o for o in live.rows if o["id"] != exclude_invoice_id]
     result.other_invoices = others
@@ -640,7 +641,8 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
         m.po_subledger = (pl.get("subledger") or "", pl.get("subledger_type") or "")
         m.po_retainage, m.po_open_amount = pl.get("retainage"), pl.get("open_amount")
         if m.amount_only:  # a PO line with no quantity (JD Edwards' order details give amounts only): matched by amount
-            m.matched_quantity = billed_quantity(li) or None
+            # (a subcontract's lump sum by its amount alone, D-273)
+            m.matched_quantity = None if subcontract else billed_quantity(li) or None
         this_invoice[m.po_line] = this_invoice.get(m.po_line, 0.0) + m.amount
         if m.amount_only:
             _amount_findings(m, li, result, billed_now_amount)
