@@ -127,7 +127,7 @@ FIELD_FLAGS: dict[str, tuple[str, str | None]] = {
 
 # The checks shown under the field they are about (their own words), besides FIELD_FLAGS' notes: {code: field}.
 CODE_FIELDS = {
-    "COMPANY_UNKNOWN": "company", "DUPLICATE_OTHER_COMPANY": "company",
+    "COMPANY_UNKNOWN": "company", "DUPLICATE_OTHER_COMPANY": "company", "DUPLICATE_INVOICE_OTHER_COMPANY": "company",
     "MISSING_VENDOR": "vendor_name", "VENDOR_NOT_IN_MASTER": "vendor_name", "VENDOR_ADDED_HERE": "vendor_name",
     "VENDOR_ON_HOLD": "vendor_name", "VENDOR_CHANGED_FROM_HELD": "vendor_name", "JDE_NO_AN8": "vendor_name",
     "JDE_BAD_AN8": "vendor_name",
@@ -187,7 +187,7 @@ def checks_summary(report: Any, errors: list[Any], warnings: list[Any], account:
         goto = {"box": GOTO_BOX[code], "line": lines[0]} if code in GOTO_BOX and lines else None
         # A possible duplicate: a link to each invoice it may duplicate, to compare them (D-60).
         links = ([{"href": f"/review/{n}", "text": f"Open #{n}"} for n in re.findall(r"#(\d+)", text)]
-                 if code == "DUPLICATE_INVOICE" else [])  # fmt: skip
+                 if code in ("DUPLICATE_INVOICE", "DUPLICATE_INVOICE_OTHER_COMPANY") else [])  # fmt: skip
         field = "" if lines else CODE_FIELDS.get(code) or FIELD_FLAGS.get(code, ("", None))[0]
         hard = kind == BLOCK or code in HARD_CODES or code.startswith("JDE_")
         mark = "" if kind == LOOK else MUST if hard else ANYWAY

@@ -32,6 +32,8 @@ TWINS = {"/month-end/accruals.xlsx", "/statements/reconciliation.xlsx", "/jde-fi
 # JD Edwards files' new cards and the workbook of all its reports (D-266): each allowed to whoever loads the chart.
 LOADS = {"/jde-files/workbook/upload", "/jde-files/workbook/load", "/jde-files/{card}/upload-table",
          "/jde-files/{card}/load-table"}  # fmt: skip
+# Settings → JD Edwards E1's card of the accounts AP posts to (D-268, D-269): an Admin's, as the rest of the tab.
+SETTINGS = {"/settings/jde/posting"}
 
 
 @pytest.fixture(scope="module")
@@ -63,7 +65,7 @@ def test_every_route_of_before_is_allowed_to_the_same_built_in_roles(server):
 def test_the_routes_made_since_are_the_admin_panels_and_an_admins_only(server):
     app, _, _ = server
     added = {f"{m} {p}" for m, p in app_routes(app)} - set(BEFORE["routes"])
-    assert {route.partition(" ")[2] for route in added} == PANEL | TWINS | LOADS
+    assert {route.partition(" ")[2] for route in added} == PANEL | TWINS | LOADS | SETTINGS
     for route in added:
         need = roles.RULES[tuple(route.split(" ", 1))]
         twin = route.removesuffix(".xlsx") + ".csv" if route.partition(" ")[2] in TWINS else ""

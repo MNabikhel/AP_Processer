@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 from ..capture.bridge import review_issues
 from ..capture.layout import PDF_LOCK, CannotRead
 from ..capture.workflow import AUTONOMOUS_REVIEWER, WAITING_FOR_PAGE_READER, autonomy_decision, capture_invoice
-from ..coding import banks, companies
+from ..coding import banks, companies, posting_edits
 from ..coding.claim import claim_findings
 from ..coding.po import po_findings
 from ..coding.remark import fill_remarks
@@ -205,16 +205,18 @@ def discover_inputs(paths: list[str | Path]) -> list[Path]:
 def duplicates_known(store: Store, others: list[int], invoice_id: int | None) -> list[dict[str, Any]]:
     """What DUPLICATE_INVOICE says of each other invoice with this vendor and invoice number
     (``validation.duplicate_message``): whether it was received before this one (``invoice_id``; None: this one is
-    coming in now), where it stands, and when it was approved. Read as the checks run, so each of a pair says the
-    other's state as its screen is drawn (B-2101)."""
+    coming in now), where it stands, when it was approved, and its company ("" for none decided, D-270). Read as the
+    checks run, so each of a pair says the other's state as its screen is drawn (B-2101)."""
     from ..core.store import APPROVED
 
     known = []
     for inv in store.get_invoices(others):
         approved = inv["status"] == APPROVED
+        coded = inv.get("final_output") or inv.get("ai_output") or {}
         known.append({"id": inv["id"], "first": invoice_id is None or inv["id"] < invoice_id, "status": inv["status"],
                       "approved": (inv.get("reviewed_at") or "") if approved else "",
-                      "exported": approved and inv.get("export_batch") is not None})  # fmt: skip
+                      "exported": approved and inv.get("export_batch") is not None,
+                      "company": companies.company_code(coded.get("company") or "")})  # fmt: skip
     return known
 
 
@@ -291,6 +293,7 @@ def finalise_coding(
         js = jde_settings.load(store) if jde_settings.in_use(store) else None
     remarks_typed = js is not None and js.remarks == jde_settings.REMARKS_TYPED
     fill_remarks(coding, store, reference, wanted=reference.pairs is not None or remarks_typed)
+    posting_edits.fill(coding, store, reference, exclude_invoice_id)  # an account's subledger or units (D-268)
     output = coding.to_output()
     if not coding.ship_to_province:  # no ship-to printed: where it is delivered to us (tax.supply_source)
         place, source = supply_source(coding, reference.tax)

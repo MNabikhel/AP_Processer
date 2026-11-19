@@ -54,12 +54,13 @@ HEADER_COLUMNS = [
 DIST_COLUMNS = [
     "VNEDUS", "VNEDBT", "VNEDTN", "VNEDLN", "VNEDSP", "VNEDTC", "VNEDTR",
     "VNCO", "VNDGJ", "VNDCT",
-    "VNAM", "VNANI", "VNMCU", "VNOBJ", "VNSUB", "VNSBL", "VNSBLT",
+    "VNAM", "VNANI", "VNMCU", "VNOBJ", "VNSUB", "VNSBL", "VNSBLT", "VNU",
     "VNLT", "VNAA", "VNCRCD", "VNACR", "VNEXA", "VNEXR", "VNTXA1", "VNEXR1",
 ]  # fmt: skip
 # PO receipt-match lines: the layout is NOT a standard Oracle table; to be confirmed with the JDE team.
 MATCH_COLUMNS = [
     "EDUS", "EDBT", "EDTN", "EDLN", "DOCO", "DCTO", "KCOO", "LNID", "LITM", "DSC1", "UORG", "PRRC", "AEXP", "CRCD",
+    "SBL", "SBLT",
 ]  # fmt: skip
 
 HEADER_FILE, DIST_FILE, MATCH_FILE = "F0411Z1.csv", "F0911Z1.csv", "F0411Z1T.csv"
@@ -185,11 +186,11 @@ def voucher_rows(
     # code handles tax, is the exempt code when nothing of the tax is put on it; the others keep the invoice's.
     items = final.get("line_items") or []
     kinds = sorted({t["tax_type"] for t in v.charged})
-    basis = legacy_basis(items, final.get("tax_lines") or [])
+    basis, behind = legacy_basis(items, final.get("tax_lines") or []), entry_lines(v.entries, items)
     stated = [li is not None and not (li.get("taxes_applied") or [])
               and (li.get("tax_status") in EXEMPT_STATUSES
                    or (bool(kinds) and not li.get("tax_status") and set(kinds) <= set(exempt_of(li, basis))))
-              for li in entry_lines(v.entries, items)]  # fmt: skip
+              for li in behind]  # fmt: skip
     line_codes = [exempt if no_tax and v.tax_code not in ("", exempt) else v.tax_code for no_tax in stated]
     if v.po_matched:
         header = {**common, "VLEDLN": 1, **amounts(v.gross, v.stam, v.atxa), **extras}
@@ -201,7 +202,7 @@ def voucher_rows(
                 "LNID": li.get("line_number") or "", "LITM": "", "DSC1": _text(li.get("description"), 30),
                 "UORG": _plain(li.get("quantity")), "PRRC": _plain(li.get("unit_price"), 4),
                 "AEXP": _amount(_units(li.get("amount")), settings, v.decimals), "CRCD": v.currency,
-            })  # fmt: skip
+                "SBL": li.get("subledger") or "", "SBLT": li.get("subledger_type") or ""})  # fmt: skip
         return [header], [], matches
 
     def dist_row(n: int, e: dict[str, Any]) -> dict[str, Any]:
@@ -214,7 +215,7 @@ def voucher_rows(
             "VNAA": "" if v.foreign else amount, "VNCRCD": v.currency, "VNACR": amount if v.foreign else "",
             "VNEXA": line_remark(e),
             "VNEXR": line_remark(e) if typed else str(final.get("invoice_number") or "").strip()[:30],
-            "VNSBL": acct.sbl, "VNSBLT": acct.sblt,
+            **_ledger(behind[n - 1] or {}, acct),
             "VNTXA1": v.tax_area if settings.dist_tax_columns else "",
             "VNEXR1": line_codes[n - 1] if settings.dist_tax_columns else "",
         }  # fmt: skip
@@ -272,6 +273,16 @@ def voucher_rows(
         return headers, [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
     header = {**common, "VLEDLN": 1, **amounts(v.gross, v.stam, v.atxa), **extras}
     return [header], [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
+
+
+def _ledger(line: dict[str, Any], account: GlMap) -> dict[str, str]:
+    """A G/L line's VNSBL, VNSBLT and VNU: the invoice line's own subledger and units, its account's L or U (D-268);
+    else the account mapping's subledger, and no units."""
+    if line.get("subledger"):
+        sbl, sblt = str(line["subledger"]), str(line.get("subledger_type") or "")
+    else:
+        sbl, sblt = account.sbl, account.sblt
+    return {"VNSBL": sbl, "VNSBLT": sblt, "VNU": _plain(line.get("units"), 4) if line.get("units") else ""}
 
 
 def _taxable_by_tax(v: _Voucher) -> dict[str, int]:

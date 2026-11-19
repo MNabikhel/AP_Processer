@@ -47,7 +47,7 @@ from ..coding import po as po_mod
 from ..coding.taxreturn import self_assessed_base
 from ..core.safe import neutralise_sheet, xlsx_row
 from . import jde_accounts, jde_formats, jde_match, jde_remarks, jde_review, jde_settings, jde_voucher, jde_zfiles
-from .exports import _sheet
+from .exports import _sheet, entry_lines
 
 FORMAT = jde_settings.FORMATS[1]  # "jde_keying": the export format (``exports.FORMATS`` says what it is)
 SHEET, NOT_READY = "Keying sheet", "Not ready"
@@ -55,11 +55,16 @@ SHEET, NOT_READY = "Keying sheet", "Not ready"
 LINE_COLUMNS = ["Account number", "Account description", "Amount", "Explanation -Remark-"]
 WIDTHS = [26, 36, 16, 36]
 NOTE_WIDTH = 84  # characters of a note's row: the three columns beside its label
-# Voucher Match's grid (P0411), in its order: a PO-matched voucher's rows (D-264), over the sheet's columns A to L; the
-# widths of the columns after the G/L distribution's four.
+# A G/L line's subledger, its type and its units, after its four columns, when a line of the sheet has any (an account
+# whose posting edit code is L or U, D-268).
+LEDGER_COLUMNS = ["Subledger", "Sub Type", "Units"]
+# Voucher Match's grid (P0411), in its order: a PO-matched voucher's rows (D-264), over the sheet's columns A to L
+# (and M and N, the PO line's subledger and its type, for a voucher whose PO lines have one: D-268); the widths of the
+# columns after the G/L distribution's four.
 MATCH_COLUMNS = ["Order Number", "Or Ty", "Order Co", "Line Number", "Quantity Matched", "UM", "Amount Matched",
                  "Account Number", "Tax Y/N", "Tax Expl", "Tax Area", "Remark"]  # fmt: skip
-MATCH_WIDTHS = [16, 6, 10, 26, 10, 9, 10, 32]
+MATCH_LEDGER = ["Subledger", "Sub Type"]
+MATCH_WIDTHS = [16, 6, 10, 26, 10, 9, 10, 32, 10, 8]
 NOT_ON_PO = "Not on the PO"  # a voucher match's G/L line of its own, in its Order Number column (D-265)
 STANDARD_TYPE = "PV"  # Standard Voucher Entry's own document type: any other is said (B-2621)
 CREDIT_TERMS = "none (a credit)"  # a credit memo's Payment terms: none is typed, as the files send none (B-896)
@@ -83,6 +88,14 @@ class Line:
     description: str  # the account's
     amount: float  # net of the tax JD Edwards posts; a tax left in the expense is inside
     remark: str
+    # what an account whose posting edit code is L or U requires (D-268): its subledger and type, its units
+    subledger: str = ""
+    subledger_type: str = ""
+    units: float | None = None
+
+    @property
+    def ledger(self) -> bool:
+        return bool(self.subledger or self.subledger_type or self.units)
 
 
 @dataclass
@@ -223,12 +236,24 @@ def vouchers(
             doc_type=jde_zfiles._doc_type(v, settings) or STANDARD_TYPE,
             lines=[Line(jde_accounts.ani(e["account"]),
                         str((gl_names or {}).get(str(e.get("gl_code") or "").strip()) or ""),
-                        e["cents"] / 100, jde_remarks.line_remark(e)) for e in v.entries],
+                        e["cents"] / 100, jde_remarks.line_remark(e), *_ledger(e, li))
+                   for e, li in zip(v.entries, entry_lines(v.entries, final.get("line_items") or []),
+                                    strict=True)],
             warnings=warnings, notes=notes,
             matches=keyed.rows if keyed is not None else [],
             match_tax=keyed.tax / 100 if keyed is not None else 0.0,
         ))  # fmt: skip
     return ready, held
+
+
+def _ledger(entry: dict[str, Any], line: dict[str, Any] | None) -> tuple[str, str, float | None]:
+    """A G/L line's subledger, its type and its units (D-268): the invoice line's own (its account's L or U), else
+    the account mapping's subledger."""
+    line = line or {}
+    if line.get("subledger") or line.get("units"):
+        return str(line.get("subledger") or ""), str(line.get("subledger_type") or ""), line.get("units") or None
+    account = entry.get("account")
+    return (account.sbl, account.sblt, None) if account is not None else ("", "", None)
 
 
 def po_matches(store: Any, invoices: list[dict[str, Any]], charge_account: str = "") -> dict[int, po_mod.VoucherMatch]:
@@ -362,7 +387,8 @@ def _head(v: Voucher, title: str) -> list[Row]:
         [("Tax amount", LABEL), (v.tax, MONEY), ("Taxable amount", LABEL), (v.taxable, MONEY)],
         *bank,
         *([[("Voucher match", LABEL), ("", PLAIN), ("", PLAIN), ("", PLAIN)], [(name, LABEL) for name in
-           MATCH_COLUMNS]] if v.matches else [[("G/L distribution", LABEL), ("", PLAIN), ("", PLAIN), ("", PLAIN)]]),
+           MATCH_COLUMNS + (MATCH_LEDGER if _match_ledger(v) else [])]] if v.matches
+          else [[("G/L distribution", LABEL), ("", PLAIN), ("", PLAIN), ("", PLAIN)]]),
     ]  # fmt: skip
 
 
@@ -377,18 +403,27 @@ def _tail(v: Voucher) -> list[Row]:
     return rows
 
 
-def _parts(v: Voucher, n: int, count: int) -> list[list[Row]]:
+def _match_ledger(v: Voucher) -> bool:
+    """Whether a voucher match's rows carry a subledger (its PO lines have one, D-268): its two columns are shown."""
+    return any(m.subledger or m.subledger_type for m in v.matches)
+
+
+def _parts(v: Voucher, n: int, count: int, ledger: bool = False) -> list[list[Row]]:
     """A voucher's rows (its title and fields, the G/L lines, the check line and what is said under it) as the parts
     that each fit a printed page: one, unless it is longer than a page. Then it is cut between G/L lines, each
     further part under the title and fields again ("Voucher 7 of 31, continued"), the check line with the last
     lines."""
     title = f"Voucher {n} of {count}"
-    lines: list[Row] = [[(li.account, TEXT), (li.description, PLAIN), (li.amount, MONEY), (li.remark, TEXT)]
+    lines: list[Row] = [[(li.account, TEXT), (li.description, PLAIN), (li.amount, MONEY), (li.remark, TEXT),
+                         *([(li.subledger, TEXT), (li.subledger_type, TEXT), (li.units, PLAIN)] if ledger else [])]
                         for li in v.lines]  # fmt: skip
+    with_ledger = _match_ledger(v)
     lines += [[(m.order_number, TEXT) if m.on_po else (NOT_ON_PO, LABEL), (m.order_type, TEXT),
                (m.order_company, TEXT), (m.line, TEXT),
                (m.quantity, PLAIN), (m.uom, TEXT), (m.amount, MONEY), (m.account, TEXT), (m.taxed, TEXT),
-               (m.tax_code, TEXT), (m.tax_area, TEXT), (m.remark, TEXT)] for m in v.matches]  # fmt: skip
+               (m.tax_code, TEXT), (m.tax_area, TEXT), (m.remark, TEXT),
+               *([(m.subledger, TEXT), (m.subledger_type, TEXT)] if with_ledger else [])]
+              for m in v.matches]  # fmt: skip
     head, tail = _head(v, title), _tail(v)
     room = ROWS_A_PAGE - len(head) - 1  # G/L lines (and the tail) a page holds under the fields, a blank row left
     parts: list[list[Row]] = []
@@ -404,14 +439,15 @@ def build_xlsx(ready: list[Voucher], held: list[Held]) -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = SHEET
-    ws.append(LINE_COLUMNS)
+    ledger = any(li.ledger for v in ready for li in v.lines)  # (D-268)
+    ws.append(LINE_COLUMNS + (LEDGER_COLUMNS if ledger else []))
     fill = PatternFill("solid", fgColor="E9EEF6")
     for cell in ws[1]:
         cell.font, cell.fill, cell.alignment = Font(bold=True), fill, Alignment(vertical="center")
     left = Alignment(horizontal="left")
     at, on_page = 1, 0  # the last row written; rows on the printed page so far
     for n, v in enumerate(ready, 1):
-        for i, part in enumerate(_parts(v, n, len(ready))):
+        for i, part in enumerate(_parts(v, n, len(ready), ledger)):
             # A part that would run over the page starts the next one, as each further part of a long voucher does
             # (B-2147: a break is written every time, so no stretch between two is longer than a page).
             if on_page and (i or on_page + len(part) + 1 > ROWS_A_PAGE):

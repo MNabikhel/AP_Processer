@@ -6592,3 +6592,57 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     suppliers 1 s. Each invoice: its company 3 ms, the suggestions 12 ms, the PO match 15 ms, the duplicate check 2 ms,
     the whole check 51 ms. *Left as it is:* the workbook's survey reads every row with openpyxl (about 10,000 rows a
     second): a full 50 MB workbook takes minutes to show; the chart of millions goes by the command line's CSV.
+- **D-268** · **A line coded to an account whose posting edit code is L carries its subledger and type, one coded to a
+  U account its units** (`coding/posting_edits.py`; L and U became postable in D-267, what they require is this).
+  - **On the line** (`LineItem.subledger`, `subledger_type`, `units`; left out of the stored coding when empty, never
+    asked of the model). `posting_edits.fill` (in `finalise_coding`, after the remarks) gives an L line the subledger
+    and type of the PO line it bills (the purchase orders' "Subledger" and "Sub Type": PDSBL, PDSBLT, added to the build
+    sheet's report 6), else the commonest of the supplier's past lines to that account (the account ledger's
+    "Subledger", "Sub Type", "Units": GLSBL, GLSBLT, GLU, added to report 5, kept on `journal_lines` and counted per
+    supplier and account in the prior: `AccountUse.subledger`); a U line the invoice line's quantity, else the units
+    the supplier's past lines to the account all had. A person's own always first; a line whose account requires
+    neither keeps none (what is not shown is never sent).
+  - **The check**: `JDE_SUBLEDGER_NEEDED` and `JDE_UNITS_NEEDED`, errors "Approve anyway" never covers (JD Edwards
+    would refuse the line), no confidence taken off (a JD Edwards finding).
+  - **The review screen** shows Subledger, Sub type (an L account) or Units (a U account) under the line, for such an
+    account only, filled as above; the boxes are emptied when the account changes and filled by the next check.
+  - **Sent**: the keying sheet's G/L lines get three columns, Subledger, Sub Type, Units, only when a line of the
+    sheet has one (a sheet without keeps its four), and a voucher match's rows the PO line's subledger and type (two
+    columns, likewise); F0911Z1 gets VNU (units) and the line's own VNSBL/VNSBLT before the account mapping's; the PO
+    match file SBL and SBLT.
+  - **Settings → JD Edwards E1 → Accounts AP posts to**: L and U are tick boxes (ticked by default), any other code
+    typed; nothing ticked or typed is blank alone (saved as "blank": a setting saved blank is the default, so
+    `chart settings --postable ""` had stopped meaning blank alone, B-2648).
+  - *To confirm with the JD Edwards team*: that F0911Z1's VNU and the PO match file's SBL/SBLT are read by their
+    R04110ZA version; that a U account's units are the invoice's quantity (litres, hours) and not another unit of
+    measure; which subledger types their L accounts use. *Not done:* a person's typed subledger is not learned from
+    the approval (the next past coding loaded brings it).
+- **D-269** · **Control accounts are never suggested, and a line coded to one is warned** (the never-offered setting,
+  reused). The objects of the lines JD Edwards adds to a voucher itself, as the past coding says them (the Learning
+  page's trade and intercompany payable objects and tax objects, `chart.CONTROL_KEYS`), are read with the chart's
+  settings (`ChartSettings.control`, never saved with them: the Learning page changes them) and held back as the
+  accounts never offered are (`held_back`): never in a suggestion, the supplier's accounts, the Account box's list or
+  search, on any business unit or subsidiary. A line coded to one is `ACCOUNT_CONTROL` (a warning, counted in the
+  Coding like `ACCOUNT_RESERVED`: "JD Edwards posts to it itself"), and a fixed coding rule may not code to one. The
+  tax lines are AP Coder's own: never warned. Others a person adds (retainage payable) go in the never-offered list,
+  now on Settings → JD Edwards E1 → Accounts AP posts to (also still under JD Edwards files' chart settings, where the
+  pilot tester's guide sets it), and are `ACCOUNT_RESERVED` as before.
+- **D-270** · **A duplicate among AP Coder's own invoices is per company, as one in JD Edwards is** (D-267). Each other
+  invoice with the same vendor and invoice number is known with its company (`pipeline.duplicates_known`);
+  `validation.duplicate_findings` makes `DUPLICATE_INVOICE`, the error it always was, of those for the invoice's company
+  or with none decided (one company, or not known yet), and `DUPLICATE_INVOICE_OTHER_COMPANY`, a warning never
+  approved without a person, of those for another company: another company's bill with the same number, or one of the
+  two given the wrong company. The re-check after one of them is rejected or deleted says it the same way.
+- **D-271** · **The master workbook's survey counts the rows in the sheets' XML, never reading them as cells**
+  (`chart_file.sheet_survey`; D-266's survey read every row with openpyxl, a 50 MB workbook taking minutes before its
+  summary, D-267's "left as it is"). One pass over the zip, no XML reader: each sheet's first ten rows as text, to
+  tell its report and where its column names are (`pick`), then its XML a block of whole rows at a time (8 MB), of
+  each row the cells up to one filled and the company column's; shared strings (Excel's) and inline ones, a namespace
+  prefix, rows the XML leaves out. The same counts as before (a test against reading every row; the made-up
+  workbooks' summaries compared whole). openpyxl had also parsed each sheet whole to find a size the file does not
+  give (a workbook written without `<dimension>`). *Measured* (`bench/jde_exports.master_workbook_xlsx` of the made-up
+  company's year, its ledger and G/L lines repeated; one process, a shared 4-core machine): 2.4 MB, 33,830 rows: 10.2
+  s before, 0.6 s now; 34 MB, 389,263 rows: 139 s before, 7.8 s now (the process at 172 and 195 MB at most: the
+  upload is held, two blocks read); 51 MB, 576,333 rows (the upload's bound): 12.2 s now, 211 MB. *Not chosen:* the
+  summary shown as it is counted (a few seconds need no progress); the sheet's `<dimension>` (ReportsNow may not
+  write it, and it counts blank rows).

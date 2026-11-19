@@ -46,7 +46,8 @@ _REFERENCE_LOCK = threading.Lock()
 REFERENCE_KEPT, WITH_PAIRS_KEPT = 8, 2
 # Everything ``reference_data`` is built from, in one query: compared, it says whether the one kept still holds. The
 # chart of accounts' pairs (D-209) by the count of its changes, what its tables hold (``chart_hash``, written with
-# them: B-2125) and its settings (``chart.SETTING_KEYS``), not by its rows.
+# them: B-2125) and its settings (``chart.SETTING_KEYS``, and the control accounts of the past coding: ``CONTROL_KEYS``,
+# D-269), not by its rows.
 _REFERENCE_STAMP = """SELECT
     (SELECT group_concat(code || '|' || description || '|' || category || '|' || meals, char(10))
      FROM (SELECT * FROM gl_accounts ORDER BY code)),
@@ -56,7 +57,8 @@ _REFERENCE_STAMP = """SELECT
      FROM (SELECT * FROM tax_treatments ORDER BY tax_type)),
     (SELECT group_concat(key || '=' || value, char(10))
      FROM (SELECT * FROM settings WHERE key IN ('our_province', 'site_provinces', 'policy_notes', 'chart_version',
-           'chart_hash', 'postable_codes', 'never_offered', 'skip_words', 'home_business_unit', 'account_labels')
+           'chart_hash', 'postable_codes', 'never_offered', 'skip_words', 'home_business_unit', 'account_labels',
+           'journal_payable_trade', 'journal_payable_intercompany', 'journal_tax_objects')
            ORDER BY key))"""
 
 # What the checks read besides the reference data, as the queue's re-check compares them (``Store.checks_stamp``,

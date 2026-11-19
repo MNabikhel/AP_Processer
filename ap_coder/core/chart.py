@@ -67,6 +67,7 @@ def split_account(text: Any) -> tuple[str, str]:
 # budget-only (B), an inactive (I) or a machine-only (M) account has another. CONFIRM with the JD Edwards team before
 # adding one.
 POSTABLE = ("", "L", "U")
+BLANK_ONLY = "blank"  # the setting saved for blank alone: saved blank, it is ``POSTABLE``
 HEADER_EDIT = "N"  # the posting edit code of a title account: the accounts under it roll up into it
 # The business unit master's status of a business unit that takes postings; blank: the file gives no status.
 ACTIVE = ("ACT", "")
@@ -82,6 +83,11 @@ LABELS = ("Business unit", "Object", "Subsidiary")  # the three parts' names (jo
 # reference data is kept by (``Store.account_pairs``).
 SETTING_KEYS = ("postable_codes", "never_offered", SKIP_WORDS_SETTING, "home_business_unit", "account_labels")
 VERSION_KEY = "chart_version"
+# The objects of the lines JD Edwards adds to a voucher itself, as the past coding says them (``core/store/journal``'s
+# settings, the Learning page's boxes): the trade and the intercompany payable objects, the tax ones. Control accounts
+# (D-269), held back as ``never_offered`` is: read with the chart's settings, never saved with them.
+CONTROL_KEYS = {"journal_payable_trade": "A/P trade payable", "journal_payable_intercompany": "intercompany payable",
+                "journal_tax_objects": "sales tax"}  # fmt: skip
 
 
 def _listed(text: Any) -> tuple[str, ...]:
@@ -97,13 +103,32 @@ class ChartSettings:
     ``object.subsidiary`` ("*.7701": that subsidiary of any object), or a whole string ("0880133142.*.*"). A line
     coded to one by hand is a warning. ``skip_words``: a business unit whose name carries one is not offered either.
     ``home_business_unit``: where a line is suggested to go when nothing says otherwise. ``account_labels``: what
-    the three parts are called."""
+    the three parts are called. ``control``: the control accounts the past coding gives (``CONTROL_KEYS``: (object,
+    what it is) each), held back as the accounts never offered are (``held_back``, D-269); a person adds others
+    (retainage payable) to ``never_offered``."""
 
     postable_codes: tuple[str, ...] = POSTABLE
     never_offered: tuple[str, ...] = ()
     skip_words: tuple[str, ...] = SKIP_WORDS
     home_business_unit: str = ""
     account_labels: tuple[str, ...] = LABELS
+    control: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def held_back(self) -> tuple[str, ...]:
+        """The patterns of the accounts never suggested nor listed: ``never_offered`` and the control objects."""
+        return (*self.never_offered, *(obj for obj, _ in self.control if obj not in self.never_offered))
+
+    def control_account(self, business_unit: str, code: str) -> str:
+        """The control object the account is ("2110"; "" when it is none): see ``control``."""
+        return _never_offered([obj for obj, _ in self.control], business_unit, code)
+
+    def why_held(self, pattern: str) -> str:
+        """Why an account matching ``pattern`` (one of ``held_back``) is held back, in words for a finding."""
+        said = dict(self.control).get(pattern)
+        if said and pattern not in self.never_offered:
+            return f"it is a control account ({pattern}, {said}: JD Edwards posts to it itself)"
+        return f"it is one of the accounts never offered ({pattern})"
 
     @classmethod
     def read(cls, saved: Mapping[str, str]) -> ChartSettings:
@@ -112,19 +137,23 @@ class ChartSettings:
         (``Store.skip_words``): commas between, and saved blank they are none."""
         labels = _listed(saved.get("account_labels"))
         words = str(saved.get(SKIP_WORDS_SETTING, SKIP_WORDS_SAVED) or "").split(",")
-        codes = [c.upper() for c in _listed(saved.get("postable_codes"))]
+        codes = [c.upper() for c in _listed(saved.get("postable_codes")) if c.lower() != BLANK_ONLY]
+        blank_only = str(saved.get("postable_codes") or "").strip().lower() == BLANK_ONLY
+        control = {obj.upper(): said for key, said in CONTROL_KEYS.items()
+                   for obj in _listed(str(saved.get(key) or "").replace(" ", ","))}  # fmt: skip
         return cls(
-            postable_codes=tuple(dict.fromkeys(("", *codes))) if codes else POSTABLE,
+            postable_codes=tuple(dict.fromkeys(("", *codes))) if codes or blank_only else POSTABLE,
             never_offered=tuple(p.upper() for p in _listed(saved.get("never_offered"))),
             skip_words=tuple(word.strip() for word in words if word.strip()),
             home_business_unit=clean(saved.get("home_business_unit")),
             account_labels=labels if len(labels) == len(LABELS) else LABELS,
+            control=tuple(control.items()),
         )
 
     def saved(self) -> dict[str, str]:
         """The settings as text, as ``read`` takes them back."""
         return {
-            "postable_codes": ", ".join(c for c in self.postable_codes if c),
+            "postable_codes": ", ".join(c for c in self.postable_codes if c) or BLANK_ONLY,
             "never_offered": ", ".join(self.never_offered),
             "skip_words": ", ".join(self.skip_words),
             "home_business_unit": self.home_business_unit,
@@ -625,9 +654,9 @@ class AccountPairs:
         bu, code, found = self._found(business_unit, code)
         if found is None:
             return ""
-        pattern = _never_offered(self.settings.never_offered, bu, code)
+        pattern = _never_offered(self.settings.held_back, bu, code)
         if pattern:
-            return f"it is one of the accounts never offered ({pattern})"
+            return self.settings.why_held(pattern)
         word = self._skipped.get(bu)
         return f"the name of business unit {bu} says {word}" if word else ""
 

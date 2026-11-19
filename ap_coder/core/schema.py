@@ -415,8 +415,16 @@ class LineItem(BaseModel):
     # are left out of the stored coding when empty.
     remark: str = ""
     remark_from: str = ""
+    # What JD Edwards requires of a line coded to an account whose posting edit code is L (its subledger, 8 characters,
+    # and subledger type, 1) or U (its units), D-268: filled from the PO line, the supplier's past coding or the line's
+    # quantity (``coding/posting_edits.fill``), else typed on the review screen. The model is never asked for them, and
+    # they are left out of the stored coding when empty.
+    subledger: str = ""
+    subledger_type: str = ""
+    units: float | None = None
     # The fields left out of the stored coding while they say nothing (``_without_empty``).
-    OPTIONAL: ClassVar[tuple[str, ...]] = ("taxes_read", "candidates", "decided_by", "remark", "remark_from")
+    OPTIONAL: ClassVar[tuple[str, ...]] = ("taxes_read", "candidates", "decided_by", "remark", "remark_from",
+                                           "subledger", "subledger_type", "units")  # fmt: skip
 
     @field_validator("candidates")
     @classmethod
@@ -429,6 +437,11 @@ class LineItem(BaseModel):
         if value and value.get("source") not in DECIDED_SOURCES:
             raise ValueError(f"decided_by's source must be one of {DECIDED_SOURCES}, got {value.get('source')!r}")
         return value
+
+    @field_validator("subledger", "subledger_type", mode="before")
+    @classmethod
+    def _ledger_code(cls, value: Any) -> str:
+        return " ".join(str(value or "").split()).upper()
 
     @field_validator("remark_from")
     @classmethod

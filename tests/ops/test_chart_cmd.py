@@ -165,3 +165,13 @@ def test_a_chart_without_its_posting_edit_column_is_imported_only_when_asked_and
     code, out, _ = _run(tmp_path, capsys, "--chart", str(cf.write_chart(tmp_path / "chart.xlsx")), "--anyway")
     assert code == 0 and said not in out and store.chart_without() == ()
     assert said not in _run(tmp_path, capsys, action="show")[1]
+
+
+def test_postable_blank_only_from_the_console_leaves_l_and_u_closed(tmp_path, capsys):
+    """``--postable ""`` is "blank only", as its help says: since L and U were postable by default (D-267) it saved
+    nothing that read back as blank only, and L and U stayed postable."""
+    code, out, _ = _run(tmp_path, capsys, "--postable", "", action="settings")
+    assert code == 0 and "Posting edit codes AP may post to: blank only." in out
+    assert Store(tmp_path / "ap_coder.db").chart_settings().postable_codes == ("",)
+    code, out, _ = _run(tmp_path, capsys, "--postable", "L, U", action="settings")
+    assert Store(tmp_path / "ap_coder.db").chart_settings().postable_codes == ("", "L", "U")

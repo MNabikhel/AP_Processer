@@ -297,13 +297,17 @@ GL_LINES = ImportSpec(
         "remark": ("Remark", "Remark"), "explanation": ("Explanation", "Explanation"),
         "supplier": ("Supplier number", "Supplier Number"), "name": ("Supplier name", "Supplier Name"),
         "invoice": ("Invoice number", "Invoice Number"), "po": ("Purchase order", "Purchase Order"),
-        "currency": ("Currency", "Curr Code"),
+        "currency": ("Currency", "Curr Code"), "subledger": ("Subledger", "Subledger"),
+        "subledger_type": ("Subledger type", "Sub Type"), "units": ("Units", "Units"),
     }, {"document": "with the company and type, the voucher each line is of", "amount": "the line's amount, a "
         "debit plus and a credit minus", "supplier": "the supplier each voucher was for", "account": "the account "
         "string each line was coded to (business unit.object.subsidiary)", "object": "with the business unit and "
         "subsidiary, the account each line was coded to (instead of the account number)",
         "remark": "AP's words on each line, learned with it", "company": "lines of another company are left out",
-        "doc_type": "tells two vouchers of one number apart"}),
+        "doc_type": "tells two vouchers of one number apart",
+        "subledger": "the subledger each line was keyed with (an account whose posting edit code is L), learned with "
+        "its coding", "subledger_type": "the type of that subledger", "units": "the units each line was keyed with "
+        "(an account whose posting edit code is U)"}),
     find=_matcher(journal.FLAT_ALIASES),
 )  # fmt: skip
 
@@ -503,7 +507,8 @@ PURCHASE_ORDERS = ImportSpec(
         "foreign_unit_price": ("Foreign unit price", "Foreign Unit Cost"),
         "foreign_amount": ("Foreign line amount", "Original Ordered Foreign Amount"),
         "tax_flag": ("Taxable", "Tax Y/N"), "tax_code": ("Tax explanation code", "Tax Expl"),
-        "tax_area": ("Tax rate/area", "Tax Rate/Area"),
+        "tax_area": ("Tax rate/area", "Tax Rate/Area"), "subledger": ("Subledger", "Subledger"),
+        "subledger_type": ("Subledger type", "Sub Type"),
     }, {"open_amount": "what is left to expense (alone, without a quantity, price or amount: the line's amount)",
         "received_quantity": "what was received, for the match",
         "gl_code": "the account the line is coded to (JD Edwards' object account)",
@@ -523,7 +528,9 @@ PURCHASE_ORDERS = ImportSpec(
         "foreign_amount": "a foreign order's line amount, in its currency",
         "tax_flag": "JD Edwards' Tax Y/N of the line, typed on its voucher match row",
         "tax_code": "the line's tax explanation code, typed on its voucher match row",
-        "tax_area": "the line's tax rate/area, typed on its voucher match row"}),
+        "tax_area": "the line's tax rate/area, typed on its voucher match row",
+        "subledger": "the line's subledger, which an account whose posting edit code is L requires",
+        "subledger_type": "the type of the line's subledger"}),
     find=_matcher(po.COLUMN_ALIASES),
 )  # fmt: skip
 

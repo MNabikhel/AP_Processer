@@ -70,6 +70,8 @@ class MatchLine:
     # False: a G/L line of its own, not matched to the PO (a charge the PO has no line for, a tax JD Edwards does not
     # work out on the rows, D-265)
     on_po: bool = True
+    subledger: str = ""  # the PO line's subledger and its type (D-268)
+    subledger_type: str = ""
 
 
 @dataclass
@@ -198,7 +200,9 @@ def keyed_match(v: _Voucher, matched: VoucherMatch, settings: JdeSettings) -> Ke
         out.rows.append(MatchLine(
             row.order_number, (row.order_type or settings.po_document_type.strip()) if row.on_po else "",
             (row.order_company or company) if row.on_po else "", row.line, row.quantity, row.uom, row.amount,
-            row.account, taxed, code, at, line_remark(li), on_po=row.on_po))  # fmt: skip
+            row.account, taxed, code, at, line_remark(li), on_po=row.on_po,
+            subledger=row.subledger[0] or str(li.get("subledger") or ""),
+            subledger_type=row.subledger[1] or str(li.get("subledger_type") or "")))  # fmt: skip
         if not row.on_po:
             out.notes.append(f"Line {row.invoice_line} “{row.description[:40]}” ({row.amount:,.2f}) is not on "
                              f"PO {str(final.get('po_number') or '').strip()}: it is keyed as a G/L line of its own on "

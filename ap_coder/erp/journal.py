@@ -89,6 +89,10 @@ FLAT_ALIASES: dict[str, tuple[str, ...]] = {
     "invoice": ("Invoice Number", "Supplier Invoice Number", *_gl("VINV")),
     "po": ("Purchase Order", *_gl("PO")),
     "currency": ("Curr Code", "Currency Code", *_gl("CRCD")),
+    # Optional (D-268): what an account whose posting edit code is L or U was keyed with, learned with its coding.
+    "subledger": ("Subledger", *_gl("SBL")),
+    "subledger_type": ("Sub Type", "Subledger Type", *_gl("SBLT")),
+    "units": ("Units", *_gl("U")),
 }  # fmt: skip
 # The columns that make a table the account ledger: these, and its account number or its business unit and object.
 FLAT_NEEDS = ("document", "amount", "supplier")
@@ -123,6 +127,11 @@ class Line:
     amount: float  # debit - credit
     remark: str  # AP's words (30 characters)
     kind: str  # CODING, PAYABLE or TAX
+    # (the account ledger as a table, D-268) the line's subledger and its type, and its units: blank and None when
+    # the export has none
+    subledger: str = ""
+    subledger_type: str = ""
+    units: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -461,9 +470,11 @@ def _read_flat(rows: list[list[str]], at: int, pos: dict[str, int], kinds: dict[
         if draft is None:
             date = _gl_date(_cell(row, where["gl_date"]), day_first=day_first)
             draft = drafts[key] = _Draft(n, key[1], key[0], date.isoformat() if date else "")
+        units = parse_amount(_cell(row, where["units"])) if _cell(row, where["units"]) else None
         draft.lines.append(Line(n, join_account(business_unit, code), business_unit, obj, subsidiary,
                                 _cell(row, where["description"]), cents / 100, _cell(row, where["remark"]),
-                                kinds.get(obj, CODING)))  # fmt: skip
+                                kinds.get(obj, CODING), _cell(row, where["subledger"]).upper(),
+                                _cell(row, where["subledger_type"]).upper()[:1], units or None))  # fmt: skip
         draft.net += cents
         draft.supplier_number = draft.supplier_number or _cell(row, where["supplier"])
         draft.supplier_name = draft.supplier_name or _cell(row, where["name"]) or _cell(row, where["explanation"])

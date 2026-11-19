@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse, Response
 from ap_coder.coding import companies
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCES, province_label
 from ap_coder.coding.terms import terms_key
-from ap_coder.core import ui
+from ap_coder.core import chart, ui
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import Store
 from ap_coder.erp import import_specs, jde_accounts, jde_ais, jde_settings, jde_sync, jde_voucher, jde_worksheet
@@ -164,7 +164,25 @@ def jde_context(store: Store, query: Any = None) -> dict[str, Any]:
         "worksheet_spec": JDE_WORKSHEET,
         "gl_map_look": _gl_map_look(query.get("gl_map")) if query.get("gl_map") else None,
         "worksheet_look": _worksheet_look(js, query.get("worksheet")) if query.get("worksheet") else None,
+        "posting": posting_context(store),
     }
+
+
+# The posting edit codes the page offers as tick boxes, what each requires (D-268); any other is typed.
+POSTING_CODES = (("L", "a subledger and its type are required on the line"),
+                 ("U", "units are required on the line"))  # fmt: skip
+
+
+def posting_context(store: Store) -> dict[str, Any]:
+    """The accounts AP posts to (D-268, D-269): the posting edit codes it may post to besides blank (the ticked ones
+    and the others), the control accounts the past coding gives (each object and what it is) and the patterns never
+    offered a person typed."""
+    settings = store.chart_settings()
+    ticked = [code for code, _ in POSTING_CODES]
+    return {"codes": POSTING_CODES, "ticked": [c for c in settings.postable_codes if c in ticked],
+            "others": ", ".join(c for c in settings.postable_codes if c and c not in ticked),
+            "control": [{"object": obj, "said": said} for obj, said in settings.control],
+            "never_offered": ", ".join(settings.never_offered), "chart": store.has_chart()}  # fmt: skip
 
 
 def company_rows(store: Store, js: jde_settings.JdeSettings) -> list[dict[str, str]]:
@@ -471,6 +489,23 @@ def _save_an8(request: Request, form: Any) -> JSONResponse:
     new.an8_overrides = {vendor_key(v): a[:8] for v, a in zip(vendors, numbers, strict=True) if vendor_key(v) and a}
     changed = jde_settings.save(store, new, actor=reviewer())
     return done(request, URL + "#an8", "Address numbers saved." if changed else "Nothing changed.")
+
+
+@router.post(URL + "/posting")
+def save_posting(request: Request, code: list[str] = Form([]), other_codes: str = Form(""),  # noqa: B008
+                 never_offered: str = Form("")) -> JSONResponse:  # fmt: skip
+    """The posting edit codes AP may post to besides blank (L and U ticked by default, D-268; others typed) and the
+    control accounts and others never offered (D-269): the chart's settings, as ``chart settings`` saves them on the
+    command line."""
+    store = get_store(request)
+    codes = [c for c in (*code, *other_codes.replace(",", " ").split()) if c.strip()]
+    typed = {"postable_codes": ", ".join(codes) or chart.BLANK_ONLY, "never_offered": never_offered}
+    wanted = chart.ChartSettings.read({**store.chart_settings().saved(), **typed})
+    try:
+        changed = store.save_chart_settings(wanted, actor=reviewer())
+    except ValueError as exc:
+        return refuse(f"Not saved: {exc}")
+    return done(request, URL + "#posting", "The accounts AP posts to were saved." if changed else "Nothing changed.")
 
 
 # --- The worksheet for the JDE team -----------------------------------------------------------------------------

@@ -18,6 +18,7 @@ SOURCES = [
     "coding/banks.py",
     "coding/claim.py",
     "coding/companies.py",
+    "coding/posting_edits.py",
     "web/invoice_view.py",
     "web/invoice_fields.py",
     "erp/jde_review.py",
