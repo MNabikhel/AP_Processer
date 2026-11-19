@@ -63,11 +63,11 @@ def _load_chart(client, exports) -> None:
 
 def test_the_page_starts_with_nothing_loaded_and_says_the_order(client):
     page = client.get("/jde-files").text
-    assert page.count("Not yet") == 10 and "Loaded</span>" not in page  # the checklist's five lines, and each card
+    assert page.count("Not yet") == 16 and "Loaded</span>" not in page  # the checklist's eight lines, and each card
     assert str(escape(jde_files.ORDER)) in page
-    for card in ("chart", "units", "suppliers", "journal", "vouchers"):
+    for card in ("chart", "units", "suppliers", "journal", "vouchers", "orders", "terms", "areas"):
         assert f'<section class="card stack" id="{card}">' in page and f'href="#{card}"' in page
-    assert page.count('type="file"') == 5
+    assert page.count('type="file"') == 9  # (and the workbook's, at the top: D-266)
 
 
 def test_the_chart_and_the_business_units_load_and_say_what_was_read(client, store, exports):
@@ -79,7 +79,7 @@ def test_the_chart_and_the_business_units_load_and_say_what_was_read(client, sto
     page = _upload_and_load(client, "units", made.UNITS_FILE, (exports / made.UNITS_FILE).read_bytes())
     assert "Business units" in page.split('id="units-said"', 1)[1].split("</div></div>", 1)[0]
     assert store.business_units() and f"{len(store.business_units()):,} business units</b>" in page
-    assert page.count("Not yet") == 6  # three files still to load
+    assert page.count("Not yet") == 12  # six files still to load
 
 
 def test_the_charts_settings_are_saved_from_the_page(client, store, exports):
@@ -290,7 +290,7 @@ def test_a_journal_saved_as_unicode_text_is_read_as_the_csv_is(client, store, ex
         seen = journal_cmd.look(store, data, name)
         assert seen.state == journal_cmd.READY, (name, seen.problem)
         assert seen.journal.vouchers == journal_cmd.look(store, saved, "saved.csv").journal.vouchers, name
-    assert 'accept=".csv,.txt"' in client.get("/jde-files").text
+    assert 'accept=".csv,.txt,.xlsx"' in client.get("/jde-files").text  # (and the G/L lines as a workbook, D-266)
     upload = client.post("/jde-files/journal/upload", files={"file": ("tabs.txt", data)}, headers=PAGE)
     page = follow(client, client.post("/jde-files/journal/load", data={"token": _token(upload)}, headers=PAGE))
     (loaded,) = store.journal_files()
@@ -1057,7 +1057,7 @@ def test_each_more_is_named_after_what_it_is_about(client):
     times. Each names its report."""
     names = re.findall(r'<details class="imp-more"><summary>([^<]*)</summary>', client.get("/jde-files").text)
     more = [name for name in names if name.startswith("More")]
-    assert "More" not in names and len(more) == 5 and len(set(more)) == 5, names
+    assert "More" not in names and len(more) == 8 and len(set(more)) == 8, names  # (and D-266's three)
     assert "More about chart of accounts" in more and "More about invoices already in JD Edwards" in more
 
 

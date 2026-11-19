@@ -29,6 +29,9 @@ PANEL = {"/admin", "/admin/sign-in", "/admin/users/{user_id:int}", "/admin/users
          "/admin/roles/{key}/delete"}  # fmt: skip  # the Admin panel's own routes, made since (D-249, D-250)
 # Excel twins of a CSV of before, a workbook to read (B-2633): each allowed to whoever the CSV is.
 TWINS = {"/month-end/accruals.xlsx", "/statements/reconciliation.xlsx", "/jde-files/loaded/{what}.xlsx"}
+# JD Edwards files' new cards and the workbook of all its reports (D-266): each allowed to whoever loads the chart.
+LOADS = {"/jde-files/workbook/upload", "/jde-files/workbook/load", "/jde-files/{card}/upload-table",
+         "/jde-files/{card}/load-table"}  # fmt: skip
 
 
 @pytest.fixture(scope="module")
@@ -60,10 +63,11 @@ def test_every_route_of_before_is_allowed_to_the_same_built_in_roles(server):
 def test_the_routes_made_since_are_the_admin_panels_and_an_admins_only(server):
     app, _, _ = server
     added = {f"{m} {p}" for m, p in app_routes(app)} - set(BEFORE["routes"])
-    assert {route.partition(" ")[2] for route in added} == PANEL | TWINS
+    assert {route.partition(" ")[2] for route in added} == PANEL | TWINS | LOADS
     for route in added:
         need = roles.RULES[tuple(route.split(" ", 1))]
         twin = route.removesuffix(".xlsx") + ".csv" if route.partition(" ")[2] in TWINS else ""
+        twin = "POST /jde-files/chart/load" if route.partition(" ")[2] in LOADS else twin
         allowed = BEFORE["routes"][twin]["roles"] if twin else ["admin"]
         assert [role for role in ROLES if roles.allowed(BUILT_IN[role], need)] == allowed, route
 

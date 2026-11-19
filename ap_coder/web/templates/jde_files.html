@@ -39,22 +39,95 @@
 {# A chart or business unit file whose Load is under way (``looks.<card>.loading``): said instead of its Load. #}
 {% macro being_loaded(card) %}<p class="imp-then" id="{{ card }}-loading" role="status"><span class="ms" aria-hidden="true">hourglass_top</span><span>This file is being loaded now: open the page again in a moment to see what was loaded.</span></p>{% endmacro %}
 {% macro cancel(card) %}<a class="btn" href="/jde-files#{{ card }}"><span class="ms" aria-hidden="true">close</span>Choose another file</a>{% endmacro %}
+{# A card of a report read as a sheet with every column it needs (6, 7, 8: jde_files.TABLE_CARDS). #}
+{% macro table_card(n, card, icon, what, template="/jde-files/template/") %}{% set spec = specs[card][0] %}
+<section class="card stack" id="{{ card }}">
+  {{ card_head(n, card, card_titles[card], spec.purpose) }}
+  {{ what_was_said(card) }}
+  {% if loaded[card] %}<p id="{{ card }}-now" class="imp-now"><span class="ms" aria-hidden="true">inventory_2</span><span><b>{{ loaded[card] | plural(rows_of[card][:-1]) }}</b>{% if last[card] %}
+    <span class="muted">· last loaded {{ last[card].when }}{% if last[card].by %} by {{ last[card].by }}{% endif %}</span>{% endif %}</span></p>{% endif %}
+  {% if caller %}{{ caller() }}{% endif %}
+  {{ imp.report(spec, false, template) }}
+  {% set look = looks[card] %}
+  {% if look %}
+  {% if look.name %}
+  {% call imp.preview(look, card) %}
+    {% if look.said %}<ul class="imp-said">{% for line in look.said %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
+    {{ load_then(card) }}
+    {% if can("/jde-files/" ~ card ~ "/load-table") %}
+    <div class="row">
+      {% if not look.problem %}
+      <form method="post" action="/jde-files/{{ card }}/load-table" data-busy="Loading…" data-long data-refusal>
+        <input type="hidden" name="token" value="{{ look.token }}">
+        <button class="btn primary" type="submit" data-load="{{ card }}"><span class="ms" aria-hidden="true">{{ icon }}</span>{{ load[card].button }}</button>
+      </form>
+      {% endif %}
+      {{ cancel(card) }}
+    </div>
+    {% endif %}
+  {% endcall %}
+  {% else %}
+  <div id="{{ card }}-summary">{{ ui.empty_note("This file cannot be loaded as it is.", " " ~ look.problem, "warning") }} {{ cancel(card) }}</div>
+  {% endif %}
+  {% elif can("/jde-files/" ~ card ~ "/upload-table") %}
+  {{ imp.file_box("/jde-files/" ~ card ~ "/upload-table", ".xlsx,.csv", what, "Reading…") }}
+  {% endif %}
+</section>
+{% endmacro %}
 {% block content %}
 <div class="narrow imp">
+<section class="card stack imp-workbook" id="workbook" aria-labelledby="workbook-title">
+  <div class="imp-steps-head">
+    <h2 id="workbook-title">All your JD Edwards reports in one workbook</h2>
+    <p class="muted">The reports of the build sheet, a sheet each, in one Excel workbook: each sheet is told by its column names and shown first; Load all loads them in the order below. Each card's own upload stays.</p>
+  </div>
+  {{ what_was_said("workbook") }}
+  {% set book = workbook %}
+  {% if book %}
+  <div class="imp-preview stack" id="workbook-summary">
+    <p class="imp-file"><span class="ms" aria-hidden="true">description</span><b>{{ book.name }}</b> · {{ book.sheets | length | plural("sheet") }} · this workbook is not loaded yet.</p>
+    {% if book.loads %}
+    <div class="flash ok imp-verdict" tabindex="-1" role="status"><span class="ms" aria-hidden="true">check_circle</span><div>{{ book.loads | plural("sheet") }} of {{ book.reports | plural("report") }} can be loaded{% if book.loads < book.sheets | length %}; the others say why not{% endif %}.</div></div>
+    {% else %}
+    <div class="flash err imp-verdict" tabindex="-1" role="alert"><span class="ms" aria-hidden="true">block</span><div>No sheet of this workbook can be loaded: each says why.</div></div>
+    {% endif %}
+    <div class="table-wrap"><table class="apc-table" id="workbook-sheets" aria-label="The workbook's sheets">
+      <thead><tr><th scope="col">Sheet</th><th scope="col">Report</th><th scope="col" class="r">Rows</th><th scope="col">Columns</th></tr></thead>
+      <tbody>{% for sheet in book.sheets %}
+        <tr{% if sheet.problem %} class="imp-sheet-out"{% endif %}><td><b>{{ sheet.title }}</b>{% if sheet.at %}<br><span class="apc-muted">column names on row {{ sheet.at + 1 }}</span>{% endif %}</td>
+          <td>{% if sheet.report %}{{ sheet.report }}{% if sheet.card %}<br><span class="apc-muted">{{ sheet.card }}</span>{% endif %}{% else %}<span class="apc-muted">Not recognised</span>{% endif %}</td>
+          <td class="r">{{ sheet.rows | num }}{% if sheet.by_company %}<br><span class="apc-muted">by company: {{ sheet.by_company }}</span>{% endif %}</td>
+          <td>{% if sheet.found %}{{ sheet.found | length }} found{% endif %}{% if sheet.missing %}<br><span class="imp-tag bad">missing: {{ sheet.missing | join(", ") }}</span>{% endif %}
+            {% if sheet.problem %}<br>{{ ui.pill("Not loaded", "warn", "warning") }} {{ sheet.problem }}{% else %}<br>{{ ui.pill("Loads", "ok", "check") }}{% endif %}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    {% if can("/jde-files/workbook/load") %}
+    <form method="post" action="/jde-files/workbook/load" class="row" data-busy="Loading every sheet (a minute or two for a year)…" data-long data-refusal>
+      <input type="hidden" name="token" value="{{ book.token }}">
+      {% if book.loading %}{{ being_loaded("workbook") }}{% elif book.loads %}<button class="btn primary" type="submit" data-load="workbook"><span class="ms" aria-hidden="true">playlist_add_check</span>Load all: {{ book.loads | plural("sheet") }}</button>{% endif %}
+      {{ cancel("workbook") }}
+    </form>
+    {% endif %}
+  </div>
+  {% elif can("/jde-files/workbook/upload") %}
+  {{ imp.file_box("/jde-files/workbook/upload", ".xlsx", "All your JD Edwards reports in one workbook, a sheet each (.xlsx)", "Reading every sheet…", then="Load all", wait="A year of every report takes up to a minute to read.") }}
+  {% endif %}
+</section>
+
 <section class="card imp-steps-card" id="checklist" aria-labelledby="checklist-title">
   <div class="imp-steps-head">
     <h2 id="checklist-title">What is loaded</h2>
-    <p class="muted">Five exports from JD Edwards, loaded top to bottom. Each file is shown first: nothing is kept until you click Load.</p>
+    <p class="muted">Six exports from JD Edwards, loaded top to bottom, and two that are optional. Each file is shown first: nothing is kept until you click Load.</p>
   </div>
   <ol class="imp-steps">
     {% for item in checklist %}
     <li class="imp-step {{ 'done' if item.loaded else '' }}{{ ' attention' if item.attention else '' }}">
       <span class="imp-num{{ ' done' if item.loaded }}" aria-hidden="true">{% if item.attention %}<span class="ms">priority_high</span>{% elif item.loaded %}<span class="ms">check</span>{% else %}{{ loop.index }}{% endif %}</span>
       <div class="imp-step-body">
-        <a class="imp-step-name" href="#{{ item.card }}">{{ loop.index }}. {{ item.name }}</a>
+        <a class="imp-step-name" href="#{{ item.card }}">{{ loop.index }}. {{ item.name }}</a>{% if item.optional %} <span class="muted">(optional)</span>{% endif %}
         <div class="imp-step-state">
           {% if item.loaded %}{{ ui.pill("Loaded", "ok", "check") }}
-          <a href="/jde-files/loaded/{{ item.card }}" data-see="{{ item.card }}">See the {{ item.rows }}</a>
+          <a href="{{ item.see }}" data-see="{{ item.card }}">See the {{ item.rows }}</a>
           {% if item.last %}<span class="muted">· {{ item.last.when }}</span>{% endif %}{% if item.by_hand %}
           <span class="muted">· {{ item.by_hand | num }} changed by hand, kept when a newer file is loaded</span>{% endif %}
           {% else %}{{ ui.pill("Not yet", "gray") }}{% endif %}
@@ -191,7 +264,8 @@
   {% if look.name %}
   {% call imp.preview(look, "suppliers") %}
     {% if look.info %}<ul class="imp-said">{% for line in look.said %}<li>{{ line }}</li>{% endfor %}</ul>
-    {% elif not look.problem %}<p>{{ look.count | plural("row") }} read: {{ look.kept | plural("supplier") }} to load{% if look.left_out %}, {{ look.left_out | plural("row") }} left out (no name){% endif %}.</p>{% endif %}
+    {% elif not look.problem %}<p>{{ look.count | plural("row") }} read: {{ look.kept | plural("supplier") }} to load{% if look.left_out %}, {{ look.left_out | plural("row") }} left out (no name){% endif %}.</p>
+    {% if look.said %}<p class="muted">With their vendor information, loaded with them:</p><ul class="imp-said" id="suppliers-info">{% for line in look.said %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}{% endif %}
     {{ load_then("suppliers") }}
     {% if can("/jde-files/suppliers/load") %}
     <div class="row">
@@ -214,10 +288,12 @@
 </section>
 
 <section class="card stack" id="journal">
-  {{ card_head(4, "journal", "Past invoice coding", specs.journal[0].purpose) }}
+  {{ card_head(4, "journal", "Past invoice coding", "Either export, any period: the more history, the better the suggestions. Several files add up.") }}
   {{ what_was_said("journal") }}
   {{ loaded_now("journal", loaded.journal, "journal", none) }}
-  {{ report(specs.journal[0]) }}
+  <div class="imp-two">
+    {% for spec in specs.journal %}{{ report(spec, named=true) }}{% endfor %}
+  </div>
   {% set journal = looks.journal %}
   {% if journal %}
   {% call imp.preview(journal, "journal") %}
@@ -243,7 +319,7 @@
     {{ imp.journal_details(journal) }}
   {% endcall %}
   {% elif can("/jde-files/journal/upload") %}
-  {{ imp.file_box("/jde-files/journal/upload", specs.journal[0].accept, "Report R09321 saved as CSV (.csv), or as Unicode Text (.txt)", "Reading…") }}
+  {{ imp.file_box("/jde-files/journal/upload", ".csv,.txt,.xlsx", "Report R09321 saved as CSV (.csv) or Unicode Text (.txt); or the G/L lines (.xlsx or .csv)", "Reading…") }}
   {% endif %}
   {% if journals %}
   <div class="table-wrap imp-journals"><table class="apc-table" aria-label="JD Edwards journals loaded">
@@ -294,6 +370,17 @@
   {% endif %}
   <p class="muted">The list is cleared on <a href="/exports#register">Exports, under Invoices already in JD Edwards</a>.</p>
 </section>
+
+{% call table_card(6, "orders", "shopping_cart", "The open purchase order lines, an Excel workbook (.xlsx) or CSV", "/imports/template/") %}
+  {% if loaded.orders %}<p class="muted">An invoice that quotes one of them is matched to its lines. The orders are on <a href="/purchase-orders">Purchase orders</a>.</p>{% endif %}
+{% endcall %}
+{% call table_card(7, "terms", "event", "JD Edwards' payment terms (F0014), an Excel workbook (.xlsx) or CSV") %}
+  {% if terms_table %}<details class="imp-more" id="terms-table"><summary>The {{ terms_table | length | plural("terms code") }} loaded</summary>
+    <ul class="imp-said">{% for code, row in terms_table %}<li><b>{{ code }}</b> {{ row.description }} <span class="muted">· net {{ row.net_days }} days{% if row.discount_pct %}, {{ row.discount_pct }}% within {{ row.discount_days }} days{% endif %}</span></li>{% endfor %}</ul></details>{% endif %}
+{% endcall %}
+{% call table_card(8, "areas", "map", "JD Edwards' tax areas (F4008), an Excel workbook (.xlsx) or CSV") %}
+  {% if areas_table %}<ul class="imp-said" id="areas-said">{% for line in areas_said %}<li>{{ line }}</li>{% else %}<li>Every tax area Settings gives a province is one of JD Edwards', at the rate of its taxes.</li>{% endfor %}</ul>{% endif %}
+{% endcall %}
 </div>
 {% endblock %}
 {% block scripts %}<script type="module" src="{{ static_url('/static/js/imports.js') }}"></script>{% endblock %}

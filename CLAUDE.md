@@ -37,7 +37,9 @@ guides, the bug log (BUGS.md), decisions (decisions.md) and the owner's to-do li
   pairs exist and can be posted to); the chart's tables `core/store/chart.py`, its reader `core/chart_file.py`; the past
   invoice coding (journal) `erp/journal.py` + `core/store/journal.py`, the suggestions from it `ai/supplier_prior.py`;
   the 30-character remark `coding/remark.py`; each line's taxes `coding/taxmath.py` (`invoice_taxes`); the keying sheet
-  `erp/jde_keying.py`; the review row with one Account box `web/account_lines.py`; the uploads `web/pages/jde_files.py`;
+  `erp/jde_keying.py`; the review row with one Account box `web/account_lines.py`; the uploads `web/pages/jde_files.py`
+  (all in one workbook `web/pages/jde_workbook.py`; the pilot tester's ReportsNow build sheet `bench/jde_exports.py`
+  `BUILD_SHEET`, D-266);
   scoring against past coding `ops/journal_score.py`, `ops/proposed_score.py`; a made-up company for tests
   `bench/jde_company.py`, `jde_exports.py`, `jde_invoices.py` (fixture `chart_company`).
 - What is loaded of JD Edwards' files, row by row, and what a person changed by hand in it (D-221):

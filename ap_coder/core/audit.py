@@ -98,6 +98,7 @@ ACTIONS = {
     "journal_forgotten": ("delete_sweep", "warn", "JD Edwards journal forgotten"),
     "vendors_imported": ("storefront", "info", "Vendor master imported"),
     "pos_imported": ("shopping_cart", "info", "Purchase orders imported"),
+    "jde_table_loaded": ("table_view", "info", "JD Edwards' payment terms or tax areas loaded"),
     "po_status": ("shopping_cart", "info", "Purchase order updated"),
     "pos_deleted": ("remove_shopping_cart", "warn", "Purchase orders deleted"),
     "autonomy_on": ("bolt", "ok", "Autonomy turned on"),
@@ -541,6 +542,8 @@ def _import_text(action: str, d: dict[str, Any]) -> str | None:
         )
     if action == "po_status":
         return f"{d.get('po', '')} {'closed' if d.get('status') == 'closed' else 'reopened'}"
+    if action == "jde_table_loaded":
+        return f"{str(d.get('table', '')).replace('_', ' ')}: {d.get('rows', 0)} row(s)"
     if action == "pos_deleted":
         pos = d.get("pos") or []
         return f"{', '.join(pos[:8])}{' …' if len(pos) > 8 else ''}"

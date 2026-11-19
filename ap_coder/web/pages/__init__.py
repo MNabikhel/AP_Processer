@@ -190,9 +190,10 @@ PAGES: list[Page] = [
 # (D-97), logging in and out and one's own password (/login, /logout, /account/password) and the Users page
 # (/admin/users); the Admin panel (/admin, a person's page, Sign-in: D-249; Roles, ``admin_roles``: D-250), its one
 # entry drawn by base.html.
-# ``jde_loaded``: the rows of what the JD Edwards files page loaded (/jde-files/loaded/..., D-221).
+# ``jde_loaded``: the rows of what the JD Edwards files page loaded (/jde-files/loaded/..., D-221); ``jde_workbook``:
+# all of its reports in one workbook (/jde-files/workbook/..., D-266).
 MORE_MODULES: list[str] = ["invoice", "azure", "who", "login", "users", "admin", "admin_roles", "downloads",
-                           "jde_loaded"]  # fmt: skip
+                           "jde_loaded", "jde_workbook"]  # fmt: skip
 
 BY_KEY: dict[str, Page] = {p.key: p for p in PAGES}
 PINNED = {"settings", "help"}  # at the rail's foot, always on screen

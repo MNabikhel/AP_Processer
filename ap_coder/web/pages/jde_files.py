@@ -8,9 +8,15 @@ one place, in the order they depend on each other.
    payment holds, and the vendor information list (``coding/vendor_info``, ``Store.import_vendor_info``, D-219),
    which gives the tax IDs, currencies, terms and addresses. Each goes to the supplier of its number, and neither
    removes what only the other gives;
-4. the past invoice coding, the Transaction Journal (``ops/journal_cmd``: ``look``, then ``load``; ``forget``);
+4. the past invoice coding, the Transaction Journal (``ops/journal_cmd``: ``look``, then ``load``; ``forget``), or
+   the G/L lines of the vouchers as a table (F0911 queried in ReportsNow, D-266: a workbook's sheet is read as its
+   CSV, ``gl_lines_csv``); each file adds to those loaded;
 5. the vouchers already in JD Edwards (the voucher list, as on Exports: ``erp/registers``,
-   ``Store.import_erp_vouchers``).
+   ``Store.import_erp_vouchers``), added to those loaded;
+6. the open purchase order lines (as on Purchase orders, which Simple screens hide: ``load_orders``), 7. the
+   payment terms (F0014) and 8. the tax areas (F4008), both optional (``load_table``, D-266).
+
+All of them in one workbook, a sheet each, are loaded by one click (``pages/jde_workbook.py``).
 
 Nothing is read here: each card calls the importer the command line and the other pages call, and shows what it
 says. Every card looks before it keeps (D-234): the file is uploaded and shown first (its name and rows, each column
@@ -35,9 +41,12 @@ from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from ap_coder.coding import po as po_mod
 from ap_coder.coding import vendor_info
+from ap_coder.coding.terms import JDE_TERMS_ALIASES, JDE_TERMS_SETTING, jde_table, jde_words
 from ap_coder.coding.vendors import master_columns, master_rows
 from ap_coder.core import chart, chart_file, ui
+from ap_coder.core.headers import match_columns
 from ap_coder.core.reference_data import reads_like_meals
 from ap_coder.core.store import Store
 from ap_coder.core.store.vendor_master import JDE_FILES, name_marker
@@ -73,15 +82,22 @@ LOOK_KIND = "jde-files-look"  # a chart or business unit file's first rows and c
 VOUCHERS_KIND = "jde-files-vouchers"  # the voucher list as read at its upload, for its summary and its load
 ORDER = ("Load them in this order: the chart of accounts and the business units first, because the suppliers, the "
          "past invoice coding and the vouchers are checked against them; then the suppliers; then the past invoice "
-         "coding; then the invoices already in JD Edwards, its voucher list.")  # fmt: skip
+         "coding; then the invoices already in JD Edwards, its voucher list; then the open purchase order lines. The "
+         "payment terms and the tax areas are optional, at any time. All of them in one workbook, a sheet each, are "
+         "loaded in this order by one click.")  # fmt: skip
 # Each card: its title, and the reports loaded on it (``import_specs.SPECS``), in the order the page names them.
 CARDS = {
     "chart": ("Chart of accounts", ("chart",)),
     "units": ("Business units", ("units",)),
     "suppliers": ("Suppliers", ("supplier_master", "vendor_info")),
-    "journal": ("Past invoice coding", ("journal",)),
+    "journal": ("Past invoice coding", ("journal", "gl_lines")),
     "vouchers": ("Invoices already in JD Edwards", ("vouchers",)),
+    "orders": ("Open purchase order lines", ("purchase_orders",)),
+    "terms": ("Payment terms", ("payment_terms",)),
+    "areas": ("Tax areas", ("tax_areas",)),
 }
+OPTIONAL = ("terms", "areas")  # (D-266: the reports a pilot does without)
+TABLE_EVENT = "jde_table_loaded"  # the payment terms or the tax areas loaded: {"table", "rows"}
 NOT_XLSX = "Upload the export as JD Edwards saves it, an Excel workbook (.xlsx)."
 GONE = files.GONE  # (one message for an upload no longer kept, on every page)
 LOADED_KIND = "jde-files-loaded"  # an upload's token once its file is loaded: a second Load says so (B-2416)
@@ -149,8 +165,9 @@ def _judge(card: str, headers: list[str]) -> dict[str, Any]:
     the page, named with the card it goes on, or a voucher's own grid. A file that is none of them is judged as the
     card's report with the most of its needed columns there."""
     own = [SPECS[key] for key in CARDS[card][1]]
-    seen = import_specs.recognise(headers)
-    known = import_specs.identify(headers) or SPECS.get(seen or "")
+    seen = import_specs.workbook_report(headers)  # (the open PO lines and the G/L lines by their own columns: D-266)
+    known = SPECS[seen] if seen in ("purchase_orders", "gl_lines") else (
+        import_specs.identify(headers) or SPECS.get(seen or ""))  # fmt: skip
     checks = {spec.key: import_specs.check(spec, headers) for spec in own}
     most = max(own, key=lambda spec: len(spec.required) - len(checks[spec.key].missing))
     spec = known if known in own else most
@@ -325,7 +342,11 @@ def _suppliers_look(store: Store, token: str) -> dict[str, Any]:
     # (the suppliers it would add: those of no supplier loaded now, by the import's own rules, nothing written)
     there = {key for key, _number in store.master_vendor_ids()}
     new = sum(1 for key in store._master_rows_merged(rows, True)[0] if key not in there) if rows else 0
-    return {**look, "kept": len(rows), "left_out": len(df) - len(rows), "problem": problem, "new": new}
+    look = {**look, "kept": len(rows), "left_out": len(df) - len(rows), "problem": problem, "new": new}
+    if not problem and (info := _info_of_master(df)[1]):  # (the supplier master with its vendor information, D-266)
+        known = {str(number).strip().lstrip("0") for _key, number in store.master_vendor_ids() if number}
+        look["said"] = vendor_info.said({"rows": info, "left": {}}, known, 0)[1:]
+    return look
 
 
 def _card_sheet(card: str, token: str) -> tuple[Any, Any, list[str]]:
@@ -394,6 +415,11 @@ def _journal_look(look: dict[str, Any] | None) -> dict[str, Any] | None:
         rows, at = import_specs.journal_head(kept[1])
     except ValueError:
         return look
+    _columns, table_at = journal.flat_header(rows)
+    if table_at is not None:  # (the G/L lines as a table, D-266)
+        judged = _judge("journal", [str(cell) for cell in rows[table_at]])
+        sample = import_specs.preview(rows, table_at, judged["check"].found.values())
+        return {**look, **judged, "problem": look["problem"] or judged["problem"], "sample": sample}
     if at is None:  # (no header row: the report's first cell is its number, read by its standard positions)
         return {**look, "positions": True}
     judged = _judge("journal", [str(cell) for cell in rows[at]])
@@ -455,16 +481,30 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
     settings = store.chart_settings()
     journals = learning._journal_context(store, q.get("journal"), q)
     said = current_store().ephemeral(SAID_KIND, q.get("said"))
+    terms_table, areas_table = store.jde_terms_table(), tax_areas_of(store)
     loaded = {
         "chart": accounts,
         "units": len(units),
         "suppliers": store.master_vendor_count(),
         "journal": len(journals["journals"]),
         "vouchers": store.erp_register_count(),
+        "orders": store.open_po_count(),
+        "terms": len(terms_table),
+        "areas": len(areas_table),
     }
-    # Each opens its rows (pages/jde_loaded.py, D-221); the three a person may change say how many rows were.
-    rows_of = {"chart": "accounts", "units": "business units", "suppliers": "suppliers", "journal": "lines",
-               "vouchers": "vouchers"}  # fmt: skip
+    # Each opens its rows (pages/jde_loaded.py, D-221); the three a person may change say how many rows were. The
+    # purchase orders are on their own page; the payment terms and tax areas are listed on their card.
+    rows_of = {
+        "chart": "accounts",
+        "units": "business units",
+        "suppliers": "suppliers",
+        "journal": "lines",
+        "vouchers": "vouchers",
+        "orders": "purchase orders",
+        "terms": "terms codes",
+        "areas": "tax areas",
+    }
+    see = {"orders": "/purchase-orders", "terms": _url("terms"), "areas": _url("areas")}  # fmt: skip
     edits = store.hand_edits()
     by_hand = {"chart": len(edits["chart_accounts"]), "units": len(edits["business_units"]),
                "suppliers": len(edits["vendors"])}  # fmt: skip
@@ -474,6 +514,7 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
         "suppliers": _suppliers_look(store, q["suppliers"]) if q.get("suppliers") else None,
         "journal": _journal_look(journals.pop("journal")),
         "vouchers": _vouchers_look(store, q["vouchers"]) if q.get("vouchers") else None,
+        **{card: _table_look(store, card, q[card]) if q.get(card) else None for card in TABLE_CARDS},
     }
     last = {
         "chart": _last(store, "accounts_imported", "chart_accounts"),
@@ -485,6 +526,9 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
             default=None,
         ),
         "vouchers": _last(store, "erp_register_imported"),
+        "orders": _last(store, "pos_imported"),
+        "terms": _last(store, TABLE_EVENT, "payment_terms"),
+        "areas": _last(store, TABLE_EVENT, "tax_areas"),
     }
     tax_ids = store.vendor_info_count()
     gl = store.list_accounts("gl_accounts")  # (read once: B-2436)
@@ -497,6 +541,8 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
                 "name": title,
                 "loaded": loaded[card],
                 "rows": rows_of[card],
+                "see": see.get(card, f"{HERE}/loaded/{card}"),
+                "optional": card in OPTIONAL,
                 "by_hand": by_hand.get(card, 0),
                 "last": last[card],
                 "attention": _attention(card, looks[card], loaded[card], store, tax_ids)
@@ -522,6 +568,12 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
         "upload_gone": journals.pop("upload_gone", False)
         or any(q.get(card) and looks[card] is None for card in ("chart", "units")),
         "tax_ids": tax_ids,
+        "card_titles": {card: title for card, (title, _keys) in CARDS.items()},
+        "rows_of": rows_of,
+        "terms_table": sorted(terms_table.items()),
+        "areas_table": sorted(areas_table.items()),
+        "areas_said": jde_settings.tax_areas_compared(areas_table, jde_settings.load(store)) if areas_table else [],
+        "workbook": _workbook_look(store, q["workbook"]) if q.get("workbook") else None,
         **journals,
     }
 
@@ -551,6 +603,13 @@ def _load_words(card: str, look: dict[str, Any] | None, loaded: int, by_hand: in
     elif card == "journal":
         button = "Load this journal" + (f": {look['size']}" if look.get("size") else "")
         then = f"Added to the {ui.plural(loaded, 'journal')} loaded now: a voucher in both is counted once."
+    elif card == "orders":
+        button = f"Load {ui.plural(look.get('kept', 0), 'line')} of {ui.plural(look.get('orders', 0), 'order')}"
+        then = (f"Added to the {ui.plural(loaded, 'open purchase order')} loaded now: an order in this file replaces "
+                "its lines, the others are kept.")  # fmt: skip
+    elif card in TABLE_CARDS:
+        button = f"Load {ui.plural(look.get('kept', 0), 'terms code' if card == 'terms' else 'tax area')}"
+        then = f"Replaces the {ui.plural(loaded, 'row')} loaded now: the table is taken whole from this file."
     else:
         button, then = f"Load {ui.plural(look.get('kept', 0), 'voucher')}", ""
     return {"button": button, "then": then if loaded else ""}
@@ -566,8 +625,9 @@ def _said_view(said: dict[str, Any], loaded: dict[str, int]) -> dict[str, Any]:
         at = next((n for n, line in enumerate(lines) if line.startswith("Loaded ")), 0)
     elif card == "vouchers":
         at = len(lines) - 1
-    cards = list(CARDS)
-    after = cards[cards.index(card) + 1 :] + cards[: cards.index(card)]
+    cards = [c for c in CARDS if c not in OPTIONAL]  # (the optional ones are never the next to load)
+    at_card = cards.index(card) if card in cards else -1
+    after = cards[at_card + 1 :] + cards[: max(at_card, 0)]
     coming = next((c for c in after if not loaded[c]), None)
     shown = {"card": coming, "name": f"{cards.index(coming) + 1}. {CARDS[coming][0]}"} if coming else None
     return {**said, "head": lines[at] if lines else "", "more": lines[:at] + lines[at + 1 :], "next": shown}
@@ -800,20 +860,244 @@ def _suppliers_load(request: Request, token: str) -> JSONResponse:
         if problem := _master_problem(_judge("suppliers", [str(c) for c in df.columns]), df, sheets) or (
                 NO_ROWS if df.empty else ""):  # fmt: skip
             return refuse(problem)
-        columns = master_columns(list(df.columns))
-        result = store.import_vendor_master(master_rows(df.to_dict("records"), columns), actor=reviewer(),
-                                            by_erp_id=True, where=JDE_FILES)  # fmt: skip
+        said = load_supplier_master(store, df)
         drop_upload(token)
-        said = [f"Suppliers: {result['added']:,} added, {result['updated']:,} updated."]
+        _loaded(token)
+        return _said(request, "suppliers", said)
     _loaded(token)
-    if dupes := result["duplicates"]:
-        said.append(f"{ui.plural(len(dupes), 'supplier')} {'appears' if len(dupes) == 1 else 'appear'} more than "
-                    "once in the file under similar names (merged here; one on hold keeps the supplier on hold): "
-                    + "; ".join(" / ".join(names) for names in dupes[:8]) + ".")  # fmt: skip
-    return _said(request, "suppliers", said)
+    return _said(request, "suppliers", said + _duplicates_said(result))
+
+
+def _duplicates_said(result: dict[str, Any]) -> list[str]:
+    dupes = result["duplicates"]
+    if not dupes:
+        return []
+    return [f"{ui.plural(len(dupes), 'supplier')} {'appears' if len(dupes) == 1 else 'appear'} more than once in the "
+            "file under similar names (merged here; one on hold keeps the supplier on hold): "
+            + "; ".join(" / ".join(names) for names in dupes[:8]) + "."]  # fmt: skip
+
+
+def _info_of_master(df: Any) -> tuple[dict[str, str], list[dict[str, str]]]:
+    """({field: header} of the vendor information a supplier master sheet carries, its rows as the vendor information
+    list's: ``vendor_info.rows_of``); ({}, []) for the supplier master's grid, which carries none (D-266)."""
+    headers = [str(c) for c in df.columns]
+    found, columns = vendor_info.in_master(headers), master_columns(headers)
+    if not found or "erp_id" not in columns:
+        return {}, []
+    where = {"erp_id": headers.index(columns["erp_id"]), "vendor_name": headers.index(columns["vendor_name"]),
+             **{field: headers.index(header) for field, header in found.items()}}  # fmt: skip
+    return found, vendor_info.rows_of(df.itertuples(index=False, name=None), where)[0]
+
+
+def load_supplier_master(store: Store, df: Any) -> list[str]:
+    """Load a supplier master sheet (``df``, every column it needs: the card's or the workbook's) by supplier number,
+    and what it says, a line each. One that carries the vendor information too (the build sheet's suppliers report,
+    D-266) is loaded as both, in one go: each supplier's hold, and its tax ID, currency, terms and address."""
+    rows = master_rows(df.to_dict("records"), master_columns(list(df.columns)))
+    _found, info = _info_of_master(df)
+    if info:
+        result = store.import_vendor_info(vendor_info.with_master(rows, info), info, actor=reviewer())
+        said = [f"Suppliers: {result['added']:,} added, {result['updated']:,} updated, each with its payment hold. "
+                f"Tax IDs kept for {sum(1 for row in info if row['tax_id']):,} of them, with their currencies, terms "
+                "and addresses."]  # fmt: skip
+    else:
+        result = store.import_vendor_master(rows, actor=reviewer(), by_erp_id=True, where=JDE_FILES)
+        said = [f"Suppliers: {result['added']:,} added, {result['updated']:,} updated."]
+    return said + _duplicates_said(result)
+
+
+# --- 6, 7, 8: the open purchase order lines, the payment terms, the tax areas (D-266) ------------------------------
+
+TABLE_CARDS = ("orders", "terms", "areas")  # read as a sheet with every column of its report: no column is picked
+
+
+def tax_areas_of(store: Store) -> dict[str, dict[str, Any]]:
+    """JD Edwards' tax areas as loaded on card 8 ({} when none are)."""
+    try:
+        table = json.loads(store.get_setting(jde_settings.TAX_AREAS_SETTING) or "{}")
+    except ValueError:
+        return {}
+    return table if isinstance(table, dict) else {}
+
+
+def _by_company(df: Any, column: str | None) -> str:
+    """How many rows of each company a sheet has ("" without a company column, or of one company only): every row is
+    loaded, each with its company (D-266)."""
+    if not column or column not in df.columns:
+        return ""
+    counts = df[column].astype(str).str.strip().replace("", "(none)").value_counts()
+    if len(counts) < 2:
+        return ""
+    return "Rows by company: " + ", ".join(f"{company} {count:,}" for company, count in sorted(counts.items())) + "."
+
+
+def _order_rows(store: Store, df: Any) -> tuple[list[dict[str, Any]], int]:
+    """The open purchase order lines of a sheet (``po.rows_from_records``), each PO's closed lines left out
+    (``po.open_lines``), and how many rows had no PO number or description. An order in a foreign currency is read in
+    it when the sheet has its foreign columns and no base currency: the base is the company's (Settings, JD Edwards
+    E1), as a query of F4311 has none."""
+    columns = po_mod.map_columns([str(c) for c in df.columns])
+    records = df.to_dict("records")
+    foreign = {"foreign_open_amount", "foreign_unit_price", "foreign_amount"} & set(columns)
+    if foreign and "base_currency" not in columns:
+        base = jde_settings.load(store).domestic_currency
+        records = [{**record, "(base currency)": base} for record in records]
+        columns["base_currency"] = "(base currency)"
+    rows, skipped = po_mod.rows_from_records(records, columns)
+    return po_mod.open_lines(rows), skipped
+
+
+def load_orders(store: Store, frames: list[Any]) -> list[str]:
+    """Load the open purchase order lines of one sheet or several (split by company or year, D-266) as one file: an
+    order in them replaces its lines, a line given twice counts once. ``ValueError`` when no line can be read."""
+    rows: dict[tuple[str, ...], dict[str, Any]] = {}
+    skipped = 0
+    for df in frames:
+        read, left = _order_rows(store, df)
+        skipped += left
+        for row in read:
+            rows[(row["order_company"], row["order_type"], row["po_number"], row["erp_line"] or
+                  str(row["line_number"] or len(rows)))] = row  # fmt: skip
+    if not rows:
+        raise ValueError(f"No row has a PO number and a description ({ui.plural(skipped, 'row')} skipped): nothing "
+                         "was loaded, the purchase orders are as they were.")  # fmt: skip
+    result = store.import_purchase_orders(list(rows.values()), actor=reviewer())
+    said = (
+        f"Open purchase order lines: {result['added']} added, {result['updated']} updated "
+        f"({ui.plural(result['orders'], 'order')} with {ui.plural(result['lines'], 'line')})"
+    )
+    return [said + (f", {ui.plural(skipped, 'row')} skipped (no PO number or description)." if skipped else ".")]
+
+
+def _table_of(card: str, df: Any) -> tuple[dict[str, dict[str, Any]], int]:
+    records = df.to_dict("records")
+    headers = [str(c) for c in df.columns]
+    if card == "terms":
+        return jde_table(records, match_columns(headers, JDE_TERMS_ALIASES))
+    return jde_settings.tax_area_table(records, match_columns(headers, jde_settings.TAX_AREA_ALIASES))
+
+
+def load_table(store: Store, card: str, df: Any) -> list[str]:
+    """Load JD Edwards' payment terms (``card`` "terms") or tax areas ("areas") of a sheet, replacing those loaded,
+    and what that says. ``ValueError`` when no row can be read."""
+    table, left = _table_of(card, df)
+    what = "terms code" if card == "terms" else "tax area"
+    if not table:
+        raise ValueError(f"No {what} of this file can be read: nothing was loaded.")
+    key = JDE_TERMS_SETTING if card == "terms" else jde_settings.TAX_AREAS_SETTING
+    store.set_setting(key, json.dumps(table, sort_keys=True), actor=reviewer())
+    store.log_event(TABLE_EVENT, actor=reviewer(), detail={"table": SPECS[CARDS[card][1][0]].key, "rows": len(table)})
+    out = f", {ui.plural(left, 'row')} left out (no {what}, or no rate or days that read)." if left else "."
+    said = [f"{CARDS[card][0]}: {ui.plural(len(table), what)} loaded{out}"]
+    if card == "terms":
+        said.append(
+            "A supplier's terms code now counts as its terms: "
+            + "; ".join(f"{code} {jde_words(row)}" for code, row in sorted(table.items())[:6])
+            + ("…" if len(table) > 6 else ".")
+        )
+    else:
+        said += jde_settings.tax_areas_compared(table, jde_settings.load(store)) or [
+            "Every tax area Settings gives a province is one of JD Edwards', at the rate of its taxes."
+        ]
+    return said
+
+
+def _table_look(store: Store, card: str, token: str) -> dict[str, Any]:
+    """An uploaded sheet of open PO lines, payment terms or tax areas as it would be loaded, nothing written."""
+    try:
+        upload, df, _sheets = _card_sheet(card, token)
+    except SheetError as exc:
+        return {"problem": str(exc)}
+    look = _look(card, token, upload.name, [str(c) for c in df.columns], count=len(df))
+    look["sample"] = _sample(df, look["check"].found.values())
+    if look["problem"] or df.empty:
+        return {**look, "problem": look["problem"] or NO_ROWS}
+    if card == "orders":
+        rows, skipped = _order_rows(store, df)
+        orders = {(row["order_company"], row["order_type"], row["po_number"]) for row in rows}
+        said = [
+            f"{ui.plural(len(rows), 'open line')} of {ui.plural(len(orders), 'order')} to load"
+            + (f"; {ui.plural(skipped, 'row')} without a PO number or description left out." if skipped else ".")
+        ]
+        said += [line for line in [_by_company(df, look["check"].found.get("order_company"))] if line]
+        return {
+            **look,
+            "kept": len(rows),
+            "orders": len(orders),
+            "said": said,
+            "problem": "" if rows else "No row has a PO number and a description: nothing can be loaded.",
+        }
+    table, left = _table_of(card, df)
+    said = [
+        f"{ui.plural(len(table), 'terms code' if card == 'terms' else 'tax area')} to load"
+        + (f", {ui.plural(left, 'row')} left out." if left else ".")
+    ]
+    if card == "areas" and table:
+        said += jde_settings.tax_areas_compared(table, jde_settings.load(store))
+    return {**look, "kept": len(table), "said": said, "problem": "" if table else "No row of this file can be read."}
+
+
+@router.post(HERE + "/{card}/upload-table")
+async def table_upload(request: Request, card: str, file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
+    if card not in TABLE_CARDS:
+        raise HTTPException(status_code=404, detail="No such card.")
+    token, problem = await receive_sheet(file, accept=None)
+    if problem:
+        return refuse(problem)
+    return done(request, _shown(card, token))
+
+
+@router.post(HERE + "/{card}/load-table")
+async def table_load(request: Request, card: str, token: str = Form("")) -> JSONResponse:
+    if card not in TABLE_CARDS:
+        raise HTTPException(status_code=404, detail="No such card.")
+    return await run_in_threadpool(_table_load, request, card, token)
+
+
+@one_connection
+def _table_load(request: Request, card: str, token: str) -> JSONResponse:
+    """Load the uploaded sheet as its card showed it: only one that is its report with every column it needs."""
+    store = get_store(request)
+    if get_upload(token) is None:
+        return refuse(_gone(token))
+    look = _table_look(store, card, token)
+    if look.get("problem"):
+        return refuse(look["problem"])
+    _upload, df, _sheets = _card_sheet(card, token)
+    try:
+        said = load_orders(store, [df]) if card == "orders" else load_table(store, card, df)
+    except ValueError as exc:
+        return refuse(str(exc))
+    drop_upload(token)
+    _loaded(token)
+    return _said(request, card, said)
+
+
+# --- All the reports in one workbook (D-266: pages/jde_workbook.py) -------------------------------------------------
+
+
+def _workbook_look(store: Store, token: str) -> dict[str, Any] | None:
+    from ap_coder.web.pages import jde_workbook
+
+    return jde_workbook.look(store, token)
 
 
 # --- 4: the past invoice coding (the Transaction Journal) -----------------------------------------------------------
+
+
+def gl_lines_csv(content: bytes, name: str, sheet: str = "") -> bytes | None:
+    """The G/L lines of the vouchers as a table (D-266) in a workbook's sheet ``sheet`` (else the first that is
+    them), as the CSV the journal's reader reads (``journal.sheet_csv``, its rows from the header on, a row at a time
+    within the workbook reader's bounds); None when no sheet is them or the workbook cannot be read."""
+    try:
+        for title, head in chart_file.sheet_heads(content, name):
+            at = journal.flat_header([_cells(row) for row in head])[1]
+            if at is not None and sheet in ("", title):
+                rows = chart_file.read_rows(content, name, title)
+                return journal.sheet_csv(row for n, row in enumerate(rows) if n >= at)
+    except chart.ChartError:
+        return None
+    return None
 
 
 @router.post(HERE + "/journal/upload")
@@ -824,7 +1108,9 @@ async def journal_upload(request: Request, file: UploadFile = File(...)) -> JSON
         return refuse(TOO_BIG)
     if not content:
         return refuse(EMPTY)
-    if not looks_like_journal(content):
+    if name.lower().endswith(".xlsx") and (lines := await run_in_threadpool(gl_lines_csv, content, name)):
+        return done(request, _shown("journal", learning.keep_journal(name, lines)))  # (the G/L lines, D-266)
+    if not looks_like_journal(content) and not journal.is_gl_lines(content):
         known = await run_in_threadpool(_known_report, name, content)
         if known is import_specs.JOURNAL:
             return refuse(JOURNAL_XLSX)
