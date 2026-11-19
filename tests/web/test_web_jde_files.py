@@ -66,9 +66,9 @@ def test_the_page_starts_with_nothing_loaded_and_says_the_order(client):
     assert page.count("Not yet") == 10 and "Loaded</span>" not in page  # the checklist's five lines, and each card
     assert page.count("Optional") >= 6  # (and the three D-266 added, which a company may not have)
     assert str(escape(jde_files.ORDER)) in page
-    for card in ("chart", "units", "suppliers", "journal", "vouchers", "orders", "terms", "areas"):
+    for card in ("chart", "units", "suppliers", "journal", "vouchers", "orders", "terms", "areas", "companies"):
         assert f'<section class="card stack" id="{card}">' in page and f'href="#{card}"' in page
-    assert page.count('type="file"') == 9  # (and the workbook's, at the top: D-266)
+    assert page.count('type="file"') == 10  # (and the workbook's, at the top: D-266; the companies', D-267)
 
 
 def test_the_chart_and_the_business_units_load_and_say_what_was_read(client, store, exports):
@@ -1058,7 +1058,7 @@ def test_each_more_is_named_after_what_it_is_about(client):
     times. Each names its report."""
     names = re.findall(r'<details class="imp-more"><summary>([^<]*)</summary>', client.get("/jde-files").text)
     more = [name for name in names if name.startswith("More")]
-    assert "More" not in names and len(more) == 8 and len(set(more)) == 8, names  # (and D-266's three)
+    assert "More" not in names and len(more) == 9 and len(set(more)) == 9, names  # (and D-266's three, D-267's one)
     assert "More about chart of accounts" in more and "More about invoices already in JD Edwards" in more
 
 
