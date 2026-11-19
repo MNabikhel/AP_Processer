@@ -292,13 +292,13 @@ def import_files(store: Store, chart_source: str | Path | bytes | None = None,
         charts = [(chart_source, chart_sheet, name)]
     said: list[str] = []
     results: list[dict[str, Any]] = []
-    read = [0]
+    seen = [0]
 
     def counted(rows: Iterable[Any]) -> Iterable[Any]:  # (how many rows were read, said after each ``every``)
         for row in rows:
-            read[0] += 1
-            if read[0] % every == 0:
-                print(f"  {read[0]:,} rows read...", flush=True)
+            seen[0] += 1
+            if seen[0] % every == 0:
+                print(f"  {seen[0]:,} rows read...", flush=True)
             yield row
 
     with store.session():

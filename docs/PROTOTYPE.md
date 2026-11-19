@@ -112,9 +112,25 @@ Excel workbook, a sheet each (the sheet names do not matter), and drop it on **A
 workbook** at the top of the page. Each sheet is told by its column names (the build sheet's titles, or JD Edwards'
 field names such as MCU, GMMCU or F0901.GMMCU) and shown first: the report it is, its rows (and how many of each
 company), the columns found and any missing. A sheet that is none of the reports is listed and left alone; two
-sheets of the chart (or of the business units) are both left out, said. A ledger or past coding split into several
-sheets (by company or year) loads as one, an overlap counted once. **Load all** loads them in the order below; each
-card's own upload stays for one file at a time.
+sheets of the business units with a company in both are both left out, said. The chart in several sheets loads as
+one: every sheet read and checked, then put in place at once (a company split across sheets is loaded whole). A
+ledger or past coding split into several sheets (by company or year) loads as one, an overlap counted once. **Load
+all** loads them in the order below; each card's own upload stays for one file at a time.
+
+**The whole chart, every company's** (F0901 unfiltered: millions of rows, too big for a workbook): save the
+ReportsNow query as tab-delimited text (*Unicode text* or UTF-8) and load it from `scripts\terminal.bat`:
+
+```
+python -m ap_coder chart import --chart "F0901 all companies.txt"
+```
+
+Split into several files, name each: `--chart "part 1.txt" --chart "part 2.txt"` (one load; a company in two
+files is loaded with both, and is never refreshed from only one of them later). It says the rows read, accepted and
+rejected (with why and the first rows of each reason), and each posting edit code with its accounts and whether AP
+posts to it; the chart card shows the same. A refresh with far fewer accounts than now is refused, the chart left as
+it was, unless you add `--anyway`. Every account is kept; only those AP posts to are offered (Settings → JD Edwards
+E1 → Accounts AP posts to, where a code JD Edwards' own list does not have waits for you to decide, and where the
+**companies in the pilot** are set: an invoice of another company is held).
 
 | # | File | What it gives AP Coder | From JD Edwards |
 |---|---|---|---|

@@ -613,6 +613,34 @@ the grid shows: a chart without its posting edit column ("P E") or its Subsidiar
 message names the column to add to the grid; `--anyway` imports it as it is (without "P E" every account is offered),
 and the summary says so each time until a whole export is imported.
 
+**The whole group's chart, unfiltered** (F0901 of every company, millions of rows, D-272): save the ReportsNow query
+as text, tab-delimited (*Unicode text* or UTF-8, .txt or .tsv; CSV works too) and import it from disk, where it is
+read a row at a time:
+
+```
+python -m ap_coder chart import --chart "F0901 all companies.txt"
+```
+
+A chart split across several files (by company range, or a company too big for one) is **one import**, every file
+named: `--chart "F0901 part 1.txt" --chart "F0901 part 2.txt"`. The files are read and checked in full into a table of
+their own while the dashboard keeps working, then put in place of the chart in one go; a company in two files is
+loaded with both. A company loaded from several files is never refreshed from fewer of them (that would drop the
+other file's accounts): the import is refused, saying which files it came from, unless `--anyway`. So is a refresh
+with less than half the accounts a company has now (a filtered or cut-short export), and a file with no account at
+all; the chart is then left as it was. Every account is kept (its description, and why a line may not use it); only
+those whose posting edit code AP posts to are offered (Settings → JD Edwards E1 → Accounts AP posts to: blank, L and
+U by default). **The summary** says the rows read, accepted and rejected (each reason with its first rows: a row whose
+cells do not line up with the column names, a blank row, an account given twice...), the accounts by company, and
+each posting edit code with its accounts and whether AP posts to it. A code JD Edwards' own list does not have is
+*not yet decided*: closed, and listed on the Accounts AP posts to card until someone decides it. The same summary is
+on the JD Edwards files page's chart card (What the chart holds). 3,500,000 rows (about 260 MB) load in a few minutes:
+see D-272 for the numbers.
+
+- **Business units missing from the business units report** are never offered; a line coded to one is an error,
+  approved only with Approve anyway and a reason.
+- **Companies in the pilot** (the same card): with companies named, an invoice of another company is held (no
+  approval passes it), and only their accounts are offered. Empty: every company.
+
 - A GL account's meals tick, a category typed for it and a cost center's manager stay. When an import no longer has
   the account or the business unit, they are **set aside**, said in the summary, and put back when a later import has
   it again.

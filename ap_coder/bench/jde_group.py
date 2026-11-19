@@ -154,6 +154,48 @@ def write_chart_csv(path: Any, scale: Scale) -> int:
     return n
 
 
+# The whole group's F0901 unfiltered (D-272): of each business unit's 26 accounts, one in two postable (blank), the
+# others titles, budget, inactive and machine-only, and one with a code JD Edwards' own list does not have.
+FULL_EDITS = ("N", "B", "I", "M", "N", "B", "I", "M", "N", "B", "I", "M", "Z")
+FULL_HEADER = ("Company", "Business Unit", "Object Account", "Subsidiary", "Account Description", "L D", "P E",
+               "Account ID")  # fmt: skip
+FULL_UNLISTED = 997  # one business unit in this many is missing from the business units report
+
+
+def _full_units(rows: int, companies: int) -> tuple[list[str], int]:
+    codes = [c[0] for c in group(companies)]
+    return codes, max(1, rows // ((len(OBJECTS) * 2 + 1) * len(codes)))
+
+
+def full_unit_rows(rows: int, companies: int = 20) -> list[BuRow]:
+    """The business units report of ``write_full_chart``'s chart: one in ``FULL_UNLISTED`` left out."""
+    codes, each = _full_units(rows, companies)
+    return [BuRow(unit, f"Job {unit}", code, "JB", "") for code in codes for k, unit in enumerate(units_of(code, each))
+            if (k + 1) % FULL_UNLISTED]  # fmt: skip
+
+
+def write_full_chart(path: Any, rows: int, companies: int = 20, encoding: str = "utf-8") -> int:
+    """The group's whole chart (F0901 unfiltered, every company's, every posting edit code) as ReportsNow saves it as
+    text: tab-delimited, CRLF, a business unit right-aligned in 12 characters, a quotation mark in some descriptions;
+    ``rows`` rows at most (``FULL_EDITS``: about half of the accounts not posted to). How many rows were written."""
+    codes, each = _full_units(rows, companies)
+    n = 0
+    with open(path, "w", encoding=encoding, newline="") as out:
+        out.write("\t".join(FULL_HEADER) + "\r\n")
+        for code in codes:
+            for unit in units_of(code, each):
+                lines = [(f"{unit:>12}", "", "", f"Job {unit}", 3, "N")]
+                for k, (obj, sub) in enumerate((obj, sub) for obj in OBJECTS for sub in ("", "0100")):
+                    said = f'Cost {obj} 1/2" pipe' if k % 5 == 0 else f"Cost {obj} {'labour' if sub else 'material'}"
+                    lines.append((f"{unit:>12}", obj, sub, said, 8 if sub else 7, FULL_EDITS[k // 2] if k % 2 else ""))
+                for bu, obj, sub, description, lod, edit in lines:
+                    if n >= rows:
+                        return n
+                    out.write(f"{code}\t{bu}\t{obj}\t{sub}\t{description}\t{lod}\t{edit}\t{n + 10_000_000:08d}\r\n")
+                    n += 1
+    return n
+
+
 def supplier_rows(scale: Scale) -> list[dict[str, str]]:
     """The suppliers as the vendor master's import takes them: number, name, GST/HST number."""
     return [{"erp_id": str(10000 + k), "vendor_name": f"Supplier {k:05d} {_PLACES[k % len(_PLACES)]} Ltd",

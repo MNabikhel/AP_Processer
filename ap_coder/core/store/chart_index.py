@@ -52,6 +52,17 @@ CODE_INDEX = "CREATE INDEX IF NOT EXISTS chart_accounts_code ON chart_accounts (
 UNIT_COMPANY_INDEX = "CREATE INDEX IF NOT EXISTS business_units_company ON business_units (company)"
 
 
+def _globbed(patterns: tuple[str, ...]) -> tuple[str, list[str]] | None:
+    """The accounts never offered (``chart._never_offered``'s patterns) as SQL: (the condition, its values), each
+    pattern matched against the object, the ``object.subsidiary`` or the whole string as its dots say, by GLOB
+    (``*`` and ``?`` as ``fnmatch``'s; ``[!...]`` as GLOB's ``[^...]``); None for no pattern."""
+    if not patterns:
+        return None
+    told = ("object", "object || '.' || subsidiary", "bu || '.' || object || '.' || subsidiary")
+    return (" OR ".join(f"{told[min(p.count('.'), 2)]} GLOB ?" for p in patterns),
+            [p.replace("[!", "[^") for p in patterns])  # fmt: skip
+
+
 class IndexedPairs:
     """The chart of ``store`` as the checks and the suggestions ask it (``AccountPairs``' answers), with its settings
     ``settings``. Shared by the threads of a process: read it, don't change it."""
@@ -300,15 +311,37 @@ class IndexedPairs:
             return int(conn.execute("SELECT COUNT(*) FROM chart_accounts WHERE object != ''").fetchone()[0])
 
     def tally(self) -> Counter[str]:
-        """How many of the chart's accounts are of each status, in one pass."""
+        """How many of the chart's accounts are of each status: counted by SQLite by business unit, company and
+        whether the posting edit code is one AP posts to, the accounts never offered by their patterns as SQLite's
+        GLOB (``fnmatch``'s own wildcards), never a row at a time (D-272: 3,500,000 accounts in seconds)."""
         out: Counter[str] = Counter()
+        _names, closed, companies, skipped, listed = self._unit_facts()
+        postable = json.dumps(list(self.settings.postable_codes))
+        open_units: Counter[tuple[str, str]] = Counter()  # (business unit, company): accounts that may be offered
         with self._reader() as conn:
-            for bu, obj, sub, description, edit, company in conn.execute(
-                "SELECT bu, object, subsidiary, description, posting_edit, company FROM chart_accounts WHERE "
-                "object != ''"
-            ):
-                out[self._status(bu, code_of(obj, sub), (description, edit, company))] += 1
-        return out
+            for bu, company, edit_ok, n in conn.execute(
+                f"SELECT bu, company, {_in_list('posting_edit')}, COUNT(*) FROM chart_accounts WHERE object != '' "
+                "GROUP BY bu, company, 3", (postable,)):  # fmt: skip
+                if bu in closed:
+                    out[BU_INACTIVE] += n
+                elif not edit_ok:
+                    out[NOT_POSTABLE] += n
+                elif listed and bu not in listed:
+                    out[BU_UNKNOWN] += n
+                elif bu in skipped or self.settings.company_held(companies.get(bu) or company):
+                    out[RESERVED] += n
+                else:
+                    open_units[(bu, company)] += n
+            matched = _globbed(self.settings.held_back)
+            if matched:
+                for bu, company, n in conn.execute(
+                    f"SELECT bu, company, COUNT(*) FROM chart_accounts WHERE object != '' AND "
+                    f"{_in_list('posting_edit')} AND ({matched[0]}) GROUP BY bu, company", (postable, *matched[1])):
+                    if (bu, company) in open_units:
+                        open_units[(bu, company)] -= n
+                        out[RESERVED] += n
+        out[OK] += sum(open_units.values())
+        return +out
 
     def _pilot_units(self) -> frozenset[str]:
         """The business units of the companies in the pilot, as the business units report gives them (read once)."""
