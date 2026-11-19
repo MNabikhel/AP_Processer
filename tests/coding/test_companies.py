@@ -156,6 +156,38 @@ def test_a_companys_name_inside_the_suppliers_own_never_decides(group, reference
     assert output["company"] == "00230"
 
 
+def test_report_9_loaded_after_an_invoice_was_read_its_checks_again_read_the_names_on_its_page(tmp_path):
+    """B-2681: every check made again (the review screen, the queue's, bulk approval, touchless processing's, the
+    second approval's) decided the company without the page: its names were read only as it was first read. JD
+    Edwards' companies loaded after (the invoices already in the queue), an invoice billed to Maple Ridge Builders
+    Inc. (00310, US) by a supplier that had billed only 00220 was given 00220, a Canadian company, by that history:
+    no warning that its tax is not checked, Ready on the queue and approved in bulk."""
+    from ap_coder.coding import bulk
+    from ap_coder.core.store import REVIEW, load_sample_setup
+    from tests.review_page import ReviewPage
+    from tests.webclient import SAMPLE_STEM, SAMPLES, client_for, gt, web_settings
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    supplier = "Kelso Formwork Ltd."
+    store.import_vendor_master([{"vendor_name": supplier, "erp_id": "4410"}])
+    page = f"{supplier}\nInvoice KF-118\nBill to: Maple Ridge Builders Inc., 18 Main St, Spokane WA\n"
+    iid = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", gt(vendor_name=supplier, invoice_number="KF-118"),
+                            {"requires_review": False, "adjusted_confidence": 0.97}, extraction_md=page)  # fmt: skip
+    _load_group(store)
+    store.import_erp_vouchers([{"key": "00220-PV-700101-001", "vendor_name": supplier, "invoice_number": "KF-90",
+                                "total": 10.0, "invoice_date": "2026-01-02", "an8": "", "document": "700101"}])  # fmt: skip
+    assert "US_TAX_NOT_CHECKED" in {i["code"] for i in bulk.issues_today(store, [iid])[iid]}
+    result = bulk.bulk_approve(store, store.reference_data(), web_settings(), [iid], "Sam")
+    assert result["approved"] == [] and store.get_invoice(iid)["status"] == REVIEW
+    assert "not checked for Canadian tax" in result["skipped"][0][1]
+    screen = ReviewPage(client_for(store), iid)
+    assert screen.form["company"] == ["00310"] and "Maple Ridge Builders Inc. is named on the invoice" in screen.text
+    stamp = store.checks_stamp()  # a name of Settings → Review decides a company too: the queue checks again
+    store.set_setting("our_names", "Kelso Yard = 230")
+    assert store.checks_stamp() != stamp
+
+
 def test_the_suppliers_history_decides_when_it_only_ever_billed_one_company(group, reference, ground_truth):
     voucher = {"key": "00230-PV-700101-001", "vendor_name": "Northwind IT Solutions Inc.", "invoice_number": "N-1",
                "total": 10.0, "invoice_date": "2026-01-02", "an8": "", "document": "700101"}  # fmt: skip

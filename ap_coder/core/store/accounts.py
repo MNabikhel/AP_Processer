@@ -65,11 +65,12 @@ _REFERENCE_STAMP = """SELECT
 # What the checks read besides the reference data, as the queue's re-check compares them (``Store.checks_stamp``,
 # B-815): JD Edwards' settings, whether it is in use (its switch, or a batch made: whether there is one, not how many,
 # so an export changes no check, D-155), the days to pay, and the count of changes to the vendor master and the POs
-# (``masters_version``, B-842), and our bank accounts (the account an invoice is paid from, D-66, B-958).
+# (``masters_version``, B-842), our bank accounts (the account an invoice is paid from, D-66, B-958), and our names
+# (a name written "name = company" decides an invoice's company, D-267, B-2681).
 _CHECKS_STAMP = """SELECT
     (SELECT group_concat(key || '=' || value, char(10))
-     FROM (SELECT * FROM settings WHERE key IN ('jde_e1', 'show_jde_settings', 'default_terms_days', 'masters_version')
-           ORDER BY key)),
+     FROM (SELECT * FROM settings WHERE key IN ('jde_e1', 'show_jde_settings', 'default_terms_days', 'masters_version',
+           'our_names') ORDER BY key)),
     (SELECT EXISTS (SELECT 1 FROM export_batches WHERE format = 'jde')),
     (SELECT group_concat(code || '|' || currency || '|' || gl_account || '|' || is_default || '|' || active, char(10))
      FROM (SELECT * FROM bank_accounts ORDER BY code))"""

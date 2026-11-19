@@ -531,7 +531,8 @@ class InvoicesMixin:
     _JSON_COLUMNS = ("ai_output", "final_output", "validation", "meta", "edits")
     _LIGHT_COLUMNS = (
         "id", "status", "requires_review", "created_at", "reviewed_at", "reviewer", "second_reviewer",
-        "second_reviewed_at", "invoice_date", "due_date", "export_batch", "source_path", "file_name", *_JSON_COLUMNS
+        "second_reviewed_at", "invoice_date", "due_date", "export_batch", "source_path", "file_name", *_JSON_COLUMNS,
+        "extraction_md",  # (its text: the queue's re-check reads the companies' names on it, B-2681)
     )  # fmt: skip
 
     def check_stamps(self, ids: list[int]) -> dict[int, tuple[str, str]]:
