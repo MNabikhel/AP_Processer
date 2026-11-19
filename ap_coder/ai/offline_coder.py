@@ -200,16 +200,17 @@ def _rate_table_at(stamp: tuple[Any, ...]) -> Any:
         return None
 
 
-def provinces(text: str, layout: DocLayout | None = None) -> tuple[str, str]:
+def provinces(text: str, layout: DocLayout | None = None, ours: frozenset[str] = frozenset()) -> tuple[str, str]:
     """(supplier province, ship-to province) from the addresses on the page: the ship-to printed, else the address
     printed under a customer label ("Bill to", "Sold to", "Client", "Facturé à": ours, as the customer), else "".
     Never the vendor's own province (its letterhead): with no address of ours printed, the place of supply is worked
     out as D-23 says, the cost center's site or our province (D-61, B-651). With the page's ``layout``, each label's
     address is read from where it is printed, under or right of the label (``spatial_addresses``, B-920); the text's
-    line order only for what that does not find."""
-    supplier, ship_to, bill_to = addresses(text)
+    line order only for what that does not find. ``ours``: the company's own names (vendor keys, ``our_name_keys``):
+    on a page with no customer or ship-to label, the address under one of them is the bill-to (B-2720)."""
+    supplier, ship_to, bill_to = addresses(text, ours)
     if layout is not None:
-        ship, bill = spatial_addresses(layout)
+        ship, bill = spatial_addresses(layout, ours)
         ship_to, bill_to = ship or ship_to, bill or bill_to
     return supplier, ship_to or bill_to
 
@@ -247,23 +248,27 @@ def addressed_to(text: str) -> str:
     return "\n".join(out)
 
 
-def addresses(text: str) -> tuple[str, str, str]:
+def addresses(text: str, ours: frozenset[str] = frozenset()) -> tuple[str, str, str]:
     """(supplier, ship-to, bill-to) provinces from the addresses on the page: the first address is the supplier's
     (its letterhead), the first after a "Ship to" / "Livré à" label the ship-to, the first after a "Bill to" /
     "Sold to" / "Client" label the customer's. A US address is OUTSIDE_CANADA. Each labelled address goes to the
     labels in the order they were read, so "Bill to" and "Ship to" side by side (labels on one row, then each
-    column's address) are told apart; only from its own block (``ADDRESS_BLOCK_LINES``), never from a remit-to."""
+    column's address) are told apart; only from its own block (``ADDRESS_BLOCK_LINES``), never from a remit-to. On a
+    page with no customer or ship-to label, a line that is one of the company's own names (``ours``, vendor keys) is
+    the customer's label: the address under it is the bill-to, never the letterhead (an envelope's window, B-2720)."""
     supplier = bill_to = ship_to = named_supplier = ""
     after_label = table = False
     pending: list[tuple[str, int]] = []  # labels read whose address has not come yet, with their line
     remit_until = -1
-    for n, line in enumerate(text.splitlines()):
+    rows = text.splitlines()
+    ours = frozenset() if any(_SHIP_LABEL.search(ln) or _CUSTOMER_LABEL.search(ln) for ln in rows) else ours
+    for n, line in enumerate(rows):
         if _REMIT_LABEL.search(line):
             remit_until = n + REMIT_BLOCK_LINES
         elif _SHIP_LABEL.search(line):
             after_label, table = True, False  # its own block, even under the line items (B-2493)
             pending.append(("ship", n))
-        elif _CUSTOMER_LABEL.search(line):
+        elif _CUSTOMER_LABEL.search(line) or (ours and vendor_key(line) in ours):
             after_label, table = True, False
             pending.append(("bill", n))
         table = table or bool(_TABLE_HEADING.match(line))
@@ -297,11 +302,13 @@ SPATIAL_BLOCK_LINES = 9
 SPATIAL_COLUMN = 0.5  # a label's column: from it to the next label on its row, at most half the page across
 
 
-def spatial_addresses(layout: DocLayout) -> tuple[str, str]:
+def spatial_addresses(layout: DocLayout, ours: frozenset[str] = frozenset()) -> tuple[str, str]:
     """(ship-to, bill-to) provinces read where each address is printed (B-920): for each "Ship to" / "Bill to" /
     "Customer" label, the first province (or US address) in its own block, the lines under it (or right of it on its
     row) in its column, which ends at the next label to its right on the row and at the next label under it. Side by
-    side columns, which a PDF's text gives one after the other, so are told apart. A remit-to's block is never ours."""
+    side columns, which a PDF's text gives one after the other, so are told apart. A remit-to's block is never ours.
+    On a page with no customer or ship-to label, a line that is one of the company's own names (``ours``) is the
+    bill-to's label (B-2720)."""
     ship = bill = ""
     for page in layout.pages[:2]:
         width, height = 1.0, 1.0
@@ -314,10 +321,12 @@ def spatial_addresses(layout: DocLayout) -> tuple[str, str]:
                     else "bill" if _CUSTOMER_LABEL.search(ln.text) else "")  # fmt: skip
             if kind:
                 labels.append((kind, ln))
+        if ours and not any(kind in ("ship", "bill") for kind, _ in labels):
+            labels += [("ours", ln) for ln in lines if vendor_key(ln.text) in ours]
         for kind, label in labels:
-            if kind == "remit" or (kind == "ship" and ship) or (kind == "bill" and bill):
+            if kind == "remit" or (kind == "ship" and ship) or (kind in ("bill", "ours") and bill):
                 continue
-            where = _block_province(label, lines, [ln for _, ln in labels], width, height)
+            where = _block_province(label, lines, [ln for _, ln in labels], width, height, kind == "ours")
             if kind == "ship":
                 ship = where
             else:
@@ -325,8 +334,10 @@ def spatial_addresses(layout: DocLayout) -> tuple[str, str]:
     return ship, bill
 
 
-def _block_province(label: Line, lines: list[Line], labels: list[Line], width: float, height: float) -> str:
-    """The province of the address printed in ``label``'s block (``spatial_addresses``), "" when none is."""
+def _block_province(label: Line, lines: list[Line], labels: list[Line], width: float, height: float,
+                    named: bool = False) -> str:  # fmt: skip
+    """The province of the address printed in ``label``'s block (``spatial_addresses``), "" when none is. ``named``:
+    the label is the company's own name, no label's words before an address."""
 
     def box(ln: Line) -> tuple[float, float, float, float]:
         b = ln.box
@@ -344,7 +355,7 @@ def _block_province(label: Line, lines: list[Line], labels: list[Line], width: f
     bottom = min(bottom, ly1 + SPATIAL_BLOCK_LINES * tall)
     after = _SHIP_LABEL.split(label.text, 1)[-1] if _SHIP_LABEL.search(label.text) else (
         _CUSTOMER_LABEL.split(label.text, 1)[-1])  # fmt: skip
-    found = _province_of(after)
+    found = "" if named else _province_of(after)
     if found:
         return found
     block = []
@@ -439,10 +450,11 @@ def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.da
 
 # The supplier's banking details: words only banking details use ("Transit", "Institution", "IBAN", "SWIFT", "bank
 # account", "direct deposit", "virement"...), on a line with an account's digits (amounts don't count: "Deposit
-# 500.00" is a line item). "Remit by EFT within 30 days" has none; "100 Bank Street" is an address.
+# 500.00" is a line item). "Remit by EFT within 30 days" has none; "100 Bank Street" is an address. A word may run into
+# its number, as a scan's OCR reads it ("Transit10184", B-2721).
 _BANKING = re.compile(
     r"(?i)\b(?:transit|institution|iban|swift|bic|routing|aba|bank\s+(?:account|acct)|banking|banque|bancaires?|"
-    r"direct\s+deposit|d[ée]p[ôo]t\s+direct|virement|wire\s+transfer|eft)\b"
+    r"direct\s+deposit|d[ée]p[ôo]t\s+direct|virement|wire\s+transfer|eft)(?![a-z])"
 )
 _BANK_WORDS = re.compile(
     r"(?i)\b(?:transit|institution|inst\b|iban|swift|bic|routing|aba|bank(?!\s+(?:st|street|ave|avenue|rd|road|"
@@ -732,7 +744,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     # Freight read beside the subtotal is part of the coded subtotal (lines + charges, before tax) and taxed.
     charges = capture.fields.get("other_charges")
     freight = _amount(values, "other_charges") if charges is not None and charges.status in (VERIFIED, LIKELY) else 0.0
-    supplier_province, ship_to_province = provinces(text, layout)
+    supplier_province, ship_to_province = provinces(text, layout, our_name_keys(store))
     invoice_on = _iso_or_empty(values.get("invoice_date"))
     # The province a tax line names when its rate does not say: where it is delivered as best known (the vendor's
     # province is never stored as the ship-to, D-61).
