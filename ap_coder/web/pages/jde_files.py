@@ -82,9 +82,9 @@ LOOK_KIND = "jde-files-look"  # a chart or business unit file's first rows and c
 VOUCHERS_KIND = "jde-files-vouchers"  # the voucher list as read at its upload, for its summary and its load
 ORDER = ("Load them in this order: the chart of accounts and the business units first, because the suppliers, the "
          "past invoice coding and the vouchers are checked against them; then the suppliers; then the past invoice "
-         "coding; then the invoices already in JD Edwards, its voucher list; then the open purchase order lines. The "
-         "payment terms and the tax areas are optional, at any time. All of them in one workbook, a sheet each, are "
-         "loaded in this order by one click.")  # fmt: skip
+         "coding; then the invoices already in JD Edwards, its voucher list; then the open purchase order lines, if "
+         "you use them. The payment terms and the tax areas are optional, at any time. All of them in one workbook, a "
+         "sheet each, are loaded in this order by one click.")  # fmt: skip
 # Each card: its title, and the reports loaded on it (``import_specs.SPECS``), in the order the page names them.
 CARDS = {
     "chart": ("Chart of accounts", ("chart",)),
@@ -96,7 +96,7 @@ CARDS = {
     "terms": ("Payment terms", ("payment_terms",)),
     "areas": ("Tax areas", ("tax_areas",)),
 }
-OPTIONAL = ("terms", "areas")  # (D-266: the reports a pilot does without)
+OPTIONAL = ("orders", "terms", "areas")  # (D-266: the reports a company may not have, never the next to load)
 TABLE_EVENT = "jde_table_loaded"  # the payment terms or the tax areas loaded: {"table", "rows"}
 NOT_XLSX = "Upload the export as JD Edwards saves it, an Excel workbook (.xlsx)."
 GONE = files.GONE  # (one message for an upload no longer kept, on every page)
@@ -569,6 +569,7 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
         or any(q.get(card) and looks[card] is None for card in ("chart", "units")),
         "tax_ids": tax_ids,
         "card_titles": {card: title for card, (title, _keys) in CARDS.items()},
+        "optional": OPTIONAL,
         "rows_of": rows_of,
         "terms_table": sorted(terms_table.items()),
         "areas_table": sorted(areas_table.items()),

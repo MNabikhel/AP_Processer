@@ -24,7 +24,7 @@
 <div class="imp-head">
   <span class="imp-num{{ ' done' if loaded[card] }}" aria-hidden="true">{% if loaded[card] %}<span class="ms">check</span>{% else %}{{ n }}{% endif %}</span>
   <div class="imp-title"><h2 id="{{ card }}-title">{{ n }}. {{ title }}</h2><p class="muted">{{ purpose }}</p></div>
-  <span class="imp-state">{% if loaded[card] %}{{ ui.pill("Loaded", "ok", "check") }}{% else %}{{ ui.pill("Not yet", "gray") }}{% endif %}</span>
+  <span class="imp-state">{% if loaded[card] %}{{ ui.pill("Loaded", "ok", "check") }}{% elif card in optional %}{{ ui.pill("Optional", "gray") }}{% else %}{{ ui.pill("Not yet", "gray") }}{% endif %}</span>
 </div>
 {% endmacro %}
 {# What is loaded now: how much, when and by whom. #}
@@ -117,20 +117,20 @@
 <section class="card imp-steps-card" id="checklist" aria-labelledby="checklist-title">
   <div class="imp-steps-head">
     <h2 id="checklist-title">What is loaded</h2>
-    <p class="muted">Six exports from JD Edwards, loaded top to bottom, and two that are optional. Each file is shown first: nothing is kept until you click Load.</p>
+    <p class="muted">Five exports from JD Edwards, loaded top to bottom, and three more if you have them (the open purchase order lines, the payment terms, the tax areas). Each file is shown first: nothing is kept until you click Load.</p>
   </div>
   <ol class="imp-steps">
     {% for item in checklist %}
     <li class="imp-step {{ 'done' if item.loaded else '' }}{{ ' attention' if item.attention else '' }}">
       <span class="imp-num{{ ' done' if item.loaded }}" aria-hidden="true">{% if item.attention %}<span class="ms">priority_high</span>{% elif item.loaded %}<span class="ms">check</span>{% else %}{{ loop.index }}{% endif %}</span>
       <div class="imp-step-body">
-        <a class="imp-step-name" href="#{{ item.card }}">{{ loop.index }}. {{ item.name }}</a>{% if item.optional %} <span class="muted">(optional)</span>{% endif %}
+        <a class="imp-step-name" href="#{{ item.card }}">{{ loop.index }}. {{ item.name }}</a>
         <div class="imp-step-state">
           {% if item.loaded %}{{ ui.pill("Loaded", "ok", "check") }}
           <a href="{{ item.see }}" data-see="{{ item.card }}">See the {{ item.rows }}</a>
           {% if item.last %}<span class="muted">· {{ item.last.when }}</span>{% endif %}{% if item.by_hand %}
           <span class="muted">· {{ item.by_hand | num }} changed by hand, kept when a newer file is loaded</span>{% endif %}
-          {% else %}{{ ui.pill("Not yet", "gray") }}{% endif %}
+          {% elif item.optional %}{{ ui.pill("Optional", "gray") }}{% else %}{{ ui.pill("Not yet", "gray") }}{% endif %}
           {% if item.attention %}<span class="imp-attn">{{ ui.pill(item.attention, "warn", "warning") }}</span>{% endif %}
         </div>
       </div>

@@ -6509,7 +6509,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     is left out (multi-company is a later change).
   - **PO lines** (F4311): an account number in another format (a short ID after "*", a third number after "/") gives
     way to the line's cost center, object and subsidiary; a foreign order's amounts are read in its currency with
-    the company's as its base (a query has no "Base Curr"). Card 6 on JD Edwards files, so Simple screens reach it.
+    the company's as its base (a query has no "Base Curr"). Card 6 on JD Edwards files, so Simple screens reach it;
+  like cards 7 and 8 it is "Optional" in the checklist (a company may not use POs), never the next to load.
   - **Payment terms** (F0014, optional, card 7): kept whole in a setting; a supplier's code counts as its discount
     and net days (`terms.jde_meaning` in `Store.vendor_terms`), so its invoice is due as JD Edwards makes it. A
     discount kept as a fraction (.02) is read as 2%. *Not done:* F0014's prox, split and fixed-date rules.

@@ -104,8 +104,8 @@ folder (`C:\Users\<you>\APCoder`) is never touched.
 
 ## 3. Load your JD Edwards files (once, about 15 minutes)
 
-**Setup → JD Edwards files** takes six exports, and two optional ones, each exactly as JD Edwards gives it: no column
-to rename, no row to delete. *What is loaded* ticks off what is loaded.
+**Setup → JD Edwards files** takes five exports, and three more if you have them, each exactly as JD Edwards gives it:
+no column to rename, no row to delete. *What is loaded* ticks off what is loaded.
 
 **All in one workbook.** If you query JD Edwards' tables in ReportsNow with the build sheet, put every report in one
 Excel workbook, a sheet each (the sheet names do not matter), and drop it on **All your JD Edwards reports in one

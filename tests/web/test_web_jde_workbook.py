@@ -188,3 +188,35 @@ def test_a_report_on_another_card_is_named_with_its_card(client, workbook):
     assert "load it under 7. Payment terms" in shown
     refused = client.post("/jde-files/areas/load-table", data={"token": token}, headers=PAGE)
     assert refused.status_code == 400 and "7. Payment terms" in refused.json()["error"]
+
+
+def test_in_a_browser_the_workbook_is_dropped_shown_and_loaded_on_a_laptop(chromium, workbook, tmp_path):
+    """At 1366 x 768 and 390 x 844: the workbook's box is the first thing on the page; after Check its summary and
+    Load all are shown, the sheets' table within the page's width; Load all says what it loaded."""
+    from ap_coder.core.store import Store
+    from ap_coder.web.app import create_app
+    from tests.browser import browser_on
+    from tests.webclient import web_settings
+
+    path = tmp_path / made.MASTER_FILE
+    path.write_bytes(workbook)
+    for width, height in ((1366, 768), (390, 844)):
+        store = Store(tmp_path / f"{width}.db")
+        with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
+            page = browser.new_page(viewport={"width": width, "height": height})
+            page.goto(base + "/jde-files")
+            first = page.locator("main section.card").first
+            assert first.get_attribute("id") == "workbook"
+            page.locator("#workbook input[type=file]").set_input_files(str(path))
+            page.locator("#workbook .imp-upload button[type=submit]").click()
+            page.wait_for_selector("#workbook-summary")
+            page.wait_for_load_state("load")
+            load = page.locator("#workbook-summary button[data-load]")
+            assert load.inner_text().strip().endswith("Load all: 10 sheets")
+            wide = page.evaluate("document.documentElement.scrollWidth")
+            assert wide <= width + 1, (width, wide)
+            load.click()
+            page.wait_for_selector("#workbook-said", timeout=120_000)
+            assert "Loaded 10 sheets" in page.locator("#workbook-said").inner_text()
+            assert store.master_vendor_count() and store.journal_files()
+            page.close()

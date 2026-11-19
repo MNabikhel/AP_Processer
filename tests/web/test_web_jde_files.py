@@ -63,7 +63,8 @@ def _load_chart(client, exports) -> None:
 
 def test_the_page_starts_with_nothing_loaded_and_says_the_order(client):
     page = client.get("/jde-files").text
-    assert page.count("Not yet") == 16 and "Loaded</span>" not in page  # the checklist's eight lines, and each card
+    assert page.count("Not yet") == 10 and "Loaded</span>" not in page  # the checklist's five lines, and each card
+    assert page.count("Optional") >= 6  # (and the three D-266 added, which a company may not have)
     assert str(escape(jde_files.ORDER)) in page
     for card in ("chart", "units", "suppliers", "journal", "vouchers", "orders", "terms", "areas"):
         assert f'<section class="card stack" id="{card}">' in page and f'href="#{card}"' in page
@@ -79,7 +80,7 @@ def test_the_chart_and_the_business_units_load_and_say_what_was_read(client, sto
     page = _upload_and_load(client, "units", made.UNITS_FILE, (exports / made.UNITS_FILE).read_bytes())
     assert "Business units" in page.split('id="units-said"', 1)[1].split("</div></div>", 1)[0]
     assert store.business_units() and f"{len(store.business_units()):,} business units</b>" in page
-    assert page.count("Not yet") == 12  # six files still to load
+    assert page.count("Not yet") == 6  # three files still to load
 
 
 def test_the_charts_settings_are_saved_from_the_page(client, store, exports):
