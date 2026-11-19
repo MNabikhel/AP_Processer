@@ -194,6 +194,7 @@ class PurchasingMixin:
                 conn.execute("DELETE FROM po_lines")
                 conn.execute("DELETE FROM purchase_orders")
             existing = {r["po_key"] for r in conn.execute("SELECT po_key FROM purchase_orders")}
+            replaced: set[str] = set()
             for key, order in orders.items():
                 head = order["row"]
                 status = "closed" if all(r.get("status") == "closed" for r in order["lines"]) else OPEN
@@ -203,6 +204,9 @@ class PurchasingMixin:
                     next((r[f] for r in order["lines"] if r.get(f)), "")
                     for f in ("currency", "order_type", "order_company", "supplier_number"))  # fmt: skip
                 name = head.get("vendor_name") or named.get(supplier) or ""
+                numbered = po_key(head["po_number"])
+                if key != numbered and self._replaces_numbered(conn, numbered, vendor_key(name), supplier):
+                    replaced.add(key)  # (the order kept by its number alone, now with its company and type: B-2665)
                 conn.execute(
                     """INSERT INTO purchase_orders (po_key, po_number, vendor_name, vendor_key, status, updated_at,
                        currency, order_type, order_company, supplier_number, number_key)
@@ -237,13 +241,31 @@ class PurchasingMixin:
                     )  # fmt: skip
             counts = {
                 "orders": len(orders),
-                "added": len(set(orders) - existing),
-                "updated": len(set(orders) & existing),
+                "added": len(set(orders) - existing - replaced),
+                "updated": len((set(orders) & existing) | replaced),
                 "lines": sum(len(o["lines"]) for o in orders.values()),
             }
             if log:
                 self._log(conn, "pos_imported", actor=actor, detail={**counts, "replace_all": replace_all})
         return counts
+
+    @staticmethod
+    def _replaces_numbered(conn: Any, number: str, vendor: str, supplier: Any) -> bool:
+        """Whether an order of a file naming its company or type (``keys.order_key``; ``vendor``: its vendor key,
+        ``supplier``: its supplier number) is the one kept by its number alone (loaded from a file that named neither,
+        D-267), of its supplier or of none: then that one is deleted, its lines too, and this one takes its place
+        (B-2665), not a second order of the number beside it."""
+        kept = conn.execute("SELECT vendor_key, supplier_number FROM purchase_orders WHERE po_key = ? AND "
+                            "order_type = '' AND order_company = ''", (number,)).fetchone()  # fmt: skip
+        if kept is None:
+            return False
+        theirs, number_of = kept["vendor_key"] or "", str(kept["supplier_number"] or "").lstrip("0")
+        supplier = str(supplier or "").lstrip("0")
+        if (theirs or number_of) and not ((vendor and theirs == vendor) or (supplier and number_of == supplier)):
+            return False  # (another supplier's: another order of that number)
+        conn.execute("DELETE FROM po_lines WHERE po_key = ?", (number,))
+        conn.execute("DELETE FROM purchase_orders WHERE po_key = ?", (number,))
+        return True
 
     def has_purchase_orders(self) -> bool:
         with self._conn() as conn:

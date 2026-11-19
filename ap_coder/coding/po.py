@@ -816,6 +816,11 @@ def voucher_match(match: PoMatch | None, number: str, charge_account: str = "") 
     "": such a charge holds the voucher, as any line on no PO line."""
     out = VoucherMatch()
     label = po_label(number)
+    if match is not None and match.orders:  # its number several orders', none the invoice's (B-2664)
+        out.held.append(f"{label} is {len(match.orders)} purchase orders ({orders_named(match.orders)}), none of them "
+                        "told by the invoice's supplier and company: pick the invoice's company, or match it in JD "
+                        "Edwards by hand")  # fmt: skip
+        return out
     if match is None or not match.found or match.po is None:
         out.held.append(f"{label} is not in the purchase orders loaded: load its open lines from JD Edwards "
                         "(Purchase orders), then make the keying sheet again")  # fmt: skip
