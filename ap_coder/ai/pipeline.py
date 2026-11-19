@@ -220,6 +220,33 @@ def duplicates_known(store: Store, others: list[int], invoice_id: int | None) ->
     return known
 
 
+def _company_checks(store: Store | None, coding: InvoiceCoding, extraction: ExtractionResult | None,
+                    js: Any) -> tuple[list[tuple[str, str, str]], bool, companies.Decision | None]:  # fmt: skip
+    """Which of JD Edwards' companies it is ours under, with several (D-267): decided (``coding.company``) before the
+    checks that read it (its PO, the duplicates, its voucher); none decided holds it for a person. A company not
+    checked for Canadian tax (a US one) has every check but those, and a warning that its tax was not checked. With
+    fewer than two, a voucher is keyed under Settings' company (``js``: JD Edwards in use), or one the coding kept from
+    when several were known: asked of the pilot too (B-2683). Returns (what is said, whether the Canadian tax checks
+    apply, the decision: None with fewer than two companies)."""
+    said: list[tuple[str, str, str]] = []
+    if store is None or not companies.several(store):
+        kept = companies.company_code(coding.company)
+        outside = (companies.pilot_finding(store, kept or js.company_code, settings_company=not kept)
+                   if store is not None and js is not None else None)  # fmt: skip
+        return ([outside] if outside is not None else []), True, None
+    decision = companies.decide(store, coding, extraction.content if extraction is not None else "")
+    coding.company = companies.company_code(coding.company or decision.company)
+    if not coding.company.strip():
+        return [companies.unknown_finding(decision, store)], True, decision
+    outside = companies.pilot_finding(store, coding.company)  # (D-272: held, whoever approves it)
+    if outside is not None:
+        said.append(outside)
+    canadian_tax, why = companies.canadian(store, coding.company)
+    if not canadian_tax:
+        said.append(companies.us_tax_finding(companies.company_code(coding.company), why))
+    return said, canadian_tax, decision
+
+
 def finalise_coding(
     coding: InvoiceCoding,
     reference: ReferenceData,
@@ -258,23 +285,6 @@ def finalise_coding(
         if store is not None
         else None
     )
-    # Which of JD Edwards' companies it is ours under, with several (D-267): decided before the checks that read it
-    # (its PO, the duplicates, its voucher); none decided holds it for a person. A company not checked for Canadian
-    # tax (a US one) has every check but those, and a warning that its tax was not checked.
-    company_said: list[tuple[str, str, str]] = []
-    canadian_tax, decision = True, None
-    if store is not None and companies.several(store):
-        decision = companies.decide(store, coding, extraction.content if extraction is not None else "")
-        coding.company = companies.company_code(coding.company or decision.company)
-        if not coding.company.strip():
-            company_said.append(companies.unknown_finding(decision, store))
-        else:
-            outside = companies.pilot_finding(store, coding.company)  # (D-272: held, whoever approves it)
-            if outside is not None:
-                company_said.append(outside)
-            canadian_tax, why = companies.canadian(store, coding.company)
-            if not canadian_tax:
-                company_said.append(companies.us_tax_finding(companies.company_code(coding.company), why))
     # The bank account it is paid from (ours, D-66): the vendor's last one, else the currency's default, when none is
     # chosen yet; checked once our accounts are set up.
     bank_findings: list[tuple[str, str, str]] = []
@@ -294,11 +304,7 @@ def finalise_coding(
         from ..erp import jde_accounts, jde_review, jde_settings
 
         js = jde_settings.load(store) if jde_settings.in_use(store) else None
-        if js is not None and decision is None:  # fewer than two companies: a voucher is Settings' (B-2683)
-            kept = companies.company_code(coding.company)  # (its own, kept from when several were known)
-            outside = companies.pilot_finding(store, kept or js.company_code, settings_company=not kept)
-            if outside is not None:
-                company_said.append(outside)
+    company_said, canadian_tax, decision = _company_checks(store, coding, extraction, js)
     remarks_typed = js is not None and js.remarks == jde_settings.REMARKS_TYPED
     fill_remarks(coding, store, reference, wanted=reference.pairs is not None or remarks_typed)
     posting_edits.fill(coding, store, reference, exclude_invoice_id)  # an account's subledger or units (D-268)
