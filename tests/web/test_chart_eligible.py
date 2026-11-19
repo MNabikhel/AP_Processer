@@ -250,6 +250,11 @@ def test_with_one_company_an_invoice_is_held_when_settings_company_is_not_in_the
     assert page.approve(anyway="it is ours")["ok"] is False and store.get_invoice(page.id)["status"] == REVIEW
     result = bulk_approve(store, store.reference_data(), web_settings(), [page.id], "Sam")
     assert result["approved"] == [] and store.get_invoice(page.id)["status"] == REVIEW
+    # a company the coding has, kept from when several were known: its voucher is keyed under it, so it is asked
+    _pilot(store, client, "210")
+    kept = client.post(f"/review/{page.id}/check", data={**page.form, "company": "00410"}, headers=PAGE).json()
+    assert not kept["allow"] and "Company 00410 is not in the pilot" in kept["sections"]["checks"]
+    assert client.post(f"/review/{page.id}/check", data={**page.form, "company": ""}, headers=PAGE).json()["allow"]
     _pilot(store, client, "00210, 00310")
     assert page.check()["allow"] and page.approve()["ok"] is not False
     assert store.get_invoice(page.id)["status"] == APPROVED

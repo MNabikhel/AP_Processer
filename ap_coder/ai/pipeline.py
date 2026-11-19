@@ -294,8 +294,9 @@ def finalise_coding(
         from ..erp import jde_accounts, jde_review, jde_settings
 
         js = jde_settings.load(store) if jde_settings.in_use(store) else None
-        if js is not None and decision is None:  # fewer than two companies: every voucher is Settings' (B-2683)
-            outside = companies.pilot_finding(store, js.company_code, settings_company=True)
+        if js is not None and decision is None:  # fewer than two companies: a voucher is Settings' (B-2683)
+            kept = companies.company_code(coding.company)  # (its own, kept from when several were known)
+            outside = companies.pilot_finding(store, kept or js.company_code, settings_company=not kept)
             if outside is not None:
                 company_said.append(outside)
     remarks_typed = js is not None and js.remarks == jde_settings.REMARKS_TYPED
