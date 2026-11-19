@@ -18,6 +18,7 @@ without holding them): ``Store.account_pairs`` gives one, kept with the referenc
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from collections import Counter, OrderedDict
@@ -197,15 +198,21 @@ class IndexedPairs:
         return sorted(out)
 
     def bus_of(self, code: Any) -> tuple[str, ...]:
-        """The business units a GL code is offered on, in order (``chart_accounts_code``)."""
+        """The business units a GL code is offered on, in order (``chart_accounts_code``; what may be posted to and is
+        not closed told by SQLite, the units held back for their name and the accounts never offered here)."""
         code = _gl(code)
         obj, sub = split_code(code)
         if not obj:
             return ()
+        postable = list(self.settings.postable_codes)
+        skipped, patterns = self._unit_facts()[3], self.settings.never_offered
+        closed = f"SELECT code FROM business_units WHERE status NOT IN ({', '.join('?' * len(ACTIVE))})"
+        sql = (f"SELECT bu FROM chart_accounts WHERE object = ? AND subsidiary = ? AND posting_edit IN "
+               f"({', '.join('?' * len(postable))}) AND bu NOT IN ({closed}) ORDER BY bu")  # fmt: skip
         with self._reader() as conn:
-            rows = conn.execute("SELECT bu, description, posting_edit FROM chart_accounts WHERE object = ? AND "
-                                "subsidiary = ? ORDER BY bu", (obj, sub)).fetchall()  # fmt: skip
-        return tuple(bu for bu, description, edit in rows if self._status(bu, code, (description, edit)) == OK)
+            rows = conn.execute(sql, (obj, sub, *postable, *ACTIVE)).fetchall()
+        return tuple(bu for (bu,) in rows
+                     if bu not in skipped and not (patterns and _never_offered(patterns, bu, code)))  # fmt: skip
 
     def offered_codes(self) -> frozenset[str]:
         return self._offered_once()[0]
@@ -285,6 +292,9 @@ class IndexedPairs:
                 marks = ", ".join("?" * len(named)) or "''"
                 clauses.append(f"(UPPER(description) LIKE ? OR bu IN ({marks}))")
                 params += [f"%{word}%", *named]
+        if units is not None:  # (one company's: its business units', by the chart's key)
+            clauses.append("bu IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(sorted(units)))
         out: list[list[str]] = []
         sql = (f"SELECT bu, object, subsidiary, description, posting_edit FROM chart_accounts WHERE object != '' AND "
                f"{' AND '.join(clauses)} ORDER BY bu, object, subsidiary LIMIT ?")  # fmt: skip
@@ -292,7 +302,7 @@ class IndexedPairs:
             rows = conn.execute(sql, (*params, most * 20)).fetchall()
         for bu, obj, sub, description, edit in rows:
             code = code_of(obj, sub)
-            if (units is None or bu in units) and self._status(bu, code, (description, edit)) == OK:
+            if self._status(bu, code, (description, edit)) == OK:
                 out.append([f"{bu}.{code}", description, names.get(bu, "")])
                 if len(out) >= most:
                     break
