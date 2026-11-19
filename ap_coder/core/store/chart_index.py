@@ -76,6 +76,7 @@ class IndexedPairs:
         self._units: tuple[dict[str, str], set[str], dict[str, str], dict[str, str], set[str]] | None = None
         self._offered: tuple[frozenset[str], tuple[str, ...]] | None = None
         self._pilot: frozenset[str] | None = None
+        self._tally: Counter[str] | None = None
 
     @contextmanager
     def _reader(self) -> Iterator[sqlite3.Connection]:
@@ -313,7 +314,10 @@ class IndexedPairs:
     def tally(self) -> Counter[str]:
         """How many of the chart's accounts are of each status: counted by SQLite by business unit, company and
         whether the posting edit code is one AP posts to, the accounts never offered by their patterns as SQLite's
-        GLOB (``fnmatch``'s own wildcards), never a row at a time (D-272: 3,500,000 accounts in seconds)."""
+        GLOB (``fnmatch``'s own wildcards), never a row at a time (D-272: 3,500,000 accounts in 3 s), once for the
+        chart and its settings (a page shows it at each view)."""
+        if self._tally is not None:
+            return Counter(self._tally)
         out: Counter[str] = Counter()
         _names, closed, companies, skipped, listed = self._unit_facts()
         postable = json.dumps(list(self.settings.postable_codes))
@@ -343,7 +347,8 @@ class IndexedPairs:
                         open_units[(bu, company)] -= n
                         out[RESERVED] += n
         out[OK] += sum(open_units.values())
-        return +out
+        self._tally = +out
+        return Counter(self._tally)
 
     def _pilot_units(self) -> frozenset[str]:
         """The business units of the companies in the pilot, as the business units report gives them (read once)."""
