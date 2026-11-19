@@ -384,7 +384,7 @@ def test_a_chart_searched_as_typed_asks_once_typing_stops_and_an_empty_box_lists
 ):
     """D-267's search as typed asked the chart at every key, each answer drawn when it came (an older one could come in
     over a newer), and an empty box's "On ..." group was empty: the box held no list to take it from. It asks once the
-    typing stops (and calls off a question on its way), and an empty box asks for the line's business unit's accounts."""
+    typing stops (and calls off a question on its way); an empty box asks for the line's business unit's accounts."""
     from ap_coder.web.pages import invoice_lookups
 
     monkeypatch.setattr(invoice_lookups, "LIST_MOST", 10)
