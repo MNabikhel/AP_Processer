@@ -21,6 +21,7 @@ HEADER_LABELS = {
     "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #", "pst_registration_number": "PST #",
     "original_invoice_number": "invoice credited", "remit_bank_account": "bank account", "subtotal": "subtotal",
     "tax_total": "tax total", "grand_total": "total",
+    "company": "company",  # which of JD Edwards' companies, with several (D-267, B-2688)
 }  # fmt: skip
 LINE_LABELS = {
     "predicted_gl_code": "GL", "predicted_cost_center": "cost center", "amount": "amount",

@@ -626,6 +626,9 @@ if (form) {
       if (cell) { cell.classList.remove("is-guess"); cell.querySelector(".inv-guess")?.remove(); }
     }
     soon(e.target.tagName === "SELECT" || e.target.type === "checkbox" ? 0 : 200);
+    // Another company (D-267): the Account boxes search its accounts and the box says its own tax note, so the screen
+    // is drawn again once the check has kept the edits (B-2684).
+    if (e.target.matches("select[data-company]")) flush().then(() => lastCheckOk && !stale && location.reload());
   });
 }
 

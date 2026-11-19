@@ -6727,3 +6727,27 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     load it is counted by neither; an invoice that over-bills the line in that window is not warned. *Not chosen:*
     counting an export made after the PO's load (`purchase_orders.updated_at` is also moved by a person closing or
     opening a PO by hand, so it is no load time); the quantity lines (their quantity ordered is the original).
+- **D-285** · **What decides an invoice's company and what may approve it, reviewed** (D-263, D-267, D-270, D-272;
+  an adversarial review, 19 Nov 2026; B-2680 to B-2688).
+  - **The names on the page** decide the company at every check made again (the review screen, the queue's Ready,
+    bulk approval, touchless processing's, the second approval's, the AI reviewer's corrections), from the text kept
+    with the invoice (`extraction.kept_extraction`), not only as it is first read; a name printed only inside the
+    supplier's own name ("Fraser Bend" in "Fraser Bend Aggregates Ltd.") is left out, as the supplier's name is.
+    Settings → Review's names are in the checks' stamp (a name "= company" decides a company).
+  - **The pilot with fewer than two companies.** Every voucher is then keyed under Settings → JD Edwards E1's company
+    (or one the coding kept from when several were known): it is asked of the pilot as an invoice's own company is
+    (`COMPANY_NOT_IN_PILOT`, whoever approves it).
+  - **Approved without a company, then JD Edwards' companies loaded:** the second approval refuses it (its voucher
+    would go under Settings' company whatever company the check made again took it for): sent back, approved again
+    for its company.
+  - **An order of another company** than the invoice's (a company picked, or decided before the purchase orders were
+    loaded and kept since): `PO_COMPANY_DIFFERS`, a warning never approved without a person.
+  - **A supplier the AI reviewer corrects** has the invoice's company decided again for it; the correction says so
+    when it changes. Another company picked on the review screen draws the screen again (its Account boxes search
+    that company's accounts).
+  - **The audit trail** has the company among an approval's changes; the controls report counts an approval over
+    another company's duplicate or order as a signal, as it counted the duplicate errors they replaced.
+  - *Left as it is:* a company decided once stays the coding's (`decide` keeps it, said "picked"), whatever the rules
+    say later: the rules change as files are loaded, and a person may have picked it. A company not in report 9 is a
+    warning (`US_TAX_NOT_CHECKED`), not an error: the pilot may name one (D-272). An invoice approved before report 9
+    and not reopened is exported under Settings' company, as approved.

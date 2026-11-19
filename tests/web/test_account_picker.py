@@ -412,3 +412,30 @@ def test_a_chart_searched_as_typed_asks_once_typing_stops_and_an_empty_box_lists
     assert account in _options(page)
     typed = [u for u in asked if "q=" in u]
     assert len(typed) == 1 and typed[0].endswith(f"q={code.replace('.', '')}") and not errors
+
+
+def test_another_company_picked_draws_the_screen_again_for_that_companys_accounts(browser, chart_company):
+    """B-2684: with several JD Edwards companies (D-267), another company picked in the Company box was checked, but
+    the Account boxes still searched the company the screen was drawn for (none of the one picked, its units' accounts
+    never offered), and the box still said the old company's tax note, until the page was opened again. The screen is
+    drawn again once the check has kept the edits."""
+    from tests.web.test_chart_eligible import _two_companies
+
+    _two_companies(chart_company.store)
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": 1366, "height": 768})
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base}/review/{chart_company.invoices['one_line'][1]}")  # (one company's of several: searched as typed)
+    page.wait_for_load_state("networkidle")
+
+    def seed() -> str:
+        return page.eval_on_selector("#account-seed", "e => e.textContent")
+
+    assert "company=00210" in seed() and "Not checked for Canadian tax" not in page.inner_text(".inv-company")
+    with page.expect_navigation():
+        page.select_option("select[data-company]", "00310")
+    page.wait_for_load_state("networkidle")
+    assert page.input_value("select[data-company]") == "00310" and "company=00310" in seed()
+    assert "Not checked for Canadian tax (currency USD)" in page.inner_text(".inv-company")
+    assert not errors

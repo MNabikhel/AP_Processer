@@ -7,6 +7,7 @@ compare what is billed with what was ordered (and received):
 * PO_UNKNOWN (warning): the quoted PO is not in the list
 * PO_CLOSED (warning): the PO is closed
 * PO_VENDOR_MISMATCH (warning): the PO was raised for another vendor
+* PO_COMPANY_DIFFERS (warning): the PO is an order of another JD Edwards company than the invoice's (D-267)
 * PO_LINE_NOT_ON_PO (warning): an invoice line matches nothing on the PO
 * PO_PRICE_OVER (warning): unit price above the PO price beyond the tolerance
 * PO_QTY_OVER (warning): billed so far (this and earlier invoices) exceeds the quantity ordered
@@ -689,6 +690,12 @@ def _header_findings(coding: InvoiceCoding, po: dict[str, Any]) -> list[Finding]
                 (WARNING, "PO_VENDOR_MISMATCH",
                  f"{po_label(number)} was raised for {po.get('vendor_name')}, not {coding.vendor_name}", None)
             )  # fmt: skip
+    # The invoice's company picked, or decided before the POs were loaded, another than its order's (B-2686)
+    theirs, mine = company_code(po.get("order_company")), company_code(coding.company)
+    if theirs and mine and theirs != mine:
+        findings.append((WARNING, "PO_COMPANY_DIFFERS", f"{po_label(number)} is an order of company {theirs}, not "
+                         f"of {mine}, the company this invoice is for: check the company, or the PO number",
+                         None))  # fmt: skip
     return findings
 
 
