@@ -23,7 +23,7 @@
 import { ACTION_MS, HEADERS, fetchWithin, follow, noAnswer, poll, post, toast, ourWords } from "./app.js";
 import { openFor, register } from "./ctxmenu.js";
 import { InvoiceViewer } from "./invoice_viewer.js";
-import { joined as joinedAccount, prepare as prepareAccounts, search as searchAccounts } from "./account_search.js";
+import { joined as joinedAccount, lineUnit, prepare as prepareAccounts, search as searchAccounts } from "./account_search.js";
 import { enhance, fold, follow as followList, refresh, registerGroups, registerSections, setAction, setSource, setValue } from "./picker.js";
 
 const form = document.getElementById("inv");
@@ -206,6 +206,27 @@ function syncAccount(row) {
   const cc = row.querySelector('[name="line_cc"]');
   if (gl) gl.value = (dot > 0 && text.slice(dot + 1)) || "UNASSIGNED";
   if (cc) cc.value = (dot > 0 ? text.slice(0, dot) : "") || "UNASSIGNED";
+  // Another account: its subledger and units are its own, filled by the next check (D-268)
+  const ledger = row.querySelector("[data-ledger]");
+  if (ledger && ledger.dataset.ledgerAccount !== text) {
+    ledger.dataset.ledgerAccount = text;
+    ledger.querySelectorAll("input").forEach((box) => { box.value = ""; });
+  }
+}
+
+/** A line's Subledger, Sub type and Units boxes as the check answered them (D-268): shown for an account whose
+    posting edit code is L or U only; an empty box takes what the check filled, a box with something in it, or the
+    one being typed in, is left as it is. */
+function applyLedger(row, view) {
+  const cell = row.querySelector("[data-ledger]");
+  if (!cell || !view) return;
+  cell.dataset.ledger = view.needs || "";
+  cell.hidden = !view.needs;
+  cell.querySelectorAll("[data-ledger-for]").forEach((label) => { label.hidden = label.dataset.ledgerFor !== view.needs; });
+  const filled = { line_subledger: view.subledger, line_subledger_type: view.subledger_type, line_units: view.units };
+  cell.querySelectorAll("input").forEach((box) => {
+    if (!box.value && box !== document.activeElement && filled[box.name]) box.value = filled[box.name];
+  });
 }
 
 /** Put ``text`` (a whole account string, or "" to clear it) in a line's Account box, as typing it would. */
@@ -302,6 +323,7 @@ function applyLineViews(views, posted) {
     const view = views[i];
     // (a remark typed in since the check was sent waits for the next one)
     if (!sentRemarks || row.querySelector('[name="line_remark"]')?.value === sentRemarks[i]) applyRemark(row, view.remark_box);
+    applyLedger(row, view.ledger);
     row.classList.toggle("is-fix", view.state === "fix");
     row.classList.toggle("is-check", view.state === "check");
     row.classList.toggle("has-keyed", Boolean(view.has_keyed));
@@ -332,27 +354,37 @@ const accounts = { entries: null, byValue: new Map(), total: accountSeed?.count 
   home: accountSeed?.home || "", failed: false, loading: null };
 
 // A chart too big to send whole (a group's, of millions of accounts: D-267), or one company's of several: searched as
-// a box is typed in (#account-seed's "search"), each answer kept for the words it was asked for.
+// a box is typed in (#account-seed's "search"), each answer kept for the words it was asked for; with nothing typed,
+// the accounts of the line's business unit (#account-seed's "unit"). Asked SEARCH_WAIT ms after the last key, never
+// for each one, and a question still on its way is called off when another is asked: an older answer never comes in
+// over a newer one.
+const SEARCH_WAIT = 200;
 const searched = new Map();
-let searching = "";
+let asking = null; // {key, timer, controller}: the question asked last, until its answer is in
 let lastFound = [];
-function searchChart(box, typed) {
-  const words = typed.trim();
-  if (!words) return [];
-  if (searched.has(words)) return (lastFound = searched.get(words));
-  if (searching === words) return lastFound; // (its answer on its way: the last one shown meanwhile)
-  searching = words;
-  fetchWithin(accountSeed.search + encodeURIComponent(words), { headers: { Accept: "application/json" } })
-    .then((response) => (response.ok ? response.json() : { list: [] }))
-    .then((answer) => {
-      searched.set(words, prepareAccounts(answer.list || []));
-      if (searched.size > 200) searched.delete(searched.keys().next().value);
-    })
-    .catch(() => {})
-    .finally(() => {
-      if (searching === words) searching = "";
-      if (document.activeElement === box) refresh(box);
-    });
+function searchChart(box, key, url) {
+  if (searched.has(key)) return (lastFound = searched.get(key));
+  if (asking?.key === key) return lastFound; // (its answer on its way: the last one shown meanwhile)
+  if (asking) {
+    clearTimeout(asking.timer);
+    asking.controller.abort();
+  }
+  const ask = { key, controller: new AbortController(), timer: 0 };
+  ask.timer = setTimeout(() => {
+    fetchWithin(url, { headers: { Accept: "application/json" }, signal: ask.controller.signal })
+      .then((response) => (response.ok ? response.json() : { list: [] }))
+      .then((answer) => {
+        searched.set(key, prepareAccounts(answer.list || []));
+        if (searched.size > 200) searched.delete(searched.keys().next().value);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (asking !== ask) return; // (called off: the newer question draws the list)
+        asking = null;
+        if (document.activeElement === box) refresh(box);
+      });
+  }, SEARCH_WAIT);
+  asking = ask;
   return lastFound;
 }
 
@@ -376,18 +408,22 @@ function loadAccounts() {
 }
 
 registerSections("account", (box, typed) => {
-  if (accountSeed?.search) { // searched as typed: the entries are the chart's answer for these words
-    const found = searchChart(box, typed);
-    accounts.entries = found;
-    accounts.byValue = new Map(found.map((e) => [e.value, e]));
-  } else if (!accounts.entries) loadAccounts();
   let candidates = [];
   try {
     candidates = JSON.parse(box.dataset.candidates || "[]");
   } catch {
     candidates = [];
   }
-  return searchAccounts(accounts, { candidates, was: box.dataset.was ?? box.value }, typed);
+  const line = { candidates, was: box.dataset.was ?? box.value };
+  if (accountSeed?.search) { // searched as typed: the entries are the chart's answer for these words
+    const words = typed.trim();
+    const unit = lineUnit(accounts, line); // (nothing typed: the line's business unit's accounts)
+    const found = words ? searchChart(box, `q ${words}`, accountSeed.search + encodeURIComponent(words))
+      : unit && accountSeed.unit ? searchChart(box, `unit ${unit}`, accountSeed.unit + encodeURIComponent(unit)) : [];
+    accounts.entries = found;
+    accounts.byValue = new Map(found.map((e) => [e.value, e]));
+  } else if (!accounts.entries) loadAccounts();
+  return searchAccounts(accounts, line, typed);
 });
 if (accountSeed && !readOnly) loadAccounts();
 

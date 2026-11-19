@@ -161,6 +161,19 @@ def _account_list(reference: ReferenceData) -> AccountList:
     return AccountList(body, gzip.compress(body, mtime=0), hashlib.sha256(body).hexdigest()[:16], len(rows))
 
 
+UNIT_MOST = 50  # a business unit's accounts listed in an empty Account box of a chart searched as typed
+
+
+def _unit_accounts(reference: ReferenceData, unit: str, units: frozenset[str] | None) -> list[list[str]]:
+    """The accounts offered on business unit ``unit`` ([[account string, name, business unit's name], ...]), the first
+    ``UNIT_MOST``; none for a unit not of ``units`` (one company's, when given)."""
+    pairs, unit = reference.pairs, chart.clean(unit)
+    if units is not None and unit not in units:
+        return []
+    return [[chart.join_account(unit, code), pairs.description(unit, code), pairs.name_of(unit)]
+            for code in pairs.accounts_of(unit)[:UNIT_MOST]]  # fmt: skip
+
+
 def account_search(store: Store, reference: ReferenceData, company: str = "") -> bool:
     """Whether the Account boxes search the chart as they are typed in (``GET /review/accounts.json?q=``), not a list
     fetched whole: a chart of more than LIST_MOST accounts (a group's, of millions: D-267), or one company's of
@@ -178,6 +191,7 @@ def account_seed(store: Store, reference: ReferenceData, vendor_name: str,
         return None
     if account_search(store, reference, company):  # (searched as typed: the list is never sent whole, D-267)
         return {"url": "", "search": f"/review/accounts.json?company={company_code(company)}&q=",
+                "unit": f"/review/accounts.json?company={company_code(company)}&unit=",
                 "count": len(reference.pairs), "home": reference.pairs.settings.home_business_unit,
                 "supplier": account_lines.supplier_accounts(store, reference, vendor_name)}  # fmt: skip
     kept = account_list(store, reference)
@@ -189,16 +203,18 @@ def account_seed(store: Store, reference: ReferenceData, vendor_name: str,
 
 
 @router.get("/review/accounts.json")
-def accounts_json(request: Request, v: str = "", q: str = "", company: str = "") -> Response:
+def accounts_json(request: Request, v: str = "", q: str = "", company: str = "", unit: str = "") -> Response:
     """The accounts the review screen's Account boxes pick from (``account_list``), fetched as the screen opens,
     not printed in every page. Kept by the browser as the vendor list is (``vendors_json``, D-160): for good on a
     laptop while ``v`` is its version, ``no-store`` behind the company server's login. An empty list without a
-    chart (no page asks for it then)."""
+    chart (no page asks for it then). A chart searched as typed (D-267) answers the words ``q``, and with nothing
+    typed the accounts of the line's business unit ``unit`` (``UNIT_MOST`` at most)."""
     store = get_store(request)
     reference = reference_or_none(store)
-    if q and reference is not None and account_lines.in_use(reference):  # (a search as typed, D-267)
+    if (q or unit) and reference is not None and account_lines.in_use(reference):  # (a search as typed, D-267)
         units = reference.pairs.units_of(company) if company and companies.several(store) else None
-        return JSONResponse({"list": reference.pairs.search(q, units or None)}, headers={"Cache-Control": "no-store"})
+        found = reference.pairs.search(q, units or None) if q else _unit_accounts(reference, unit, units or None)
+        return JSONResponse({"list": found}, headers={"Cache-Control": "no-store"})
     kept = account_list(store, reference)
     if kept is None:
         return JSONResponse({"list": []}, headers={"Cache-Control": "no-store"})

@@ -231,7 +231,8 @@ def test_a_suppliers_lines_are_its_coding_by_date_with_what_the_voucher_says(sto
         assert (line["affiliate"], line["balanced"], line["company"], line["doc_type"]) == (False, True, "00210", "PV")
         assert set(line) == {"voucher_id", "n", "gl_date", "company", "doc_type", "supplier_number", "supplier_name",
                              "account", "business_unit", "object", "subsidiary", "description", "amount", "remark",
-                             "kind", "voucher_coding_lines", "affiliate", "credit", "balanced"}  # fmt: skip
+                             "kind", "subledger", "subledger_type", "units", "voucher_coding_lines", "affiliate",
+                             "credit", "balanced"}  # fmt: skip
     assert all(line["voucher_coding_lines"] == by_voucher[line["voucher_id"]] for line in lines)
     everything = store.journal_lines_for(str(busiest), include_unbalanced=True)
     assert len(everything) == sum(len(v.lines) for v in own)

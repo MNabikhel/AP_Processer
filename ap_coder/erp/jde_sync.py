@@ -325,7 +325,8 @@ def _with_lines_kept(rows: list[dict[str, Any]], before: dict[str, dict[str, Any
                      "gl_code": li["gl_code"], "cost_center": li["cost_center"], "status": status,
                      "erp_line": li.get("erp_line") or "", "uom": li.get("uom") or "",
                      "open_quantity": li.get("open_quantity"), "tax_flag": li.get("tax_flag") or "",
-                     "tax_code": li.get("tax_code") or "", "tax_area": li.get("tax_area") or ""}
+                     "tax_code": li.get("tax_code") or "", "tax_area": li.get("tax_area") or "",
+                     "subledger": li.get("subledger") or "", "subledger_type": li.get("subledger_type") or ""}
                     for li in had["lines"] if li["line_number"] not in given]  # fmt: skip
         out += lines
     return out

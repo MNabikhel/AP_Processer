@@ -26,6 +26,7 @@ from typing import Any
 
 from ..chart import (
     ACTIVE,
+    CONTROL_KEYS,
     SETTING_KEYS,
     VERSION_KEY,
     WITHOUT_KEY,
@@ -67,7 +68,8 @@ def _units(conn: sqlite3.Connection) -> list[BuRow]:
 
 
 def _settings(conn: sqlite3.Connection) -> ChartSettings:
-    rows = conn.execute(f"SELECT key, value FROM settings WHERE {_in_list('key')}", (json.dumps(SETTING_KEYS),))
+    rows = conn.execute(f"SELECT key, value FROM settings WHERE {_in_list('key')}",
+                        (json.dumps([*SETTING_KEYS, *CONTROL_KEYS]),))  # fmt: skip
     return ChartSettings.read({r["key"]: r["value"] for r in rows})
 
 

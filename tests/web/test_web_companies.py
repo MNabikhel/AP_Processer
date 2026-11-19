@@ -107,3 +107,23 @@ def test_a_chart_too_big_to_send_is_searched_as_an_account_box_is_typed_in(clien
     assert seed["url"] == "" and seed["search"] == "/review/accounts.json?company=&q="
     found = client.get("/review/accounts.json?q=coffee").json()["list"]
     assert found == [[f"{cf.HOME}.5410.2210", "Coffee and Refreshments", "Head Office General"]]
+
+
+def test_a_chart_searched_as_typed_lists_a_business_units_accounts_with_nothing_typed(client, store, monkeypatch):
+    """With nothing typed, the Account box of a chart searched as typed lists the accounts of the line's business unit
+    ("On ..."): it was empty, the box holding no list to take them from. One company's of several: its units alone."""
+    from ap_coder.web.pages import invoice_lookups
+    from tests import chart_files as cf
+    from tests.core.test_chart import _chart, _units
+
+    load_sample_setup(store)
+    store.import_business_units(_units().rows)
+    store.import_chart(_chart().rows)
+    monkeypatch.setattr(invoice_lookups, "LIST_MOST", 5)
+    seed = invoice_lookups.account_seed(store, store.reference_data(), "")
+    assert seed["unit"] == "/review/accounts.json?company=&unit="
+    found = client.get(f"/review/accounts.json?unit={cf.HOME}").json()["list"]
+    assert [row[0] for row in found] == [f"{cf.HOME}.{code}" for code in ("5410", "5410.2210", "5410.7701", "5710")]
+    assert found[1] == [f"{cf.HOME}.5410.2210", "Coffee and Refreshments", "Head Office General"]
+    assert client.get(f"/review/accounts.json?unit={cf.CLOSED}").json()["list"] == []  # (closed: nothing offered)
+    assert client.get("/review/accounts.json?unit=").json()["list"] != []  # (no unit: the whole list, as before)

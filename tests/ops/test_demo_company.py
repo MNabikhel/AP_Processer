@@ -40,7 +40,11 @@ def test_the_company_is_set_up_the_way_a_department_that_types_its_vouchers_keys
     store, company = chart_company.store, chart_company.truth.company
     settings = store.chart_settings()
     assert settings.never_offered == ("*.9710", "*.9720") and settings.home_business_unit == company.main_business_unit
-    assert store.account_pairs().tally()[chart.RESERVED] == sum(1 for a in chart_company.truth.accounts if a.reserved)
+    # held back too: the payable and tax objects its past coding gives, its control accounts (D-269)
+    control = {obj for obj, _ in settings.control}
+    assert control == {company.payable_object, company.intercompany_object, company.gst_object}
+    held = sum(1 for a in chart_company.truth.accounts if a.reserved or a.object in control and a.posting_edit == "")
+    assert store.account_pairs().tally()[chart.RESERVED] == held
     tax = {tax_type: (t.treatment, t.gl_code) for tax_type, t in store.tax_treatments().items()}
     assert tax["GST"] == tax["HST"] == (RECOVERABLE, company.gst_object)
     assert tax["PST"] == tax["QST"] == (EXPENSE_TO_LINE, "")

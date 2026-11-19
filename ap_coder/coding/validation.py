@@ -18,8 +18,10 @@ from typing import Any
 
 from ..ai.extraction import ExtractionResult
 from ..core import chart
+from ..core.keys import company_code
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import InvoiceCoding
+from . import posting_edits
 from .money import CENT, EXACT, LINE_MATH_SHARE, READ_AGAIN, add_up, cash_rounded, half_up, nil, per_line, within
 from .remark import long_remarks
 from .tax import build_gl_distribution, check_taxes
@@ -38,7 +40,7 @@ SETUP_PREFIXES = ("JDE_", "PAY_FROM_")
 # its business unit does not have, or that is not to be posted to there, with a chart of accounts imported (D-209).
 COUNTED_IN_CODING = frozenset({"GL_UNASSIGNED", "CC_UNASSIGNED", "GL_UNKNOWN", "CC_UNKNOWN", "GL_IS_TAX_ACCOUNT",
                                "PST_EXEMPTION_TO_CONFIRM", "ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE",
-                               "BU_INACTIVE", "ACCOUNT_RESERVED"})  # fmt: skip
+                               "BU_INACTIVE", "ACCOUNT_RESERVED", "ACCOUNT_CONTROL"})  # fmt: skip
 # Findings about the business, not about how the invoice was read or coded (the vendor master, a purchase order, a
 # possible duplicate, an unusual amount): like setup findings they keep Approve closed (an error), go to a person and
 # are said, but take nothing off the Reading or the Coding: every value can be read right and still not be in the
@@ -145,6 +147,24 @@ def duplicate_message(duplicate_of: list[Any]) -> str:
     return f"same vendor and invoice number as invoice {', '.join(said)}: possible duplicate payment. {advice}"
 
 
+def duplicate_findings(duplicate_of: list[Any], company: str = "") -> list[tuple[str, str, str]]:
+    """What the other invoices with the same vendor and invoice number say (``duplicate_of``: ids, or what
+    ``pipeline.duplicates_known`` knows of each) of one for ``company`` (its coding's; "": none decided), per company
+    as DUPLICATE_IN_ERP is (D-270): DUPLICATE_INVOICE of those for the same company or none decided; those for another
+    company, DUPLICATE_INVOICE_OTHER_COMPANY, a warning (one of the two may be keyed to the wrong company)."""
+    mine = company_code(company)
+    other = [d for d in duplicate_of if mine and isinstance(d, dict) and d.get("company") and d["company"] != mine]
+    same = [d for d in duplicate_of if not any(d is o for o in other)]
+    out = [(ERROR, "DUPLICATE_INVOICE", duplicate_message(same))] if same else []
+    if other:
+        said = duplicate_message(other).split(": possible duplicate payment", 1)[0]
+        theirs = " and ".join(sorted({d["company"] for d in other}))
+        out.append((WARNING, "DUPLICATE_INVOICE_OTHER_COMPANY", f"{said}, which {'is' if len(other) == 1 else 'are'} "
+                    f"for company {theirs}, not {mine}: another company's bill with the same number, or one of the two "
+                    "keyed to the wrong company. Check the company of each"))  # fmt: skip
+    return out
+
+
 def validate_coding(
     coding: InvoiceCoding,
     reference: ReferenceData,
@@ -168,8 +188,8 @@ def validate_coding(
     def add(severity: str, code: str, message: str, line: int | None = None) -> None:
         issues.append(Issue(severity, code, message, line))
 
-    if duplicate_of:
-        add(ERROR, "DUPLICATE_INVOICE", duplicate_message(duplicate_of))
+    for severity, code, message in duplicate_findings(duplicate_of or [], coding.company):
+        add(severity, code, message)
     for severity, code, message in vendor_findings or []:  # vendor master / fraud signals (vendors.py)
         add(severity, code, message)
     for severity, code, message, line in po_findings or []:  # purchase order match (po.py)
@@ -181,6 +201,8 @@ def validate_coding(
     _header_issues(coding, add)
     # --- Line items -------------------------------------------------------
     _line_issues(coding, reference, add)
+    for severity, code, message, line in posting_edits.findings(coding, reference):  # an account's L or U (D-268)
+        add(severity, code, message, line)
     guesses = [li for li in coding.line_items if (li.decided_by or {}).get("source") in GUESS_SOURCES]
     if guesses and len(guesses) == len(coding.line_items):
         # Not one account a person, a rule, the past invoice coding or an approval decided: "Approve anyway" with a
@@ -268,6 +290,11 @@ def _pair_issue(reference: ReferenceData, li: Any, tax_gls: Any) -> tuple[str, s
         return None
     status = chart.OK if gl in tax_gls else pairs.status(cc, gl)
     account = chart.join_account(cc, gl)
+    control = pairs.settings.control_account(cc, gl) if status == chart.RESERVED else ""
+    if control:  # (D-269) JD Edwards posts to it itself: the payable, an intercompany payable, a tax
+        return (WARNING, "ACCOUNT_CONTROL", f"account {account} is a control account ({control}, "
+                f"{dict(pairs.settings.control)[control]}): JD Edwards posts to it itself, so a line coded to it "
+                "would count it twice. Code the line to the expense or asset it is for")  # fmt: skip
     if status == chart.RESERVED:
         return (WARNING, "ACCOUNT_RESERVED", f"account {account} exists but is not offered for invoices: "
                 f"{pairs.why_reserved(cc, gl)}. Check it is the one meant")  # fmt: skip
@@ -293,10 +320,11 @@ def _pair_issue(reference: ReferenceData, li: Any, tax_gls: Any) -> tuple[str, s
 
 def account_problem(reference: ReferenceData, gl: str, cc: str) -> str:
     """Why nothing may be coded to GL account ``gl`` on business unit ``cc``, in the words a line's check says it
-    (``_pair_issue``'s errors), for what codes lines without being one: a fixed coding rule. "" for a pair that
-    exists and may be posted to (one never offered too: the line's check warns of it), and with no chart."""
+    (``_pair_issue``'s errors, and a control account's warning: D-269), for what codes lines without being one: a
+    fixed coding rule. "" for a pair that exists and may be posted to (one never offered too: the line's check warns
+    of it), and with no chart."""
     found = _pair_issue(reference, SimpleNamespace(predicted_gl_code=gl, predicted_cost_center=cc), ())
-    return found[2] if found and found[0] == ERROR else ""
+    return found[2] if found and (found[0] == ERROR or found[1] == "ACCOUNT_CONTROL") else ""
 
 
 def _line_issues(coding: InvoiceCoding, reference: ReferenceData, add: Any) -> None:

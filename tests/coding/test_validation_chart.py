@@ -184,3 +184,32 @@ def test_an_install_with_no_chart_checks_the_sample_invoices_exactly_as_before(s
     # The same report with the pair check taken out altogether: it does nothing here.
     monkeypatch.setattr(validation, "_pair_issue", lambda *args: None)
     assert validate_coding(coding, reference).to_dict() == report.to_dict()
+
+
+def test_a_control_account_of_the_past_coding_is_never_offered_and_a_line_coded_to_it_is_warned(store, ground_truth):
+    """D-269: the payable and tax objects the past coding gives (Learning) are control accounts: never offered on any
+    business unit, and a line a person codes to one is warned (JD Edwards posts to it itself); a fixed coding rule
+    may not code to one. The tax lines are AP Coder's own: not warned."""
+    store.import_business_units(_units())
+    store.import_chart(_chart())
+    for tax in ("GST", "HST"):
+        store.set_tax_treatment(tax, "recoverable", "2310")
+    before = store.reference_data()
+    assert before.pairs.offered("07310", "2140") and "07310" in before.pairs.bus_of("2140")
+    store.save_journal_objects(["2140"], [], ["2310"])
+    reference = store.reference_data()
+    pairs = reference.pairs
+    assert not pairs.offered("07310", "2140") and not pairs.offered("07310", "2140.QC") and pairs.bus_of("2140") == ()
+    assert pairs.status("07310", "2140") == chart.RESERVED
+    assert (
+        pairs.why_reserved("07310", "2140") == "it is a control account (2140, A/P trade payable: JD Edwards "
+        "posts to it itself)"
+    )
+    report = validate_coding(_coded(ground_truth, ("07310", "2140")), reference)
+    assert _found(report) == [(1, WARNING, "ACCOUNT_CONTROL")]
+    assert report.issues[0].message.startswith("account 07310.2140 is a control account (2140, A/P trade payable)")
+    assert "ACCOUNT_CONTROL" in COUNTED_IN_CODING and report.requires_review
+    assert validation.account_problem(reference, "2140", "07310").startswith("account 07310.2140 is a control")
+    assert validation.account_problem(reference, "5410.7701", HOME) == ""  # (never offered: only warned)
+    coded = _coded(ground_truth)
+    assert not [i for i in validate_coding(coded, reference).issues if i.code == "ACCOUNT_CONTROL"]  # tax lines

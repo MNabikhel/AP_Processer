@@ -265,6 +265,8 @@ def _import(args: argparse.Namespace) -> int:
 
 def _settings(args: argparse.Namespace, store: Store) -> int:
     typed = {setting: getattr(args, option) for option, setting in OPTIONS.items() if getattr(args, option) is not None}
+    if "postable_codes" in typed and not typed["postable_codes"].strip():  # ("": blank only, as the help says)
+        typed["postable_codes"] = chart.BLANK_ONLY
     if typed:
         wanted = chart.ChartSettings.read({**store.chart_settings().saved(), **typed})
         pairs, home = store.account_pairs(), wanted.home_business_unit

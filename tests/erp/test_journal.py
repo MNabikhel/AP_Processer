@@ -679,3 +679,16 @@ def test_the_tax_object_is_worked_out_of_a_table_without_its_payable_lines():
         ]
     payable, tax, why = jr.suggest_objects(flat(*rows))
     assert payable.trade == () and tax == (GST,) and why[0].startswith("Trade payable: none is needed")
+
+
+def test_the_account_ledger_as_a_table_reads_each_lines_subledger_its_type_and_its_units():
+    """The build sheet's Subledger, Sub Type and Units (GLSBL, GLSBLT, GLU, D-268): what an account whose posting edit
+    code is L or U was keyed with, learned with the coding; blank and None where the line has none."""
+    head = [*FLAT_HEAD, "Subledger", "Sub Type", "Units"]
+    rows = [
+        [*gl(5001, f"{MAIN}.7410", 100.0, "JOB 77"), "  4500777", "w", "12.5"],
+        [*gl(5001, f"{MAIN}.7200.01", 20.0, "PAPER", line=2.0), "", "", ""],
+    ]
+    read = jr.read_journal(flat(*rows, head=head), payable_objects=OBJECTS, tax_objects=())
+    assert [(li.subledger, li.subledger_type, li.units) for v in read.vouchers for li in v.lines] == [
+        ("4500777", "W", 12.5), ("", "", None)]  # fmt: skip

@@ -245,7 +245,8 @@ RULES: dict[tuple[str, str], str] = {
         "POST /settings/reading/servers",  # the backup model servers (D-180)
         "POST /settings/automation/limit", "POST /settings/jde", "POST /settings/jde/gl-map",
         "POST /settings/jde/gl-map/upload", "POST /settings/jde/gl-map/import", "POST /settings/jde/tax-map",
-        "POST /settings/jde/terms", "POST /settings/jde/an8", "GET /settings/jde/worksheet.xlsx",
+        "POST /settings/jde/terms", "POST /settings/jde/an8", "POST /settings/jde/posting",
+        "GET /settings/jde/worksheet.xlsx",
         "POST /settings/jde/worksheet/upload", "POST /settings/jde/worksheet",
         "POST /settings/jde/api", "POST /settings/jde/api/test", "POST /settings/jde/api/sync",  # D-104
         "POST /settings/hub", "POST /settings/hub/run",  # the finance hub feed (D-103)

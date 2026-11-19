@@ -70,7 +70,8 @@ FIELD_LABELS = {
 JDE_LABELS = {**FIELD_LABELS, "vendor_name": "Supplier"}  # the review screen's with JD Edwards: its own word
 LINE_COLUMNS = ("line_number", "description", "quantity", "unit_price", "amount", "predicted_gl_code",
                 "predicted_cost_center", "taxes_applied", "tax_exempt", "tax_status",
-                "reasoning_justification", "remark", "remark_from")  # fmt: skip
+                "reasoning_justification", "remark", "remark_from", "subledger", "subledger_type",
+                "units")  # fmt: skip
 LINE_REMARK = "line_remark"  # a line's remark for JD Edwards, one box a row, posted in order (D-213)
 LINE_TAX_CODE = "line_tax_code"  # a line's tax code, one dropdown a row (D-64)
 TAX_COLUMNS = ("tax_type", "province", "rate_pct", "taxable_amount", "tax_amount")
@@ -78,6 +79,9 @@ TAX_COLUMNS = ("tax_type", "province", "rate_pct", "taxable_amount", "tax_amount
 LINE_INPUTS = {"line_number": "line_number", "description": "line_description", "amount": "line_amount",
                "predicted_gl_code": "line_gl", "predicted_cost_center": "line_cc", "quantity": "line_quantity",
                "unit_price": "line_unit_price", "reasoning_justification": "line_reason"}  # fmt: skip
+# What an account whose posting edit code is L or U requires (D-268): three boxes a row of the screen with a chart of
+# accounts (shown for such an account only), posted in order; a form without them keeps each line's.
+LINE_LEDGER = {"subledger": "line_subledger", "subledger_type": "line_subledger_type", "units": "line_units"}
 TAX_INPUTS = {"tax_type": "tax_type", "province": "tax_province", "rate_pct": "tax_rate_pct",
               "taxable_amount": "tax_taxable", "tax_amount": "tax_amount"}  # fmt: skip
 NO_PROVINCE = "—"
@@ -128,7 +132,7 @@ def _amount_text(value: Any) -> str:
         return str(value)
 
 
-NUMBER_CELLS = ("amount", "quantity", "unit_price", "rate_pct", "taxable_amount", "tax_amount")
+NUMBER_CELLS = ("amount", "quantity", "unit_price", "rate_pct", "taxable_amount", "tax_amount", "units")
 
 
 def _number_cell(value: Any) -> str:
@@ -258,10 +262,14 @@ class Draft:
             # The remark's box (D-213): as posted, a person's once it is not what the line had (``remark.typed``);
             # a form without the box keeps each line's remark.
             remarks = form.getlist(LINE_REMARK)
+            ledgers = {c: form.getlist(name) for c, name in LINE_LEDGER.items()}
             for i, (before, row) in enumerate(pair_lines(base.lines, lines)):
                 row["remark"], row["remark_from"] = (
                     typed_remark(remarks[i], before) if i < len(remarks)
                     else ((before or {}).get("remark"), (before or {}).get("remark_from")))  # fmt: skip
+                for c, posted in ledgers.items():
+                    row[c] = posted[i].strip() if i < len(posted) else (before or {}).get(c)
+                row["units"] = _number_cell(row["units"]) if row["units"] not in (None, "") else None
             tcols = {c: form.getlist(name) for c, name in TAX_INPUTS.items()}
             taxes = [{c: (tcols[c][i] if i < len(tcols[c]) else "") for c in TAX_INPUTS}
                      for i in range(len(tcols["tax_type"]))]  # fmt: skip

@@ -416,7 +416,8 @@ up to R04110ZA's processing options: confirm it with the JDE team.
 | VNAM | `2` | account format BU.Obj.Sub (one-field mode) |
 | VNANI | `BU.OBJ.SUB` | one-field mode |
 | VNMCU, VNOBJ, VNSUB | BU, object, subsidiary | separate-columns mode |
-| VNSBL, VNSBLT | Subledger, subledger type | optional, from the mapping row |
+| VNSBL, VNSBLT | Subledger, subledger type | the line's own when its account's posting edit code is L (from the PO line, the past coding or typed, D-268), else optional, from the mapping row |
+| VNU | Units | the line's own when its account's posting edit code is U (the line's quantity, or typed, D-268); else blank |
 | VNLT | `AA` | actual amounts ledger |
 | VNAA | Amount | domestic |
 | VNCRCD | Currency code | |
@@ -430,7 +431,8 @@ up to R04110ZA's processing options: confirm it with the JDE team.
 EDUS, EDBT, EDTN, EDLN (the pay item), DOCO (PO number), DCTO (PO type), KCOO (PO company), LNID (the
 invoice's line number, *not* necessarily the PO line; E1 stores line 1 as 1000), LITM (blank: AP Coder
 does not know the item number), DSC1 (description), UORG (quantity) and PRRC (unit price) written with a
-decimal point, AEXP (amount, in the amount format) and CRCD (currency).
+decimal point, AEXP (amount, in the amount format), CRCD (currency) and SBL, SBLT (the line's subledger and its
+type, D-268; blank for most lines).
 
 ## Test import checklist (for the pilot tester's IT)
 

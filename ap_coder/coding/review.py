@@ -115,11 +115,13 @@ def coding_from_inputs(
 
     A line's remark (D-213) is the grid's ``remark`` column: with a ``remark_from`` column beside it, as that says
     (the review screen's draft: ``remark.typed`` read the posted cell); without one, a remark that is not the one
-    proposed is a person's. A grid with no ``remark`` column keeps the remark each line was proposed with.
+    proposed is a person's. A grid with no ``remark`` column keeps the remark each line was proposed with; one with
+    no ``subledger`` column, each line's subledger, its type and units (D-268).
     """
     problems: list[str] = []
     line_items = []
     remarks: list[tuple[str, str | None] | None] = []  # each line's (remark, where from) as the grid has it
+    ledgers: list[tuple[str, str, float | None] | None] = []  # each line's (subledger, its type, units), D-268
     used = {int(n) for n in lines.get("line_number", []) if not is_blank(n)}
     next_no = max(used, default=0) + 1
     for row in lines.to_dict("records"):
@@ -136,6 +138,11 @@ def coding_from_inputs(
 
         remarks.append((text("remark"), text("remark_from") if "remark_from" in row else None)
                        if "remark" in row else None)  # fmt: skip
+        try:
+            units = to_number(row.get("units")) if not is_blank(row.get("units")) else None
+        except ValueError:  # (words in the Units box: none, said by the check)
+            units = None
+        ledgers.append((text("subledger"), text("subledger_type"), units or None) if "subledger" in row else None)
         line_items.append(
             {
                 "line_number": int(number),
@@ -169,7 +176,12 @@ def coding_from_inputs(
             }
         )
     decided_on_screen(line_items, ai.get("line_items") or [], str(header.get("vendor_name") or ""), rules)
-    for cell, (before, li) in zip(remarks, pair_lines(ai.get("line_items") or [], line_items), strict=True):
+    for cell, ledger, (before, li) in zip(remarks, ledgers, pair_lines(ai.get("line_items") or [], line_items),
+                                          strict=True):  # fmt: skip
+        # (a grid without the boxes keeps what each line was proposed with)
+        li["subledger"], li["subledger_type"], li["units"] = ledger if ledger is not None else (
+            (before or {}).get("subledger") or "", (before or {}).get("subledger_type") or "",
+            (before or {}).get("units"))  # fmt: skip
         if cell is None:
             cell = (str((before or {}).get("remark") or ""), str((before or {}).get("remark_from") or ""))
         li["remark"], li["remark_from"] = (

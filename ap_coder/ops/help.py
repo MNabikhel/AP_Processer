@@ -241,6 +241,14 @@ CHECKS: dict[str, CheckHelp] = {
         "checked: then the message names the voucher and whether it is paid.",
         "Check the ERP. If it is the same bill, reject this one so it is not paid twice.",
     ),
+    "DUPLICATE_INVOICE_OTHER_COMPANY": CheckHelp(
+        FRAUD, "Same invoice number under another company",
+        "Another invoice in AP Coder has the same vendor and invoice number, but it is for another JD Edwards company "
+        "than this one. It may be another company's bill with the same number, or the same bill with one of the two "
+        "given the wrong company: AP Coder never approves it without a person.",
+        "Open both (the finding links them) and compare their bill-to. If it is the same bill, set the right company "
+        "on one and reject the other; if they are two companies' bills, approve this one.",
+    ),
     "DUPLICATE_OTHER_COMPANY": CheckHelp(
         FRAUD, "Already entered under another company",
         "JD Edwards already has this vendor's invoice with the same number, but under another company than this "
@@ -673,6 +681,30 @@ CHECKS: dict[str, CheckHelp] = {
         f"{CHART_LOADED}: the account exists and takes postings, but it is one of those AP Coder never suggests: an "
         "account on the never-offered list, or a business unit whose name says DO NOT USE.",
         "Check the account is the one meant, then approve; else pick the usual account for this expense.",
+    ),
+    # An account whose posting edit code asks JD Edwards for more on the line (D-268).
+    "JDE_SUBLEDGER_NEEDED": CheckHelp(
+        CODING, "Subledger needed",
+        f"{CHART_LOADED}: the line's account has posting edit code L, so JD Edwards takes a posting to it only with a "
+        "subledger (up to 8 characters) and its subledger type (1 character). AP Coder fills them from the purchase "
+        "order line the invoice line bills, else from what this supplier's past lines to the account were keyed "
+        "with; this line has neither.",
+        "Type the subledger and its type in the boxes under the line (ask the person who ordered it, or look at the "
+        "PO or a past voucher in JD Edwards), or pick another account.",
+    ),
+    "JDE_UNITS_NEEDED": CheckHelp(
+        CODING, "Units needed",
+        f"{CHART_LOADED}: the line's account has posting edit code U, so JD Edwards takes a posting to it only with "
+        "units (litres, hours...). AP Coder takes the line's quantity; this line has none.",
+        "Type the units in the box under the line, from the invoice, or pick another account.",
+    ),
+    "ACCOUNT_CONTROL": CheckHelp(
+        CODING, "Control account on a line",
+        f"{CHART_LOADED}: the line is coded to a control account, one JD Edwards posts to itself: the A/P trade or "
+        "intercompany payable, or a sales tax account, as the past invoice coding shows them (the Learning page), or "
+        "one added to the list in Settings, under JD Edwards E1 (retainage payable...). AP Coder never suggests one.",
+        "Code the line to the expense or asset account it is for. The tax goes on the tax lines, never on an invoice "
+        "line.",
     ),
     "HISTORY_CONFLICT": CheckHelp(
         CODING, "Coded differently before",

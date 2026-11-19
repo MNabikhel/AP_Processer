@@ -41,6 +41,14 @@ export function joined(text) {
   return parts.length > 1 && parts.every((p) => /^[\d.]+$/.test(p)) ? parts.map((p) => p.replace(/^\.+|\.+$/g, "")).join(".") : "";
 }
 
+/** The business unit whose accounts an empty box lists: the box's own account's, else the supplier's most used,
+    else the home one ("" when none). */
+export function lineUnit(state, line) {
+  const dot = (line.was || "").indexOf(".");
+  const supplier = state.supplier?.[0]?.[0] || "";
+  return (dot > 0 ? line.was.slice(0, dot) : "") || (supplier.includes(".") ? supplier.slice(0, supplier.indexOf(".")) : "") || state.home || "";
+}
+
 /** The picker's sections for one Account box. ``state``: {entries (null until the list is here), byValue, total,
     supplier: [[account, lines, name, unit]], home, failed}; ``line``: {candidates: [[account, name, unit, reason]],
     was: the account the box held before it was typed in}. Returns {sections: [{label, items}], note}. */
@@ -50,9 +58,8 @@ export function search(state, line, typed) {
   const candidates = (line.candidates || []).map(([account, name, unit, reason]) => [known(account, name, unit), reason]);
   const supplier = (state.supplier || []).map(([account, lines, name, unit]) => [known(account, name, unit), lines]);
   const wasDot = (line.was || "").indexOf(".");
-  const wasUnit = wasDot > 0 ? line.was.slice(0, wasDot) : "";
   const wasCode = wasDot > 0 ? line.was.slice(wasDot + 1) : "";
-  const unit = wasUnit || supplier[0]?.[0].bu || state.home || "";
+  const unit = lineUnit(state, line);
   const loading = state.entries ? "" : state.failed ? "The chart's accounts could not be loaded: type the whole account." : "Loading the chart's accounts…";
   if (!text) {
     const seen = new Set();

@@ -109,7 +109,7 @@ class IndexedPairs:
         pass over the accounts that may be posted to, holding the two sets alone."""
         if self._offered is None:
             _names, closed, _companies, skipped = self._unit_facts()
-            patterns = self.settings.never_offered
+            patterns = self.settings.held_back
             codes: set[str] = set()
             units: set[str] = set()
             sql = f"SELECT bu, object, subsidiary FROM chart_accounts WHERE object != '' AND {_in_list('posting_edit')}"
@@ -156,9 +156,9 @@ class IndexedPairs:
         return RESERVED if self._why(bu, code) else OK
 
     def _why(self, bu: str, code: str) -> str:
-        pattern = _never_offered(self.settings.never_offered, bu, code)
+        pattern = _never_offered(self.settings.held_back, bu, code)
         if pattern:
-            return f"it is one of the accounts never offered ({pattern})"
+            return self.settings.why_held(pattern)
         word = self._unit_facts()[3].get(bu)
         return f"the name of business unit {bu} says {word}" if word else ""
 
@@ -203,7 +203,7 @@ class IndexedPairs:
         obj, sub = split_code(code)
         if not obj:
             return ()
-        skipped, patterns = self._unit_facts()[3], self.settings.never_offered
+        skipped, patterns = self._unit_facts()[3], self.settings.held_back
         closed = f"SELECT code FROM business_units WHERE status NOT IN ({', '.join('?' * len(ACTIVE))})"
         sql = (f"SELECT bu FROM chart_accounts WHERE object = ? AND subsidiary = ? AND {_in_list('posting_edit')} "
                f"AND bu NOT IN ({closed}) ORDER BY bu")  # fmt: skip

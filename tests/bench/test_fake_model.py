@@ -16,6 +16,7 @@ from ap_coder.ai.local_llm import parse_lm_studio_listing
 from ap_coder.bench.__main__ import main
 from ap_coder.bench.fake_model import CHAT, EMBED, READER, FakeModel, kind_of, page_key, seconds_range
 from ap_coder.core.config import LocalLLMSettings, PageReaderSettings, Settings
+from tests.scripts import load_script
 
 REAL_FETCH = local_llm._fetch_json  # conftest refuses every model server in the tests
 DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -266,3 +267,35 @@ def test_an_answer_whose_client_gave_up_is_not_served():
         s = _wait_for(fake, lambda s: s["dropped"] >= 1 and s["active"] == 0)
         assert s["served"] == 0 and [h.get("gave_up") for h in fake.history()] == [True]
         assert chat(fake)[0] == 200 and fake.stats()["served"] == 1
+
+
+def _cut_short(
+    fake, sent=b'{"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:'
+):
+    """A chat request whose client went away part of the way through its body (AP Coder shut down while it sent a
+    page image): the headers say 100 000 bytes; these few came."""
+    with socket.create_connection((fake.host, fake.port), timeout=5) as s:
+        s.sendall(b"POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+                  b"Content-Length: 100000\r\n\r\n" + sent)  # fmt: skip
+
+
+def test_a_request_cut_short_is_no_chat_request_with_an_empty_model(tmp_path, monkeypatch):
+    """CI's Mac job (B-2651): AP Coder shut down while it sent the chat model a page; what came of it was logged as a
+    chat request for the model "", and the check said a model LM Studio doesn't have was asked. A request whose body
+    never came whole is cut short: logged so, never answered, never counted as a chat request; a whole one with no
+    model still is."""
+    log = tmp_path / "lms.log"
+    with FakeModel(log=log) as fake:
+        _cut_short(fake)
+        _wait_for(fake, lambda s: s["by_kind"].get("cut"))
+        assert fake.stats()["served"] == 0
+    asked = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert [(a["path"], a["kind"], a["model"]) for a in asked] == [("/v1/chat/completions", "cut", "")]
+    lms = load_script("ci/fake_lm_studio", "fake_lm_studio_cut")
+    monkeypatch.setattr(lms, "_page", lambda app, path: "")  # (Settings > Reading is not what this test looks at)
+    asked_wrong = [p for p in lms.check("http://127.0.0.1:9", CHAT, READER, EMBED, log) if "model it doesn" in p]
+    assert asked_wrong == []
+    with FakeModel(log=log) as fake:
+        assert chat(fake, model="")[0] == 404  # a whole request with no model: still the wrong model
+    asked_wrong = [p for p in lms.check("http://127.0.0.1:9", CHAT, READER, EMBED, log) if "model it doesn" in p]
+    assert asked_wrong == ["a model it doesn't have was asked: ['']"]

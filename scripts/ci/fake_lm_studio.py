@@ -14,7 +14,8 @@ held are written to ``--log``), ``/v1/embeddings`` and ``/api/v1/models/load``.
 
 ``check``: AP Coder's Settings > Reading (the running web app) names the chat model for GL coding and OvisOCR2 as the
 page reader, lists the embedding model as not used; and (``--log``) no request ever asked the embedding model, and
-none without a page image asked OvisOCR2 (GL coding is never sent to the page reader).
+none without a page image asked OvisOCR2 (GL coding is never sent to the page reader). A request cut short (AP Coder
+shut down while it sent one: its body never came whole) is no request a model saw, and not counted.
 
 Standard library only.
 """
@@ -83,8 +84,10 @@ def check(app: str, chat: str, reader: str, embed: str, log: Path | None) -> lis
             problems.append(f"GL coding model is {name}")
     if log is not None and log.exists():
         asked = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
-        chats = [a for a in asked if a.get("path") == "/v1/chat/completions"]
+        chats = [a for a in asked if a.get("path") == "/v1/chat/completions" and a.get("kind") != "cut"]
         print(f"    chat requests: {sorted({(a['model'], bool(a['images'])) for a in chats})}")
+        if cut := sum(1 for a in asked if a.get("kind") == "cut"):  # (AP Coder shut down while it sent them)
+            print(f"    cut short by AP Coder as it stopped, never whole (not counted): {cut}")
         if any(a["model"] == embed for a in chats):
             problems.append("the embedding model was asked to chat")
         if any(a["model"] == reader and not a["images"] for a in chats):

@@ -377,3 +377,38 @@ def test_a_chart_too_big_to_send_is_searched_as_the_box_is_typed_in(browser, cha
     wait_until(page, lambda: _options(page)[:1] == [wanted])
     page.keyboard.press("Enter")
     assert page.input_value(FIRST) == wanted and not errors
+
+
+def test_a_chart_searched_as_typed_asks_once_typing_stops_and_an_empty_box_lists_its_units_accounts(
+    browser, chart_company, monkeypatch
+):
+    """D-267's search as typed asked the chart at every key, each answer drawn when it came (an older one could come in
+    over a newer), and an empty box's "On ..." group was empty: the box held no list to take it from. It asks once the
+    typing stops (and calls off a question on its way); an empty box asks for the line's business unit's accounts."""
+    from ap_coder.web.pages import invoice_lookups
+
+    monkeypatch.setattr(invoice_lookups, "LIST_MOST", 10)
+    invoice, invoice_id = chart_company.invoices["one_line"]
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": 1366, "height": 768})
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base}/review/{invoice_id}")
+    page.wait_for_load_state("networkidle")
+    asked: list[str] = []
+    page.on("request", lambda r: asked.append(r.url) if "/review/accounts.json" in r.url else None)
+    (account,) = [part.account for part in invoice.parts]
+    unit, code = chart.split_account(account)
+    page.click(FIRST)
+    page.wait_for_selector(LIST)
+    wait_until(page, lambda: any(group.startswith(f"On {unit}") for group in _groups(page)))
+    assert any(group.startswith(f"On {unit}") for group in _groups(page)), _groups(page)
+    assert account in _options(page) and asked and [u for u in asked if "unit=" in u] == asked
+    asked.clear()
+    page.fill(FIRST, "")
+    page.keyboard.type(code.replace(".", ""), delay=15)
+    wait_until(page, lambda: any("q=" in u for u in asked))
+    page.wait_for_load_state("networkidle")
+    assert account in _options(page)
+    typed = [u for u in asked if "q=" in u]
+    assert len(typed) == 1 and typed[0].endswith(f"q={code.replace('.', '')}") and not errors
