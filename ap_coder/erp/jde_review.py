@@ -132,9 +132,10 @@ def match_findings(output: dict[str, Any], settings: JdeSettings, an8: str,
     """What holds a PO-matched voucher's Voucher Match rows back from the keying sheet (``jde_match.keyed_match``,
     ``matched``: its ``po.voucher_match``), as a check before approval, as the rest of the voucher is (D-75, B-2667):
     ``PO_VOUCHER_MATCH``, a warning (the voucher may be matched in JD Edwards by hand), each reason the PO match's own
-    checks don't say already (``VoucherMatch.said``). None for a voucher not PO-matched."""
+    checks don't say already (``VoucherMatch.said``). None for a voucher not PO-matched, or held already by what
+    ``voucher_findings`` says (as the keying sheet says those first)."""
     v = _prepare({"id": 0, "final_output": output}, settings, str(an8 or "").strip())
-    if not v.po_matched:
+    if not v.po_matched or v.problems:
         return []
     held = dict.fromkeys(why for why in keyed_match(v, matched, settings).held if why not in matched.said)
     return [(WARNING, "PO_VOUCHER_MATCH", f"JD Edwards' voucher match can't be keyed from the keying sheet: {why}",
