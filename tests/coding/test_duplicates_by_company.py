@@ -106,4 +106,6 @@ def test_rejecting_one_of_two_duplicates_checks_the_third_again_per_company(tmp_
     store.reject_invoice(ids[1], "Sam Reviewer", "Sent twice")
     issues = [i for i in store.get_invoice(ids[2])["validation"]["issues"] if i["code"].startswith("DUP")]
     assert [i["code"] for i in issues] == ["DUPLICATE_INVOICE_OTHER_COMPANY"]
-    assert f"#{ids[0]} (received first" in issues[0]["message"] and "for company 00200, not 00100" in issues[0]["message"]
+    assert (
+        f"#{ids[0]} (received first" in issues[0]["message"] and "for company 00200, not 00100" in issues[0]["message"]
+    )

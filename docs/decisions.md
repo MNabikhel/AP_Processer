@@ -6627,3 +6627,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   tax lines are AP Coder's own: never warned. Others a person adds (retainage payable) go in the never-offered list,
   now on Settings → JD Edwards E1 → Accounts AP posts to (also still under JD Edwards files' chart settings, where the
   pilot tester's guide sets it), and are `ACCOUNT_RESERVED` as before.
+- **D-270** · **A duplicate among AP Coder's own invoices is per company, as one in JD Edwards is** (D-267). Each other
+  invoice with the same vendor and invoice number is known with its company (`pipeline.duplicates_known`);
+  `validation.duplicate_findings` makes `DUPLICATE_INVOICE`, the error it always was, of those for the invoice's company
+  or with none decided (one company, or not known yet), and `DUPLICATE_INVOICE_OTHER_COMPANY`, a warning never
+  approved without a person, of those for another company: another company's bill with the same number, or one of the
+  two given the wrong company. The re-check after one of them is rejected or deleted says it the same way.
