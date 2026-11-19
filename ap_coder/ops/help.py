@@ -241,6 +241,14 @@ CHECKS: dict[str, CheckHelp] = {
         "checked: then the message names the voucher and whether it is paid.",
         "Check the ERP. If it is the same bill, reject this one so it is not paid twice.",
     ),
+    "DUPLICATE_INVOICE_OTHER_COMPANY": CheckHelp(
+        FRAUD, "Same invoice number under another company",
+        "Another invoice in AP Coder has the same vendor and invoice number, but it is for another JD Edwards company "
+        "than this one. It may be another company's bill with the same number, or the same bill with one of the two "
+        "given the wrong company: AP Coder never approves it without a person.",
+        "Open both (the finding links them) and compare their bill-to. If it is the same bill, set the right company "
+        "on one and reject the other; if they are two companies' bills, approve this one.",
+    ),
     "DUPLICATE_OTHER_COMPANY": CheckHelp(
         FRAUD, "Already entered under another company",
         "JD Edwards already has this vendor's invoice with the same number, but under another company than this "

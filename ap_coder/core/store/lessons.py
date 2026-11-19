@@ -513,26 +513,32 @@ class LessonsMixin:
         """The open invoices (in review or parked) with this vendor and invoice number, after one of them was rejected
         or deleted, checked again for duplicates: DUPLICATE_INVOICE dropped, or said with the invoices left, and
         whether a person must look worked out again; the rest of their checks stand (B-1182)."""
-        from ...coding.validation import ERROR, duplicate_message, needs_review
+        from ...coding.validation import duplicate_findings, needs_review
+        from ..keys import company_code
 
+        codes = ("DUPLICATE_INVOICE", "DUPLICATE_INVOICE_OTHER_COMPANY")
         for other in self.find_duplicates(vendor_name, invoice_number, key=key):
             with self._conn() as conn:
                 begin_write(conn)
-                row = conn.execute("SELECT status, validation, grand_total, adjusted_confidence FROM invoices "
-                                   "WHERE id = ?", (other,)).fetchone()  # fmt: skip
+                row = conn.execute("SELECT status, validation, grand_total, adjusted_confidence, ai_output, "
+                                   "final_output FROM invoices WHERE id = ?", (other,)).fetchone()  # fmt: skip
                 if row is None or row["status"] not in (REVIEW, PARKED) or not row["validation"]:
                     continue
                 validation = json.loads(row["validation"])
                 issues = validation.get("issues") or []
-                kept = [i for i in issues if i.get("code") != "DUPLICATE_INVOICE"]
+                kept = [i for i in issues if i.get("code") not in codes]
                 if len(kept) == len(issues):
                     continue  # never flagged a duplicate
                 still = self.find_duplicates(
                     vendor_name, invoice_number, exclude_id=other, grand_total=row["grand_total"], key=key
                 )
-                if still:
-                    kept.insert(0, {"severity": ERROR, "code": "DUPLICATE_INVOICE", "line_number": None,
-                                    "message": duplicate_message(still)})  # fmt: skip
+                # (each with its company, D-270: one for another company is a warning)
+                known = [{"id": inv["id"], "first": inv["id"] < other, "status": inv["status"],
+                          "company": company_code((inv.get("final_output") or inv.get("ai_output") or {})
+                                                  .get("company"))} for inv in self.get_invoices(still)]  # fmt: skip
+                mine = json.loads(row["final_output"] or row["ai_output"] or "{}").get("company") or ""
+                for at, (severity, code, message) in enumerate(duplicate_findings(known, mine)):
+                    kept.insert(at, {"severity": severity, "code": code, "line_number": None, "message": message})
                 validation["issues"] = kept
                 validation.pop("recheck", None)  # the queue's re-check said the duplicate too
                 threshold = float(validation.get("review_threshold") or 0.85)

@@ -1519,6 +1519,7 @@ ALWAYS_A_PERSON: dict[str, str] = {
     "DUPLICATE_INVOICE": "it may be a duplicate",
     "DUPLICATE_IN_ERP": "it may be a duplicate",
     "DUPLICATE_OTHER_COMPANY": "it may be a duplicate",
+    "DUPLICATE_INVOICE_OTHER_COMPANY": "it may be a duplicate",
     "DUPLICATE_OTHER_VENDOR": "it may be a duplicate",
     "POSSIBLE_DUPLICATE_AMOUNT": "it may be a duplicate",
     "AMOUNT_UNUSUAL": "the amount is unusual for this vendor",

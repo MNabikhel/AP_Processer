@@ -18,6 +18,7 @@ from typing import Any
 
 from ..ai.extraction import ExtractionResult
 from ..core import chart
+from ..core.keys import company_code
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import InvoiceCoding
 from . import posting_edits
@@ -146,6 +147,24 @@ def duplicate_message(duplicate_of: list[Any]) -> str:
     return f"same vendor and invoice number as invoice {', '.join(said)}: possible duplicate payment. {advice}"
 
 
+def duplicate_findings(duplicate_of: list[Any], company: str = "") -> list[tuple[str, str, str]]:
+    """What the other invoices with the same vendor and invoice number say (``duplicate_of``: ids, or what
+    ``pipeline.duplicates_known`` knows of each) of one for ``company`` (its coding's; "": none decided), per company
+    as DUPLICATE_IN_ERP is (D-270): DUPLICATE_INVOICE of those for the same company or none decided; those for another
+    company, DUPLICATE_INVOICE_OTHER_COMPANY, a warning (one of the two may be keyed to the wrong company)."""
+    mine = company_code(company)
+    other = [d for d in duplicate_of if mine and isinstance(d, dict) and d.get("company") and d["company"] != mine]
+    same = [d for d in duplicate_of if not any(d is o for o in other)]
+    out = [(ERROR, "DUPLICATE_INVOICE", duplicate_message(same))] if same else []
+    if other:
+        said = duplicate_message(other).split(": possible duplicate payment", 1)[0]
+        theirs = " and ".join(sorted({d["company"] for d in other}))
+        out.append((WARNING, "DUPLICATE_INVOICE_OTHER_COMPANY", f"{said}, which {'is' if len(other) == 1 else 'are'} "
+                    f"for company {theirs}, not {mine}: another company's bill with the same number, or one of the two "
+                    "keyed to the wrong company. Check the company of each"))  # fmt: skip
+    return out
+
+
 def validate_coding(
     coding: InvoiceCoding,
     reference: ReferenceData,
@@ -169,8 +188,8 @@ def validate_coding(
     def add(severity: str, code: str, message: str, line: int | None = None) -> None:
         issues.append(Issue(severity, code, message, line))
 
-    if duplicate_of:
-        add(ERROR, "DUPLICATE_INVOICE", duplicate_message(duplicate_of))
+    for severity, code, message in duplicate_findings(duplicate_of or [], coding.company):
+        add(severity, code, message)
     for severity, code, message in vendor_findings or []:  # vendor master / fraud signals (vendors.py)
         add(severity, code, message)
     for severity, code, message, line in po_findings or []:  # purchase order match (po.py)
