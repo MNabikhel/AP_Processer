@@ -1315,3 +1315,36 @@ def test_a_tax_keyed_on_a_line_of_its_own_carries_the_subledger_of_the_po_line_i
     assert [(m.on_po, m.amount, m.subledger, m.subledger_type) for m in v.matches] == [
         (True, 480.0, "00012345", "A"), (True, 435.0, "00067890", "A"),
         (False, 33.6, "00012345", "A"), (False, 30.45, "00067890", "A")]  # fmt: skip
+
+
+def test_a_us_companys_po_matched_voucher_keys_the_sales_tax_charged_on_lines_of_their_own(tmp_path):
+    """B-2662: a company not checked for Canadian tax (a US one, D-267) has its voucher keyed with the exempt code,
+    JD Edwards working out no tax, the tax kept as charged. Its voucher match rows are the lines before tax, so with
+    the sales tax charged they never added up to the gross and every such voucher was held ("check the lines and the
+    taxes against the invoice"). The tax charged goes on a G/L line of its own on each PO line's account, Tax N, as
+    a tax JD Edwards does not work out does (D-265), and the voucher adds up to the gross."""
+    from ap_coder.core.schema import COMPANY_TAX
+    from ap_coder.core.store import Store
+    from tests.erp.test_jde import USD, _invoice
+
+    area = {COMPANY_TAX: {"tax_area": "WA-KING", "from": "PO 30981"}}
+    inv = _invoice(USD, company="00310", po_number="30981", **area)
+    final = inv["final_output"]
+    store = Store(tmp_path / "ap.db")
+    store.import_purchase_orders([
+        {"po_number": "30981", "vendor_name": final["vendor_name"], "supplier_number": "71008", "order_type": "OP",
+         "order_company": "00310", "line_number": li["line_number"], "erp_line": f"{li['line_number']}.000",
+         "description": li["description"], "quantity": li["quantity"], "unit_price": li["unit_price"],
+         "amount": li["amount"], "open_quantity": li["quantity"], "uom": "EA", "gl_code": "6420" if n < 2 else "1450",
+         "cost_center": "3100", "status": "open", "currency": "USD"}
+        for n, li in enumerate(final["line_items"])])  # fmt: skip
+    js = settings(po_matched=True)
+    js.company_currencies = {"00310": "USD"}
+    (v,), held = jde_keying.vouchers([inv], js, lambda f: "71008", on=ON_DAY,
+                                     po_matches=jde_keying.po_matches(store, [inv]))  # fmt: skip
+    assert held == [] and v.balanced, held
+    assert [(m.on_po, m.amount, m.account, m.taxed, m.tax_code, m.tax_area) for m in v.matches] == [
+        (True, 735.0, "3100.6420", "N", "E", "WA-KING"), (True, 3600.0, "3100.6420", "N", "E", "WA-KING"),
+        (True, 2480.0, "3100.1450", "N", "E", "WA-KING"), (True, 45.0, "3100.1450", "N", "E", "WA-KING"),
+        (False, 448.67, "3100.6420", "N", "E", ""), (False, 261.34, "3100.1450", "N", "E", "")]  # fmt: skip
+    assert jde_keying._check(v) == "7,570.01 + 0.00 = 7,570.01: balanced"
