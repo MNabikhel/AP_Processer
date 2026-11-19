@@ -1285,3 +1285,33 @@ def test_jd_edwards_working_out_another_tax_than_the_invoice_charges_is_a_warnin
         "At tax area CDNGST's 5% (GST), JD Edwards works out 39.29 on the rows taxed Y, but the invoice charges "
         "40.29: check the tax JD Edwards shows against the invoice before saving the voucher."
     ) in v.warnings
+
+
+def test_a_tax_keyed_on_a_line_of_its_own_carries_the_subledger_of_the_po_line_it_goes_with(tmp_path):
+    """B-2661: BC's PST kept in the expense on the pilot's GST-only tax area is keyed on a G/L line of its own on the
+    PO line's account (D-265). A PO line coded to an account whose posting edit code is L carries its subledger and
+    type (D-268), and its rows had them, but the PST's line on that account had none: JD Edwards refuses a line on an
+    L account without its subledger. It carries the PO line's, a line for each subledger."""
+    from ap_coder.bench import jde_company, jde_exports, jde_po_vouchers
+    from ap_coder.coding import po
+    from ap_coder.core.schema import InvoiceCoding
+    from ap_coder.core.store import Store
+    from ap_coder.web.files import read_sheet
+
+    case = next(c for c in jde_po_vouchers.cases(jde_company.build(1, "small", 2025)) if c.name == "bc_gst_pst")
+    store = Store(tmp_path / "ap.db")
+    sheet, _ = read_sheet("po.xlsx", jde_exports.open_po_lines_xlsx(case.po_lines))
+    rows = po.rows_from_records(sheet.to_dict("records"), po.map_columns(list(sheet.columns)))[0]
+    for row, subledger in zip(rows, ("00012345", "00067890"), strict=True):
+        row.update(subledger=subledger, subledger_type="A")
+    store.import_purchase_orders(rows)
+    final = case.coding()
+    final["gl_distribution"] = exports.build_gl_distribution(InvoiceCoding.model_validate(final), _setup())
+    inv = {"id": 1, "final_output": final}
+    js = jde_po_vouchers.pilot_settings()
+    (v,), held = jde_keying.vouchers([inv], js, lambda f: str(case.supplier.number), on=ON_DAY,
+                                     po_matches=jde_keying.po_matches(store, [inv], js.charge_account))  # fmt: skip
+    assert held == [] and v.balanced
+    assert [(m.on_po, m.amount, m.subledger, m.subledger_type) for m in v.matches] == [
+        (True, 480.0, "00012345", "A"), (True, 435.0, "00067890", "A"),
+        (False, 33.6, "00012345", "A"), (False, 30.45, "00067890", "A")]  # fmt: skip

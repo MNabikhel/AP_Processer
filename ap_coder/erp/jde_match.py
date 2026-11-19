@@ -223,20 +223,22 @@ def _apart_lines(v: _Voucher, matched: VoucherMatch, out: KeyedMatch, apart: set
                  shares: dict[int, dict[str, int]], items: dict[Any, dict[str, Any]],
                  settings: JdeSettings) -> None:  # fmt: skip
     """The taxes the invoice charges that JD Edwards would not work out on the rows and the Tax setup keeps in the
-    expense (``apart``): a G/L line on each PO line's account with its lines' share (what is left over of a tax on the
-    largest), Tax N, after the rows."""
+    expense (``apart``): a G/L line on each PO line's account, with its subledger (an L account's, B-2661), with its
+    lines' share (what is left over of a tax on the largest), Tax N, after the rows."""
     if not apart:
         return
     exempt = settings.exempt_code.strip().upper()
-    by_account: dict[str, int] = {}
+    by_account: dict[tuple[str, str, str], int] = {}
     for t in (t for t in ORDER if t in apart):
-        mine: list[tuple[str, int]] = []
+        mine: list[tuple[tuple[str, str, str], int]] = []
         for row in matched.rows:
             cents = (shares.get(row.invoice_line) or {}).get(t, 0)
             if cents:
                 li = items.get(row.invoice_line) or {}
                 own = account_for(li.get("predicted_gl_code") or "", li.get("predicted_cost_center") or "", settings)
-                mine.append((row.account or (ani(own) if own is not None else ""), cents))
+                ledger = (row.subledger[0] or str(li.get("subledger") or ""),
+                          row.subledger[1] or str(li.get("subledger_type") or ""))  # fmt: skip
+                mine.append(((row.account or (ani(own) if own is not None else ""), *ledger), cents))
         printed = _charged(v, t)
         if mine and (left := printed - sum(c for _, c in mine)):
             biggest = max(range(len(mine)), key=lambda i: abs(mine[i][1]))
@@ -245,16 +247,17 @@ def _apart_lines(v: _Voucher, matched: VoucherMatch, out: KeyedMatch, apart: set
             out.held.append(f"the {tax_name(t, v.province)} ({_money(printed)}) is on no line matched: JD Edwards "
                             "would not work it out and it has no line to go with. Key the voucher by hand")  # fmt: skip
         for account, cents in mine:
-            if not account:
+            if not account[0]:
                 out.held.append(f"the {tax_name(t, v.province)} kept in the expense has no account to go to: the PO "
                                 "line has none in the purchase orders loaded, nor the invoice line. Load the purchase "
                                 "orders again with their Account Number column")  # fmt: skip
                 continue
             by_account[account] = by_account.get(account, 0) + cents
     names = _names(apart, v.province)
-    for account, cents in by_account.items():
-        out.rows.append(MatchLine("", "", "", "", None, "", cents / 100, account, "N",
-                                  exempt, "", f"{names} not recovered"[:30], on_po=False))  # fmt: skip
+    for (account, subledger, subledger_type), cents in by_account.items():
+        out.rows.append(MatchLine("", "", "", "", None, "", cents / 100, account, "N", exempt, "",
+                                  f"{names} not recovered"[:30], on_po=False, subledger=subledger,
+                                  subledger_type=subledger_type))  # fmt: skip
     total = sum(by_account.values())
     out.notes.append(f"The {names} ({_money(total)}) is not recovered and tax area {v.tax_area or '(none)'} does not "
                      f"hold it, so JD Edwards would not work it out: it is keyed on a G/L line of its own on the PO "
