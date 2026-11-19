@@ -47,9 +47,12 @@ CARD = "workbook"
 # with them), the suppliers, then the rest.
 ORDER = ("companies", "chart", "units", "payment_terms", "tax_areas", "supplier_master", "vendor_info", "vouchers",
          "gl_lines", "purchase_orders")  # fmt: skip
-WHOLE = ("chart", "units", "payment_terms", "tax_areas", "companies")  # a newer file replaces it whole: one sheet only
+WHOLE = ("payment_terms", "tax_areas", "companies")
+# Loaded in parts, a sheet each (a chart split by company, D-267): no company in two of its sheets.
+PARTS = ("chart", "units")  # a newer file replaces it whole: one sheet only
 # The column of each report a row's company is in.
-COMPANY = {"units": "company", "vouchers": "company", "gl_lines": "company", "purchase_orders": "order_company"}
+COMPANY = {"units": "company", "vouchers": "company", "gl_lines": "company", "purchase_orders": "order_company",
+           "chart": "company"}  # fmt: skip
 NOT_XLSX = "Upload the workbook as Excel saves it (.xlsx), a sheet for each report."
 NOT_ONE = "None of the reports: not loaded."
 
@@ -106,9 +109,20 @@ def _verdicts(sheets: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if key in WHOLE and times[key] > 1 and not view["problem"]:
                 view["problem"] = (f"{times[key]} sheets are {spec.report}, which is replaced whole: neither is "
                                    "loaded. Keep the one to load and upload the workbook again.")  # fmt: skip
+            twice = sorted(_in_two(sheets, sheet)) if key in PARTS and times[key] > 1 else []
+            if twice and not view["problem"]:  # (each sheet replaces its companies': a company in two, one lost)
+                view["problem"] = (f"Company {', '.join(twice)} is in another sheet of {spec.report} too, and each "
+                                   "sheet replaces its companies' rows: neither is loaded. Keep each company in one "
+                                   "sheet and upload the workbook again.")  # fmt: skip
         view["by_company"] = ", ".join(f"{co} {n:,}" for co, n in sorted(sheet["companies"].items()))
         out.append(view)
     return out
+
+
+def _in_two(sheets: list[dict[str, Any]], sheet: dict[str, Any]) -> set[str]:
+    """The companies of ``sheet`` that another sheet of its report has too."""
+    others = {co for s in sheets if s is not sheet and s["key"] == sheet["key"] for co in s["companies"]}
+    return set(sheet["companies"]) & others
 
 
 def look(store: Store, token: str) -> dict[str, Any] | None:

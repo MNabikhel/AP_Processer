@@ -252,6 +252,13 @@ def _supplier_tax_area(store: Any, conn: sqlite3.Connection) -> None:
         dialect.add_column(conn, "vendor_info", "tax_area", "TEXT NOT NULL DEFAULT ''")
 
 
+def _chart_company(store: Any, conn: sqlite3.Connection) -> None:
+    """Each account of the chart keeps its company (``chart_accounts.company``, D-267: a chart split by company loads a
+    company at a time); '' for one loaded before. No version of its own: an older AP Coder leaves it be."""
+    if "company" not in dialect.columns(conn, "chart_accounts"):
+        dialect.add_column(conn, "chart_accounts", "company", "TEXT NOT NULL DEFAULT ''")
+
+
 def _order_number_index(store: Any, conn: sqlite3.Connection) -> None:
     """The purchase orders by their number (its column: the step to 32): every order an invoice's PO number may be."""
     conn.execute("CREATE INDEX IF NOT EXISTS purchase_orders_number ON purchase_orders (number_key)")
@@ -539,6 +546,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (32, _v32_order_keys),
     (EVERY_TIME, _order_number_index),
     (EVERY_TIME, _supplier_tax_area),
+    (EVERY_TIME, _chart_company),
 )
 MIGRATIONS: dict[int, Step] = {number: step for number, step in STEPS if number is not EVERY_TIME}
 

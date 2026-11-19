@@ -3,7 +3,9 @@ loaded from JD Edwards' exports as they come (D-209), from the console.
 
 * ``import --chart <file> --business-units <file> [--anyway]``: either file alone or both (the business units
   first, so the chart knows which are active). A chart exported without its posting edit or subsidiary column is
-  imported only with ``--anyway``, and says so each time it is shown. Each replaces what was imported before; the
+  imported only with ``--anyway``, and says so each time it is shown. Each replaces what was imported before (a file
+  whose rows name their company, the accounts or business units of those companies alone, the others kept: a chart
+  split by company, D-267; ``--whole``: all of it, to start over); the
   GL accounts and the cost centers are worked out again from the two, even when the file is the one already
   imported. What was read, what may be posted to, what was left out, what left the lists and what a person had
   typed that was set aside is said in plain words (``import_files``, which a page can call with an upload's
@@ -54,6 +56,9 @@ def add_parser(sub: Any) -> None:
     )  # fmt: skip
     for option, value, about in options:
         p.add_argument(option, default=None, metavar=value, help=about)
+    p.add_argument("--whole", action="store_true",
+                   help="import: replace the whole chart or all the business units with the file (start over), not "
+                        "only the companies it names")  # fmt: skip
     p.add_argument("--anyway", action="store_true",
                    help="import: import a chart exported without its posting edit or subsidiary column (without "
                         "the posting edit column every account is offered)")  # fmt: skip
@@ -66,9 +71,13 @@ def _left_out(skipped: dict[str, int]) -> list[str]:
 def _changed(name: str, result: dict[str, Any], rows: str = "") -> str:
     """What an import changed; ``rows``: what it counts, when its rows are not all the thing named (the chart's are
     its accounts and each business unit's title row)."""
+    named = result.get("companies") or []
+    whose = (f" (company {', '.join(named)}'s; the other companies' kept)" if len(named) == 1 else
+             f" (companies {', '.join(named)}; the other companies' kept)") if named else ""  # fmt: skip
     if not (result["added"] or result["updated"] or result["removed"]):
-        return f"{name}: the same as already imported."
-    return f"{name}: {result['added']:,} {rows}added, {result['updated']:,} changed, {result['removed']:,} removed."
+        return f"{name}: the same as already imported{whose}."
+    return (f"{name}{whose}: {result['added']:,} {rows}added, {result['updated']:,} changed, {result['removed']:,} "
+            "removed.")  # fmt: skip
 
 
 def _units_read(read: chart.Rows) -> list[str]:
@@ -172,22 +181,24 @@ def settings_lines(store: Store) -> list[str]:
 
 def import_files(store: Store, chart_source: str | Path | bytes | None = None,
                  units_source: str | Path | bytes | None = None, actor: str | None = None,
-                 anyway: bool = False, chart_sheet: str = "", units_sheet: str = "") -> list[str]:  # fmt: skip
+                 anyway: bool = False, chart_sheet: str = "", units_sheet: str = "",
+                 whole: bool = False) -> list[str]:  # fmt: skip
     """Import the business unit master and the chart of accounts (either or both; a path, or a file's bytes; each
     from its sheet of that name, ``chart_sheet`` and ``units_sheet``, else its first) and say what was done, a line
     each. ``chart.ChartError`` for a file that cannot be read (``chart.ColumnsMissing`` for a chart without its
     posting edit or subsidiary column, unless ``anyway``) and ``ValueError`` for one that would leave no account to
-    code to: nothing is changed then, of either file."""
+    code to: nothing is changed then, of either file. ``whole``: each file replaces all of its table, not only the
+    companies it names (D-267)."""
     units = chart_file.read_business_units(units_source, units_sheet) if units_source is not None else None
     rows = chart_file.read_chart(chart_source, anyway, chart_sheet) if chart_source is not None else None
     said: list[str] = []
     results: list[dict[str, Any]] = []
     with store.transaction():
         if units is not None:
-            results.append(store.import_business_units(units.rows, actor=actor))
+            results.append(store.import_business_units(units.rows, actor=actor, whole=whole))
             said += [*_units_read(units), _changed("Business units", results[-1])]
         if rows is not None:
-            results.append(store.import_chart(rows.rows, actor=actor, without=rows.without))
+            results.append(store.import_chart(rows.rows, actor=actor, without=rows.without, whole=whole))
             said += [*_chart_read(rows, store.chart_settings()), _changed("Chart of accounts", results[-1], "rows ")]
     return said + lists_lines(results) + tally_lines(store)
 
@@ -204,7 +215,8 @@ def _import(args: argparse.Namespace) -> int:
     if args.chart:
         print("Reading the chart of accounts (a chart of 15,000 rows takes 10 to 20 seconds)...", flush=True)
     try:
-        said = import_files(Store(args.db), args.chart, args.business_units, actor=ACTOR, anyway=args.anyway)
+        said = import_files(Store(args.db), args.chart, args.business_units, actor=ACTOR, anyway=args.anyway,
+                            whole=args.whole)  # fmt: skip
     except chart.ColumnsMissing as exc:
         offered = ": every account will be offered" if "posting_edit" in exc.fields else ""
         print(f"Not imported: {exc} To import it anyway, add --anyway{offered}.", file=sys.stderr)

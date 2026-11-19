@@ -115,10 +115,10 @@ def chart_rows(scale: Scale) -> tuple[list[ChartRow], list[BuRow]]:
     for code in codes:
         for unit in units_of(code, units_each):
             units.append(BuRow(unit, f"Job {unit}", code, "JB", ""))
-            rows.append(ChartRow(unit, "", "", f"Job {unit}", 3, "N"))
+            rows.append(ChartRow(unit, "", "", f"Job {unit}", 3, "N", "", code))
             for obj in OBJECTS:
-                rows.append(ChartRow(unit, obj, "", f"Cost {obj}", 7, ""))
-                rows.append(ChartRow(unit, obj, "0100", f"Cost {obj} labour", 8, ""))
+                rows.append(ChartRow(unit, obj, "", f"Cost {obj}", 7, "", "", code))
+                rows.append(ChartRow(unit, obj, "0100", f"Cost {obj} labour", 8, "", "", code))
     return rows[: scale.chart_rows], units
 
 

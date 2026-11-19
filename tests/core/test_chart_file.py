@@ -41,7 +41,8 @@ def test_only_the_columns_the_import_needs_are_kept_a_row_at_a_time(tmp_path):
     assert iter(reading) is reading  # a row at a time: the sheet is never held whole
     records = list(reading)
     assert len(records) == len(cf.CHART)
-    assert list(records[0]) == ["Business Unit", "Object Account", "Subsidiary", "Account Description", "L D", "P E"]
+    assert list(records[0]) == ["Business Unit", "Object Account", "Subsidiary", "Account Description", "Company", "L D",
+                                "P E"]  # fmt: skip
     assert records[3]["Business Unit"] == "       07310" and records[0]["Object Account"] == " "  # cleaned later
 
 

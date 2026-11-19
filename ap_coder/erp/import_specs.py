@@ -135,14 +135,19 @@ CHART = ImportSpec(
     source="JD Edwards' account master: list your company's accounts in its grid, every column shown, and export the "
            "grid to Excel (.xlsx).",
     more="Business unit, object and subsidiary make the account string (business unit.object.subsidiary). The "
-         "posting edit code tells a title from an account that can be posted to. A newer export replaces the chart "
-         "whole; what you changed by hand is kept.",
+         "posting edit code tells a title from an account that can be posted to. A newer export replaces the "
+         "accounts of the companies it has (its Company column), the other companies' kept, so a chart split by "
+         "company loads a file at a time; without that column it replaces the chart whole. What you changed by hand "
+         "is kept.",
     report="JD Edwards' account master export (the chart of accounts)", file_types=(XLSX,), fix=JDE_FIX,
     columns=_columns(chart.CHART_ALIASES, (*chart.CHART_NEEDS, *chart.CHART_WANTS), {
         "business_unit": ("Business unit", "Business Unit"), "object": ("Object account", "Object Account"),
         "subsidiary": ("Subsidiary", "Subsidiary"), "description": ("Account description", "Account Description"),
         "lod": ("Level of detail", "L D"), "posting_edit": ("Posting edit code", "P E"),
+        "company": ("Company", "Company"),
     }, {"business_unit": "the first part of every account string", "object": "the account itself",
+        "company": "the account's company: a chart split by company loads a file at a time, each replacing only "
+                   "its companies' accounts",
         **{f: f"{why[1][0].upper()}{why[1][1:]}" for f, why in chart.CHART_WANTS.items()},
         "description": "the account's name, shown wherever the account is", "lod": "the title an account sits "
         "under (its level of detail), so suggestions and the review screen group accounts as JD Edwards does"}),
@@ -153,7 +158,8 @@ UNITS = ImportSpec(
     key="units", card="2. Business units", title="Business units", jde=True, page="/jde-files#units",
     purpose="Which business units are open, what they are called and the company each belongs to.",
     source="JD Edwards' business unit master: export its grid to Excel (.xlsx), every column shown.",
-    more="A newer export replaces the business units whole; what you changed by hand is kept.",
+    more="A newer export replaces the business units of the companies it has, the others kept; what you changed by "
+         "hand is kept.",
     report="JD Edwards' business unit master export", file_types=(XLSX,), fix=JDE_FIX,
     columns=_columns(chart.BU_ALIASES, chart.BU_NEEDS, {
         "code": ("Business unit", "Job Number"), "name": ("Name", "Job Name"), "company": ("Company", "Co"),

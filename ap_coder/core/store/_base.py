@@ -170,9 +170,13 @@ ANSWER_WANTS = ("CREATE TABLE IF NOT EXISTS answer_wants (name TEXT NOT NULL, as
 CHART_TABLES = (
     "CREATE TABLE IF NOT EXISTS chart_accounts (bu TEXT NOT NULL, object TEXT NOT NULL DEFAULT '', subsidiary TEXT NOT "
     "NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', lod INTEGER NOT NULL DEFAULT 0, posting_edit TEXT NOT NULL "
-    "DEFAULT '', category TEXT NOT NULL DEFAULT '', PRIMARY KEY (bu, object, subsidiary))",
+    "DEFAULT '', category TEXT NOT NULL DEFAULT '', company TEXT NOT NULL DEFAULT '', PRIMARY KEY (bu, object, "
+    "subsidiary))",
     "CREATE TABLE IF NOT EXISTS business_units (code TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', company TEXT NOT "
     "NULL DEFAULT '', type TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '')",
+    # (asked an account at a time, never held whole: ``chart_index``, D-267)
+    "CREATE INDEX IF NOT EXISTS chart_accounts_code ON chart_accounts (object, subsidiary)",
+    "CREATE INDEX IF NOT EXISTS business_units_company ON business_units (company)",
 )
 
 _SCHEMA = """

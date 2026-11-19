@@ -602,11 +602,14 @@ def _load_words(card: str, look: dict[str, Any] | None, loaded: int, by_hand: in
     if card == "chart":
         accounts = look.get("accounts")
         button = f"Load {ui.plural(accounts or look['count'], 'account' if accounts else 'row')}"
-        then = f"Replaces the {ui.plural(loaded, 'account')} loaded now: the chart is taken whole from this file.{kept}"
+        then = (f"Replaces the accounts of the companies in this file (its Company column) among the "
+                f"{ui.plural(loaded, 'account')} loaded now, the other companies' kept; a file without a Company "
+                f"column replaces the chart whole.{kept}")  # fmt: skip
     elif card == "units":
         button = f"Load {ui.plural(look['count'], 'business unit')}"
-        then = (f"Replaces the {ui.plural(loaded, 'business unit')} loaded now: the list is taken whole from this "
-                f"file.{kept}")  # fmt: skip
+        then = (f"Replaces the business units of the companies in this file among the "
+                f"{ui.plural(loaded, 'business unit')} loaded now, the other companies' kept; a file without a "
+                f"company column replaces the list whole.{kept}")  # fmt: skip
     elif card == "suppliers":
         button = f"Load {ui.plural(look['kept'], 'supplier')}"
         new = look.get("new", 0)
@@ -731,19 +734,20 @@ def _keep_export(request: Request, card: str, name: str, content: bytes) -> JSON
 
 
 @router.post(HERE + "/chart/load")
-async def chart_load(request: Request, token: str = Form("")) -> JSONResponse:
-    return await run_in_threadpool(_chart_import, request, "chart", token)  # (a chart of 15,000 rows: 10 to 20 s)
+async def chart_load(request: Request, token: str = Form(""), whole: str = Form("")) -> JSONResponse:
+    return await run_in_threadpool(_chart_import, request, "chart", token, bool(whole))  # (15,000 rows: 10 to 20 s)
 
 
 @router.post(HERE + "/units/load")
-async def units_load(request: Request, token: str = Form("")) -> JSONResponse:
-    return await run_in_threadpool(_chart_import, request, "units", token)
+async def units_load(request: Request, token: str = Form(""), whole: str = Form("")) -> JSONResponse:
+    return await run_in_threadpool(_chart_import, request, "units", token, bool(whole))
 
 
 @one_connection
-def _chart_import(request: Request, card: str, token: str) -> JSONResponse:
+def _chart_import(request: Request, card: str, token: str, whole: bool = False) -> JSONResponse:
     """Load the uploaded chart or business unit file as its card showed it: only a file with every column the
-    report needs (no "load it anyway" here; the command line keeps its --anyway)."""
+    report needs (no "load it anyway" here; the command line keeps its --anyway). ``whole``: it replaces the whole
+    chart or every business unit (start over), not only the companies it names (D-267)."""
     look, upload = _export_look(card, token), json.loads(current_store().ephemeral(LOOK_KIND, token) or b"{}")
     kept = get_upload(upload.get("upload"))
     if look is None or kept is None:
@@ -755,7 +759,7 @@ def _chart_import(request: Request, card: str, token: str) -> JSONResponse:
         return refuse(BEING_LOADED)
     given = {"chart_source": kept.content} if card == "chart" else {"units_source": kept.content}
     try:
-        said = chart_cmd.import_files(get_store(request), **given, actor=reviewer())
+        said = chart_cmd.import_files(get_store(request), **given, actor=reviewer(), whole=whole)
     except ValueError as exc:  # (a ChartError too: the file cannot be read as what it should be)
         return refuse(f"Not loaded: {exc}")
     finally:

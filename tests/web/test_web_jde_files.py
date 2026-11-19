@@ -50,10 +50,11 @@ def _accounts(store) -> int:
     return len([row for row in store.chart_accounts() if not row.is_header])
 
 
-def _upload_and_load(client, card: str, name: str, data: bytes):
-    """A chart or business unit file sent, shown, then loaded: the page after the load."""
+def _upload_and_load(client, card: str, name: str, data: bytes, whole: bool = False):
+    """A chart or business unit file sent, shown, then loaded (``whole``: starting over, D-267): the page after."""
     token = _token(client.post(f"/jde-files/{card}/upload", files={"file": (name, data)}, headers=PAGE))
-    return follow(client, client.post(f"/jde-files/{card}/load", data={"token": token}, headers=PAGE))
+    form = {"token": token, **({"whole": "1"} if whole else {})}
+    return follow(client, client.post(f"/jde-files/{card}/load", data=form, headers=PAGE))
 
 
 def _load_chart(client, exports) -> None:
@@ -164,7 +165,9 @@ def test_the_one_company_of_the_business_units_is_offered_as_jd_edwards_company(
     assert "/jde-files/company" not in page
     refused = client.post("/jde-files/company", headers=PAGE)
     assert refused.status_code == 400 and jde_settings.load(store).company == "00001"
-    _load_chart(client, exports)
+    _load_chart(client, exports)  # (the other companies' business units kept: D-267)
+    assert {unit.company for unit in store.business_units()} == {"00002", "00210", "07310"}
+    _upload_and_load(client, "units", made.UNITS_FILE, (exports / made.UNITS_FILE).read_bytes(), whole=True)
     (company,) = {unit.company for unit in store.business_units()}
     page = client.get("/jde-files").text
     assert company != "00001" and f"Use company {company} (the one your business units belong to)" in page
@@ -451,7 +454,7 @@ def test_the_chart_is_shown_first_its_columns_in_any_order_and_loaded_only_on_lo
     assert "every column it needs is here." in summary and 'role="alert"' not in summary
     for header in ("Business Unit", "Object Account", "Subsidiary", "P E", "Account Description", "L D"):
         assert f'<span class="muted">as</span> “{header}”' in summary, header
-    assert "104 other columns of the file are not used:" in summary
+    assert "103 other columns of the file are not used:" in summary  # (its Company column is: D-267)
     offered = re.search(r"Load ([\d,]+) accounts</button>", summary)
     assert summary.count("<tr>") == 1 + 5 and offered
     assert store.chart_accounts() == []
@@ -792,9 +795,10 @@ def test_each_load_button_says_what_it_loads_and_what_that_replaces_or_adds_to(c
     accounts, units = _accounts(store), len(store.business_units())
     card = _card_of(client, "chart", _token(_send(client, "/jde-files/chart/upload", exports, made.CHART_FILE)))
     assert f"Load {accounts:,} accounts</button>" in card
-    assert f"Replaces the {accounts:,} accounts loaded now: the chart is taken whole from this file." in card
+    assert (f"Replaces the accounts of the companies in this file (its Company column) among the {accounts:,} "
+            "accounts loaded now, the other companies&#39; kept") in card  # (D-267)
     card = _card_of(client, "units", _token(_send(client, "/jde-files/units/upload", exports, made.UNITS_FILE)))
-    assert f"Load {units:,} business units</button>" in card and f"Replaces the {units:,} business units loaded" in card
+    assert f"Load {units:,} business units</button>" in card and f"among the {units:,} business units loaded" in card
     token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.SUPPLIERS_FILE))
     assert "Updates the" not in _card_of(client, "suppliers", token)  # (nothing loaded yet: nothing to update)
     follow(client, client.post("/jde-files/suppliers/load", data={"token": token}, headers=PAGE))

@@ -199,7 +199,7 @@ def test_every_column_is_found_by_its_header_and_each_other_name_the_reader_read
 
 def test_the_specs_are_the_readers_own_tables():
     assert {c.field for c in SPECS["chart"].required} == {*chart.CHART_NEEDS, *chart.CHART_WANTS}
-    assert [c.field for c in SPECS["chart"].columns if not c.required] == ["description", "lod"]
+    assert [c.field for c in SPECS["chart"].columns if not c.required] == ["description", "lod", "company"]
     assert {c.field for c in SPECS["vouchers"].required} == set(registers.VOUCHER_REQUIRED)
     assert {c.field for c in SPECS["vendor_info"].required} == set(vendor_info.NEEDS)
     assert {c.field for c in SPECS["purchase_orders"].required} == set(po.REQUIRED_COLUMNS)

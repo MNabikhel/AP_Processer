@@ -1,0 +1,72 @@
+"""D-267: a chart of accounts split by company loads a file at a time. Each file replaces the accounts (and business
+units) of the companies it has, the other companies' kept, so the files add up and one company's file again refreshes
+that company alone; "start over" replaces it all. JD Edwards' L and U posting edit codes are postable by default."""
+
+import sqlite3
+from contextlib import closing
+
+import pytest
+
+from ap_coder.core import chart
+from ap_coder.core.chart import BuRow, ChartRow
+from ap_coder.core.store import Store
+
+
+def _rows(company, unit, *objects, description="Cost"):
+    return [ChartRow(unit, "", "", f"Job {unit}", 3, "N", "", company)] + [
+        ChartRow(unit, obj, "", f"{description} {obj}", 7, "", "", company) for obj in objects
+    ]
+
+
+def _accounts(store):
+    return {(r.company, r.bu, r.object): r.description for r in store.chart_accounts() if r.object}
+
+
+@pytest.fixture
+def store(tmp_path):
+    return Store(tmp_path / "ap.db")
+
+
+def test_each_companys_file_adds_up_and_loaded_again_refreshes_only_that_company(store):
+    store.import_business_units([BuRow("2100101", "Job A", "00210"), BuRow("3100101", "Job B", "00310")])
+    store.import_chart(_rows("00210", "2100101", "5110", "5120"))
+    result = store.import_chart(_rows("310", "3100101", "5110"))
+    assert result["companies"] == ["00310"] and (result["added"], result["removed"]) == (2, 0)
+    assert set(_accounts(store)) == {("00210", "2100101", "5110"), ("00210", "2100101", "5120"),
+                                     ("00310", "3100101", "5110")}  # fmt: skip
+    again = store.import_chart(_rows("00210", "2100101", "5110", description="Materials"))
+    assert (again["updated"], again["removed"]) == (1, 1)
+    assert _accounts(store) == {("00210", "2100101", "5110"): "Materials 5110",
+                                ("00310", "3100101", "5110"): "Cost 5110"}  # fmt: skip
+    assert {code for code in store.reference_data().line_accounts()} >= {"5110"}
+    # starting over: the file's alone
+    store.import_chart(_rows("00310", "3100101", "5120"), whole=True)
+    assert set(_accounts(store)) == {("00310", "3100101", "5120")}
+
+
+def test_accounts_kept_without_a_company_are_replaced_on_the_business_units_of_the_file(store):
+    store.import_chart([ChartRow("2100101", "5110", "", "Old"), ChartRow("9900101", "5110", "", "Other")])
+    store.import_chart(_rows("00210", "2100101", "5120"))
+    assert set(_accounts(store)) == {("", "9900101", "5110"), ("00210", "2100101", "5120")}
+
+
+def test_business_units_load_by_company_too(store):
+    store.import_business_units([BuRow("2100101", "Job A", "00210"), BuRow("3100101", "Job B", "00310")])
+    store.import_business_units([BuRow("2100102", "Job A2", "00210")])
+    assert {u.code for u in store.business_units()} == {"2100102", "3100101"}
+    store.import_business_units([BuRow("2100103", "Job A3", "00210")], whole=True)
+    assert {u.code for u in store.business_units()} == {"2100103"}
+
+
+def test_the_chart_reads_each_accounts_company_and_an_older_database_gets_the_column(tmp_path):
+    read = chart.chart_rows([{"Business Unit": "  2100101", "Object Account": "5110", "Subsidiary": "",
+                              "Account Description": "Cost", "Company": "210", "L D": "7", "P E": "L"}])  # fmt: skip
+    assert read.rows[0].company == "00210"
+    pairs = chart.AccountPairs(read.rows)
+    assert pairs.status("2100101", "5110") == chart.OK  # L: a subledger is required, postable
+    assert chart.ChartSettings().postable_codes == ("", "L", "U")
+    db = Store(tmp_path / "old" / "ap.db").path
+    with closing(sqlite3.connect(db)) as conn, conn:
+        conn.execute("ALTER TABLE chart_accounts DROP COLUMN company")
+        conn.execute("INSERT INTO chart_accounts (bu, object) VALUES ('2100101', '5110')")
+    assert Store(db).chart_accounts()[0].company == ""

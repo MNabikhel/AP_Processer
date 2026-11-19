@@ -29,7 +29,7 @@ from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal
 from typing import NamedTuple
 
-from ..core.chart import code_of, join_account, split_account, split_code
+from ..core.chart import POSTABLE, code_of, join_account, split_account, split_code
 from .jde_names import (
     AFFILIATES,
     CHART,
@@ -152,7 +152,7 @@ class Account:
 
     @property
     def postable(self) -> bool:
-        return bool(self.object) and not self.posting_edit
+        return bool(self.object) and self.posting_edit in POSTABLE  # (blank, L and U: JD Edwards' own, D-267)
 
     @property
     def reserved(self) -> bool:
