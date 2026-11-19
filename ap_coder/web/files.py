@@ -395,6 +395,13 @@ def _long_report(name: str, content: bytes, sheet: str | None) -> tuple[pd.DataF
             raise SheetError(TOO_BIG_UNZIPPED)
     except ChartError as exc:
         raise SheetError(TOO_BIG_UNZIPPED) from exc
+    df = _named_row(rows_frame(read), specs)
+    df.attrs["sheet"] = title
+    return df, [title for title, _rows in heads]
+
+
+def rows_frame(read: list[list[str]]) -> pd.DataFrame:
+    """A sheet's rows as text cells (``_cell``), its column names the first row's, as ``read_sheet`` gives a sheet."""
     width = max((len(row) for row in read), default=0)
     read = [row + [""] * (width - len(row)) for row in read]
     columns: list[str] = []
@@ -403,9 +410,7 @@ def _long_report(name: str, content: bytes, sheet: str | None) -> tuple[pd.DataF
         while column in columns:  # two columns of one name: kept apart, as pandas does
             column += ".1"
         columns.append(column)
-    df = _named_row(_frame(pd.DataFrame(read[1:], columns=columns, dtype=str)), specs)
-    df.attrs["sheet"] = title
-    return df, [title for title, _rows in heads]
+    return _frame(pd.DataFrame(read[1:], columns=columns, dtype=str))
 
 
 def _cell(value: Any) -> str:

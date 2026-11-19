@@ -27,7 +27,7 @@ from typing import Any
 
 from ..core import chart_file, ui
 from ..core.chart import ChartError
-from ..core.headers import header_key
+from ..core.headers import header_key, jde_names, match_columns
 from ..core.keys import norm_tax_number
 
 # Each field's column name in the list, as ``header_key`` reads it; "business_unit_name" is the second column named
@@ -45,7 +45,26 @@ LABELS = {
     "terms": "Payment terms", "address1": "Address", "city": "City", "state": "Province or state",
     "country": "Country", "postal_code": "Postal code", "email": "E-mail", "business_unit": "Business unit",
 }  # fmt: skip
+# The same fields in JD Edwards' supplier master queried with its address book in one report (F0101 and F0401, with
+# F0116's address and F01151's e-mail: the build sheet's tab 3, D-266), beside the master's own supplier number and
+# name: titled as this list titles them, as the build sheet does, or by their fields. ``tax_id2``: the additional tax
+# ID, where a company may keep the GST/HST or QST number.
+IN_MASTER = {
+    "tax_id": ("taxid", *jde_names("F0101", "AB", "TAX")),
+    "tax_id2": ("additionaltaxid", "additionalindividualtaxid", "taxidadditionalindividual",
+                *jde_names("F0101", "AB", "TX2")),
+    "currency": ("curcod", "currencycodeap", *jde_names("F0401", "A6", "CRRP")),
+    "terms": ("paymenttermsap", *jde_names("F0401", "A6", "TRAP")),
+    **{f"address{n}": (f"addressline{n}", *jde_names("F0116", "AL", f"ADD{n}")) for n in range(1, 5)},
+    "city": ("citycty1", "city", *jde_names("F0116", "AL", "CTY1")),
+    "state": ("state", *jde_names("F0116", "AL", "ADDS")),
+    "country": ("country", *jde_names("F0116", "AL", "CTR")),
+    "postal_code": ("postalcode", "zipcode", *jde_names("F0116", "AL", "ADDZ")),
+    "email": ("jdeemailaddress", "electronicaddress", "emailaddress", *jde_names("F01151", "EA", "EMAL")),
+}  # fmt: skip
+_OWN = ("tax_id", "tax_id2", "currency", "address1", "postal_code", "email")  # what only this list gives
 CANADA = ("", "CA", "CAN", "CANADA")
+_QST_NUMBER = re.compile(r"\d{10}tq\d{4}")  # a QST number, as ``norm_tax_number`` writes it
 _GST_ACCOUNT = re.compile(r"\d{9}rt\d{0,4}")  # as ``norm_tax_number`` writes it
 _OTHER_ACCOUNT = re.compile(r"(\d{9})r[a-z]\d{0,4}")  # the same business' payroll or income tax account
 _OLD_NUMBER = re.compile(r"r(\d{9})")
@@ -60,6 +79,13 @@ def positions(headers: Iterable[Any]) -> dict[str, int]:
         if first in found and COLUMNS[first] in keys[found[first] + 1 :]:
             found[field] = keys.index(COLUMNS[first], found[first] + 1)
     return found
+
+
+def in_master(headers: Iterable[Any]) -> dict[str, str]:
+    """{field: header} of the vendor information a supplier master export carries beside its own columns (its tax
+    ID, currency, address, e-mail: ``IN_MASTER``); {} when it carries none of them (the supplier master's grid)."""
+    found = match_columns([str(h) for h in headers if h is not None], IN_MASTER)
+    return found if set(found) & set(_OWN) else {}
 
 
 def is_vendor_info(headers: Iterable[Any]) -> bool:
@@ -112,20 +138,25 @@ def rows_of(records: Iterable[tuple[Any, ...]], where: dict[str, int]) -> tuple[
         if not row["erp_id"] or not row["vendor_name"]:
             left["no name" if row["erp_id"] else "no number" if row["vendor_name"] else "totals"] += 1
             continue
-        row["tax_id_norm"] = compared(row["tax_id"])
+        row.setdefault("tax_id", "")
+        second = row.pop("tax_id2", "")  # (the additional tax ID: the GST/HST number when the tax ID is none)
         row["gst"] = gst_number(row["tax_id"], row.get("country"))
+        if not row["gst"] and gst_number(second, row.get("country")):
+            row["gst"], row["tax_id"] = gst_number(second, row.get("country")), row["tax_id"] or second
+        row["qst"] = second if _QST_NUMBER.fullmatch(norm_tax_number(second)) else ""
+        row["tax_id_norm"] = compared(row["tax_id"])
         if row["erp_id"] in kept:
             left["twice"] += 1
         kept[row["erp_id"]] = row
     return list(kept.values()), left
 
 
-def read(source: bytes, name: str) -> dict[str, Any] | None:
+def read(source: bytes, name: str, sheet: str = "") -> dict[str, Any] | None:
     """An uploaded workbook read as the vendor information list: {"name", "rows" (``rows_of``), "left" (what was
     left out), "found" and "missing" (the columns, by their labels)}; None when its column names are not this
     list's or it cannot be opened (another supplier file: the caller reads it its own way). ``ChartError``, in plain
     words, for the list when its rows cannot be read."""
-    records = chart_file.read_rows(source, name)
+    records = chart_file.read_rows(source, name, sheet)  # (``sheet``: the sheet of that name, else the first)
     try:
         for at in range(chart_file.HEADER_ROWS):  # (row 1, or under a grid's title rows: B-2273)
             try:
@@ -173,10 +204,28 @@ def master_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     from .vendors import ACTIVE, _province_or_blank
 
     return [{"vendor_name": row["vendor_name"], "erp_id": row["erp_id"], "gst": row["gst"], "terms": row.get("terms"),
-             "status": ACTIVE, "status_given": False, "qst": "", "pst": "", "default_gl": None, "hold": None,
+             "status": ACTIVE, "status_given": False, "qst": row.get("qst", ""), "pst": "", "default_gl": None,
+             "hold": None,
              "province": _province_or_blank(row.get("state", ""))
              if str(row.get("country") or "").strip().upper() in CANADA else ""}
             for row in rows]  # fmt: skip
+
+
+def with_master(rows: list[dict[str, Any]], info: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """The supplier master's rows (``vendors.master_rows``: each with its payment hold) of a report that carries the
+    vendor information too (``in_master``), with what that says of each supplier (``info``: ``rows_of``): its GST/HST
+    number only when its tax ID reads as one (an EIN or a word is none), its QST number, and for a supplier in
+    Canada its province; the payment terms when the master's own column gives none."""
+    by_number = {row["erp_id"]: row for row in master_rows(info)}
+    out = []
+    for row in rows:
+        mine = by_number.get(str(row.get("erp_id") or "").strip())
+        if mine is not None:
+            row = {**row, "gst": mine["gst"], "qst": mine["qst"] or row.get("qst") or "",
+                   "province": mine["province"] or row.get("province") or "",
+                   "terms": row.get("terms") if row.get("terms") is not None else mine["terms"]}  # fmt: skip
+        out.append(row)
+    return out
 
 
 def said(read: dict[str, Any], known: set[str], markers: int) -> list[str]:

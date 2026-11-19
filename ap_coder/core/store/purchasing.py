@@ -234,6 +234,11 @@ class PurchasingMixin:
         with self._conn() as conn:
             return conn.execute("SELECT 1 FROM purchase_orders LIMIT 1").fetchone() is not None
 
+    def open_po_count(self) -> int:
+        """How many purchase orders are open (JD Edwards files' card 6, D-266)."""
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM purchase_orders WHERE status = 'open'").fetchone()[0])
+
     def purchase_order(self, key: str) -> dict[str, Any] | None:
         """One PO with its lines and total (``key`` is ``po.po_key``)."""
         with self._conn() as conn:

@@ -14,6 +14,7 @@ import threading
 from types import MappingProxyType
 from typing import Any
 
+from ...coding.terms import JDE_TERMS_SETTING, jde_meaning, jde_table_of
 from ..caches import MB, Bounded, size_of
 from ..chart import SKIP_WORDS_SAVED as SKIP_WORDS  # noqa: F401  (the default as the setting holds it)
 from ..chart import SKIP_WORDS_SETTING  # noqa: F401  (imported from here by the Vendors page)
@@ -432,17 +433,24 @@ class VendorsMixin:
             return count
 
     def all_vendor_terms(self) -> dict[str, str]:
-        """{vendor_key: payment terms} for every vendor that has terms in the vendor master."""
+        """{vendor_key: payment terms} for every vendor that has terms in the vendor master (``vendor_terms``)."""
         with self._conn() as conn:
-            return {r[0]: r[1] for r in conn.execute("SELECT vendor_key, terms FROM vendors WHERE terms != ''")}
+            rows = conn.execute("SELECT vendor_key, terms FROM vendors WHERE terms != ''").fetchall()
+        table = self.jde_terms_table()
+        return {r[0]: jde_meaning(r[1], table) for r in rows}
 
     def vendor_terms(self, key: str) -> str:
-        """The vendor master's payment terms for this vendor ('' if none)."""
+        """The vendor master's payment terms for this vendor ('' if none): a JD Edwards terms code as the words it
+        stands for once its terms table is loaded (``terms.jde_meaning``, D-266)."""
         if not key:
             return ""
         with self._conn() as conn:
             row = conn.execute("SELECT terms FROM vendors WHERE vendor_key = ?", (key,)).fetchone()
-        return row[0] if row else ""
+        return jde_meaning(row[0], self.jde_terms_table()) if row and row[0] else ""
+
+    def jde_terms_table(self) -> dict[str, dict[str, Any]]:
+        """JD Edwards' payment terms table as loaded on JD Edwards files ({} when none is)."""
+        return jde_table_of(self.get_setting(JDE_TERMS_SETTING))
 
     def vendor_invoices(self, key: str, shared: bool = False) -> list[dict[str, Any]]:
         """This vendor's invoices (newest first) with the GST/HST number and bank account each one carried: the vendor

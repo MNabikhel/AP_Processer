@@ -594,3 +594,88 @@ def test_no_note_on_the_order_when_no_date_reads_two_ways(journal):
     assert not any("two ways" in note for note in _dated("25/03/2026", "2026-04-03").notes)
     assert not any("two ways" in note for note in _dated("03/25/2026", "03/04/2026").notes)
     assert journal.vouchers[0].gl_date == "2025-03-07" and not any("two ways" in note for note in journal.notes)
+
+
+# --- The account ledger as a table (F0911 in ReportsNow, D-266) -----------------------------------------------------
+
+FLAT_HEAD = ["Document Number", "Doc Type", "Doc Co", "G/L Date", "Line Number", "Account Number",
+             "Account Description", "Amount", "Explanation", "Remark", "Supplier Number", "Supplier Name"]  # fmt: skip
+
+
+def flat(*rows, head=FLAT_HEAD) -> bytes:
+    return jr.sheet_csv([["G/L lines of vouchers"], head, *rows])
+
+
+def gl(document, account, amount, remark="", supplier="41001", company=COMPANY, date="2026-03-04", line=1.0):
+    return [document, "PV", company, date, line, account, "", amount, "NORTHERN COURIER", remark, supplier,
+            "NORTHERN COURIER LTD"]  # fmt: skip
+
+
+def test_the_account_ledger_as_a_table_is_read_a_voucher_a_document_with_or_without_its_payable_lines():
+    """A row a G/L line, one signed amount; the lines of one document (in any order) are one voucher. Without the
+    payable lines (left out by the export) a voucher is complete, the supplier owed the sum of its lines; with
+    them, the payable lines are told by their object as in the report."""
+    rows = [
+        gl(5001, f"{MAIN}.7410", 100.0, "COURIER MARCH"),
+        gl(5002, f"{FLOOR}.7630", 800.0, "LEGAL Q1"),
+        gl(5001, f"{MAIN}.{GST}", 5.0, line=2.0),
+        gl(5001, f"{MAIN}.7200.01", 20.0, "PAPER", line=3.0),
+    ]
+    data = flat(*rows)
+    assert jr.is_gl_lines(data) and not jr.looks_like_journal(data)
+    read = jr.read_journal(data, payable_objects=OBJECTS, tax_objects=(GST,))
+    assert read.flat and [(v.row, v.gross, v.tax, v.balanced, v.payable_left_out) for v in read.vouchers] == [
+        (3, 125.0, 5.0, True, True), (4, 800.0, 0.0, True, True)]  # fmt: skip
+    assert [(c.line.account, c.line.remark, c.supplier_number) for c in jr.coding_lines(read)] == [
+        (f"{MAIN}.7410", "COURIER MARCH", "41001"), (f"{MAIN}.7200.01", "PAPER", "41001"),
+        (f"{FLOOR}.7630", "LEGAL Q1", "41001")]  # fmt: skip
+    assert any("2 vouchers with no payable line" in note for note in read.notes)
+    assert jr.payable_left_out(read)
+    whole = jr.read_journal(flat(*rows, gl(5001, f"{MAIN}.{TRADE}", -125.0), gl(5002, f"{MAIN}.{TRADE}", -800.0)),
+                            payable_objects=OBJECTS, tax_objects=(GST,))  # fmt: skip
+    assert [(v.gross, v.balanced, v.payable_left_out) for v in whole.vouchers] == [(125.0, True, False),
+                                                                                   (800.0, True, False)]  # fmt: skip
+    assert not jr.payable_left_out(whole)
+
+
+ACCOUNT_PARTS = [
+    ("Business Unit", "Object Account", "Subsidiary"),
+    ("Cost Center", "Obj Acct", "Sub"),
+    ("Business Unit", "Obj Acct", "Sub"),
+]
+
+
+@pytest.mark.parametrize("parts", ACCOUNT_PARTS)
+def test_the_account_may_be_its_business_unit_object_and_subsidiary(parts):
+    """Without an account number, or with one in another format (a short account ID), the account is the line's
+    business unit, object and subsidiary, by either of their titles."""
+    head = [*FLAT_HEAD[:5], "Account Number", *parts, *FLAT_HEAD[6:]]
+    row = gl(5001, "*00123456", 42.5, "TONER")
+    row = [*row[:6], f"  {MAIN}", "7200", "01", *row[6:]]
+    read = jr.read_journal(flat(row, head=head), payable_objects=OBJECTS, tax_objects=())
+    assert [line.account for v in read.vouchers for line in v.lines] == [f"{MAIN}.7200.01"]
+    without = [h for h in head if h != "Account Number"]
+    read = jr.read_journal(flat(row[:5] + row[6:], head=without), payable_objects=OBJECTS, tax_objects=())
+    assert [line.account for v in read.vouchers for line in v.lines] == [f"{MAIN}.7200.01"]
+
+
+def test_every_companys_vouchers_are_kept_and_counted_by_company():
+    rows = [
+        gl(5001, f"{MAIN}.7410", 10.0),
+        gl(5001, f"{MAIN}.7410", 20.0, company="06130"),
+        gl(5003, f"{MAIN}.7410", 5),
+    ]
+    read = jr.read_journal(flat(*rows), payable_objects=OBJECTS, tax_objects=())
+    assert [(v.company, v.gross) for v in read.vouchers] == [(COMPANY, 10.0), ("06130", 20.0), (COMPANY, 5.0)]
+    assert "Vouchers by company: 06120 2, 06130 1." in read.notes
+
+
+def test_the_tax_object_is_worked_out_of_a_table_without_its_payable_lines():
+    rows = []
+    for n in range(8):
+        rows += [
+            gl(6000 + n, f"{MAIN}.7410", 100.0 + 20 * n, line=1.0),
+            gl(6000 + n, f"{MAIN}.{GST}", 5.0 + n, line=2.0),
+        ]
+    payable, tax, why = jr.suggest_objects(flat(*rows))
+    assert payable.trade == () and tax == (GST,) and why[0].startswith("Trade payable: none is needed")

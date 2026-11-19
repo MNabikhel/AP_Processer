@@ -104,16 +104,28 @@ folder (`C:\Users\<you>\APCoder`) is never touched.
 
 ## 3. Load your JD Edwards files (once, about 15 minutes)
 
-**Setup → JD Edwards files** takes five exports, each exactly as JD Edwards gives it: no column to rename, no row to
-delete. The top of the page (*What is loaded*) ticks off what is loaded.
+**Setup → JD Edwards files** takes five exports, and three more if you have them, each exactly as JD Edwards gives it:
+no column to rename, no row to delete. *What is loaded* ticks off what is loaded.
+
+**All in one workbook.** If you query JD Edwards' tables in ReportsNow with the build sheet, put every report in one
+Excel workbook, a sheet each (the sheet names do not matter), and drop it on **All your JD Edwards reports in one
+workbook** at the top of the page. Each sheet is told by its column names (the build sheet's titles, or JD Edwards'
+field names such as MCU, GMMCU or F0901.GMMCU) and shown first: the report it is, its rows (and how many of each
+company), the columns found and any missing. A sheet that is none of the reports is listed and left alone; two
+sheets of the chart (or of the business units) are both left out, said. A ledger or past coding split into several
+sheets (by company or year) loads as one, an overlap counted once. **Load all** loads them in the order below; each
+card's own upload stays for one file at a time.
 
 | # | File | What it gives AP Coder | From JD Edwards |
 |---|---|---|---|
 | 1 | Chart of accounts (Excel) | every account string a line may be coded to, and which can be posted to | account master |
 | 2 | Business units (Excel) | their names, and which are closed | business unit master |
 | 3 | Suppliers (Excel): two exports, loaded one after the other in either order | the supplier master's grid: supplier numbers, names, payment holds; the vendor information list: each supplier's tax ID, currency, payment terms, address and e-mail | supplier master; vendor information list |
-| 4 | Past invoice coding (CSV) | what each supplier's lines were coded to, and their remarks, of any period (the more history, the better the suggestions) | the Transaction Journal, saved as CSV |
-| 5 | Invoices already in JD Edwards: the voucher list (Excel) | the duplicate check, and the voucher and batch numbers | supplier ledger inquiry |
+| 4 | Past invoice coding (CSV, or Excel) | what each supplier's lines were coded to, and their remarks, of any period (the more history, the better the suggestions); several files add up | the Transaction Journal, saved as CSV; or the G/L lines of the vouchers (F0911) from ReportsNow |
+| 5 | Invoices already in JD Edwards: the voucher list (Excel) | the duplicate check, and the voucher and batch numbers; several files add up | supplier ledger inquiry, or F0411 from ReportsNow |
+| 6 | Open purchase order lines (Excel) | the lines an invoice quoting a PO is matched to | Work With Order Details, or F4311 from ReportsNow |
+| 7 | Payment terms (optional) | what each supplier's terms code means (N: Net 30), for the due date | F0014 from ReportsNow |
+| 8 | Tax areas (optional) | JD Edwards' tax areas and rates, compared with the ones Settings gives each province | F4008 from ReportsNow |
 
 Each card says which report to export and how (**How to get it**), the columns it needs and the optional ones (the
 other names each is read by under *What each column is*), and has **Download a blank template** with those column
@@ -124,7 +136,8 @@ is there; a file without one is not loaded (the card names the missing column), 
 card says which. A newer chart, business unit list or voucher list replaces the older one, a newer supplier list adds
 the new suppliers and updates the others, and what you changed by hand is kept (below).
 
-Box 3 takes both supplier exports and tells them apart by their column names. Each row goes to the supplier of its
+Box 3 takes both supplier exports and tells them apart by their column names; the build sheet's suppliers report (the
+supplier master with its address book) is both at once. Each row goes to the supplier of its
 number, so loading one never removes what only the other gives. The vendor information list lists the suppliers of
 every company (about 20,000): it is read in a few seconds, its last row of totals is left out, and the summary says
 how many tax IDs are business numbers. A tax ID that is a word (CHARITABLE, GOVERNMENT) or another kind of number

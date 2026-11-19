@@ -396,3 +396,33 @@ def test_a_journal_saved_again_through_excel_is_refused_in_plain_words(tmp_path,
         assert words.lower() in out.lower() and _store(tmp_path).journal_files() == []
     code, out, _ = _run(tmp_path, capsys, "import", _file(tmp_path, truth))
     assert code == 0 and out.splitlines()[-1].startswith("Loaded R09321.csv")
+
+
+def _gl_lines(tmp_path, truth, name):
+    """The vouchers' G/L lines as the build sheet's query exports them, saved as CSV (D-266): no payable lines."""
+    from ap_coder.erp import journal as jr
+
+    rows = [[cell[0] if isinstance(cell, tuple) else cell for cell in row]
+            for row in jde_exports._master_gl_lines(truth, 1) + jde_exports._master_gl_lines(truth, 2)]  # fmt: skip
+    path = tmp_path / name
+    path.write_bytes(jr.sheet_csv([jde_exports._titles("gl_lines"), *rows]))
+    return path
+
+
+def test_the_vouchers_gl_lines_as_a_table_are_loaded_and_split_files_add_up(tmp_path, capsys, truth):
+    """D-266: the account ledger queried in ReportsNow, without the payable lines, is learned from as the
+    Transaction Journal is (its GST lines told by their share); a second file of the same vouchers adds nothing
+    twice, and one of other vouchers adds them."""
+    first = _gl_lines(tmp_path, replace(truth, vouchers=truth.vouchers[:80]), "2024 a.csv")
+    code, out, err = _run(tmp_path, capsys, "import", first)
+    assert code == 0 and err == "", out
+    lines = out.splitlines()
+    assert lines[0] == "2024 a.csv: the G/L lines of JD Edwards' vouchers (F0911)."
+    assert "the export left out the payable lines JD Edwards adds" in out and "Vouchers by company: 00210 80." in out
+    assert f"The tax object: {truth.company.gst_object} (worked out from this file)." in out
+    learned = sum(1 for v in truth.vouchers[:80] if not v.oddity for _line in v.lines)
+    assert _store(tmp_path).journal_files()[0]["learned_lines"] >= learned
+    second = _gl_lines(tmp_path, replace(truth, vouchers=truth.vouchers[40:]), "2024 b.csv")
+    code, out, _ = _run(tmp_path, capsys, "import", second)
+    assert code == 0 and "40 vouchers of this file are there already" in out
+    assert len(_store(tmp_path).journal_vouchers()) == 120

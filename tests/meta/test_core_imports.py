@@ -48,6 +48,8 @@ KEPT = {
         "in its own transaction (line_tax.tax_vote, D-70)",
     ("ap_coder/core/store/invoices.py", "ap_coder.coding.terms"): "the default payment terms, as the due date's "
         "parser has them (terms.DEFAULT_TERMS_DAYS)",
+    ("ap_coder/core/store/vendors.py", "ap_coder.coding.terms"): "a supplier's JD Edwards terms code is given as the "
+    "words its terms table says (D-266), which every due date is worked out from, wherever the terms are read",
     ("ap_coder/core/store/lessons.py", "ap_coder.coding.line_tax"): "the corrections listed say a tax code in its own "
         "words (line_tax.code_label)",
     ("ap_coder/core/store/lessons.py", "ap_coder.coding.validation"): "the duplicates checked again are said and "

@@ -6480,3 +6480,45 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - *Not chosen:* the PST in the amount matched (JD Edwards would work the GST out of it); a tax area guessed from
     another province's for a GST-only line (the rates agree, the reporting would not); the Z-files' match rows
     (F0411Z1T, unchanged).
+- **D-266** · **The pilot tester's ReportsNow reports, titled by the build sheet, load as they come, one by one or all
+  in one workbook.** The tester now queries JD Edwards' tables directly (F0901, F0006, F0101 with F0401, F0116 and
+  F01151, F0411, F0911, F4311, F0014, F4008) by a build sheet that names, per report, each field and the column title
+  to give it.
+  - **Titles and field names.** Each reader's own alias table takes the build sheet's titles, JD Edwards' field names
+    with or without the table prefix (MCU, GMMCU, F0901.GMMCU: `headers.jde_names`) and the data dictionary's names.
+    `import_specs.recognise` tells each report by them too (`JDE_MARKS`: the fields with their table's prefix, and the
+    data items no other report has), never one for another: a test per report, by its titles, its fields and its
+    bare items, and the screen exports the tester sent before are told as before. "Document Type" is no name of the
+    document type (the ledger grid's column of the type's words beside "Doc Type").
+  - **Past coding as a table** (F0911, `journal.FLAT_ALIASES`): a voucher is the lines of one document (company,
+    type, number); one signed amount; the account its "Account Number" or its business unit, object and subsidiary
+    ("Business Unit"/"Cost Center", "Object Account"/"Obj Acct", "Subsidiary"/"Sub"). The build sheet asks to leave
+    out the payable lines: a voucher with none, whose lines do not add up to nothing, is read as complete, the
+    supplier owed the sum of its lines (`Voucher.payable_left_out`), and no trade payable object is needed; its tax
+    lines are told by the tax setup or by their share, as before. It feeds the same tables and suggestions. A
+    workbook's sheet is read as its CSV (`journal.sheet_csv`). *Not chosen:* a document number in the voucher's
+    identity (the R09321 report has none; a voucher in a journal and in a table is the same voucher only when its
+    lines are).
+  - **The suppliers report is both lists** (`vendor_info.in_master`, `with_master`): the master's number, name and
+    hold, and the vendor information list's tax ID, currency, terms code, address and e-mail, in one load. The GST/HST
+    number only from a tax ID that reads as one; the additional tax ID gives it when the tax ID does not, or a QST
+    number.
+  - **Several files add up.** A ledger or past coding split by company or year: each file adds, an overlap counted
+    once (the vouchers by their key; a pay item listed twice by its document, pay item and Pay Ext; the journal by
+    voucher identity). Every company's rows are kept with their company and counted by company in the summary; none
+    is left out (multi-company is a later change).
+  - **PO lines** (F4311): an account number in another format (a short ID after "*", a third number after "/") gives
+    way to the line's cost center, object and subsidiary; a foreign order's amounts are read in its currency with
+    the company's as its base (a query has no "Base Curr"). Card 6 on JD Edwards files, so Simple screens reach it;
+  like cards 7 and 8 it is "Optional" in the checklist (a company may not use POs), never the next to load.
+  - **Payment terms** (F0014, optional, card 7): kept whole in a setting; a supplier's code counts as its discount
+    and net days (`terms.jde_meaning` in `Store.vendor_terms`), so its invoice is due as JD Edwards makes it. A
+    discount kept as a fraction (.02) is read as 2%. *Not done:* F0014's prox, split and fixed-date rules.
+  - **Tax areas** (F4008, optional, card 8): the areas in force kept; each area Settings gives a province that
+    JD Edwards does not have, or whose rates add up to another rate than the province's taxes, is said.
+  - **One workbook** (`web/pages/jde_workbook.py`): every sheet read a row at a time within the workbook reader's
+    bounds (the 50 MB upload, 250 MB a sheet), its report told by its columns (header under title rows), shown before
+    anything is kept (report, rows, by company, columns found and missing); a sheet that is none is listed, never
+    guessed; two sheets of a report replaced whole (chart, business units, terms, tax areas) both left out, said.
+    "Load all" loads in order: chart, business units, terms, tax areas, suppliers, ledger, past coding, PO lines, each
+    through its card's loader; one that fails is said and the rest load.

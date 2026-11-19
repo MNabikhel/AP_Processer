@@ -222,6 +222,8 @@ RULES: dict[tuple[str, str], str] = {
         "POST /jde-files/suppliers/upload", "POST /jde-files/suppliers/load",
         "POST /jde-files/journal/upload", "POST /jde-files/journal/load", "POST /jde-files/journal/forget",
         "POST /jde-files/vouchers/upload", "POST /jde-files/vouchers/load",
+        "POST /jde-files/{card}/upload-table", "POST /jde-files/{card}/load-table",  # PO lines, terms, tax areas
+        "POST /jde-files/workbook/upload", "POST /jde-files/workbook/load",  # every report in one workbook (D-266)
         "POST /jde-files/meals", "POST /jde-files/company",
         "POST /jde-files/loaded/{what}/edit",  # a row of the chart, the business units or the suppliers, by hand
     ),

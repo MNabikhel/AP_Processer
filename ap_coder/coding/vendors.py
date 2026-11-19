@@ -42,7 +42,7 @@ import re
 import statistics
 from typing import TYPE_CHECKING, Any
 
-from ..core.headers import header_key, match_columns
+from ..core.headers import header_key, jde_names, match_columns
 from ..core.keys import ACCOUNT_LABEL as _ACCOUNT_LABEL
 from ..core.keys import (  # noqa: F401  (the names this module had: imported from here too)
     ADDED_HERE,
@@ -447,23 +447,27 @@ def vendor_findings(
 
 MASTER_ALIASES: dict[str, tuple[str, ...]] = {
     "vendor_name": ("vendorname", "vendor", "name", "supplier", "suppliername", "fournisseur", "legalname",
-                    "alphaname"),  # "Alpha Name" in JD Edwards' address book
+                    "alphaname",  # "Alpha Name" in JD Edwards' address book; its field (ReportsNow, D-266)
+                    "namealpha", *jde_names("F0101", "AB", "ALPH")),
     "erp_id": ("vendorid", "vendornumber", "vendorno", "vendorcode", "supplierid", "suppliernumber", "id",
                "number", "no", "code", "accountnumber", "suppliercode", "numero",  # "No." in Business Central
-               "addressnumber", "an8", "suppliernumberan8"),  # JD Edwards' supplier number (B-929)
+               "addressnumber", "an8", "suppliernumberan8",  # JD Edwards' supplier number (B-929)
+               *jde_names("F0101", "AB", "AN8")),
     "gst": ("gsthstnumber", "gstnumber", "hstnumber", "gsthst", "gst", "businessnumber", "bn", "taxnumber",
             "tps", "numerotps", "vatregistrationno", "taxregistrationno", "gstregistrationno",
             "gsthstregistrationno",
-            "taxid", "taxidnumber"),  # "Tax ID" in JD Edwards' address book (B-1029)
+            "taxid", "taxidnumber",  # "Tax ID" in JD Edwards' address book (B-1029)
+            *jde_names("F0101", "AB", "TAX")[1:]),  # (not "TAX" alone: another system's tax code)
     "qst": ("qstnumber", "qst", "tvq", "numerotvq", "qstregistrationno", "qstregistrationnumber"),
     "pst": ("pstnumber", "pst", "rstnumber", "rst", "tvp", "pstregistrationno", "pstregistrationnumber",
             "provincialtaxnumber"),
-    "province": ("province", "prov", "state", "region", "provincestate"),
-    "terms": ("paymentterms", "terms", "termes", "conditions", "paymenttermscode", "termscode"),
+    "province": ("province", "prov", "state", "region", "provincestate", *jde_names("F0116", "AL", "ADDS")),
+    "terms": ("paymentterms", "terms", "termes", "conditions", "paymenttermscode", "termscode", "paymenttermsap",
+              *jde_names("F0401", "A6", "TRAP")),
     "status": ("status", "active", "blocked", "hold", "statut"),
     # JD Edwards' hold payment code (its supplier master's export): read as the sync reads it, kept apart from the
     # status (B-2082). Its "Individual Tax ID" is free text and "Long Address" mostly an address: neither is guessed.
-    "hold": ("holdpaymentcode", "holdpayment", "paymentholdcode", "holdcode"),
+    "hold": ("holdpaymentcode", "holdpayment", "paymentholdcode", "holdcode", *jde_names("F0401", "A6", "HDPY")),
     "default_gl": ("defaultgl", "glaccount", "gl", "glcode", "expenseaccount", "account", "defaultaccount"),
 }  # fmt: skip
 _GST_HST_NUMBER = re.compile(r"\d{9}rt\d{4}")  # a Canadian GST/HST number, as ``norm_tax_number`` writes it

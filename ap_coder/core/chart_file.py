@@ -134,17 +134,17 @@ def _columns(rows: Iterator[tuple[Any, ...]], columns_of: Callable[[list[str], s
 
 
 def read_export(source: str | Path | bytes, columns_of: Callable[[list[str], str], dict[str, str]],
-                about: dict[str, Any] | None = None) -> Iterator[dict[str, Any]]:  # fmt: skip
+                about: dict[str, Any] | None = None, sheet: str = "") -> Iterator[dict[str, Any]]:  # fmt: skip
     """The first sheet's rows, one at a time, each as {header: cell}, of the columns the import needs only: those
     ``columns_of`` finds among the headers (``chart.chart_columns`` or ``chart.bu_columns``). ``source``: the file's
     path, or its bytes. ``about``: a dict told, before the first row is given, the row the column names are on
-    (``header_row``) and the columns found (``found``). ``ChartError``, in plain words that name the file, when it
-    is not that export or cannot be read; a file open in another program is the caller's to say
-    (``PermissionError``)."""
+    (``header_row``) and the columns found (``found``); ``sheet``: the sheet of that name (a workbook of several
+    reports, D-266). ``ChartError``, in plain words that name the file, when it is not that export or cannot be read;
+    a file open in another program is the caller's to say (``PermissionError``)."""
     name = chart.FILE if isinstance(source, bytes) else Path(source).name
-    with _first_sheet(source, name) as sheet:
-        rows = sheet.iter_rows(values_only=True)
-        kept = _columns(rows, columns_of, name, sheet.title, {} if about is None else about)
+    with _first_sheet(source, name, sheet) as opened:
+        rows = opened.iter_rows(values_only=True)
+        kept = _columns(rows, columns_of, name, opened.title, {} if about is None else about)
         for row in rows:
             yield {column: row[at] if at < len(row) else None for at, column in kept}
 
@@ -204,13 +204,13 @@ def _first_sheet(source: str | Path | bytes, name: str, title: str = "") -> Iter
 
 def _read(source: str | Path | bytes, columns_of: Callable[[list[str], str], dict[str, str]],
           rows_of: Callable[..., chart.Rows], wants: Iterable[str] = (),
-          anyway: bool = True) -> chart.Rows:  # fmt: skip
+          anyway: bool = True, sheet: str = "") -> chart.Rows:  # fmt: skip
     """The export's clean rows; what the rows' own rules refuse (``chart.chart_rows``) is said with the file's
     name. An export without a column of ``wants`` is refused before a row is kept (``chart.ColumnsMissing``),
     unless ``anyway``: its rows then say which columns they came without (``Rows.without``)."""
     name = chart.FILE if isinstance(source, bytes) else Path(source).name
     about: dict[str, Any] = {}
-    records = read_export(source, columns_of, about)
+    records = read_export(source, columns_of, about, sheet)
     try:
         first = next(records, None)  # (the column names are read with the first row)
         without = tuple(field for field in wants if field not in about["found"])
@@ -228,12 +228,13 @@ def _read(source: str | Path | bytes, columns_of: Callable[[list[str], str], dic
         records.close()
 
 
-def read_chart(source: str | Path | bytes, anyway: bool = False) -> chart.Rows:
+def read_chart(source: str | Path | bytes, anyway: bool = False, sheet: str = "") -> chart.Rows:
     """The account master's export as clean rows (``chart.chart_rows``). ``chart.ColumnsMissing`` for an export
-    without its posting edit or subsidiary column, unless ``anyway`` (``Rows.without`` then names them)."""
-    return _read(source, chart.chart_columns, chart.chart_rows, chart.CHART_WANTS, anyway)
+    without its posting edit or subsidiary column, unless ``anyway`` (``Rows.without`` then names them). ``sheet``:
+    the sheet of that name (else the first)."""
+    return _read(source, chart.chart_columns, chart.chart_rows, chart.CHART_WANTS, anyway, sheet)
 
 
-def read_business_units(source: str | Path | bytes) -> chart.Rows:
-    """The business unit master's export as clean rows (``chart.bu_rows``)."""
-    return _read(source, chart.bu_columns, chart.bu_rows)
+def read_business_units(source: str | Path | bytes, sheet: str = "") -> chart.Rows:
+    """The business unit master's export as clean rows (``chart.bu_rows``); ``sheet`` as ``read_chart``'s."""
+    return _read(source, chart.bu_columns, chart.bu_rows, sheet=sheet)

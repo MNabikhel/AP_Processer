@@ -22,7 +22,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from .headers import match_columns
+from .headers import jde_names, match_columns
 
 SEPARATOR = "."
 
@@ -160,22 +160,24 @@ def _never_offered(patterns: Iterable[str], business_unit: str, code: str) -> st
 
 # --- The two exports' rows ---------------------------------------------------------------------------------------
 
-# The columns of the account master's export (JD Edwards' own headers first), for ``headers.match_columns``.
+# The columns of the account master's export (JD Edwards' own headers first), for ``headers.match_columns``; then the
+# fields of its table, F0901, as a query tool titles them (ReportsNow, D-266: "MCU", "GMMCU", "F0901.GMMCU").
 CHART_ALIASES: dict[str, tuple[str, ...]] = {
-    "business_unit": ("Business Unit", "BU", "Cost Center", "MCU"),
-    "object": ("Object Account", "Object", "Obj Acct", "OBJ"),
-    "subsidiary": ("Subsidiary", "Sub"),
-    "description": ("Account Description", "Description", "DL01"),
-    "lod": ("L D", "LOD", "Level of Detail", "LDA"),
-    "posting_edit": ("P E", "Posting Edit", "Posting Edit Code", "PEC"),
+    "business_unit": ("Business Unit", "BU", "Cost Center", *jde_names("F0901", "GM", "MCU")),
+    "object": ("Object Account", "Object", "Obj Acct", *jde_names("F0901", "GM", "OBJ")),
+    "subsidiary": ("Subsidiary", "Sub", *jde_names("F0901", "GM", "SUB")),
+    "description": ("Account Description", "Description", *jde_names("F0901", "GM", "DL01")),
+    "lod": ("L D", "LOD", "Level of Detail", "Account Level of Detail", *jde_names("F0901", "GM", "LDA")),
+    "posting_edit": ("P E", "Posting Edit", "Posting Edit Code", *jde_names("F0901", "GM", "PEC")),
 }
-# The columns of the business unit master's export.
+# The columns of the business unit master's export, then its table's (F0006).
 BU_ALIASES: dict[str, tuple[str, ...]] = {
-    "code": ("Job Number", "Business Unit", "BU", "Cost Center", "MCU"),
-    "name": ("Job Name", "Business Unit Description", "Description", "Name", "DL01"),
-    "company": ("Co", "Company"),
-    "type": ("BU Ty", "BU Type", "Business Unit Type"),
-    "status": ("Job Sts", "Job Status", "Status"),
+    "code": ("Job Number", "Business Unit", "BU", "Cost Center", *jde_names("F0006", "MC", "MCU")),
+    "name": ("Job Name", "Business Unit Description", "Description", "Name", *jde_names("F0006", "MC", "DL01")),
+    "company": ("Co", "Company", *jde_names("F0006", "MC", "CO")),
+    "type": ("BU Ty", "BU Type", "Business Unit Type", *jde_names("F0006", "MC", "STYL")),
+    # (its posting edit code, blank when it takes postings, read as its status: ``ACTIVE`` has blank)
+    "status": ("Job Sts", "Job Status", "Status", "Posting Edit - Business Unit", *jde_names("F0006", "MC", "PECC")),
 }
 CHART_NEEDS = ("business_unit", "object")  # the columns a chart cannot be read without
 BU_NEEDS = ("code",)

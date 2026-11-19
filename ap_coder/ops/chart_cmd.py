@@ -172,13 +172,14 @@ def settings_lines(store: Store) -> list[str]:
 
 def import_files(store: Store, chart_source: str | Path | bytes | None = None,
                  units_source: str | Path | bytes | None = None, actor: str | None = None,
-                 anyway: bool = False) -> list[str]:  # fmt: skip
-    """Import the business unit master and the chart of accounts (either or both; a path, or a file's bytes) and say
-    what was done, a line each. ``chart.ChartError`` for a file that cannot be read (``chart.ColumnsMissing`` for a
-    chart without its posting edit or subsidiary column, unless ``anyway``) and ``ValueError`` for one that would
-    leave no account to code to: nothing is changed then, of either file."""
-    units = chart_file.read_business_units(units_source) if units_source is not None else None
-    rows = chart_file.read_chart(chart_source, anyway) if chart_source is not None else None
+                 anyway: bool = False, chart_sheet: str = "", units_sheet: str = "") -> list[str]:  # fmt: skip
+    """Import the business unit master and the chart of accounts (either or both; a path, or a file's bytes; each
+    from its sheet of that name, ``chart_sheet`` and ``units_sheet``, else its first) and say what was done, a line
+    each. ``chart.ChartError`` for a file that cannot be read (``chart.ColumnsMissing`` for a chart without its
+    posting edit or subsidiary column, unless ``anyway``) and ``ValueError`` for one that would leave no account to
+    code to: nothing is changed then, of either file."""
+    units = chart_file.read_business_units(units_source, units_sheet) if units_source is not None else None
+    rows = chart_file.read_chart(chart_source, anyway, chart_sheet) if chart_source is not None else None
     said: list[str] = []
     results: list[dict[str, Any]] = []
     with store.transaction():

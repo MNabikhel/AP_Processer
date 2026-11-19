@@ -13,9 +13,10 @@ import pytest
 
 from ap_coder.ai import history
 from ap_coder.bench import jde_exports as made
-from ap_coder.coding import banks, po, vendor_info
+from ap_coder.coding import banks, po, terms, vendor_info
 from ap_coder.coding.vendors import master_columns, master_rows
 from ap_coder.core import chart, chart_file
+from ap_coder.core.headers import match_columns
 from ap_coder.erp import import_specs as specs
 from ap_coder.erp import jde_accounts, jde_settings, jde_worksheet, journal, registers, statements
 from ap_coder.erp.import_specs import SPECS
@@ -45,6 +46,7 @@ VALUES = {
     "debit": "10.00", "credit": "", "document": "1001", "pay_item": "001", "an8": "410001", "gross": "10.00",
     "invoice_number": "INV-1", "total": "10.00", "po_number": "PO1", "quantity": "1", "number": "INV-1",
     "amount": "10.00", "gl_code": "6010", "currency": "CAD", "id": "company", "answer": "00210",
+    "supplier": "410001", "net_days": "30", "area": "ON-HST", "rate1": "13",
 }  # fmt: skip
 
 
@@ -67,6 +69,23 @@ def _journal_file(spec, fields) -> bytes:
     text = io.StringIO()
     csv.writer(text).writerows([["Transaction Journal"], head, line])
     return text.getvalue().encode("utf-8")
+
+
+def _gl_lines_take(spec, fields) -> bool:
+    """The account ledger as a table (D-266): read as one, with a voucher line."""
+    data = journal.sheet_csv([[spec.column(f).header for f in fields], _row(spec, fields)])
+    if not journal.is_gl_lines(data):
+        return False
+    read = journal.read_journal(data, payable_objects=journal.PayableObjects(()), tax_objects=())
+    return bool(read.vouchers)
+
+
+def _table_takes(aliases, reader):
+    def takes(spec, fields) -> bool:
+        headers = [spec.column(f).header for f in fields]
+        return bool(reader(_records(spec, fields), match_columns(headers, aliases))[0])
+
+    return takes
 
 
 def _chart_takes(spec, fields) -> bool:
@@ -120,6 +139,9 @@ READERS = {
     "vendor_info": lambda s, f: vendor_info.read(_xlsx([[s.column(x).header for x in f], _row(s, f)]), "v.xlsx")
     is not None,
     "journal": lambda s, f: journal.looks_like_journal(_journal_file(s, f)),
+    "gl_lines": _gl_lines_take,
+    "payment_terms": _table_takes(terms.JDE_TERMS_ALIASES, terms.jde_table),
+    "tax_areas": _table_takes(jde_settings.TAX_AREA_ALIASES, jde_settings.tax_area_table),
     "vouchers": lambda s, f: bool(registers.voucher_columns([s.column(x).header for x in f])),
     "gl_accounts": _accounts_take,
     "cost_centers": _accounts_take,
@@ -316,3 +338,46 @@ def test_jd_edwards_reports_are_told_by_their_own_headers_and_other_lists_are_no
                     ["Document Number", "Supplier Number", "Gross Amount", "Invoice Number"]):  # fmt: skip
         assert specs.recognise(headers) is None, headers
     assert specs.recognise(["Alpha Name", "Address Number"]) == "supplier_master"  # (every column it needs)
+
+
+# --- The build sheet's reports, queried in ReportsNow (D-266) --------------------------------------------------------
+
+TABLES = {"GM": "F0901", "MC": "F0006", "AB": "F0101", "A6": "F0401", "AL": "F0116", "EA": "F01151", "RP": "F0411",
+          "GL": "F0911", "PD": "F4311", "PN": "F0014", "TA": "F4008"}  # fmt: skip
+
+
+@pytest.mark.parametrize("key", list(made.BUILD_SHEET))
+def test_each_report_of_the_build_sheet_is_told_by_its_titles_and_its_fields(key):
+    """Each report titled as the build sheet says, or by its JD Edwards fields (with their table's prefix, alone, or
+    with the table too), is that report with every column it needs, never another."""
+    fields = [field for field, _title in made.BUILD_SHEET[key]]
+    for headers in ([title for _field, title in made.BUILD_SHEET[key]], fields, [f[2:] for f in fields],
+                    [f"{TABLES[f[:2]]}.{f}" for f in fields]):  # fmt: skip
+        assert specs.workbook_report(headers) == key, headers
+        assert specs.check(SPECS[key], headers).ok, headers
+        if key != "gl_lines":  # (its titles are no grid's: told on the JD Edwards files page only)
+            assert specs.recognise(headers) == (None if key == "purchase_orders" else key), headers
+
+
+def test_the_data_dictionarys_names_are_read_too():
+    """ReportsNow's default titles are JD Edwards' data dictionary's descriptions."""
+    assert specs.workbook_report(["Business Unit", "Description", "Company", "Business Unit Type",
+                                  "Posting Edit - Business Unit"]) == "units"  # fmt: skip
+    assert specs.workbook_report(["Payment Terms Code", "Description - Payment Terms", "Discount %",
+                                  "Days - Net Days to Pay"]) == "payment_terms"  # fmt: skip
+    found = specs.check(SPECS["chart"], ["Business Unit", "Object Account", "Subsidiary", "Description",
+                                         "Account Level of Detail", "Posting Edit"]).found  # fmt: skip
+    assert set(found) == {"business_unit", "object", "subsidiary", "description", "lod", "posting_edit"}
+
+
+def test_the_screen_exports_are_still_told_apart(exports):
+    """The grids the pilot tester exports from JD Edwards' screens are the same reports as before, in the master
+    workbook too; the order details grid is the open PO lines."""
+    for name, key in ((made.CHART_FILE, "chart"), (made.UNITS_FILE, "units"), (made.SUPPLIERS_FILE, "supplier_master"),
+                      (made.VENDOR_INFO_FILE, "vendor_info"), (made.HEADERS_FILE, "vouchers"),
+                      ("voucher_split_gl_distribution.xlsx", "gl_distribution")):  # fmt: skip
+        assert specs.workbook_report(_sheet(exports / name)[0]) == key, name
+    assert specs.workbook_report(made.ORDER_DETAILS_HEADER) == "purchase_orders"
+    assert specs.workbook_report(made.OPEN_PO_HEADER) == "purchase_orders"
+    assert specs.workbook_report(["Vendor Name", "Vendor ID", "Tax ID"]) is None
+    assert specs.workbook_report(["Document Number", "Supplier Number", "Account Number", "Gross Amount"]) is None

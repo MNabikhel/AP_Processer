@@ -43,7 +43,7 @@ GROUPS = {
               "settings_changed", "rules_changed", "vendor_updated", "vendor_added", "vendors_deleted",
               "vendors_imported", "pos_imported", "po_status", "pos_deleted", "export_undone", "erp_register_imported",
               "files_moved", "file_found", "directory_preset_saved", "directory_preset_deleted", "jde_api_tested",
-              "jde_synced"],
+              "jde_synced", "jde_table_loaded"],
     "Learning": ["lessons_forgotten", "lesson_explained", "lesson_one_off", "lesson_retired", "lesson_restored",
                  "history_imported",
                  "journal_imported", "journal_forgotten",
