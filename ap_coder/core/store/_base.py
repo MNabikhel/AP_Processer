@@ -219,7 +219,7 @@ CREATE TABLE IF NOT EXISTS vendor_info (
     address2 TEXT NOT NULL DEFAULT '', address3 TEXT NOT NULL DEFAULT '', address4 TEXT NOT NULL DEFAULT '',
     city TEXT NOT NULL DEFAULT '', state TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT '',
     postal_code TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', business_unit TEXT NOT NULL DEFAULT '',
-    business_unit_name TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL);
+    business_unit_name TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL, tax_area TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS invoices_vendor ON invoices (vendor_key);
 CREATE TABLE IF NOT EXISTS export_batches (
     id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, actor TEXT, format TEXT NOT NULL,

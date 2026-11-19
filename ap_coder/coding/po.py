@@ -247,6 +247,13 @@ def open_lines(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [r for r in rows if r.get("status") != CLOSED or order_key_of(r) not in open_pos]
 
 
+def of_supplier(order: dict[str, Any], vendor: str, vendor_id: Any = "") -> bool:
+    """Whether a PO (``Store.orders_numbered``' row) is the supplier's: by its vendor key, or its supplier number."""
+    supplier = str(vendor_id or "").strip().lstrip("0")
+    return bool((vendor and order.get("vendor_key") == vendor)
+                or (supplier and str(order.get("supplier_number") or "").strip().lstrip("0") == supplier))  # fmt: skip
+
+
 def pick_order(
     orders: list[dict[str, Any]], vendor: str, vendor_id: Any = "", company: Any = ""
 ) -> dict[str, Any] | None:
@@ -256,9 +263,7 @@ def pick_order(
     never a guess."""
     if len(orders) <= 1:
         return orders[0] if orders else None
-    supplier = str(vendor_id or "").strip().lstrip("0")
-    mine = [o for o in orders if (vendor and o.get("vendor_key") == vendor)
-            or (supplier and str(o.get("supplier_number") or "").strip().lstrip("0") == supplier)]  # fmt: skip
+    mine = [o for o in orders if of_supplier(o, vendor, vendor_id)]
     if len(mine) > 1 and str(company or "").strip():
         mine = [o for o in mine if company_code(o.get("order_company")) == company_code(company)]
     return mine[0] if len(mine) == 1 else None

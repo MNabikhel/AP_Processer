@@ -152,9 +152,18 @@ def main(argv: list[str] | None = None) -> int:
     for name, sizes in QUICK.items():
         took = sizes["took"]
         parsers[name].add_argument("--quick", action="store_true", help=f"a small run to check a change ({took})")
-    from ap_coder.bench import adversarial, coding_journal, di_compare, jde_po_vouchers, load, seed, volume  # parts
+    from ap_coder.bench import (  # parts
+        adversarial,
+        coding_journal,
+        companies_speed,
+        di_compare,
+        jde_po_vouchers,
+        load,
+        seed,
+        volume,
+    )
 
-    for part in (load, seed, volume, coding_journal, di_compare, adversarial, jde_po_vouchers):
+    for part in (load, seed, volume, coding_journal, di_compare, adversarial, jde_po_vouchers, companies_speed):
         part.add_parser(sub)
     a = p.parse_args(argv)
     if a.cmd == "load":

@@ -17,9 +17,19 @@ from typing import Any
 from ..coding.line_tax import exempt_of, legacy_basis
 from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES
 from ..coding.terms import terms_key
+from ..core.schema import COMPANY_TAX
 from .jde_accounts import VendorLookup, account_for, ani, resolve_an8
 from .jde_formats import E1_YEARS, NO_DECIMAL_CURRENCIES, _date, _negative, _norm, _units
-from .jde_settings import AMOUNT_GROSS, PST_PROVINCES, JdeSettings, TaxArea, gl_date_of, period_problem
+from .jde_settings import (
+    AMOUNT_GROSS,
+    PST_PROVINCES,
+    JdeSettings,
+    TaxArea,
+    company_of,
+    domestic_of,
+    gl_date_of,
+    period_problem,
+)
 
 # The two reasons an invoice is held back for its supplier number: the Exports page links them to Settings → JD
 # Edwards E1 → Supplier address numbers (``an8_problem``).
@@ -164,7 +174,12 @@ def an8_problem(reason: str) -> bool:
 
 
 def _tax_area_code(final: dict[str, Any], settings: JdeSettings) -> tuple[list[dict[str, Any]], str, str, str]:
-    """The Canadian tax lines charged, the province of supply, and the JDE tax area and explanation code for it."""
+    """The Canadian tax lines charged, the province of supply, and the JDE tax area and explanation code for it. A
+    company not checked for Canadian tax (a US one, D-267): none charged, the tax area its PO line or its supplier
+    gives (``schema.COMPANY_TAX``), the exempt code (E1 works out no tax: the tax stays as charged)."""
+    other = final.get(COMPANY_TAX)
+    if isinstance(other, dict):
+        return [], "", str(other.get("tax_area") or "").strip(), settings.exempt_code.strip().upper()
     charged = [
         t for t in final.get("tax_lines") or []
         if t.get("tax_type") in CANADIAN_TAX_TYPES and abs(float(t.get("tax_amount") or 0)) > 0.004
@@ -476,11 +491,12 @@ def _check_header(v: _Voucher, final: dict[str, Any], settings: JdeSettings, an8
         elif v.gl_moved:
             v.gl_day = day
 
-    v.currency = _norm(final.get("currency")) or settings.domestic_currency.upper()
-    allowed = {_norm(c) for c in settings.currencies} | {_norm(settings.domestic_currency)}
+    home = domestic_of(final, settings)  # the company's own (D-267)
+    v.currency = _norm(final.get("currency")) or home
+    allowed = {_norm(c) for c in settings.currencies} | {_norm(settings.domestic_currency), home}
     if v.currency not in allowed:
         add(f"currency {v.currency} is not set up for JD Edwards (Settings → JD Edwards → currencies)", "JDE_CURRENCY")
-    v.foreign = v.currency != _norm(settings.domestic_currency)
+    v.foreign = v.currency != home
     v.decimals = NO_DECIMAL_CURRENCIES.get(v.currency, 2)
     return po
 
@@ -492,7 +508,14 @@ def _check_tax_area(v: _Voucher, final: dict[str, Any], settings: JdeSettings) -
     # With the tax coded to G/L accounts (D-93) there is no tax area: none of these is asked.
     charged, v.province, v.tax_area, v.tax_code = _tax_area_code(final, settings)
     on_gl = settings.tax_on_gl
-    if on_gl:
+    if isinstance(final.get(COMPANY_TAX), dict):  # a US company's (D-267): its area from the PO line or the supplier
+        if not v.tax_area:
+            add(
+                f"no tax area for company {company_of(final, settings)}'s voucher: neither its PO line nor the "
+                "supplier's default (JD Edwards' supplier master, Tax Rate/Area) gives one",
+                "JDE_TAX_AREA",
+            )
+    elif on_gl:
         pass
     elif charged and v.province in ("", OUTSIDE_CANADA):
         add("province of supply unknown: no JDE tax area for the Canadian tax charged", "JDE_TAX_AREA")

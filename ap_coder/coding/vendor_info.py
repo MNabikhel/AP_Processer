@@ -36,7 +36,7 @@ COLUMNS = {
     "erp_id": "internalsuppliernumber", "vendor_name": "companyname", "address1": "addressline1",
     "address2": "addressline2", "address3": "addressline3", "address4": "addressline4", "city": "citycty1",
     "state": "state", "country": "country", "postal_code": "postalcode", "tax_id": "taxid", "currency": "curcod",
-    "email": "jdeemailaddress", "terms": "paymenttermsap", "business_unit": "businessunit",
+    "email": "jdeemailaddress", "terms": "paymenttermsap", "business_unit": "businessunit", "tax_area": "taxratearea",
 }  # fmt: skip
 SECOND = {"business_unit_name": "business_unit"}
 NEEDS = ("erp_id", "vendor_name", "tax_id")  # the columns that make a file this list
@@ -61,6 +61,8 @@ IN_MASTER = {
     "country": ("country", *jde_names("F0116", "AL", "CTR")),
     "postal_code": ("postalcode", "zipcode", *jde_names("F0116", "AL", "ADDZ")),
     "email": ("jdeemailaddress", "electronicaddress", "emailaddress", *jde_names("F01151", "EA", "EMAL")),
+    # the supplier's default tax area (D-267: a US company's voucher takes it)
+    "tax_area": ("taxratearea", *jde_names("F0401", "A6", "TXA2")),
 }  # fmt: skip
 _OWN = ("tax_id", "tax_id2", "currency", "address1", "postal_code", "email")  # what only this list gives
 CANADA = ("", "CA", "CAN", "CANADA")

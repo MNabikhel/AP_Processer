@@ -15,6 +15,7 @@ from typing import Any
 
 from ..coding.tax import OUTSIDE_CANADA, PROVINCES, regime_on
 from ..core.headers import jde_names
+from ..core.keys import company_code
 from ..core.memory import refresh_vendor_key
 from ..core.parsing import parse_date
 from ..core.safe import parse_amount
@@ -238,9 +239,17 @@ class JdeSettings:
     # JDE team gives it (E1 keeps the short account ID there). Empty: no VLGLBA column, E1 takes the AAI PB bank.
     bank_glba: dict[str, str] = field(default_factory=dict)
     answers: dict[str, str] = field(default_factory=dict)  # the JDE team's answers that are not settings (worksheet)
+    # With several companies (D-267): {company: "on" or "off"}, its Canadian tax checks turned on or off whatever
+    # report 9 says (none: worked out, ``companies.canadian``).
+    company_tax: dict[str, str] = field(default_factory=dict)
+    # JD Edwards' companies' currencies, {company: currency} (report 9: ``companies.companies``): read with the settings
+    # (``load``), never saved; a company's own is its vouchers' domestic currency (``domestic_of``).
+    company_currencies: dict[str, str] = field(default_factory=dict)
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self), sort_keys=True)
+        saved = asdict(self)
+        saved.pop("company_currencies")  # (report 9's, never saved)
+        return json.dumps(saved, sort_keys=True)
 
     @classmethod
     def from_json(cls, text: str | None) -> JdeSettings:
@@ -252,7 +261,7 @@ class JdeSettings:
         if not isinstance(data, dict):
             data = {}
         base = cls()
-        known = set(asdict(base))
+        known = set(asdict(base)) - {"company_currencies"}
         values: dict[str, Any] = {k: v for k, v in data.items() if k in known and k not in ("gl_map", "tax_map")}
         out = cls(**{**{k: getattr(base, k) for k in known if k not in ("gl_map", "tax_map")}, **values})
         out.gl_map = [
@@ -276,6 +285,9 @@ class JdeSettings:
             out.terms_codes = {}
         out.terms_codes = {str(k): str(v).strip().upper() for k, v in out.terms_codes.items()
                            if str(k).strip() and str(v).strip()}  # fmt: skip
+        if not isinstance(out.company_tax, dict):
+            out.company_tax = {}
+        out.company_tax = {str(k).strip(): str(v) for k, v in out.company_tax.items() if str(v) in ("on", "off")}
         if not isinstance(out.an8_overrides, dict):
             out.an8_overrides = {}
         # Vendor keys saved under older vendor-matching rules, as today's rules give them ("energir sec" -> "energir").
@@ -336,12 +348,27 @@ class JdeSettings:
         return text.zfill(5) if text.isdigit() else text
 
 
+def company_of(final: Mapping[str, Any], settings: JdeSettings) -> str:
+    """The company a voucher is keyed under (VLCO): the invoice's own, with several companies (D-267), else
+    Settings' company (the default company: one company, or none decided)."""
+    return company_code(final.get("company")) or settings.company_code
+
+
+def domestic_of(final: Mapping[str, Any], settings: JdeSettings) -> str:
+    """The domestic currency of the company a voucher is keyed under: its own (report 9, D-267), else Settings'."""
+    return (settings.company_currencies.get(company_of(final, settings)) or settings.domestic_currency).strip().upper()
+
+
 def load(store: Any) -> JdeSettings:
-    return JdeSettings.from_json(store.get_setting(SETTING_KEY))
+    settings = JdeSettings.from_json(store.get_setting(SETTING_KEY))
+    from ..coding.companies import companies
+
+    settings.company_currencies = {code: c.currency for code, c in companies(store).items() if c.currency}
+    return settings
 
 
 # What a save may hold and still be no JD Edwards setup (``set_up``): the keying set-up keeps them as they are.
-NO_SETUP = ("an8_overrides", "terms_codes", "payment_terms_code", "answers", "bank_glba")
+NO_SETUP = ("an8_overrides", "terms_codes", "payment_terms_code", "answers", "bank_glba", "company_currencies")
 
 
 def set_up(settings: JdeSettings) -> bool:

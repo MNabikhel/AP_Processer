@@ -245,6 +245,13 @@ def _v32_order_keys(store: Any, conn: sqlite3.Connection) -> None:
                      (identity, po_key(number) or key, key))  # fmt: skip
 
 
+def _supplier_tax_area(store: Any, conn: sqlite3.Connection) -> None:
+    """Each supplier's default tax area as JD Edwards' supplier master gives it (``vendor_info.tax_area``, D-267: a US
+    company's voucher takes it); '' for one loaded before. No version of its own: an older AP Coder leaves it be."""
+    if "tax_area" not in dialect.columns(conn, "vendor_info"):
+        dialect.add_column(conn, "vendor_info", "tax_area", "TEXT NOT NULL DEFAULT ''")
+
+
 def _order_number_index(store: Any, conn: sqlite3.Connection) -> None:
     """The purchase orders by their number (its column: the step to 32): every order an invoice's PO number may be."""
     conn.execute("CREATE INDEX IF NOT EXISTS purchase_orders_number ON purchase_orders (number_key)")
@@ -531,6 +538,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (31, _v31_po_jde),
     (32, _v32_order_keys),
     (EVERY_TIME, _order_number_index),
+    (EVERY_TIME, _supplier_tax_area),
 )
 MIGRATIONS: dict[int, Step] = {number: step for number, step in STEPS if number is not EVERY_TIME}
 

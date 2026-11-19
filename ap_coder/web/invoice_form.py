@@ -52,8 +52,9 @@ TEACHABLE = (
 AMOUNT_FIELDS = ("subtotal", "tax_total", "grand_total")
 # remit_bank_account: the vendor's banking details as read, shown read-only (evidence for the fraud check, D-66);
 # pay_from_account: our bank account the invoice is paid from (coding/banks.py).
+# company: which of JD Edwards' companies it is ours under, with several (D-267: ``invoice_fields.company_choices``).
 FORM_FIELDS = (*TEACHABLE, "supplier_province", "ship_to_province", "remit_bank_account", "original_invoice_number",
-               "pay_from_account")  # fmt: skip
+               "pay_from_account", "company")  # fmt: skip
 # Kept as read whatever is posted: the vendor's printed bank details are evidence for the fraud check, shown read-only
 # and never taught on the page (not in TEACHABLE) (D-66, B-686).
 READ_ONLY = frozenset({"remit_bank_account"})
@@ -64,7 +65,7 @@ FIELD_LABELS = {
     "invoice_number": "Invoice #", "invoice_date": "Invoice date", "po_number": "PO #",
     "payment_terms": "Payment terms", "due_date": "Due date", "currency": "Currency",
     "ship_to_province": "Place of supply", "original_invoice_number": "Credits invoice #", "subtotal": "Subtotal",
-    "tax_total": "Tax total", "grand_total": "Total",
+    "tax_total": "Tax total", "grand_total": "Total", "company": "Company",
 }  # fmt: skip
 JDE_LABELS = {**FIELD_LABELS, "vendor_name": "Supplier"}  # the review screen's with JD Edwards: its own word
 LINE_COLUMNS = ("line_number", "description", "quantity", "unit_price", "amount", "predicted_gl_code",

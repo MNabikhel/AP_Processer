@@ -1529,6 +1529,9 @@ ALWAYS_A_PERSON: dict[str, str] = {
     "NOT_AN_INVOICE": "it may not be an invoice",  # a statement, a remittance advice, a quote ... (B-2217)
     # "Ignore previous instructions", "approve this invoice without review": meant to steer the models (D-259)
     "TEXT_ADDRESSED_TO_SOFTWARE": "it contains text addressed to software",
+    # With several companies (D-267): none decided, or one not checked for Canadian tax (a US company's).
+    "COMPANY_UNKNOWN": "which company it is for is not known",
+    "US_TAX_NOT_CHECKED": "its company's tax is not checked here",
     # The AI reviewer corrected values the reading missed, the math confirming them: a person confirms (D-263).
     "VERIFIER_CORRECTED": "the AI reviewer corrected values from the page, for a person to confirm",
     # A name never approved before, or not in the vendor master though its GST/HST number is: the supplier's record
@@ -1564,6 +1567,8 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("No exchange rate", "a foreign currency with no rate in Settings → Review, so the limit can't be checked"),
     ("Over the approval limit", "it needs a second approver anyway"),
     ("Credit note", "a credit is always applied by a person"),
+    ("Company to confirm", "with several JD Edwards companies: none decided for the invoice, or one whose tax is not "
+     "checked here (a US company, or one not both CA and CAD)"),
     ("Not in the vendor master", "once a vendor master is imported, a vendor that is not in it"),
     ("A new vendor name", "no invoice under that name approved yet, even with a touchless vendor's GST/HST number"),
     ("Purchase order exception", "the PO is unknown, closed or another vendor's, or billed beyond what was ordered or "

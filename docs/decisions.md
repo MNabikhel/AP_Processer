@@ -6539,3 +6539,26 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     (warning, never approved without a person: "check it isn't keyed to the wrong company"); under its own, under
     none, or no company decided: `DUPLICATE_IN_ERP`, the error it always was. JD Edwards' live answer is told the
     same way (`vendors.entered_finding`). Two loads listing a voucher count it once (its key).
+  - **Which company** (`coding/companies.py`, `decide`). Report 9 (F0010: Company, Company Name, Currency Code,
+    with the address book's Country) is card 9 of JD Edwards files and a sheet of the master workbook (loaded first:
+    its names join "Your company's names", never read as a supplier). It is told by the build sheet's titles,
+    ReportsNow's defaults ("Co", "Name", "Cur Cod", "Country") or the fields (CCCO, CCNAME, CCCRCD, ALCTR), and only
+    with a company, a name and a currency or a country (`import_specs.company_list`, asked after every other report's
+    own marks: the business units' grid has "Co" and "Company Name", the vendor information list "Company Name" and
+    "Country"). Company 00000, JD Edwards' default, is left out. With two companies or more, an invoice's company is
+    the first rule giving one answer: its PO with its supplier; a company's name (or a name of Settings → Review
+    written "name = company") on the page, the supplier's own left out; the supplier's history (the past coding's
+    and the vouchers' companies); the business units of its lines; else `COMPANY_UNKNOWN` (error, never approved
+    anyway or in bulk) and a Company box on the review screen. The coding keeps it (`InvoiceCoding.company`, left out
+    of the target schema when blank: one company changes nothing). *Not chosen:* the default company for an
+    undecided invoice with several (a guess).
+  - **What follows.** VLCO and VNCO, the keying sheet's company and the PO's (VLPKCO when Settings gives none) are
+    the invoice's (`jde_settings.company_of`); the company's currency (report 9) is the voucher's domestic one
+    (`domestic_of`: a US company's USD invoice is no foreign voucher); the supplier's suggestions are of that
+    company's business units alone (`Prior.within`, from the first coding: `companies.early`).
+  - **Canadian tax or not** (the pilot tester: report 9's Country is unreliable). A company gets the GST/HST, PST and
+    QST checks only when its country is CA and its currency CAD (`companies.canadian`, said with why: "CA and CAD",
+    "currency USD", "no country"); Settings → JD Edwards E1's tax areas card turns them on or off per company, which
+    wins. Any other: every check but those (`check_taxes(canadian=False)`: the tax lines' sums only),
+    `US_TAX_NOT_CHECKED` (warning, never approved without a person), and its voucher's tax area from its PO line or
+    the supplier's default (F0401 Tax Rate/Area, `vendor_info.tax_area`) with the exempt code, else held.

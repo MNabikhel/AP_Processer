@@ -42,11 +42,12 @@ router = page_router()
 
 KIND = "jde-workbook"  # a workbook as surveyed at its upload: its sheets, their reports and rows
 CARD = "workbook"
-# The order the reports are loaded in: the chart and the business units first (the rest is checked against them),
-# the payment terms and tax areas (the suppliers' terms read with them), the suppliers, then the rest.
-ORDER = ("chart", "units", "payment_terms", "tax_areas", "supplier_master", "vendor_info", "vouchers", "gl_lines",
-         "purchase_orders")  # fmt: skip
-WHOLE = ("chart", "units", "payment_terms", "tax_areas")  # a newer file replaces it whole: one sheet only
+# The order the reports are loaded in: the companies (their names are never read as a supplier, D-267), the chart and
+# the business units (the rest is checked against them), the payment terms and tax areas (the suppliers' terms read
+# with them), the suppliers, then the rest.
+ORDER = ("companies", "chart", "units", "payment_terms", "tax_areas", "supplier_master", "vendor_info", "vouchers",
+         "gl_lines", "purchase_orders")  # fmt: skip
+WHOLE = ("chart", "units", "payment_terms", "tax_areas", "companies")  # a newer file replaces it whole: one sheet only
 # The column of each report a row's company is in.
 COMPANY = {"units": "company", "vouchers": "company", "gl_lines": "company", "purchase_orders": "order_company"}
 NOT_XLSX = "Upload the workbook as Excel saves it (.xlsx), a sheet for each report."
@@ -189,8 +190,9 @@ def _load_sheet(store: Store, key: str, content: bytes, name: str, sheet: dict[s
     df = _frame(content, name, sheet)
     if key == "supplier_master":
         return jde_files.load_supplier_master(store, df)
-    if key in ("payment_terms", "tax_areas"):
-        return jde_files.load_table(store, "terms" if key == "payment_terms" else "areas", df)
+    if key in ("payment_terms", "tax_areas", "companies"):
+        card = {"payment_terms": "terms", "tax_areas": "areas", "companies": "companies"}[key]
+        return jde_files.load_table(store, card, df)
     found = jde_vouchers(store, df)  # (the supplier ledger: added to the vouchers loaded, never replacing them)
     if found is None:
         raise ValueError(NO_ROWS)

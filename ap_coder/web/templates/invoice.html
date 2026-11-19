@@ -217,6 +217,20 @@
           <span class="inv-flag small" data-flag{% if 'pay_from_account' not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("pay_from_account", "") }}</span></span>
         </label>
       {%- endmacro %}
+      {% macro company_field() -%}
+        {% set flags = live.flags or {} %}
+        {# Which of JD Edwards' companies it is ours under, with several (D-267): AP Coder's answer, or a person's pick. #}
+        <label class="field wide inv-company{% if 'company' in flags %} is-flagged{% endif %}{% if 'company' in (live.flag_errors or []) %} is-error{% endif %}" data-field="company">
+          <span class="lbl">{{ labels["company"] }} <span class="rvw-hint" title="The JD Edwards company this invoice is for: its voucher is keyed under it, and its PO, duplicates and accounts are that company's."><span class="ms" aria-hidden="true">info</span></span></span>
+          <select name="company" form="inv" data-company>
+            <option value=""{% if not company.value %} selected{% endif %}>Pick the company</option>
+            {% for code, label in company.options %}<option value="{{ code }}"{% if code == company.value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+          {% if company.said %}<span class="inv-field-note small muted"><span class="ms" aria-hidden="true">info</span>{{ company.said }}</span>{% endif %}
+          {% if company.tax %}<span class="inv-field-note small muted"><span class="ms" aria-hidden="true">public</span>{{ company.tax }}</span>{% endif %}
+          <span class="inv-flag small" data-flag{% if 'company' not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("company", "") }}</span></span>
+        </label>
+      {%- endmacro %}
       {% macro supply_field() -%}
         <div class="field inv-supply" data-field="ship_to_province">
           <span class="lbl">{{ labels["ship_to_province"] }} <span class="rvw-hint" title="The province whose sales tax applies: where the goods are delivered to you (services: generally where you are), not where the vendor is or ships from."><span class="ms" aria-hidden="true">info</span></span></span>
@@ -247,6 +261,7 @@
         {{ field("due_date", placeholder=due_placeholder, hint="Only if printed; otherwise it comes from the terms (shown greyed)") }}
         <div class="inv-head-sum" data-live="amounts">{{ live_ui.amounts(live, inv.id) }}</div>
       </div>
+      {% if company.any %}<div class="inv-head-row bank">{{ company_field() }}</div>{% endif %}
       {% if pay_from.any %}<div class="inv-head-row bank">{{ pay_from_field("Bank account") }}</div>{% endif %}
       <div class="inv-keyed" data-live="keyed">{{ live_ui.keyed(live, inv.id) }}</div>
       <details class="inv-more-details" data-more-details{% if found.any %} open{% endif %}>
@@ -274,6 +289,7 @@
       </div>
       <div class="rvw-group">Invoice</div>
       <div class="inv-grid">
+        {% if company.any %}{{ company_field() }}{% endif %}
         {{ field("invoice_number") }}
         {{ field("invoice_date", placeholder="YYYY-MM-DD", hint="Format YYYY-MM-DD") }}
         {{ field("po_number", hint="Purchase order the invoice quotes, if any") }}

@@ -35,7 +35,8 @@ PAYMENTS_ONLY = ("2",)
 JDE_FILES = "jde_files"
 # What JD Edwards' vendor information list says of a supplier, kept by its number (``vendor_info``, D-219).
 INFO_COLUMNS = ("tax_id", "tax_id_norm", "currency", "terms", "address1", "address2", "address3", "address4", "city",
-                "state", "country", "postal_code", "email", "business_unit", "business_unit_name")  # fmt: skip
+                "state", "country", "postal_code", "email", "business_unit", "business_unit_name",
+                "tax_area")  # fmt: skip
 
 
 def stops_vouchers(code: Any) -> bool:

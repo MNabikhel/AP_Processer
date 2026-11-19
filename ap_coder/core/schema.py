@@ -507,6 +507,10 @@ class LineItem(BaseModel):
 # The tax registration numbers filled from the vendor list, not printed on the invoice (the review screen, D-65): a list
 # of field names stored beside the coding, like the place of supply worked out.
 FROM_VENDOR_LIST = "tax_numbers_from_vendor_list"
+# A company not checked for Canadian tax (a US one, D-267): its voucher's tax area and where it came from, worked out
+# beside the coding ({"tax_area", "from"}: ``coding/companies.voucher_tax``) for the JD Edwards voucher.
+COMPANY_TAX = "company_tax"
+WORKED_OUT = (PLACE_OF_SUPPLY, FROM_VENDOR_LIST, COMPANY_TAX)
 
 
 def as_read(final: dict[str, Any], proposed: dict[str, Any]) -> dict[str, Any]:
@@ -554,8 +558,8 @@ class InvoiceCoding(BaseModel):
         # A stored invoice keeps the place of supply worked out when no ship-to is printed beside the coding
         # (pipeline.finalise_coding); it is worked out again from the lines each time, so it is dropped here.
         # Likewise the tax numbers the review screen filled from the vendor list (D-65): kept beside the coding.
-        if isinstance(data, dict) and (PLACE_OF_SUPPLY in data or FROM_VENDOR_LIST in data):
-            data = {k: v for k, v in data.items() if k not in (PLACE_OF_SUPPLY, FROM_VENDOR_LIST)}
+        if isinstance(data, dict) and any(k in data for k in WORKED_OUT):
+            data = {k: v for k, v in data.items() if k not in WORKED_OUT}
         return data
 
     @model_validator(mode="after")

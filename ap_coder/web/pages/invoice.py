@@ -186,6 +186,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         today=dt.date.today().isoformat(), taught_json=draft.taught, vendor_seed=vendor_seed(store, header),
         absent_ok=list(invoice_form.ABSENT_FIELDS), from_vendor_note=invoice_fields.FROM_VENDOR_NOTE,
         tax_fields=list(invoice_form.TAX_NUMBER_FIELDS), pay_from=invoice_fields.pay_from_choices(store, draft.header),
+        company=invoice_fields.company_choices(store, header, analysis.report),
         unread_numbers=sorted(invoice_form.unread_numbers(inv.get("ai_output") or {}) or []),
         bank_shown=mask_account(bank) if (bank := draft.header.get("remit_bank_account")) else "",
         supply=invoice_grid.supply_line(draft.header, draft.lines, reference.tax),

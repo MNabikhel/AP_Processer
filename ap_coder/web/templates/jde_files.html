@@ -44,7 +44,7 @@
 <section class="card stack" id="{{ card }}">
   {{ card_head(n, card, card_titles[card], spec.purpose) }}
   {{ what_was_said(card) }}
-  {% if loaded[card] %}<p id="{{ card }}-now" class="imp-now"><span class="ms" aria-hidden="true">inventory_2</span><span><b>{{ loaded[card] | plural(rows_of[card][:-1]) }}</b>{% if last[card] %}
+  {% if loaded[card] %}<p id="{{ card }}-now" class="imp-now"><span class="ms" aria-hidden="true">inventory_2</span><span><b>{{ loaded[card] | plural(rows_one.get(card, rows_of[card][:-1]), rows_of[card]) }}</b>{% if last[card] %}
     <span class="muted">· last loaded {{ last[card].when }}{% if last[card].by %} by {{ last[card].by }}{% endif %}</span>{% endif %}</span></p>{% endif %}
   {% if caller %}{{ caller() }}{% endif %}
   {{ imp.report(spec, false, template) }}
@@ -117,7 +117,7 @@
 <section class="card imp-steps-card" id="checklist" aria-labelledby="checklist-title">
   <div class="imp-steps-head">
     <h2 id="checklist-title">What is loaded</h2>
-    <p class="muted">Five exports from JD Edwards, loaded top to bottom, and three more if you have them (the open purchase order lines, the payment terms, the tax areas). Each file is shown first: nothing is kept until you click Load.</p>
+    <p class="muted">Five exports from JD Edwards, loaded top to bottom, and four more if you have them (the open purchase order lines, the payment terms, the tax areas, the companies). Each file is shown first: nothing is kept until you click Load.</p>
   </div>
   <ol class="imp-steps">
     {% for item in checklist %}
@@ -380,6 +380,10 @@
 {% endcall %}
 {% call table_card(8, "areas", "map", "JD Edwards' tax areas (F4008), an Excel workbook (.xlsx) or CSV") %}
   {% if areas_table %}<ul class="imp-said" id="areas-said">{% for line in areas_said %}<li>{{ line }}</li>{% else %}<li>Every tax area Settings gives a province is one of JD Edwards', at the rate of its taxes.</li>{% endfor %}</ul>{% endif %}
+{% endcall %}
+{% call table_card(9, "companies", "domain", "JD Edwards' companies (F0010), an Excel workbook (.xlsx) or CSV") %}
+  {% if companies_said %}<details class="imp-more" id="companies-table"><summary>The {{ loaded.companies | plural("company", "companies") }} loaded</summary>
+    <ul class="imp-said">{% for line in companies_said %}<li>{{ line }}</li>{% endfor %}</ul></details>{% endif %}
 {% endcall %}
 </div>
 {% endblock %}

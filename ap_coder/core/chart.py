@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .headers import jde_names, match_columns
+from .keys import company_code
 
 SEPARATOR = "."
 
@@ -523,6 +524,8 @@ class AccountPairs:
         self._accounts: dict[str, dict[str, tuple[str, str]]] = {}  # business unit: {code: (description, edit code)}
         self._names: dict[str, str] = {}
         self._closed: set[str] = set()  # the business units the master says take no postings
+        self._company: dict[str, str] = {}  # business unit: its company (F0006's Co, D-267)
+        self._of_company: dict[str, frozenset[str]] | None = None  # (``units_of``, made at its first ask)
         for row in rows:
             if row.is_header:
                 self._names.setdefault(row.bu, row.description)
@@ -531,6 +534,8 @@ class AccountPairs:
         for unit in units:
             if unit.name:
                 self._names[unit.code] = unit.name
+            if unit.company:
+                self._company[unit.code] = company_code(unit.company)
             if unit.status not in ACTIVE:
                 self._closed.add(unit.code)
         # The business units held back for their name, with the word; then, of each code, the business units it is
@@ -551,6 +556,19 @@ class AccountPairs:
     def tally(self) -> Counter[str]:
         """How many of the chart's accounts are of each status (``OK``, ``RESERVED``...)."""
         return Counter(self.status(bu, code) for bu, codes in self._accounts.items() for code in codes)
+
+    def company_of(self, business_unit: Any) -> str:
+        """The company a business unit belongs to (the business unit master's; "" when not known)."""
+        return self._company.get(str(business_unit or "").strip(), "")
+
+    def units_of(self, company: str) -> frozenset[str]:
+        """The business units of ``company`` (``keys.company_code``) as the business unit master gives them."""
+        if self._of_company is None:
+            found: dict[str, set[str]] = {}
+            for bu, co in self._company.items():
+                found.setdefault(co, set()).add(bu)
+            self._of_company = {co: frozenset(units) for co, units in found.items()}
+        return self._of_company.get(company_code(company), frozenset())
 
     def closed_units(self) -> list[str]:
         """The business units the business unit master says are not active, in order."""

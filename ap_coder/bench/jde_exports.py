@@ -238,6 +238,7 @@ BUILD_SHEET: dict[str, tuple[tuple[str, str], ...]] = {
                   *((f"TATA{n}", f"Tax Authority {n}") for n in range(1, 6)),
                   *((f"TATXR{n}", f"Tax Rate {n}") for n in range(1, 6)),
                   ("TAEFDJ", "Effective Date"), ("TAEFTJ", "Expired Date")),
+    "companies": (("CCCO", "Company"), ("CCNAME", "Company Name"), ("CCCRCD", "Currency Code"), ("ALCTR", "Country")),
 }  # fmt: skip
 # The master workbook's sheets: (title, report); two of the supplier ledger and of the G/L lines, by half year.
 MASTER_SHEETS = (("Accounts", "chart"), ("BUs", "units"), ("Suppliers", "supplier_master"),
@@ -940,9 +941,11 @@ def _master_po_lines(lines: Iterable[OpenPoLine]) -> list[list[Any]]:
     return _rows_of("purchase_orders", records)
 
 
-def master_workbook_xlsx(truth: Truth, lines: Iterable[OpenPoLine] | None = None) -> bytes:
+def master_workbook_xlsx(truth: Truth, lines: Iterable[OpenPoLine] | None = None,
+                         companies: Iterable[dict[str, str]] = ()) -> bytes:  # fmt: skip
     """Every report of the build sheet in one workbook, a sheet each (``MASTER_SHEETS``), titled as the build sheet
-    says; the open PO lines ``lines`` (``open_po_lines`` when None). The chart's header is under a title row; a last
+    says; the open PO lines ``lines`` (``open_po_lines`` when None); with ``companies`` (report 9's rows: CCCO,
+    CCNAME, CCCRCD, ALCTR; ``jde_group``), a sheet "Companies" first. The chart's header is under a title row; a last
     sheet of notes is no report."""
     lines = open_po_lines(truth) if lines is None else lines
     terms = [{"PNPTC": code, "PNPTD": words, "PNDCP": pct, "PNDCD": days, "PNNDTP": net}
@@ -958,6 +961,8 @@ def master_workbook_xlsx(truth: Truth, lines: Iterable[OpenPoLine] | None = None
     sheets = [(title, _titles(key), halves.get(title) or rows[key],
                [f"{truth.company.name}: account master (F0901)"] if key == "chart" else None)
               for title, key in MASTER_SHEETS]  # fmt: skip
+    if companies:
+        sheets.insert(0, ("Companies", _titles("companies"), _rows_of("companies", companies), None))
     sheets.append(("Notes", ["Note"], [["Queried in ReportsNow from the build sheet."]], None))
     return _book(sheets)
 

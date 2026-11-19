@@ -200,13 +200,16 @@ class _TaxCheck:
 
 
 def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = None,
-                erp_posts: frozenset[str] = frozenset()) -> list[TaxFinding]:  # fmt: skip
+                erp_posts: frozenset[str] = frozenset(), canadian: bool = True) -> list[TaxFinding]:  # fmt: skip
     """The tax findings of an invoice as coded, in the order the review screen lists them: the tax lines' sums,
     each tax line's amount, rate and province, which lines carry each tax, the regime of the place of supply, a
     non-Canadian tax, exemptions to confirm, the registration numbers and the GL accounts the taxes post to.
-    ``erp_posts``: the taxes JD Edwards posts itself from the voucher's pay item (``jde_review.taxes_e1_posts``)."""
+    ``erp_posts``: the taxes JD Edwards posts itself from the voucher's pay item (``jde_review.taxes_e1_posts``).
+    ``canadian``: False for a company not checked for Canadian tax (a US one, D-267): its tax lines' sums only."""
     check = _start_tax_check(coding, setup)
     _tax_lines_add_up(check)
+    if not canadian:
+        return check.findings
     _lines_for_two_provinces(check)
     _each_tax_line(check)
     _lines_carry_each_tax(check)

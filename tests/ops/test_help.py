@@ -17,6 +17,7 @@ SOURCES = [
     "ai/pipeline.py",
     "coding/banks.py",
     "coding/claim.py",
+    "coding/companies.py",
     "web/invoice_view.py",
     "web/invoice_fields.py",
     "erp/jde_review.py",

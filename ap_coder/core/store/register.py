@@ -19,11 +19,12 @@ import sqlite3
 import time
 from typing import Any
 
-from ..keys import master_vendor_id, register_keys
+from ..keys import company_code, master_vendor_id, register_keys
 from ..memory import vendor_key
 from ._base import _in_list, _norm_number, _now
 from .dialect import ROWID, add_column, begin_write, table_names
 from .dialect import columns as table_columns
+from .journal import supplier_key as journal_supplier
 from .learning import one_snapshot
 from .summary import fetch_rows, fts_available
 
@@ -256,6 +257,22 @@ class RegisterMixin:
         if grand_total is None:
             return rows
         return [r for r in rows if (r["total"] < 0) == (grand_total < 0)]
+
+    def supplier_companies(self, vendor: str, supplier: str = "") -> set[str]:
+        """The companies a supplier has billed (D-267): of its vouchers in the past invoice coding loaded (by its
+        supplier number ``supplier``) and in JD Edwards' vouchers already entered (by its vendor key ``vendor``), each
+        company once, as ``keys.company_code`` writes it. Each read off its index, the supplier's rows only."""
+        found: set[str] = set()
+        with self._conn() as conn:
+            if str(supplier or "").strip():
+                found |= {r[0] for r in conn.execute(
+                    "SELECT DISTINCT company FROM journal_vouchers WHERE supplier_key = ? AND counted = 1",
+                    (journal_supplier(supplier),))}  # fmt: skip
+            if vendor:
+                found |= {r[0] for r in conn.execute(
+                    "SELECT DISTINCT substr(erp_key, 1, instr(erp_key, '-') - 1) FROM erp_vouchers "
+                    "WHERE vendor_key = ?", (vendor,))}  # fmt: skip
+        return {company_code(c) for c in found if str(c or "").strip()}
 
     # --- JD Edwards' vouchers, from the API's sync (D-181) ----------------------------------------------
 

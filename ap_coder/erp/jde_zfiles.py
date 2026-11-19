@@ -27,6 +27,8 @@ from .jde_settings import (
     REMARKS_TYPED,
     GlMap,
     JdeSettings,
+    company_of,
+    domestic_of,
     gl_date_of,
 )
 from .jde_voucher import (
@@ -143,9 +145,10 @@ def voucher_rows(
     # VLPO, VLPDCT and VLPKCO go together (B-457); a PO longer than VLPO is not sent, only kept in the remark (D-87).
     send_po = bool(po) and (v.po_matched or (settings.send_po_reference and len(po) <= PO_WIDTH))
     typed = settings.remarks == REMARKS_TYPED  # VNEXR: the line's remark, not the invoice number (D-210)
-    rate = _rate(fx_rates, v.currency, settings.domestic_currency) if v.foreign else None
+    rate = _rate(fx_rates, v.currency, domestic_of(final, settings)) if v.foreign else None
+    company = company_of(final, settings)  # the invoice's own, with several companies (D-267)
     common = {
-        **keys, "VLDCT": doc_type, "VLCO": settings.company_code, "VLMCU": settings.header_bu.strip(),
+        **keys, "VLDCT": doc_type, "VLCO": company, "VLMCU": settings.header_bu.strip(),
         "VLAN8": str(vendor_an8 or "").strip(), "VLVINV": str(final.get("invoice_number") or "").strip()[:25],
         "VLDIVJ": julian(invoice_date), "VLDGJ": julian(gl_date), "VLDSVJ": julian(invoice_date),
         "VLTXA1": v.tax_area, "VLEXR1": v.tax_code, "VLCRRM": "F" if v.foreign else "D", "VLCRCD": v.currency,
@@ -157,7 +160,7 @@ def voucher_rows(
         "VLPO": po[:PO_WIDTH] if send_po else "",
         "VLPDCT": settings.po_document_type.strip() if send_po else "",
         "VLPKCO": (settings.po_company.strip().zfill(5) if settings.po_company.strip().isdigit()
-                   else settings.po_company.strip() or settings.company_code) if send_po else "",
+                   else settings.po_company.strip() or company) if send_po else "",
         "VLRMK": _pay_item_remark(v, settings),
     }  # fmt: skip
     if settings.bank_glba:  # the G/L bank account of the Pay from account (D-66); blank: E1's AAI PB
@@ -207,7 +210,7 @@ def voucher_rows(
         acct = account or GlMap(e.get("gl_code") or "")
         amount = _amount(e["cents"], settings, v.decimals)
         row = {
-            **_keys("VN", settings, batch, invoice, v.inv_id, site), "VNEDLN": n, "VNCO": settings.company_code,
+            **_keys("VN", settings, batch, invoice, v.inv_id, site), "VNEDLN": n, "VNCO": company,
             "VNDGJ": julian(gl_date), "VNDCT": doc_type, "VNLT": "AA",
             "VNAA": "" if v.foreign else amount, "VNCRCD": v.currency, "VNACR": amount if v.foreign else "",
             "VNEXA": line_remark(e),

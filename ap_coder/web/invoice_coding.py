@@ -64,7 +64,7 @@ def suggestions(store: Store, reference: ReferenceData, coding: InvoiceCoding) -
     feedback = store.learning_rows(coding.vendor_name, key)
     vendor = store.get_vendor(key)
     default_gl = (vendor or {}).get("default_gl") or ""
-    prior, units = supplier_evidence(store, vendor or coding.vendor_name, key, reference)
+    prior, units = supplier_evidence(store, vendor or coding.vendor_name, key, reference, coding.company)
     whole = by_pairs(reference, prior)
     out = []
     for pos, li in lines:

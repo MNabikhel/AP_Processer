@@ -127,17 +127,17 @@ FIELD_FLAGS: dict[str, tuple[str, str | None]] = {
 
 # The checks shown under the field they are about (their own words), besides FIELD_FLAGS' notes: {code: field}.
 CODE_FIELDS = {
+    "COMPANY_UNKNOWN": "company", "DUPLICATE_OTHER_COMPANY": "company",
     "MISSING_VENDOR": "vendor_name", "VENDOR_NOT_IN_MASTER": "vendor_name", "VENDOR_ADDED_HERE": "vendor_name",
     "VENDOR_ON_HOLD": "vendor_name", "VENDOR_CHANGED_FROM_HELD": "vendor_name", "JDE_NO_AN8": "vendor_name",
     "JDE_BAD_AN8": "vendor_name",
     "MISSING_INVOICE_NUMBER": "invoice_number", "JDE_INVOICE_NUMBER_LONG": "invoice_number",
     "DUPLICATE_INVOICE": "invoice_number", "DUPLICATE_IN_ERP": "invoice_number",
-    "DUPLICATE_OTHER_COMPANY": "invoice_number",
     "INVOICE_DATE_NOT_FOUND": "invoice_date", "OLD_INVOICE_DATE": "invoice_date", "FUTURE_INVOICE_DATE": "invoice_date",
     "DUE_BEFORE_INVOICE": "due_date", "JDE_DATE_RANGE": "invoice_date",
     "CURRENCY_UNKNOWN": "currency", "CURRENCY_FORMAT": "currency", "JDE_CURRENCY": "currency",
     "PO_UNKNOWN": "po_number", "PO_CLOSED": "po_number", "PO_VENDOR_MISMATCH": "po_number", "JDE_PO_LONG": "po_number",
-    "PO_CURRENCY_DIFFERS": "po_number",
+    "PO_CURRENCY_DIFFERS": "po_number", "PO_AMBIGUOUS": "po_number",
     "SUBTOTAL_MISMATCH": "subtotal", "TOTAL_MISMATCH": "grand_total", "TAX_LINES_TOTAL_MISMATCH": "tax_total",
     "JDE_TAX_AREA": "ship_to_province",
 }  # fmt: skip
@@ -275,6 +275,8 @@ HARD_CODES = frozenset({
     "ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE", "BU_INACTIVE",
     # A vendor on hold: the hold is lifted first (the Vendors page, or JD Edwards), or the invoice rejected (B-1544).
     "VENDOR_ON_HOLD",
+    # With several companies, the voucher's company: picked first (D-267).
+    "COMPANY_UNKNOWN",
 })  # fmt: skip
 
 

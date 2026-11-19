@@ -110,10 +110,12 @@ VENDOR_BY_NUMBER = "supplier list (GST/HST number)"  # a vendor name's source: t
 
 
 def our_name_keys(store: Any) -> frozenset[str]:
-    """The company's own names (``Store.our_names``) as vendor keys: the customer's, never the supplier's."""
+    """The company's own names (``Store.our_names``, and JD Edwards' companies: ``companies.own_names``, D-267) as
+    vendor keys: the customer's, never the supplier's."""
+    from ..coding.companies import own_names
     from ..core.memory import vendor_key
 
-    names = store.our_names() if store is not None and hasattr(store, "our_names") else []
+    names = own_names(store) if store is not None and hasattr(store, "our_names") else []
     return frozenset(k for k in (vendor_key(n) for n in names) if k)
 
 
