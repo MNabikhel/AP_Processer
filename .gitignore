@@ -61,3 +61,6 @@ bench_learn/
 
 # The coding bench with a journal writes its report here (python -m ap_coder.bench coding --journal).
 /bench_coding_journal/
+
+# The pilot day bench writes its invoices, files and report here (python -m ap_coder.bench pilotday).
+/bench_pilotday/
