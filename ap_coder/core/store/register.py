@@ -56,6 +56,13 @@ ISO_DAY = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"  # a voucher's date as th
 SEARCH_SCHEMA = "CREATE VIRTUAL TABLE register_search USING fts5(plain_name, raw_number, tokenize = 'trigram')"
 SEARCH_STEP = "register_search_step"
 _COUNT = "COALESCE((SELECT value FROM settings WHERE key = 'changes/register'), '0')"
+# The companies a bill's JD Edwards vouchers are entered under (a JSON list, each once: a voucher is kept once by its
+# key "company-type-document-...", however many lists gave it), of the register's row ``b``.
+_BILL_COMPANIES = (
+    "(SELECT json_group_array(DISTINCT substr(v.erp_key, 1, instr(v.erp_key, '-') - 1)) FROM erp_vouchers v "
+    "WHERE v.vendor_key = b.vendor_key AND v.number_key = b.number_key AND v.total = b.total "
+    "AND instr(v.erp_key, '-') > 1)"
+)
 _LAST_ROWID = 2**63 - 1  # SQLite's largest rowid: past it, a row added gets one at random (not above the others)
 
 
@@ -227,7 +234,9 @@ class RegisterMixin:
                an8: str | None = None) -> list[dict[str, Any]]:  # fmt: skip
         """This vendor's invoices with the same number already in the ERP (a credit note is not a duplicate
         of the invoice it reverses): filed under its name, or synced from JD Edwards under its supplier number
-        (``an8``; None: the vendor list's ERP ID of the vendor) whatever name they were filed under (R7)."""
+        (``an8``; None: the vendor list's ERP ID of the vendor) whatever name they were filed under (R7). Each with
+        the companies its JD Edwards vouchers are entered under (``companies``, sorted; none for a bill of a register
+        file, which names no company: D-267)."""
         key, number = vendor_key(vendor_name), _norm_number(invoice_number)
         if not key or not number:
             return []
@@ -237,11 +246,13 @@ class RegisterMixin:
             rows = [
                 dict(r)
                 for r in conn.execute(
-                    "SELECT invoice_number, invoice_date, total FROM erp_invoices "
+                    f"SELECT invoice_number, invoice_date, total, {_BILL_COMPANIES} AS companies FROM erp_invoices b "
                     "WHERE number_key = ? AND (vendor_key = ? OR (? != '' AND ltrim(an8, '0') = ?))",
                     (number, key, an8, an8),
                 )
             ]
+        for r in rows:
+            r["companies"] = sorted(json.loads(r["companies"] or "[]"))
         if grand_total is None:
             return rows
         return [r for r in rows if (r["total"] < 0) == (grand_total < 0)]

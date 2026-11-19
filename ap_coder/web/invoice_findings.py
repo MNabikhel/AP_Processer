@@ -132,6 +132,7 @@ CODE_FIELDS = {
     "JDE_BAD_AN8": "vendor_name",
     "MISSING_INVOICE_NUMBER": "invoice_number", "JDE_INVOICE_NUMBER_LONG": "invoice_number",
     "DUPLICATE_INVOICE": "invoice_number", "DUPLICATE_IN_ERP": "invoice_number",
+    "DUPLICATE_OTHER_COMPANY": "invoice_number",
     "INVOICE_DATE_NOT_FOUND": "invoice_date", "OLD_INVOICE_DATE": "invoice_date", "FUTURE_INVOICE_DATE": "invoice_date",
     "DUE_BEFORE_INVOICE": "due_date", "JDE_DATE_RANGE": "invoice_date",
     "CURRENCY_UNKNOWN": "currency", "CURRENCY_FORMAT": "currency", "JDE_CURRENCY": "currency",

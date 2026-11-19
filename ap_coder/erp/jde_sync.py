@@ -46,14 +46,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..coding import po as po_mod
-from ..coding.vendors import master_rows, norm_invoice_number
+from ..coding.vendors import entered_finding, master_rows, norm_invoice_number
 from ..core.caches import MB, Bounded
 from ..core.keys import order_key_of
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
 from ..core.store.register import CLEARED_KEY
 from . import jde_accounts, jde_ais, jde_formats, jde_settings
-from .jde_review import ERROR, INFO
+from .jde_review import INFO
 from .registers import iso_date
 
 log = logging.getLogger(__name__)
@@ -853,11 +853,13 @@ def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None
         if parse_amount(r.get("open_amount")) == 0 and gross:
             paid = "paid"
         date = iso_date(_text(r.get("invoice_date")))
-        out.append((ERROR, "DUPLICATE_IN_ERP",
-                    f"invoice {_text(r.get('invoice_number'))} from this vendor is already in JD Edwards: voucher "
-                    f"{_text(r.get('document'))} {_text(r.get('doc_type'))}{' dated ' + date if date else ''}"
-                    + (f", total {gross:,.2f}" if gross is not None else "") + (f", {paid}" if paid else "")
-                    + ": possible duplicate payment"))  # fmt: skip
+        voucher = (
+            f": voucher {_text(r.get('document'))} {_text(r.get('doc_type'))}{' dated ' + date if date else ''}"
+            + (f", total {gross:,.2f}" if gross is not None else "")
+            + (f", {paid}" if paid else "")
+        )
+        out.append(entered_finding({"invoice_number": _text(r.get("invoice_number"))}, [_text(r.get("company"))],
+                                   getattr(coding, "company", ""), "JD Edwards", voucher))  # fmt: skip
         if len(out) >= 2:
             break
     return out
@@ -877,10 +879,7 @@ def _in_register(store: Any, coding: Any, an8: str, ids: dict[str, str]) -> list
             if (bill := (posted["invoice_number"], posted["invoice_date"], posted["total"])) in said:
                 continue
             said.add(bill)
-            out.append((ERROR, "DUPLICATE_IN_ERP",
-                        f"invoice {posted['invoice_number']} from this vendor is already in the ERP"
-                        f"{' (dated ' + posted['invoice_date'] + ')' if posted['invoice_date'] else ''}, total "
-                        f"{posted['total']:,.2f}: possible duplicate payment"))  # fmt: skip
+            out.append(entered_finding(posted, posted["companies"], getattr(coding, "company", ""), "the ERP"))
     return out[:2]
 
 

@@ -6533,3 +6533,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     (`po.pick_order`); none of these giving one answer is `PO_AMBIGUOUS` (never approved without a person), matched
     to neither and billing neither (the PO page's totals, the billing of each PO, month-end's accruals:
     `Store._order_owners`). `Store.purchase_order` still takes a number that is one order's alone.
+  - **Duplicates per company.** A JD Edwards voucher is kept by its key (company-type-document), so a bill of the
+    register knows the companies it is entered under (`Store.in_erp`'s `companies`; a register file names none). An
+    invoice whose company is decided and a bill entered only under other companies: `DUPLICATE_OTHER_COMPANY`
+    (warning, never approved without a person: "check it isn't keyed to the wrong company"); under its own, under
+    none, or no company decided: `DUPLICATE_IN_ERP`, the error it always was. JD Edwards' live answer is told the
+    same way (`vendors.entered_finding`). Two loads listing a voucher count it once (its key).
