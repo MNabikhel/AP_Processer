@@ -46,6 +46,7 @@ from .chart_index import IndexedPairs
 
 CHART_COLUMNS = ("bu", "object", "subsidiary", "description", "lod", "posting_edit", "category", "company")
 BU_COLUMNS = ("code", "name", "company", "type", "status")
+STAGED_COLUMNS = (*CHART_COLUMNS, "line")  # a row staged (``chart_load``): its row of the file too (D-272)
 HASH_KEY = "chart_hash"  # what the two tables hold (settings: read by the reference data's stamp)
 ASIDE_KEY = "chart_set_aside"  # what a person typed on the codes that left the lists (settings, JSON)
 NAMED = 50  # the codes an import's result and its event name of each kind (the counts say them all)
@@ -530,8 +531,8 @@ class ChartMixin:
             conn.execute(f"CREATE TEMP TABLE chart_load AS SELECT {', '.join(CHART_COLUMNS)}, 0 AS line FROM "
                          "chart_accounts WHERE 0")  # fmt: skip
             conn.execute("CREATE UNIQUE INDEX temp.chart_load_key ON chart_load (bu, object, subsidiary)")
-            insert = dialect.insert_or_ignore(f"INSERT INTO temp.chart_load ({', '.join(CHART_COLUMNS)}, line) VALUES "
-                                              f"({', '.join('?' * (len(CHART_COLUMNS) + 1))})")  # fmt: skip
+            insert = dialect.insert_or_ignore(f"INSERT INTO temp.chart_load ({', '.join(STAGED_COLUMNS)}) VALUES "
+                                              f"({', '.join('?' * len(STAGED_COLUMNS))})")  # fmt: skip
             for name, rows in parts:
                 staged.parts.append(name)
                 for batch in _batches(rows, LOAD_BATCH):
