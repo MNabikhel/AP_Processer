@@ -744,7 +744,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     # Freight read beside the subtotal is part of the coded subtotal (lines + charges, before tax) and taxed.
     charges = capture.fields.get("other_charges")
     freight = _amount(values, "other_charges") if charges is not None and charges.status in (VERIFIED, LIKELY) else 0.0
-    supplier_province, ship_to_province = provinces(text, layout, our_name_keys(store))
+    # (the company's own names but the supplier's: a company of the group billing another, its letterhead its own)
+    supplier_province, ship_to_province = provinces(text, layout, our_name_keys(store) - {vendor_key(vendor)})
     invoice_on = _iso_or_empty(values.get("invoice_date"))
     # The province a tax line names when its rate does not say: where it is delivered as best known (the vendor's
     # province is never stored as the ship-to, D-61).

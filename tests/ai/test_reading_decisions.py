@@ -384,3 +384,10 @@ def test_the_address_under_the_companys_own_name_unlabelled_is_where_it_is_suppl
     codes = {i.code for i in result.report.issues}
     assert result.output["ship_to_province"] == "ON", result.output["ship_to_province"]
     assert not codes & {"TAX_REGIME_MISMATCH", "ITC_AT_RISK", "TAX_PROVINCE_DIFFERS"}, codes
+    # A company of the group billing another: its own name over its letterhead is the supplier's, not the bill-to.
+    from ap_coder.ai.offline_coder import provinces
+    from ap_coder.core.memory import vendor_key
+
+    page = ("Maple Ridge Constructors Ltd.\n1180 Marine Drive, Kamloops, BC V2C 1A4\nFRASER BEND CIVIL LTD.\n"
+            "75 Quarry Road, Sudbury, ON P3A 4R7\n")  # fmt: skip
+    assert provinces(page, ours=frozenset({vendor_key("Fraser Bend Civil Ltd.")})) == ("BC", "ON")
