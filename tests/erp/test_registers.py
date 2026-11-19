@@ -277,10 +277,11 @@ def test_a_us_companys_vouchers_in_its_own_currency_are_not_said_kept_in_canadia
         "00310": {"name": "Maple Ridge Builders Inc.", "currency": "USD", "country": "US"}}))  # fmt: skip
     head = ["Document Number", "Doc Type", "Doc Co", "Pay Item", "Supplier Number", "Supplier Number Desc",
             "Invoice Number", "Gross Amount", "Curr Code"]  # fmt: skip
+    cascade = ("4420201", "CASCADE BEARING & DRIVE INC")
     listed = [dict(zip(head, row, strict=True)) for row in (
-        ["700101", "PV", "00310", "001", "4420201", "CASCADE BEARING & DRIVE INC", "CA-1", "1250.00", "USD"],
-        ["700102", "PV", "00310", "001", "4420201", "CASCADE BEARING & DRIVE INC", "CA-2", "300.00", "USD"],
-        ["700103", "PV", "00210", "001", "4420201", "CASCADE BEARING & DRIVE INC", "CA-3", "1700.00", "USD"])]
+        ["700101", "PV", "00310", "001", *cascade, "CA-1", "1250.00", "USD"],
+        ["700102", "PV", "00310", "001", *cascade, "CA-2", "300.00", "USD"],
+        ["700103", "PV", "00210", "001", *cascade, "CA-3", "1700.00", "USD"])]  # fmt: skip
     rows, read = named_vouchers(store, listed, registers.voucher_columns(head))
     assert [r["total"] for r in rows] == [1250.0, 300.0, 1700.0]
     assert read["domestic"] == {"USD": 1}, read["domestic"]
