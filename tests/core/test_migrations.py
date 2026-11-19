@@ -219,7 +219,7 @@ def test_a_purchase_order_kept_before_pos_had_a_currency_has_none(tmp_path):
     with closing(sqlite3.connect(db)) as conn, conn:
         _without_order_keys(conn)
         for table, column in (("purchase_orders", "currency"), *_JDE_PO_COLUMNS, *_SUBLEDGER_COLUMNS,
-                              *_RETAINAGE_COLUMNS):
+                              *_RETAINAGE_COLUMNS):  # fmt: skip
             conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
         conn.execute("INSERT INTO purchase_orders (po_key, po_number, updated_at) VALUES ('81', 'PO-81', '2026-11')")
         conn.execute("UPDATE settings SET value = '29' WHERE key = 'schema_version'")
