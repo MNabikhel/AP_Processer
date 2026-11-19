@@ -15,7 +15,8 @@ voucher (``jde_voucher``) has it:
 
 A tax the invoice charges that the voucher's tax area does not hold (the PST or QST of a province whose area is a
 GST-only one shared with others, the prototype's ``CDNGST``) is not JD Edwards' to work out: kept in the expense by the
-Tax setup, it goes on a G/L line of its own on the PO line's account, Tax N. A charge the PO has no line for (freight,
+Tax setup, it goes on a G/L line of its own on the PO line's account, Tax N; so does every tax a company not checked
+for Canadian tax is charged (a US one, keyed with the exempt code, D-267). A charge the PO has no line for (freight,
 a fuel surcharge) is one too when Settings → JD Edwards E1 says so (``JdeSettings.charge_account``). What can't be
 keyed so holds the voucher with why, never guessed: a line taxed with part of what its area holds (GST only on a GST +
 PST area) and no tax area of its own on its PO line, a tax recovered that JD Edwards would not work out, a tax kept in
@@ -30,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..coding.line_tax import tax_name
+from ..core.schema import COMPANY_TAX
 from .jde_accounts import account_for, ani
 from .jde_formats import _date, _units
 from .jde_remarks import line_remark
@@ -130,9 +132,24 @@ def _money(cents: int) -> str:
     return f"{cents / 100:,.2f}"
 
 
+def _charges(v: _Voucher) -> list[dict[str, Any]]:
+    """The tax lines the invoice charges, with an amount: the Canadian ones (``v.charged``); of a company not checked
+    for Canadian tax (D-267), whose voucher goes with the exempt code, every one: JD Edwards works out none of them on
+    the rows, they are kept as charged (B-2662)."""
+    if not _other_company(v):
+        return v.charged
+    return [t for t in v.final.get("tax_lines") or [] if isinstance(t, dict) and t.get("tax_type")
+            and abs(float(t.get("tax_amount") or 0)) > 0.004]  # fmt: skip
+
+
+def _other_company(v: _Voucher) -> bool:
+    """Whether the voucher's company is not checked for Canadian tax (a US one, ``schema.COMPANY_TAX``, D-267)."""
+    return isinstance(v.final.get(COMPANY_TAX), dict)
+
+
 def _charged(v: _Voucher, tax_type: str) -> int:
     """The tax of ``tax_type`` the invoice charges (cents)."""
-    return sum(_units(t.get("tax_amount"), v.decimals) for t in v.charged if t["tax_type"] == tax_type)
+    return sum(_units(t.get("tax_amount"), v.decimals) for t in _charges(v) if t["tax_type"] == tax_type)
 
 
 def keyed_match(v: _Voucher, matched: VoucherMatch, settings: JdeSettings) -> KeyedMatch:
@@ -146,7 +163,7 @@ def keyed_match(v: _Voucher, matched: VoucherMatch, settings: JdeSettings) -> Ke
     exempt = settings.exempt_code.strip().upper()
     company = settings.po_company.strip()
     company = (company.zfill(5) if company.isdigit() else company) or company_of(final, settings)
-    charged = {t["tax_type"] for t in v.charged}
+    charged = {t["tax_type"] for t in _charges(v)}
     area = row_taxes(v, settings)
     on_rows = charged & set(area)  # JD Edwards works them out on the rows taxed Y
     apart = charged - set(area)  # charged, and not JD Edwards' to work out: on G/L lines of their own
@@ -223,20 +240,22 @@ def _apart_lines(v: _Voucher, matched: VoucherMatch, out: KeyedMatch, apart: set
                  shares: dict[int, dict[str, int]], items: dict[Any, dict[str, Any]],
                  settings: JdeSettings) -> None:  # fmt: skip
     """The taxes the invoice charges that JD Edwards would not work out on the rows and the Tax setup keeps in the
-    expense (``apart``): a G/L line on each PO line's account with its lines' share (what is left over of a tax on the
-    largest), Tax N, after the rows."""
+    expense (``apart``): a G/L line on each PO line's account, with its subledger (an L account's, B-2661), with its
+    lines' share (what is left over of a tax on the largest), Tax N, after the rows."""
     if not apart:
         return
     exempt = settings.exempt_code.strip().upper()
-    by_account: dict[str, int] = {}
-    for t in (t for t in ORDER if t in apart):
-        mine: list[tuple[str, int]] = []
+    by_account: dict[tuple[str, str, str], int] = {}
+    for t in (t for t in (*ORDER, "OTHER") if t in apart):
+        mine: list[tuple[tuple[str, str, str], int]] = []
         for row in matched.rows:
             cents = (shares.get(row.invoice_line) or {}).get(t, 0)
             if cents:
                 li = items.get(row.invoice_line) or {}
                 own = account_for(li.get("predicted_gl_code") or "", li.get("predicted_cost_center") or "", settings)
-                mine.append((row.account or (ani(own) if own is not None else ""), cents))
+                ledger = (row.subledger[0] or str(li.get("subledger") or ""),
+                          row.subledger[1] or str(li.get("subledger_type") or ""))  # fmt: skip
+                mine.append(((row.account or (ani(own) if own is not None else ""), *ledger), cents))
         printed = _charged(v, t)
         if mine and (left := printed - sum(c for _, c in mine)):
             biggest = max(range(len(mine)), key=lambda i: abs(mine[i][1]))
@@ -245,17 +264,25 @@ def _apart_lines(v: _Voucher, matched: VoucherMatch, out: KeyedMatch, apart: set
             out.held.append(f"the {tax_name(t, v.province)} ({_money(printed)}) is on no line matched: JD Edwards "
                             "would not work it out and it has no line to go with. Key the voucher by hand")  # fmt: skip
         for account, cents in mine:
-            if not account:
+            if not account[0]:
                 out.held.append(f"the {tax_name(t, v.province)} kept in the expense has no account to go to: the PO "
                                 "line has none in the purchase orders loaded, nor the invoice line. Load the purchase "
                                 "orders again with their Account Number column")  # fmt: skip
                 continue
             by_account[account] = by_account.get(account, 0) + cents
+    other = _other_company(v)
     names = _names(apart, v.province)
-    for account, cents in by_account.items():
-        out.rows.append(MatchLine("", "", "", "", None, "", cents / 100, account, "N",
-                                  exempt, "", f"{names} not recovered"[:30], on_po=False))  # fmt: skip
+    for (account, subledger, subledger_type), cents in by_account.items():
+        out.rows.append(MatchLine("", "", "", "", None, "", cents / 100, account, "N", exempt, "",
+                                  "Sales tax" if other else f"{names} not recovered"[:30], on_po=False,
+                                  subledger=subledger, subledger_type=subledger_type))  # fmt: skip
     total = sum(by_account.values())
+    if other:
+        out.notes.append(f"The tax charged ({_money(total)}) is kept as charged: company "
+                         f"{company_of(v.final, settings)} is not checked for Canadian tax, so its voucher goes with "
+                         "the exempt code and JD Edwards works out no tax on the rows. It is keyed on a G/L line of "
+                         "its own on the PO line's account (not on the PO, Tax N).")  # fmt: skip
+        return
     out.notes.append(f"The {names} ({_money(total)}) is not recovered and tax area {v.tax_area or '(none)'} does not "
                      f"hold it, so JD Edwards would not work it out: it is keyed on a G/L line of its own on the PO "
                      f"line's account (not on the PO, Tax N). To have JD Edwards work it out on the rows instead, "

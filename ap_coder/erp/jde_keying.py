@@ -185,6 +185,7 @@ def vouchers(
     (``po_matches``), given: a PO-matched voucher is keyed with its match rows, or not ready when it has none."""
     ready: list[Voucher] = []
     held: list[Held] = []
+    taken: dict[tuple[str, str, str, str], float] = {}  # the quantity matched on each PO line above on the sheet
     for inv, (an8, v) in zip(invoices, jde_voucher._vouchers(invoices, settings, vendor_lookup, on), strict=True):
         final = v.final
         why = list((left_out or {}).get(v.inv_id) or []) or (jde_voucher._accounts_once(v) if v.problems else [])
@@ -207,7 +208,7 @@ def vouchers(
         if keyed is not None:
             warnings += keyed.warnings
             notes = [*keyed.notes, *notes]
-            _match_said(po_matches.get(v.inv_id) if po_matches else None, warnings, notes)
+            _match_said(po_matches.get(v.inv_id) if po_matches else None, warnings, notes, taken)
         printed = str(final.get("payment_terms") or "").strip()
         if not terms and printed:  # never the printed terms in JD Edwards' 3-character code (B-2618)
             notes.insert(0, f"Payment terms “{printed}” are printed and have no JD Edwards code (Settings → JD Edwards "
@@ -274,30 +275,46 @@ def po_matches(store: Any, invoices: list[dict[str, Any]], charge_account: str =
     return out
 
 
-def _match_said(matched: po_mod.VoucherMatch | None, warnings: list[str], notes: list[str]) -> None:
+def _match_said(matched: po_mod.VoucherMatch | None, warnings: list[str], notes: list[str],
+                taken: dict[tuple[str, str, str, str], float] | None = None) -> None:  # fmt: skip
     """What a voucher match's rows need said: a quantity matched over what JD Edwards had open on its PO line
     (``warnings``: a credit gives back, never over, B-2647); a PO line with no quantity in the purchase orders loaded,
-    matched by amount, and one matched in part, left open for the rest (``notes``)."""
-    for row in matched.rows if matched is not None else []:
-        if not row.on_po:
-            continue
+    matched by amount, and one matched in part, left open for the rest (``notes``). What the rows match on a PO line
+    is added up, and to what the vouchers above on the sheet match on it (``taken``, added to: B-2663)."""
+    taken = {} if taken is None else taken
+    rows = [row for row in (matched.rows if matched is not None else []) if row.on_po]
+    mine: dict[tuple[str, str, str, str], float] = {}
+    for row in rows:
+        if not row.no_quantity and row.quantity is not None:
+            key = (row.order_number, row.order_type, row.order_company, row.line)
+            mine[key] = mine.get(key, 0.0) + row.quantity
+    said: set[tuple[str, str, str, str]] = set()
+    for row in rows:
         where = f"Order {row.order_number} line {row.line}"
+        key = (row.order_number, row.order_type, row.order_company, row.line)
         if row.no_quantity:
             typed = (f"the invoice's {po_mod._qty(row.quantity)}" if row.quantity is not None
                      else "left empty")  # fmt: skip
             notes.append(f"{where} has no quantity in the purchase orders loaded: it is matched by its amount "
                          f"({row.amount:,.2f}) and Quantity Matched is {typed}. Check the quantity JD Edwards "
                          "shows for it.")  # fmt: skip
-        elif row.open_quantity is not None and row.quantity is not None and \
-                row.quantity > row.open_quantity + 1e-6:  # fmt: skip
-            warnings.append(f"{where}: {po_mod._qty(row.quantity)} matched, but JD Edwards had "
-                            f"{po_mod._qty(row.open_quantity)} open at the purchase orders' last load: it matches no "
-                            "more than is open.")  # fmt: skip
-        elif row.open_quantity is not None and row.quantity is not None and \
-                0 < row.quantity < row.open_quantity - 1e-6:  # fmt: skip
-            notes.append(f"{where}: {po_mod._qty(row.quantity)} of the {po_mod._qty(row.open_quantity)} open matched; "
-                         f"the line stays open for {po_mod._qty(row.open_quantity - row.quantity)} (do not close it "
-                         "in Voucher Match).")  # fmt: skip
+            continue
+        if key in said or key not in mine or row.open_quantity is None:
+            continue
+        said.add(key)
+        here, before, opened = mine[key], taken.get(key, 0.0), row.open_quantity
+        total = here + before
+        with_above = f", {po_mod._qty(total)} with the {po_mod._qty(before)} above on this sheet" if before else ""
+        if here > 0 and total > opened + 1e-6:
+            warnings.append(f"{where}: {po_mod._qty(here)} matched{with_above}, but JD Edwards had "
+                            f"{po_mod._qty(opened)} open at the purchase orders' last load: it matches no more than is "
+                            "open.")  # fmt: skip
+        elif here > 0 and total < opened - 1e-6:
+            notes.append(f"{where}: {po_mod._qty(here)} of the {po_mod._qty(opened)} open matched{with_above}; the "
+                         f"line stays open for {po_mod._qty(opened - total)} (do not close it in Voucher "
+                         "Match).")  # fmt: skip
+    for key, quantity in mine.items():
+        taken[key] = taken.get(key, 0.0) + quantity
 
 
 def _said(v: jde_voucher._Voucher, settings: jde_settings.JdeSettings, taxed: bool,

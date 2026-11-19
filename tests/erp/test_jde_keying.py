@@ -1285,3 +1285,150 @@ def test_jd_edwards_working_out_another_tax_than_the_invoice_charges_is_a_warnin
         "At tax area CDNGST's 5% (GST), JD Edwards works out 39.29 on the rows taxed Y, but the invoice charges "
         "40.29: check the tax JD Edwards shows against the invoice before saving the voucher."
     ) in v.warnings
+
+
+def test_a_tax_keyed_on_a_line_of_its_own_carries_the_subledger_of_the_po_line_it_goes_with(tmp_path):
+    """B-2661: BC's PST kept in the expense on the pilot's GST-only tax area is keyed on a G/L line of its own on the
+    PO line's account (D-265). A PO line coded to an account whose posting edit code is L carries its subledger and
+    type (D-268), and its rows had them, but the PST's line on that account had none: JD Edwards refuses a line on an
+    L account without its subledger. It carries the PO line's, a line for each subledger."""
+    from ap_coder.bench import jde_company, jde_exports, jde_po_vouchers
+    from ap_coder.coding import po
+    from ap_coder.core.schema import InvoiceCoding
+    from ap_coder.core.store import Store
+    from ap_coder.web.files import read_sheet
+
+    case = next(c for c in jde_po_vouchers.cases(jde_company.build(1, "small", 2025)) if c.name == "bc_gst_pst")
+    store = Store(tmp_path / "ap.db")
+    sheet, _ = read_sheet("po.xlsx", jde_exports.open_po_lines_xlsx(case.po_lines))
+    rows = po.rows_from_records(sheet.to_dict("records"), po.map_columns(list(sheet.columns)))[0]
+    for row, subledger in zip(rows, ("00012345", "00067890"), strict=True):
+        row.update(subledger=subledger, subledger_type="A")
+    store.import_purchase_orders(rows)
+    final = case.coding()
+    final["gl_distribution"] = exports.build_gl_distribution(InvoiceCoding.model_validate(final), _setup())
+    inv = {"id": 1, "final_output": final}
+    js = jde_po_vouchers.pilot_settings()
+    (v,), held = jde_keying.vouchers([inv], js, lambda f: str(case.supplier.number), on=ON_DAY,
+                                     po_matches=jde_keying.po_matches(store, [inv], js.charge_account))  # fmt: skip
+    assert held == [] and v.balanced
+    assert [(m.on_po, m.amount, m.subledger, m.subledger_type) for m in v.matches] == [
+        (True, 480.0, "00012345", "A"), (True, 435.0, "00067890", "A"),
+        (False, 33.6, "00012345", "A"), (False, 30.45, "00067890", "A")]  # fmt: skip
+
+
+def test_a_us_companys_po_matched_voucher_keys_the_sales_tax_charged_on_lines_of_their_own(tmp_path):
+    """B-2662: a company not checked for Canadian tax (a US one, D-267) has its voucher keyed with the exempt code,
+    JD Edwards working out no tax, the tax kept as charged. Its voucher match rows are the lines before tax, so with
+    the sales tax charged they never added up to the gross and every such voucher was held ("check the lines and the
+    taxes against the invoice"). The tax charged goes on a G/L line of its own on each PO line's account, Tax N, as
+    a tax JD Edwards does not work out does (D-265), and the voucher adds up to the gross."""
+    from ap_coder.core.schema import COMPANY_TAX
+    from ap_coder.core.store import Store
+    from tests.erp.test_jde import USD, _invoice
+
+    area = {COMPANY_TAX: {"tax_area": "WA-KING", "from": "PO 30981"}}
+    inv = _invoice(USD, company="00310", po_number="30981", **area)
+    final = inv["final_output"]
+    store = Store(tmp_path / "ap.db")
+    store.import_purchase_orders([
+        {"po_number": "30981", "vendor_name": final["vendor_name"], "supplier_number": "71008", "order_type": "OP",
+         "order_company": "00310", "line_number": li["line_number"], "erp_line": f"{li['line_number']}.000",
+         "description": li["description"], "quantity": li["quantity"], "unit_price": li["unit_price"],
+         "amount": li["amount"], "open_quantity": li["quantity"], "uom": "EA", "gl_code": "6420" if n < 2 else "1450",
+         "cost_center": "3100", "status": "open", "currency": "USD"}
+        for n, li in enumerate(final["line_items"])])  # fmt: skip
+    js = settings(po_matched=True)
+    js.company_currencies = {"00310": "USD"}
+    (v,), held = jde_keying.vouchers([inv], js, lambda f: "71008", on=ON_DAY,
+                                     po_matches=jde_keying.po_matches(store, [inv]))  # fmt: skip
+    assert held == [] and v.balanced, held
+    assert [(m.on_po, m.amount, m.account, m.taxed, m.tax_code, m.tax_area) for m in v.matches] == [
+        (True, 735.0, "3100.6420", "N", "E", "WA-KING"), (True, 3600.0, "3100.6420", "N", "E", "WA-KING"),
+        (True, 2480.0, "3100.1450", "N", "E", "WA-KING"), (True, 45.0, "3100.1450", "N", "E", "WA-KING"),
+        (False, 448.67, "3100.6420", "N", "E", ""), (False, 261.34, "3100.1450", "N", "E", "")]  # fmt: skip
+    assert jde_keying._check(v) == "7,570.01 + 0.00 = 7,570.01: balanced"
+
+
+def test_what_a_keying_sheet_matches_on_one_po_line_is_held_against_what_is_open_all_together(tmp_path):
+    """B-2663: the quantity matched over what JD Edwards had open on a PO line was looked for row by row: an invoice
+    billing a line's bags on two lines (60 and 60 of the 100 open) said twice "60 of the 100 open matched; the line
+    stays open for 40" and warned of nothing, and so did two invoices of 60 each on one keying sheet; JD Edwards takes
+    the first 60 and has 40 left for the rest. What a sheet matches on a PO line is added up, in its order."""
+    store = po_store(tmp_path)
+    js = settings(po_matched=True)
+
+    def bags(inv_id, *quantities):
+        inv = po_invoice(inv_id)
+        final = inv["final_output"]
+        first = final["line_items"][0]
+        final["line_items"] = [{**first, "line_number": n, "quantity": q, "amount": round(q * 5.99, 2)}
+                               for n, q in enumerate(quantities, 1)]  # fmt: skip
+        subtotal = round(sum(li["amount"] for li in final["line_items"]), 2)
+        tax = round(subtotal * 0.05, 2)
+        final.update(invoice_number=f"1182{inv_id}", subtotal=subtotal, tax_lines=[tl("GST", "", 0.05, subtotal, tax)],
+                     tax_total=tax, grand_total=round(subtotal + tax, 2))  # fmt: skip
+        return inv
+
+    def said(invoices):
+        ready, held = jde_keying.vouchers(invoices, js, promo_lookup, on=ON_DAY,
+                                          po_matches=jde_keying.po_matches(store, invoices))  # fmt: skip
+        assert held == []
+        return [([w for w in v.warnings if "open" in w], [n for n in v.notes if "open" in n]) for v in ready]
+
+    assert said([bags(1, 60, 60)]) == [(["Order 40917 line 12.000: 120 matched, but JD Edwards had 100 open at "
+                                         "the purchase orders' last load: it matches no more than is open."],
+                                        [])]  # fmt: skip
+    assert said([bags(1, 60), bags(2, 60)]) == [
+        ([], ["Order 40917 line 12.000: 60 of the 100 open matched; the line stays open for 40 (do not close it in "
+              "Voucher Match)."]),
+        (["Order 40917 line 12.000: 60 matched, 120 with the 60 above on this sheet, but JD Edwards had 100 open at "
+          "the purchase orders' last load: it matches no more than is open."], []),
+    ]  # fmt: skip
+    assert said([bags(1, 30), bags(2, 30)])[1] == ([], [
+        "Order 40917 line 12.000: 30 of the 100 open matched, 60 with the 30 above on this sheet; the line stays open "
+        "for 40 (do not close it in Voucher Match)."])  # fmt: skip
+
+
+def test_a_voucher_match_the_keying_sheet_would_hold_is_a_check_before_approval(tmp_path):
+    """B-2667: a PO-matched voucher's rows the keying sheet can't make for a reason no PO check gives (here a BC line
+    charged the GST and not the PST on BC's GST + PST area, its PO line with no area of its own, D-265) were said only
+    in the voucher block on the review screen: no check, so the invoice was approved, touchless too, and was then on
+    the keying sheet's "Not ready" sheet (what D-75 says never happens). It is the check PO_VOUCHER_MATCH, a warning
+    (keyed by hand, it is approved anyway); what a PO check says already (a line on no PO line) is not said twice."""
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.bench import jde_company, jde_exports, jde_po_vouchers
+    from ap_coder.coding import po
+    from ap_coder.core.config import Settings
+    from ap_coder.core.schema import InvoiceCoding
+    from ap_coder.core.store import Store
+    from ap_coder.web.files import read_sheet
+
+    case = next(c for c in jde_po_vouchers.cases(jde_company.build(1, "small", 2025)) if c.name == "bc_gst_pst")
+    store = Store(tmp_path / "ap.db")
+    sheet, _ = read_sheet("po.xlsx", jde_exports.open_po_lines_xlsx(case.po_lines))
+    store.import_purchase_orders(po.rows_from_records(sheet.to_dict("records"), po.map_columns(list(sheet.columns)))[0])
+    codes = {li["predicted_gl_code"] for li in case.coding()["line_items"]} | {"2310", "2320"}
+    store.import_accounts("gl_accounts", [{"code": code} for code in sorted(codes)], "code", None)
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
+    jde_settings.save(store, jde_po_vouchers.area_settings())
+    final = case.coding()
+    final["line_items"][1].update(taxes_applied=["GST"], tax_exempt=["PST"])
+    pst = round(480.0 * 0.07, 2)
+    final.update(tax_lines=[tl("GST", "", 0.05, 915.0, 45.75), tl("PST", "BC", 0.07, 480.0, pst)],
+                 tax_total=round(45.75 + pst, 2), grand_total=round(915.0 + 45.75 + pst, 2))  # fmt: skip
+
+    def issues(coding):
+        _, report = finalise_coding(InvoiceCoding.model_validate(coding), store.reference_data(), Settings(),
+                                    store=store)  # fmt: skip
+        return {i.code: (i.severity, i.message) for i in report.issues if i.code.startswith("PO_")}
+
+    found = issues(final)
+    assert found["PO_VOUCHER_MATCH"] == ("warning", (
+        "JD Edwards' voucher match can't be keyed from the keying sheet: line 2 “Hi-vis safety vest, class 2” is "
+        "charged the GST and not the PST, but tax area BC-GSTPST (code C) has JD Edwards work out both on its row: "
+        "give its PO line a tax rate/area for the GST alone in JD Edwards and load the purchase orders again (with "
+        "their Tax Rate/Area column), or key the voucher by hand"))  # fmt: skip
+    odd = {**final, "line_items": [final["line_items"][0], {**final["line_items"][1], "description": "Artwork proof"}]}
+    assert "PO_VOUCHER_MATCH" not in issues(odd) and "PO_LINE_NOT_ON_PO" in issues(odd)  # (said by the PO check)
+    assert "PO_VOUCHER_MATCH" not in issues(case.coding())  # (keyed: nothing to say)

@@ -194,6 +194,7 @@ class PurchasingMixin:
                 conn.execute("DELETE FROM po_lines")
                 conn.execute("DELETE FROM purchase_orders")
             existing = {r["po_key"] for r in conn.execute("SELECT po_key FROM purchase_orders")}
+            replaced: set[str] = set()
             for key, order in orders.items():
                 head = order["row"]
                 status = "closed" if all(r.get("status") == "closed" for r in order["lines"]) else OPEN
@@ -203,6 +204,9 @@ class PurchasingMixin:
                     next((r[f] for r in order["lines"] if r.get(f)), "")
                     for f in ("currency", "order_type", "order_company", "supplier_number"))  # fmt: skip
                 name = head.get("vendor_name") or named.get(supplier) or ""
+                numbered = po_key(head["po_number"])
+                if key != numbered and self._replaces_numbered(conn, numbered, vendor_key(name), supplier):
+                    replaced.add(key)  # (the order kept by its number alone, now with its company and type: B-2665)
                 conn.execute(
                     """INSERT INTO purchase_orders (po_key, po_number, vendor_name, vendor_key, status, updated_at,
                        currency, order_type, order_company, supplier_number, number_key)
@@ -237,13 +241,31 @@ class PurchasingMixin:
                     )  # fmt: skip
             counts = {
                 "orders": len(orders),
-                "added": len(set(orders) - existing),
-                "updated": len(set(orders) & existing),
+                "added": len(set(orders) - existing - replaced),
+                "updated": len((set(orders) & existing) | replaced),
                 "lines": sum(len(o["lines"]) for o in orders.values()),
             }
             if log:
                 self._log(conn, "pos_imported", actor=actor, detail={**counts, "replace_all": replace_all})
         return counts
+
+    @staticmethod
+    def _replaces_numbered(conn: Any, number: str, vendor: str, supplier: Any) -> bool:
+        """Whether an order of a file naming its company or type (``keys.order_key``; ``vendor``: its vendor key,
+        ``supplier``: its supplier number) is the one kept by its number alone (loaded from a file that named neither,
+        D-267), of its supplier or of none: then that one is deleted, its lines too, and this one takes its place
+        (B-2665), not a second order of the number beside it."""
+        kept = conn.execute("SELECT vendor_key, supplier_number FROM purchase_orders WHERE po_key = ? AND "
+                            "order_type = '' AND order_company = ''", (number,)).fetchone()  # fmt: skip
+        if kept is None:
+            return False
+        theirs, number_of = kept["vendor_key"] or "", str(kept["supplier_number"] or "").lstrip("0")
+        supplier = str(supplier or "").lstrip("0")
+        if (theirs or number_of) and not ((vendor and theirs == vendor) or (supplier and number_of == supplier)):
+            return False  # (another supplier's: another order of that number)
+        conn.execute("DELETE FROM po_lines WHERE po_key = ?", (number,))
+        conn.execute("DELETE FROM purchase_orders WHERE po_key = ?", (number,))
+        return True
 
     def has_purchase_orders(self) -> bool:
         with self._conn() as conn:
@@ -506,24 +528,33 @@ class PurchasingMixin:
     def purchase_orders(self) -> list[dict[str, Any]]:
         """Every PO with its total and how much has been invoiced against it (invoices in review included), in its
         currency: an invoice in another (a PO with none taken as CAD) is counted in ``invoices`` and
-        ``other_currency``, never added to ``billed`` (B-2613)."""
+        ``other_currency``, never added to ``billed`` (B-2613). A PO billed by amount whose lines all have what the ERP
+        has open on them (``by_open``: JD Edwards' order details grid as it comes, D-264) totals that, and only the
+        invoices not exported yet are added to ``billed``: the ERP's open amounts have counted the others (D-280)."""
         with self._conn() as conn:
             rows = [
                 dict(r)
                 for r in conn.execute(
                     """SELECT p.*, COUNT(l.line_number) lines, COALESCE(SUM(l.amount), 0) total,
-                       SUM(l.received_quantity IS NOT NULL) received_lines
+                       SUM(l.received_quantity IS NOT NULL) received_lines, MIN(l.amount_only) by_amount,
+                       SUM(CASE WHEN l.open_amount IS NULL THEN 1 ELSE 0 END) no_open, SUM(l.open_amount) open_total
                        FROM purchase_orders p LEFT JOIN po_lines l ON l.po_key = p.po_key
                        GROUP BY p.po_key ORDER BY p.po_number"""
                 )
             ]
+            for r in rows:
+                by_amount, no_open, open_total = r.pop("by_amount"), r.pop("no_open"), r.pop("open_total")
+                r["by_open"] = bool(r["lines"] and by_amount and not no_open)
+                if r["by_open"]:
+                    r["total"] = round(open_total, 2)
+            by_open = {r["po_key"] for r in rows if r["by_open"]}
             billed: dict[str, dict[str, Any]] = {}
             ordered = {r["po_key"]: r["currency"] or "CAD" for r in rows}  # each PO's currency (none: CAD)
             self._summary_fresh(conn)  # each invoice's subtotal billed, from the invoices' summary (D-110)
             quoting = fetch_rows(
                 conn,
-                "SELECT id, po_key, vendor_key, status, po_billed, broken, currency FROM invoice_summary WHERE "
-                "po_key != '' AND status IN "
+                "SELECT id, po_key, vendor_key, status, po_billed, broken, currency, export_batch FROM invoice_summary "
+                "WHERE po_key != '' AND status IN "
                 + _ACTIVE_IN
                 + " AND po_key IN (SELECT number_key FROM purchase_orders) ORDER BY id",  # a PO we have
                 ACTIVE_STATUSES,
@@ -541,6 +572,8 @@ class PurchasingMixin:
                 entry["in_review"] += r["status"] == REVIEW
                 if ((r["currency"] or "").strip().upper() or "CAD") != ordered[owner]:
                     entry["other_currency"] += 1  # in another currency: never added to this one (B-2613)
+                    continue
+                if owner in by_open and r["export_batch"] is not None:  # in the ERP's open amounts already (D-280)
                     continue
                 amount = r["po_billed"]
                 if r["broken"] & BIT["po"]:  # what the summary could not read: read again, failing as it did before

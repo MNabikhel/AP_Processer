@@ -106,11 +106,15 @@ def po_detail(store: Store, p: dict[str, Any]) -> dict[str, Any] | None:
     matched: dict[Any, int | None] = {}
     billed = billing.billed(full, invoices, matched=matched)
     billed_amount = billing.billed(full, invoices, amounts=True, matched=matched)
+    # (a line billed by amount with what the ERP has open on it: against that, the invoices not exported yet, D-280)
+    waiting = billing.billed(full, [i for i in invoices if i["export_batch"] is None], amounts=True, matched=matched)
     lines = []
     for li in full["lines"]:
         coding = " · ".join(x for x in (li["gl_code"], li["cost_center"]) if x)
         if li.get("amount_only"):  # services / lump sums: amounts, not quantities
-            done_amount = billed_amount.get(li["line_number"], 0.0)
+            by_open = li.get("open_amount") is not None
+            done_amount = (waiting if by_open else billed_amount).get(li["line_number"], 0.0)
+            li = {**li, "amount": li["open_amount"]} if by_open else li
             over = done_amount > li["amount"] * (1 + po_mod.TOTAL_TOLERANCE) + 0.01
             flag = (
                 ("Over-billed", "err", "")
@@ -123,9 +127,9 @@ def po_detail(store: Store, p: dict[str, Any]) -> dict[str, Any] | None:
                 {
                     "n": li["line_number"],
                     "description": li["description"],
-                    "ordered": "amount",
+                    "ordered": "amount open" if by_open else "amount",
                     "received": "—",
-                    "billed": ui.money(done_amount),
+                    "billed": ui.money(done_amount) + (" not exported yet" if by_open else ""),
                     "unit_price": "—",
                     "amount": li["amount"],
                     "coding": coding,

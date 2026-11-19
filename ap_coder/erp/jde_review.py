@@ -127,6 +127,20 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
     return [(severity, code, setup_contact(text), line) for severity, code, text, line in out]
 
 
+def match_findings(output: dict[str, Any], settings: JdeSettings, an8: str,
+                   matched: VoucherMatch) -> list[tuple[str, str, str, int | None]]:  # fmt: skip
+    """What holds a PO-matched voucher's Voucher Match rows back from the keying sheet (``jde_match.keyed_match``,
+    ``matched``: its ``po.voucher_match``), as a check before approval, as the rest of the voucher is (D-75, B-2667):
+    ``PO_VOUCHER_MATCH``, a warning (the voucher may be matched in JD Edwards by hand), each reason the PO match's own
+    checks don't say already (``VoucherMatch.said``). None for a voucher not PO-matched."""
+    v = _prepare({"id": 0, "final_output": output}, settings, str(an8 or "").strip())
+    if not v.po_matched:
+        return []
+    held = dict.fromkeys(why for why in keyed_match(v, matched, settings).held if why not in matched.said)
+    return [(WARNING, "PO_VOUCHER_MATCH", f"JD Edwards' voucher match can't be keyed from the keying sheet: {why}",
+             None) for why in held]  # fmt: skip
+
+
 def not_recovered(v: _Voucher) -> str:
     """What to say of a voucher whose GST or HST the Tax setup keeps in the expense under code V ("" otherwise): no
     input tax credit is claimed for it. Nearly every company recovers them, so it is asked, on the review screen and

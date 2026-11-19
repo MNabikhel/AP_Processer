@@ -487,6 +487,14 @@ CHECKS: dict[str, CheckHelp] = {
         "Pick the invoice's company on the review screen; if both orders are in that company, ask the buyer which "
         "one it bills.",
     ),
+    "PO_VOUCHER_MATCH": CheckHelp(
+        PO, "Voucher match not ready",
+        "With PO-matched vouchers (Settings → JD Edwards E1), the keying sheet can't make this invoice's Voucher Match "
+        "rows, for the reason said (most often the tax on a line and the tax area its rows would be keyed with): it "
+        "would be on the sheet's Not ready list.",
+        "Fix what is said (the line's tax, the tax areas, the purchase orders loaded), or approve it anyway and match "
+        "it in JD Edwards by hand.",
+    ),
     "PO_CLOSED": CheckHelp(
         PO, "PO is closed",
         "The purchase order quoted on the invoice has been closed.",
