@@ -275,3 +275,37 @@ def test_the_corrections_keep_to_the_reviewers_rounds_and_half_its_minutes(store
     assert len(model.asked("correct")) == 1 and store.get_invoice(iid)["ai_output"] == before
     (fix, fix_seconds), (review, review_seconds) = timeouts
     assert fix and 0 < fix_seconds <= 120 and not review and 120 < review_seconds <= 240
+
+
+def test_a_supplier_corrected_has_its_company_decided_again_for_the_supplier_it_is(store, monkeypatch):  # noqa: F811
+    """B-2682: with several JD Edwards companies (D-267), the company an invoice was given for the supplier misread
+    (the only one that supplier had billed) stayed once the AI reviewer corrected the supplier, said "picked on the
+    review screen" though nobody picked it: the person confirming the correction saw the wrong company as a pick."""
+    from ap_coder.capture.types import CHECK, CaptureResult, FieldResult
+    from tests.coding.test_companies import _load_group
+    from tests.webclient import SAMPLE_STEM, SAMPLES, gt
+
+    _load_group(store)
+    store.import_vendor_master([{"vendor_name": ONE_ROW_SUPPLIER, "erp_id": "4471001", "gst": ONE_ROW_GST},
+                                {"vendor_name": "Prairie Rentals Co", "erp_id": "5500"}], by_erp_id=True)  # fmt: skip
+    voucher = {"total": 10.0, "invoice_date": "2026-01-02", "an8": "", "document": "700101"}
+    store.import_erp_vouchers([{**voucher, "key": "00230-PV-700101-001", "vendor_name": "Prairie Rentals Co",
+                                "invoice_number": "PR-1"},
+                               {**voucher, "key": "00210-PV-700102-001", "vendor_name": ONE_ROW_SUPPLIER,
+                                "invoice_number": "PP-1"}])  # fmt: skip
+    page = (f"PRAIRIE PROMO\nInvoice #: 118204\nBill to: Maple Ridge Holdings Ltd.\nShip to: Maple Ridge Constructors "
+            f"Ltd., Yard 4\nGST/HST Registration No: {ONE_ROW_GST[:9]} {ONE_ROW_GST[9:]}\n")  # (two of the group)
+    misread = gt(vendor_name="Prairie Rentals Co", gst_hst_registration_number="", invoice_number="118204")
+    misread["company"] = "00230"  # as it was read: the only company Prairie Rentals billed
+    iid = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", misread, {"issues": []}, extraction_md=page)
+    store.save_capture(iid, CaptureResult({"vendor_name": FieldResult("vendor_name", "Prairie Rentals Co", 0.5,
+                                                                      CHECK)}).to_dict())  # fmt: skip
+    fix = _fix("supplier", label="Prairie Promo", gst_hst=f"{ONE_ROW_GST[:9]} {ONE_ROW_GST[9:]}")
+    monkeypatch.setattr(corrections, "ask_model", lambda coder, images, seconds_left: lambda text: _answer(fix))
+    done = corrections.correct(_settings(), store, store.get_invoice(iid), None, [], rounds=1, model=GEMMA,
+                               seconds_left=lambda: 60.0, identity=store.row_identity(iid))  # fmt: skip
+    assert done["applied"], done
+    inv = store.get_invoice(iid)
+    assert inv["ai_output"]["vendor_name"] == ONE_ROW_SUPPLIER and inv["ai_output"]["company"] == "00210"
+    assert inv["validation"]["checks"]["company"]["how"] == "history"
+    assert "company 00210 (was 00230)" in _codes(store, iid)["VERIFIER_CORRECTED"]["message"]

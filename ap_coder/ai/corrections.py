@@ -307,6 +307,7 @@ def apply_items(output: dict[str, Any], items: list[dict[str, Any]], text: str, 
             out["vendor_name"] = name
             if number:
                 out["gst_hst_registration_number"] = number
+            out.pop("company", None)  # decided again for this supplier: its PO, history (D-267, B-2682)
             continue
         amount = parse_amount(str(item.get("amount") or ""))
         if amount is None:
@@ -572,6 +573,9 @@ def _correct(settings: Any, store: Any, inv: dict[str, Any], coder: Any, images:
             refused.append(found)
         outcome["refused"] = refused
         if not isinstance(found, str):
+            was, now = output.get("company") or "", found[0].get("company") or ""
+            if was != now:  # (the supplier corrected: its company decided again)
+                said.append(f"company {now or 'not decided'} (was {was or 'not decided'}), for the supplier")
             message = _store(store, inv, *found, said, problem, identity, model)
             if message:
                 outcome.update(applied=said, message=message)
