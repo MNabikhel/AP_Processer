@@ -25,6 +25,7 @@ from ..capture.bridge import TAX_FIELD, printed_taxes, said_pages, vendor_record
 from ..capture.confidence import apply_supplier_record, reading_confidence
 from ..capture.reader import us_address
 from ..capture.reader.patterns import OUR_NAMES
+from ..capture.reader.progress import layout_rows, read_progress
 from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout, Line
 from ..capture.workflow import (
     apply_header_lessons,
@@ -722,7 +723,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     the evidence is strong enough (``Suggestion.auto``); the others stay UNASSIGNED and the review screen suggests
     accounts for them. The weak match of each line left blank is kept in ``CodingResult.hints`` (its place on the
     invoice, from 1 -> account), for the chat model's answer to be compared with (``pipeline._local_accounts``)."""
-    values = _values(capture)
+    values, progress = _progress_values(_values(capture), layout)  # a progress billing's own (D-273)
     vendor = str(values.get("vendor_name") or "")
     readings = [li for li in capture.line_items if li.amount is not None]
     # No subtotal found: the lines read are the subtotal (not a charge that cancels them all).
@@ -730,7 +731,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         round(sum(float(li.amount) for li in readings), 2)
     )  # fmt: skip
     # Freight read beside the subtotal is part of the coded subtotal (lines + charges, before tax) and taxed.
-    charges = capture.fields.get("other_charges")
+    charges = None if progress else capture.fields.get("other_charges")  # (a progress billing's: its holdback)
     freight = _amount(values, "other_charges") if charges is not None and charges.status in (VERIFIED, LIKELY) else 0.0
     supplier_province, ship_to_province = provinces(text, layout)
     invoice_on = _iso_or_empty(values.get("invoice_date"))
@@ -751,7 +752,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         key = (found or {}).get("vendor_key") or key
 
     if not readings:  # no table the reader could split: one line for the whole subtotal
-        readings_data = [("Invoice " + str(values.get("invoice_number") or ""), 1.0, subtotal, subtotal)]
+        said = PROGRESS_LINE if progress else "Invoice " + str(values.get("invoice_number") or "")
+        readings_data = [(said, 1.0, subtotal, subtotal)]
     else:
         readings_data = [
             (li.description or f"Line {i}", li.quantity if li.quantity is not None else 1.0,
@@ -793,7 +795,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
                               pst_number=str(values.get("pst_registration_number") or ""), feedback=feedback,
                               vendor=vendor, qst_number=str(values.get("qst_registration_number") or ""),
                               vendor_key=key)  # fmt: skip
-    lines = _taxes_kept(lines, readings, taxes_printed)
+    lines, tax_lines = _taxes_kept(lines, readings, taxes_printed), _progress_taxes(tax_lines, progress)
 
     # The coding's confidence_score is the Reading (D-89): how sure the header is. How sure the lines' accounts and
     # tax codes are is the Coding, worked out from the lines by the checks (``validation.coding_confidence``).
@@ -830,6 +832,46 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     )
     return CodingResult(coding=coding, raw_response="", model=MODEL_NAME, attempts=0, hints=hints,
                         offered=offered)  # fmt: skip
+
+
+# The line of a progress billing printed without a line table (a G702-style application, D-273).
+PROGRESS_LINE = "Work completed this period"
+
+
+def _progress_values(values: dict[str, Any], layout: DocLayout | None) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """(the reading's values, the progress billing read): a progress billing's own when it is one that adds up as
+    printed (``reader.progress``, no release): the work this period the subtotal, each tax as printed, the total the
+    one before the holdback (the work and the taxes), whatever totals the reader chose (its amount due is net of the
+    holdback)."""
+    progress = read_progress(layout_rows(layout)) if layout is not None else None
+    if not progress or not progress["adds_up"] or progress["release"]:
+        return values, None
+    taxes = progress["taxes"]
+    out = {**values, "subtotal": progress["this_period"], "tax_total": round(sum(taxes.values()), 2),
+           "grand_total": round(progress["this_period"] + sum(taxes.values()), 2)}  # fmt: skip
+    for field, tax_type in _TAXES:
+        if tax_type in taxes:
+            out[field] = taxes[tax_type]
+    out.pop("other_charges", None)
+    return out, progress
+
+
+def _progress_taxes(tax_lines: list[TaxLine], progress: dict[str, Any] | None) -> list[TaxLine]:
+    """A progress billing's tax lines charged on the work less the holdback (not on all of it): at the rate that makes
+    them, on that base. Charged on the work itself, as most are, they stay as they are (and any other invoice's)."""
+    if not progress:
+        return tax_lines
+    held = progress["holdback"]
+    net = round(progress["this_period"] - held, 2)
+    if not held or not net:
+        return tax_lines
+    out = []
+    for t in tax_lines:
+        rate = next((r for r in _OFFICIAL.get(t.tax_type, ()) if abs(round(net * r, 2) - t.tax_amount) < 0.015), None)
+        if rate is not None and all(abs(t.rate - r) > 1e-9 for r in _OFFICIAL.get(t.tax_type, ())):
+            t = t.model_copy(update={"rate": rate, "taxable_amount": net})
+        out.append(t)
+    return out
 
 
 _TIP_LABEL = re.compile(
@@ -956,6 +998,7 @@ def local_extraction(path: str | Path, layout: DocLayout | None = None) -> Extra
     ocr_conf = [w.conf for w in words if w.source == "ocr"]
     content = f"\n\n{PAGE_BREAK}\n\n".join("\n".join(line.text for line in page.lines) for page in layout.pages)
     return ExtractionResult(
+        progress=read_progress(layout_rows(layout)),  # a progress billing's amounts (D-273)
         source=str(path),
         model_id=f"local-{layout.source}",
         content=content,

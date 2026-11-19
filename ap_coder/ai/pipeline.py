@@ -44,7 +44,7 @@ from ..coding.vendors import vendor_findings
 from ..core.config import Settings
 from ..core.memory import compare_patterns, compare_with_history, format_examples, select_examples, vendor_key
 from ..core.reference_data import ReferenceData, short_name
-from ..core.schema import COMPANY_TAX, InvoiceCoding, decided
+from ..core.schema import COMPANY_TAX, PROGRESS_BILLING, InvoiceCoding, decided
 from ..core.store.imports import ClaimLost
 from ..core.store.joined import CLAIM
 from ..core.store.reports import anywhere_in
@@ -220,6 +220,11 @@ def duplicates_known(store: Store, others: list[int], invoice_id: int | None) ->
     return known
 
 
+def _progress_billing(extraction: ExtractionResult | None) -> dict[str, Any]:
+    """What is kept beside the coding of a progress billing: its amounts as printed (D-273); nothing for another."""
+    return {PROGRESS_BILLING: extraction.progress} if extraction is not None and extraction.progress else {}
+
+
 def finalise_coding(
     coding: InvoiceCoding,
     reference: ReferenceData,
@@ -306,6 +311,7 @@ def finalise_coding(
             output[PLACE_OF_SUPPLY] = place
     if not canadian_tax:  # a US company's voucher: its tax area from the PO line or the supplier (D-267)
         output[COMPANY_TAX] = companies.voucher_tax(store, coding)
+    output.update(_progress_billing(extraction))
     output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
     # JD Edwards in use: what its batch would hold back, asked before approval (D-75).
     erp_findings: list[tuple[str, str, str, int | None]] = []
@@ -1153,6 +1159,7 @@ def _meta(result: PipelineResult) -> dict[str, Any]:
             "mean_word_confidence": result.extraction.mean_word_confidence,
             "low_confidence_word_count": result.extraction.low_confidence_word_count,
             "invoice_fields": result.extraction.invoice_fields,
+            **({"progress": result.extraction.progress} if result.extraction.progress else {}),
         }
     if result.coding:
         meta["inference"] = {

@@ -8,8 +8,8 @@ amounts). Totals are chosen together: the subtotal, taxes and total that add up 
 
 Its parts (D-69), each using only those before it: ``_common`` (shared words and helpers), ``labels``, ``values``
 (the value beside or under a label), ``spatial``, ``patterns`` (fields read from their shape), ``totals`` (the solver),
-``line_items``, ``entry`` (``read_fields``). Re-exported here: the names used outside the package (D-115); any other
-is imported from its part.
+``line_items``, ``entry`` (``read_fields``), ``progress`` (a progress billing's amounts, D-273). Re-exported here: the
+names used outside the package (D-115); any other is imported from its part.
 """
 
 from ._common import (  # noqa: F401

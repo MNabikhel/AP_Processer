@@ -1253,3 +1253,51 @@ def test_a_retainage_percent_is_read_by_any_of_its_names_as_a_percent_and_never_
     assert po_mod.is_subcontract(store.purchase_order("41"))
     assert not po_mod.is_subcontract(store.purchase_order("42"))
     assert po_mod.is_subcontract({"order_type": "OS", "lines": []})
+
+
+def _billing(po_number, *lines):
+    """A progress billing on ``po_number``: each line (description, amount), GST on all."""
+    items = [{"line_number": n, "description": words, "quantity": 1, "unit_price": amount, "amount": amount,
+              "predicted_gl_code": "7330.3207", "predicted_cost_center": "0021061022", "taxes_applied": ["GST"]}
+             for n, (words, amount) in enumerate(lines, 1)]  # fmt: skip
+    subtotal = sum(amount for _, amount in lines)
+    return InvoiceCoding.model_validate({
+        "vendor_name": "Westmeadow Building Services Inc.", "invoice_number": "WBS-P-1", "invoice_date": "2026-10-31",
+        "po_number": po_number, "currency": "CAD", "subtotal": subtotal, "tax_total": round(subtotal * 0.05, 2),
+        "grand_total": round(subtotal * 1.05, 2), "confidence_score": 0.9, "line_items": items})  # fmt: skip
+
+
+def test_a_progress_billing_bills_the_subcontract_line_it_can_be_by_its_amount_and_none_is_guessed(tmp_path):
+    """D-273: a progress billing names the billing ("Progress billing #2"), not the subcontract's line ("SITE WORK"):
+    it bills the subcontract's only line, else the only line open for its amount; a line of the work's words still
+    pairs by them. Several lines open for it, or none: it matches none (held, never guessed). Each match row carries
+    the line's retainage percent and the work billed on it before (JD Edwards' amount less its open amount)."""
+    from ap_coder.bench import jde_exports
+    from ap_coder.erp.import_specs import PURCHASE_ORDERS, check
+    from ap_coder.web.files import read_sheet
+
+    store = Store(tmp_path / "ap.db")
+    sheet, _ = read_sheet("report6.xlsx", jde_exports.po_lines_report_xlsx(_subcontract_lines()))
+    store.import_purchase_orders(
+        rows_from_records(sheet.to_dict("records"), check(PURCHASE_ORDERS, list(sheet.columns)).found)[0]
+    )
+    # (41201: SITE WORK 100,000 open; CONCRETE FOUNDATIONS 150,000, 60,000 vouchered: 90,000 open)
+    by_words = match_invoice(_billing("41201", ("Concrete foundations - this period", 30000.0)), store)
+    assert [m.po_line for m in by_words.lines] == [2]
+    over_concrete = match_invoice(_billing("41201", ("Progress billing #4", 95000.0)), store)
+    assert [m.po_line for m in over_concrete.lines] == [1]  # (only the site work has 95,000 open)
+    either = match_invoice(_billing("41201", ("Progress billing #4", 40000.0)), store)
+    assert [m.po_line for m in either.lines] == [None]
+    assert [m.po_line for m in match_invoice(_billing("41201", ("Progress billing #4", 120000.0)), store).lines] == [
+        None]  # fmt: skip
+    rows = po_mod.voucher_match(by_words, "41201").rows
+    assert [(r.order_type, r.line, r.amount, r.retainage, r.billed_before, r.quantity) for r in rows] == [
+        ("OS", "2.000", 30000.0, 10.0, 60000.0, 1.0)]  # fmt: skip
+    # A one-line subcontract: its line, whatever the billing's words; a PO's (no retainage) never by its amount
+    store.import_purchase_orders([{"po_number": "41202", "description": "ELECTRICAL", "line_number": 1,
+                                   "quantity": 1.0, "unit_price": 50000.0, "amount": 50000.0, "amount_only": True,
+                                   "open_amount": 50000.0, "erp_line": "1.000", "order_type": "OS",
+                                   "order_company": "00210", "retainage": 10.0}])  # fmt: skip
+    assert [m.po_line for m in match_invoice(_billing("41202", ("Progress billing #1", 12000.0)), store).lines] == [1]
+    assert [m.po_line for m in match_invoice(_billing("41299", ("Progress billing #1", 2000.0)), store).lines] == [
+        None]  # fmt: skip
