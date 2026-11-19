@@ -183,3 +183,70 @@ def test_postable_blank_only_from_the_console_leaves_l_and_u_closed(tmp_path, ca
     assert Store(tmp_path / "ap_coder.db").chart_settings().postable_codes == ("",)
     code, out, _ = _run(tmp_path, capsys, "--postable", "L, U", action="settings")
     assert Store(tmp_path / "ap_coder.db").chart_settings().postable_codes == ("", "L", "U")
+
+
+# --- The whole chart as ReportsNow saves it: tab-delimited text, in one file or several (D-272) ---------------------
+
+TAB_HEADER = "Company\tBusiness Unit\tObject Account\tSubsidiary\tAccount Description\tL D\tP E"
+
+
+def _tab(path, rows):
+    """A chart as ReportsNow's "Unicode text" saves it: UTF-16 with its mark, tabs, CRLF; business units padded."""
+    lines = [TAB_HEADER, *("\t".join(row) for row in rows)]
+    path.write_bytes(("\r\n".join(lines) + "\r\n").encode("utf-16"))
+    return str(path)
+
+
+def _unit_rows(company, unit, edits):
+    return [(company, f"  {unit}", "", "", f"Job {unit}", "3", "N")] + [
+        (company, f"  {unit}", f"51{n:02d}", "", f'Cost 51{n:02d} 1/2" pipe', "7", edit) for n, edit in enumerate(edits)
+    ]
+
+
+def test_a_chart_in_two_tab_files_loads_as_one_and_says_what_it_read_accepted_and_rejected(tmp_path, capsys):
+    """Two files, company 00210 in both: read and checked in full, then one swap; the summary gives the rows read,
+    accepted and rejected (each reason with its first rows, by file), and each posting edit code with its accounts and
+    whether AP posts to it: Z, a code JD Edwards' list does not have, is not yet decided."""
+    a = _tab(tmp_path / "chart_a.txt", _unit_rows("00210", "2100101", ["", "", "L", "N", "B"]) + [("00210",)])
+    b = _tab(tmp_path / "chart_b.txt", _unit_rows("00210", "2100102", ["", "I", "Z", "", ""])
+             + _unit_rows("00310", "3100101", ["", "U", "M"]) + [_unit_rows("00310", "3100101", [""])[1]])  # fmt: skip
+    code, out, err = _run(tmp_path, capsys, "--chart", a, "--chart", b)
+    assert code == 0 and err == ""
+    assert "Read 18 rows of the chart in 2 files (chart_a.txt 7, chart_b.txt 11): 16 accepted, 2 rejected." in out
+    assert "  13 accounts on 3 business units; 8 may be posted to (the others are kept" in out
+    assert ("  Rejected (rows whose cells do not line up with the column names (a tab inside a value, or the row "
+            "cut short)): 1 (row 8 of chart_a.txt).") in out  # fmt: skip
+    assert "  Rejected (rows repeating an account already read): 1 (row 12)." in out
+    assert ("  Posting edit codes: blank 6 (posted to); B 1 (not posted to: budget only); I 1 (not posted to: "
+            "inactive); L 1 (posted to); M 1 (not posted to: machine-generated postings only); N 1 (not posted to: a "
+            "title, takes no postings); U 1 (posted to); Z 1 (not yet decided: not posted to until decided on "
+            "Settings → JD Edwards E1 → Accounts AP posts to).") in out  # fmt: skip
+    assert "  By company: 00210 10, 00310 3." in out
+    store = Store(tmp_path / "ap_coder.db")
+    pairs = store.account_pairs()
+    assert pairs.status("2100102", "5102") == "not_postable" and pairs.description("2100101", "5100") == (
+        'Cost 5100 1/2" pipe')  # fmt: skip
+    summary = store.events(actions=["accounts_imported"])[0]["detail"]["summary"]
+    assert summary[0].startswith("Read 18 rows of the chart in 2 files")  # (kept for the page)
+
+
+def test_a_refresh_of_part_of_a_split_company_or_far_fewer_accounts_is_refused_and_says_what_it_read(tmp_path, capsys):
+    a = _tab(tmp_path / "chart_a.txt", _unit_rows("00210", "2100101", [""] * 6))
+    b = _tab(tmp_path / "chart_b.txt", _unit_rows("00210", "2100102", [""] * 8))
+    assert _run(tmp_path, capsys, "--chart", a, "--chart", b)[0] == 0
+    store = Store(tmp_path / "ap_coder.db")
+    before = store.chart_accounts()
+    code, out, err = _run(tmp_path, capsys, "--chart", a)
+    assert code == 1 and "Read 7 rows of the chart: 7 accepted, 0 rejected." in out
+    assert ("Not loaded: the file has less than half the accounts loaded now of company 00210 (6 accounts, 14 now)"
+            in err and "--anyway" in err)  # fmt: skip
+    one = _tab(tmp_path / "chart.txt", _unit_rows("00210", "2100101", [""] * 6) + _unit_rows("00210", "2100102",
+                                                                                            [""] * 7))  # fmt: skip
+    code, _, err = _run(tmp_path, capsys, "--chart", one)
+    assert code == 1 and "company 00210 came from 2 files last time (chart_a.txt, chart_b.txt)" in err
+    assert "--chart a.txt --chart b.txt" in err and store.chart_accounts() == before
+    empty = _tab(tmp_path / "empty.txt", [])
+    code, _, err = _run(tmp_path, capsys, "--chart", empty)
+    assert code == 1 and "No row of this file has an object account" in err and store.chart_accounts() == before
+    code, out, _ = _run(tmp_path, capsys, "--chart", one, "--anyway")
+    assert code == 0 and len(store.account_pairs()) == 13

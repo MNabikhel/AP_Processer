@@ -444,8 +444,8 @@ def stream_chart_text(path: str | Path, anyway: bool = False) -> tuple[chart.Row
     and left out, with a few rows of each reason, and the columns it came without, as they are read; its clean rows,
     given one at a time and never held, so a chart of millions of accounts is read in the memory of one). A codes'
     leading zeros and padding come as the file has them (the store keeps them without the padding, as JD Edwards
-    compares them). A tab-delimited row whose cells do not line up with the column names (more of them, or cut short
-    before a column read) is left out, never read shifted. Up to ``chart.STREAMED_MOST`` rows;
+    compares them). A tab-delimited row whose cells do not line up with the column names (more or fewer of them than
+    the column names: a tab or a line break inside a value, the file cut short) is left out, never read shifted. Up to ``chart.STREAMED_MOST`` rows;
     ``chart.ColumnsMissing`` as ``read_chart``'s, unless ``anyway``; ``ChartError`` naming the file when it is no
     chart, or not text."""
     name = Path(path).name
@@ -468,13 +468,13 @@ def stream_chart_text(path: str | Path, anyway: bool = False) -> tuple[chart.Row
         handle.close()
         raise
     out = chart.Rows(without=without)
-    width, last = about["width"], max(at for at, _column in kept)
+    width = about["width"]
 
     def records() -> Iterator[dict[str, Any] | None]:
         with handle:
             try:
                 for row in rows:
-                    if tabbed and len(row) > 1 and (len(row) <= last or (len(row) > width and any(row[width:]))):
+                    if tabbed and len(row) != width and any(row):
                         yield None  # (cut short, or a tab inside a value: its cells would be read in the wrong columns)
                         continue
                     yield {column: row[at] if at < len(row) else None for at, column in kept}

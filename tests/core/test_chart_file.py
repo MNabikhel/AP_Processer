@@ -324,3 +324,66 @@ def test_a_sheet_whose_xml_names_its_namespace_is_counted_too(tmp_path):
     expected = chart_file.sheet_survey(data, lambda title, head: (1, 1))
     assert [found[1:] for found in expected] == [(2, {"00210": 2})]
     assert chart_file.sheet_survey(prefixed.read_bytes(), lambda title, head: (1, 1)) == expected
+
+
+# --- The chart as a query saves it as text, streamed from disk (D-272) ----------------------------------------------
+
+TAB_HEADER = ("Company", "Business Unit", "Object Account", "Subsidiary", "Account Description", "L D", "P E")
+TAB_ROWS = [
+    ("00210", "  0731066120", "", "", "Head Office General", "3", "N"),
+    ("00210", "  0731066120", "0042", "", "Objects under 1000", "5", "N"),
+    ("00210", "  0731066120", "5410", "", 'Pipe 1/2" fittings', "6", " "),
+    ("00210", "  0731066120", "5410", "0010", '"Quoted" supplies, and a comma', "7", "L"),
+    ("00210", "        0731", "5420", "", "Short unit", "6", ""),
+]
+
+
+def _tab_file(path, rows, encoding="utf-16", newline="\r\n", extra=""):
+    lines = ["\t".join(TAB_HEADER), *("\t".join(row) for row in rows)]
+    path.write_bytes((newline.join(lines) + newline + extra).encode(encoding))
+    return path
+
+
+def _streamed(path):
+    read, rows = chart_file.stream_chart_text(path)
+    return read, list(rows)
+
+
+@pytest.mark.parametrize(("encoding", "newline"), [("utf-16", "\r\n"), ("utf-16-le", "\r\n"), ("utf-16-be", "\n"),
+                                                   ("utf-8-sig", "\r\n"), ("utf-8", "\n")])  # fmt: skip
+def test_a_tab_delimited_chart_is_read_whatever_its_unicode_and_line_ends(tmp_path, encoding, newline):
+    """ReportsNow's "Unicode text" is UTF-16 with its byte-order mark and CRLF; without the mark, or UTF-8, the
+    same. Quotation marks are text (a tab file is never quoted), the codes' leading zeros kept, a business unit's
+    padding of 12 characters gone as JD Edwards compares it."""
+    path = _tab_file(tmp_path / "chart.txt", TAB_ROWS, encoding, newline)
+    assert chart_file.text_encoding(path) == encoding  # (told by the byte-order mark, or the noughts of UTF-16)
+    read, rows = _streamed(path)
+    assert (read.parsed, read.skipped, read.without) == (5, {}, ())
+    assert [(r.bu, r.object, r.subsidiary, r.description, r.posting_edit, r.company, r.line) for r in rows] == [
+        ("0731066120", "", "", "Head Office General", "N", "00210", 2),
+        ("0731066120", "0042", "", "Objects under 1000", "N", "00210", 3),
+        ("0731066120", "5410", "", 'Pipe 1/2" fittings', "", "00210", 4),
+        ("0731066120", "5410", "0010", '"Quoted" supplies, and a comma', "L", "00210", 5),
+        ("0731", "5420", "", "Short unit", "", "00210", 6),
+    ]
+
+
+def test_a_tab_row_whose_cells_do_not_line_up_is_rejected_with_its_row_never_read_shifted(tmp_path):
+    """A tab inside a description (one cell more), a line break inside one (the row in two), the file cut short: each
+    left out and counted, the first rows named, the others read."""
+    rows = [*TAB_ROWS[:3], ("00210", "  0731066120", "5430", "", "Rent\tand more", "6", ""),
+            ("00210", "  0731066120", "5440", "", "Two"), ("lines", "6", ""), TAB_ROWS[4]]  # fmt: skip
+    path = _tab_file(tmp_path / "chart.tsv", rows, "utf-8", "\r\n", extra="00210\t  0731066120\t54")
+    read, kept = _streamed(path)
+    assert [r.object for r in kept] == ["", "0042", "5410", "5420"]
+    assert read.parsed == 8 and read.skipped == {chart.MISALIGNED: 4}
+    assert read.examples == {chart.MISALIGNED: [5, 6, 7, 9]}
+
+
+def test_a_comma_file_is_read_as_before_and_text_that_is_neither_utf_is_read_as_windows_text(tmp_path):
+    path = tmp_path / "chart.csv"
+    path.write_bytes(("Business Unit,Object Account,Subsidiary,Account Description,P E\r\n"
+                      '  0731066120,5410,,"Café, ""the"" lounge",\r\n').encode("cp1252"))  # fmt: skip
+    assert chart_file.text_encoding(path) == "cp1252"
+    read, rows = chart_file.stream_chart_text(path)
+    assert [r.description for r in rows] == ['Café, "the" lounge'] and read.parsed == 1
