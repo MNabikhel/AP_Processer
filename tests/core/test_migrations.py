@@ -200,6 +200,8 @@ _JDE_PO_COLUMNS = (("purchase_orders", "order_type"), ("purchase_orders", "order
                    ("purchase_orders", "supplier_number"), ("po_lines", "erp_line"), ("po_lines", "uom"),
                    ("po_lines", "open_quantity"), ("po_lines", "tax_flag"), ("po_lines", "tax_code"),
                    ("po_lines", "tax_area"))  # fmt: skip
+# (D-268: a PO line's subledger and its type came after, with no version of their own)
+_SUBLEDGER_COLUMNS = (("po_lines", "subledger"), ("po_lines", "subledger_type"))
 
 
 def _without_order_keys(conn):
@@ -214,7 +216,7 @@ def test_a_purchase_order_kept_before_pos_had_a_currency_has_none(tmp_path):
     db = Store(tmp_path / "old" / "ap_coder.db").path
     with closing(sqlite3.connect(db)) as conn, conn:
         _without_order_keys(conn)
-        for table, column in (("purchase_orders", "currency"), *_JDE_PO_COLUMNS):  # (schema 31's too: D-264)
+        for table, column in (("purchase_orders", "currency"), *_JDE_PO_COLUMNS, *_SUBLEDGER_COLUMNS):
             conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
         conn.execute("INSERT INTO purchase_orders (po_key, po_number, updated_at) VALUES ('81', 'PO-81', '2026-11')")
         conn.execute("UPDATE settings SET value = '29' WHERE key = 'schema_version'")
@@ -229,7 +231,7 @@ def test_a_purchase_order_kept_before_the_voucher_match_names_no_jd_edwards_line
     db = Store(tmp_path / "old" / "ap_coder.db").path
     with closing(sqlite3.connect(db)) as conn, conn:
         _without_order_keys(conn)
-        for table, column in _JDE_PO_COLUMNS:
+        for table, column in (*_JDE_PO_COLUMNS, *_SUBLEDGER_COLUMNS):
             conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
         conn.execute("INSERT INTO purchase_orders (po_key, po_number, updated_at) VALUES ('82', 'PO-82', '2026-11')")
         conn.execute("INSERT INTO po_lines (po_key, line_number, description, quantity, unit_price, amount) VALUES "
@@ -238,4 +240,20 @@ def test_a_purchase_order_kept_before_the_voucher_match_names_no_jd_edwards_line
     po = Store(db).purchase_order("82")
     assert (po["order_type"], po["order_company"], po["supplier_number"]) == ("", "", "")
     assert [(li["erp_line"], li["uom"], li["open_quantity"]) for li in po["lines"]] == [("", "", None)]
+    assert shape(db) == shape(Store(tmp_path / "new" / "ap_coder.db").path)
+
+
+def test_past_coding_and_po_lines_kept_before_subledgers_were_read_have_none(tmp_path):
+    """D-268: a past coding line and a PO line kept before the subledger, its type and the units were read are kept
+    with none ('' and NULL); the database is then a new one."""
+    db = Store(tmp_path / "old" / "ap_coder.db").path
+    with closing(sqlite3.connect(db)) as conn, conn:
+        for table, column in (*_SUBLEDGER_COLUMNS, ("journal_lines", "subledger"), ("journal_lines", "subledger_type"),
+                              ("journal_lines", "units")):  # fmt: skip
+            conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+        conn.execute("INSERT INTO purchase_orders (po_key, po_number, updated_at) VALUES ('83', 'PO-83', '2026-11')")
+        conn.execute("INSERT INTO po_lines (po_key, line_number, description, quantity, unit_price, amount) VALUES "
+                     "('83', 1, 'Gravel', 2, 40, 80)")  # fmt: skip
+    po = Store(db).purchase_order("83")
+    assert [(li["subledger"], li["subledger_type"]) for li in po["lines"]] == [("", "")]
     assert shape(db) == shape(Store(tmp_path / "new" / "ap_coder.db").path)

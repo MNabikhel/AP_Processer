@@ -114,6 +114,10 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "tax_flag": ("taxyn", *_pd("TX")),
     "tax_code": ("taxexpl", "taxexplanation", "taxexplcode", "taxexplanationcode", *_pd("EXR1")),
     "tax_area": ("taxratearea", "taxarea", *_pd("TXA1")),
+    # Optional, JD Edwards' (SBL, SBLT, D-268): the line's subledger and its type, which an account whose posting edit
+    # code is L requires: the invoice line billing it takes them.
+    "subledger": ("subledger", *_pd("SBL")),
+    "subledger_type": ("subtype", "subledgertype", *_pd("SBLT")),
     "status": ("status", "postatus", "state"),
     # Optional, JD Edwards' (NXTR, LTTR): a line whose next status is 999 is closed, one whose last is 980 cancelled.
     "next_status": ("nextstatus", "nextstat", *_pd("NXTR")),
@@ -234,6 +238,8 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
                 "tax_flag": _text(get("tax_flag")).upper()[:1],
                 "tax_code": _text(get("tax_code")).upper(),
                 "tax_area": _text(get("tax_area")).upper(),
+                "subledger": _text(get("subledger")).upper()[:8],
+                "subledger_type": _text(get("subledger_type")).upper()[:1],
                 "currency": currency,
             }
         )
@@ -435,6 +441,7 @@ class LineMatch:
     po_account: str = ""
     po_open_quantity: float | None = None
     po_tax: tuple[str, str, str] = ("", "", "")  # the PO line's own Tax Y/N, explanation code, rate/area ("": none)
+    po_subledger: tuple[str, str] = ("", "")  # the PO line's subledger and its type ("": none, D-268)
 
 
 @dataclass
@@ -580,6 +587,7 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
         )
         m.po_account = join_account(pl.get("cost_center"), pl.get("gl_code"))
         m.po_tax = (pl.get("tax_flag") or "", pl.get("tax_code") or "", pl.get("tax_area") or "")
+        m.po_subledger = (pl.get("subledger") or "", pl.get("subledger_type") or "")
         if m.amount_only:  # a PO line with no quantity (JD Edwards' order details give amounts only): matched by amount
             m.matched_quantity = billed_quantity(li) or None
         this_invoice[m.po_line] = this_invoice.get(m.po_line, 0.0) + m.amount
@@ -787,6 +795,7 @@ class MatchRow:
     no_quantity: bool = False  # the PO line has no quantity in the PO file: matched by amount, its quantity to check
     tax: tuple[str, str, str] = ("", "", "")  # the PO line's own Tax Y/N, explanation code, rate/area ("": none)
     on_po: bool = True  # False: a charge the PO has no line for, keyed as a G/L line of its own on ``account`` (D-265)
+    subledger: tuple[str, str] = ("", "")  # the PO line's subledger and its type ("": none, D-268)
 
 
 @dataclass
@@ -829,7 +838,7 @@ def voucher_match(match: PoMatch | None, number: str, charge_account: str = "") 
             out.rows.append(MatchRow(
                 m.invoice_line, m.description, str(po.get("po_number") or number), po.get("order_type") or "",
                 po.get("order_company") or "", m.po_erp_line, m.matched_quantity, m.po_uom, m.amount, m.po_account,
-                m.po_open_quantity, m.amount_only, m.po_tax))  # fmt: skip
+                m.po_open_quantity, m.amount_only, m.po_tax, subledger=m.po_subledger))  # fmt: skip
     return out
 
 

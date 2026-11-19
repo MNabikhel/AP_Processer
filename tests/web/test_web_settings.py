@@ -794,3 +794,22 @@ def test_a_setting_typed_with_a_line_break_is_saved_as_one_line(store, tmp_path,
     monkeypatch.delenv("AP_LLM_MODEL", raising=False)
     assert settings_page.save_env(store, {"AP_LLM_MODEL": "gemma\r\nAP_ALLOW_INTERNET=1"}) == ["AP_LLM_MODEL"]
     assert read_env(env) == {"AP_LLM_MODEL": "gemma AP_ALLOW_INTERNET=1"}  # one setting, nothing smuggled in
+
+
+def test_jde_the_accounts_ap_posts_to_are_set_on_the_page(client, store):
+    """D-268, D-269: the posting edit codes AP may post to (L and U ticked by default, blank always; others typed) and
+    the control accounts (from the past coding, shown; others typed with the accounts never offered), on Settings →
+    JD Edwards E1, as ``chart settings`` sets them on the command line."""
+    store.save_journal_objects(["2110"], ["2120"], ["2310"])
+    text = client.get("/settings/jde").text
+    card = text.split('id="posting"', 1)[1].split("</section>", 1)[0]
+    assert 'name="code" value="L" checked' in card and 'name="code" value="U" checked' in card
+    assert "2110 · A/P trade payable" in card and "2120 · intercompany payable" in card and "2310 · sales tax" in card
+    page = follow(client, post(client, "/settings/jde/posting", {"code": ["U"], "other_codes": "m",
+                                                                "never_offered": "2150, *.7701"}))  # fmt: skip
+    assert "The accounts AP posts to were saved." in page
+    settings = store.chart_settings()
+    assert settings.postable_codes == ("", "U", "M") and settings.never_offered == ("2150", "*.7701")
+    assert settings.held_back == ("2150", "*.7701", "2110", "2120", "2310")
+    follow(client, post(client, "/settings/jde/posting", {"never_offered": "2150"}))
+    assert store.chart_settings().postable_codes == ("",)  # nothing ticked: blank only

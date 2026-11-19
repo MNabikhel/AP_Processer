@@ -148,6 +148,11 @@ class AccountUse:
     # Each of those lines: (its words, what it counts for, the id of its latest lesson), for ``Prior.sure``.
     approved_lines: tuple[tuple[frozenset[str], float, int], ...] = ()
     newest: int = 0  # the id of the latest lesson of a line a person approved to it here (0: none)
+    # What the journal's lines to it were keyed with (D-268): the commonest subledger and its type, and the units
+    # when every line that had units had the same ("" and None: none)
+    subledger: str = ""
+    subledger_type: str = ""
+    units: float | None = None
 
 
 @dataclass(frozen=True)
@@ -402,6 +407,8 @@ class _Count:
         self.kept_weight: Counter[str] = Counter()  # ...and what they count for
         self.typed: set[str] = set()  # the shapes a person typed here
         self.line_texts: dict[str, list[float]] = {}  # a line a person approved: [what it counts for, its lesson]
+        self.ledgers: Counter[tuple[str, str]] = Counter()  # the journal's lines' (subledger, type), D-268
+        self.units: set[float] = set()  # the journal's lines' units
 
 
 class _Counted:
@@ -430,6 +437,10 @@ class _Counted:
             use.vouchers.add(line["voucher_id"])
             use.last = max(use.last, str(line["gl_date"] or ""))
             self.vouchers[line["voucher_id"]] = int(line["voucher_coding_lines"] or 1)
+            if clean(line.get("subledger")):
+                use.ledgers[(clean(line["subledger"]), clean(line.get("subledger_type")))] += 1
+            if line.get("units"):
+                use.units.add(float(line["units"]))
             shape = remark_shape(line["remark"])
             if shape:
                 use.shapes[shape] += 1
@@ -491,6 +502,7 @@ class _Counted:
 
 
 def _use(pair: tuple[str, str], u: _Count, weight: float) -> AccountUse:
+    ledger = u.ledgers.most_common(1)[0][0] if u.ledgers else ("", "")
     shapes = u.shapes.most_common(TEXTS_KEPT)
     said = u.shapes + u.kept  # the journal's remarks and the ones approved here, the heaviest shape first
     usual = sorted(said, key=lambda shape: u.shapes[shape] * JOURNAL_WEIGHT + u.kept_weight[shape], reverse=True)
@@ -507,7 +519,8 @@ def _use(pair: tuple[str, str], u: _Count, weight: float) -> AccountUse:
                                         for shape in usual[:REMARKS_KEPT]), remarked=sum(said.values()),
         remark_keys=tuple(dict.fromkeys(k for shape, _ in shapes if (k := keys(shape)))),
         line_keys=tuple(lines), approved_lines=tuple((k, counts, int(lesson)) for k, (counts, lesson) in lines.items()),
-        newest=u.newest,
+        newest=u.newest, subledger=ledger[0], subledger_type=ledger[1],
+        units=next(iter(u.units)) if len(u.units) == 1 else None,
     )  # fmt: skip
 
 

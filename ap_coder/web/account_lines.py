@@ -15,6 +15,7 @@ import re
 from typing import Any
 
 from ap_coder.ai.supplier_prior import prior_for
+from ap_coder.coding import posting_edits
 from ap_coder.coding.remark import CLEARED, PERSON, REMARK_MOST, one_line
 from ap_coder.coding.review import codes_to_pick, first_offer_taken, is_blank
 from ap_coder.coding.taxmath import INSIDE, OWN_LINE, READ, InvoiceTaxes, LineTaxes
@@ -25,15 +26,19 @@ from ap_coder.core.reference_data import UNASSIGNED, ReferenceData
 LINE_ACCOUNT = "line_account"  # a line's whole account string, one box a row, posted in order
 FIX, CHECK = "fix", "check"  # a row's state: Approve is closed until it is fixed; to look at before approving
 # The chart's findings on a line's account (``coding/validation.py``): the first of a line is said on its row.
-CHART_CODES = ("ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE", "BU_INACTIVE", "ACCOUNT_RESERVED")
+CHART_CODES = ("ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE", "BU_INACTIVE", "ACCOUNT_RESERVED", "ACCOUNT_CONTROL")
 NO_ACCOUNT = "No account yet: type its number or words, or pick one"
 GUESS = "The account is AP Coder's guess, not learned yet: check it"
 OFFERED_MOST = 3  # business units offered for an account its line's business unit does not have
 _PARTS = re.compile(r"[\d.\s]+")  # an account's parts pasted with spaces or tabs between them
 NO_REMARK: dict[str, Any] = {"text": "", "typed": False, "posted": "", "why": "", "note": "", "count": 0,
                              "over": False, "printed": ""}  # fmt: skip
+# What a line coded to an account whose posting edit code is L or U requires (D-268): ``needs`` "L", "U" or "" (its
+# boxes hidden), the values the coding has, the finding's words when one is missing.
+NO_LEDGER: dict[str, Any] = {"needs": "", "subledger": "", "subledger_type": "", "units": "", "note": ""}
 EMPTY: dict[str, Any] = {"text": "", "state": "", "name": "", "unit": "", "why": "", "note": "", "candidates": [],
-                         "listed": [], "taxes": None, "remark": NO_REMARK}  # fmt: skip
+                         "listed": [], "taxes": None, "remark": NO_REMARK, "ledger": NO_LEDGER}  # fmt: skip
+LEDGER_CODES = ("JDE_SUBLEDGER_NEEDED", "JDE_UNITS_NEEDED")
 # Where a suggested remark comes from (``LineItem.remark_from``), said on its box.
 REMARK_WHY = {"supplier": "Suggested: this supplier's usual remark for this account",
               "invoice": "Suggested from the line as the invoice prints it",
@@ -224,6 +229,30 @@ def remark_view(row: dict[str, Any], coded: dict[str, Any] | None, issue: Any = 
             "printed": one_line(row.get("description"))}  # fmt: skip
 
 
+def ledger_view(reference: ReferenceData, row: dict[str, Any], coded: dict[str, Any] | None,
+                issue: Any = None) -> dict[str, Any]:  # fmt: skip
+    """A line's Subledger, Sub type and Units boxes (D-268): shown only when its account's posting edit code is L or
+    U (``needs``), with what the coding on screen has (``coded``: filled from the PO line, the past coding or the
+    quantity), else the draft row's; ``note``: the finding's words when one is missing."""
+    needs = posting_edits.needed(reference, row)
+    if not needs:
+        return NO_LEDGER
+    line = coded if coded is not None else row
+    units = line.get("units")
+    shown = "" if units in (None, "") else f"{float(units):g}" if _numeric(units) else str(units)
+    return {"needs": needs, "subledger": str(line.get("subledger") or ""),
+            "subledger_type": str(line.get("subledger_type") or ""), "units": shown,
+            "note": _sentence(issue.message) if issue is not None else ""}  # fmt: skip
+
+
+def _numeric(value: Any) -> bool:
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def row_views(reference: ReferenceData, lines: list[dict[str, Any]], proposed: list[dict[str, Any]],
               issues: Any = (), taxes: InvoiceTaxes | None = None,
               coded: list[dict[str, Any]] | None = None, meals_note: str = "") -> list[dict[str, Any]]:  # fmt: skip
@@ -234,11 +263,14 @@ def row_views(reference: ReferenceData, lines: list[dict[str, Any]], proposed: l
     line coded to a meals account says under its tax (``tax.meals_note``)."""
     found: dict[Any, Any] = {}
     long: dict[Any, Any] = {}
+    ledger: dict[Any, Any] = {}
     for issue in issues or ():
         if issue.code in CHART_CODES and issue.line_number is not None:
             found.setdefault(issue.line_number, issue)
         elif issue.code == "REMARK_LONG" and issue.line_number is not None:
             long.setdefault(issue.line_number, issue)
+        elif issue.code in LEDGER_CODES and issue.line_number is not None:
+            ledger.setdefault(issue.line_number, issue)
     by_position = {line.position: line for line in taxes.lines} if taxes is not None else {}
     views, position = [], 0
     for before, row in pair_lines(proposed, lines):
@@ -250,6 +282,7 @@ def row_views(reference: ReferenceData, lines: list[dict[str, Any]], proposed: l
             mine = coded[position] if coded is not None and position < len(coded) else None
             position += 1
         view["remark"] = remark_view(row, mine, long.get(row.get("line_number")))
+        view["ledger"] = ledger_view(reference, row, mine, ledger.get(row.get("line_number")))
         # what the Account box's list offers first: [account, its name, its business unit's name, why]
         view["listed"] = [[c["account"], c["name"], c["unit"], c["reason"]] for c in view["candidates"]]
         views.append(view)

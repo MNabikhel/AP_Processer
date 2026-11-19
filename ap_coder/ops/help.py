@@ -674,6 +674,30 @@ CHECKS: dict[str, CheckHelp] = {
         "account on the never-offered list, or a business unit whose name says DO NOT USE.",
         "Check the account is the one meant, then approve; else pick the usual account for this expense.",
     ),
+    # An account whose posting edit code asks JD Edwards for more on the line (D-268).
+    "JDE_SUBLEDGER_NEEDED": CheckHelp(
+        CODING, "Subledger needed",
+        f"{CHART_LOADED}: the line's account has posting edit code L, so JD Edwards takes a posting to it only with a "
+        "subledger (up to 8 characters) and its subledger type (1 character). AP Coder fills them from the purchase "
+        "order line the invoice line bills, else from what this supplier's past lines to the account were keyed "
+        "with; this line has neither.",
+        "Type the subledger and its type in the boxes under the line (ask the person who ordered it, or look at the "
+        "PO or a past voucher in JD Edwards), or pick another account.",
+    ),
+    "JDE_UNITS_NEEDED": CheckHelp(
+        CODING, "Units needed",
+        f"{CHART_LOADED}: the line's account has posting edit code U, so JD Edwards takes a posting to it only with "
+        "units (litres, hours...). AP Coder takes the line's quantity; this line has none.",
+        "Type the units in the box under the line, from the invoice, or pick another account.",
+    ),
+    "ACCOUNT_CONTROL": CheckHelp(
+        CODING, "Control account on a line",
+        f"{CHART_LOADED}: the line is coded to a control account, one JD Edwards posts to itself: the A/P trade or "
+        "intercompany payable, or a sales tax account, as the past invoice coding shows them (the Learning page), or "
+        "one added to the list in Settings, under JD Edwards E1 (retainage payable...). AP Coder never suggests one.",
+        "Code the line to the expense or asset account it is for. The tax goes on the tax lines, never on an invoice "
+        "line.",
+    ),
     "HISTORY_CONFLICT": CheckHelp(
         CODING, "Coded differently before",
         "Reviewers coded similar lines from this vendor to another GL account in the past.",

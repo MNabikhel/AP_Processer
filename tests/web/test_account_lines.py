@@ -580,3 +580,43 @@ def test_a_remark_over_30_characters_is_never_cut_and_says_the_findings_words(ch
     page.open()
     shown, classes = _remark_boxes(page.text)[0]
     assert shown == long and "is-over" in classes and "41 / 30: 11 too many" in page.text
+
+
+def _posting_edit(store, account: str, code: str) -> None:
+    """The chart's ``account`` given posting edit code ``code`` (as JD Edwards' export would have it)."""
+    unit, gl = chart.split_account(account)
+    obj, sub = chart.split_code(gl)
+    with store._conn() as conn:
+        conn.execute("UPDATE chart_accounts SET posting_edit = ? WHERE bu = ? AND object = ? AND subsidiary = ?",
+                     (code, unit, obj, sub))  # fmt: skip
+        store._chart_stamped(conn)
+
+
+def test_a_line_on_an_account_that_takes_a_subledger_shows_its_boxes_and_is_approved_once_they_are_typed(
+    chart_company, chart_company_client
+):
+    """D-268: an account whose posting edit code is L takes a posting only with a subledger and its type: the row
+    shows the two boxes (and no others), the finding keeps Approve closed, and what is typed is kept and stored."""
+    page = _page(chart_company, chart_company_client, "one_line")
+    _posting_edit(chart_company.store, page.lines[0].account, "L")
+    page.check()
+    (row,) = _rows(page.text)
+    ledger = re.search(r'<td class="c-ledger" data-ledger="L"[^>]*>(.*?)</td>', row, flags=re.S).group(1)
+    assert re.search(r'data-ledger-for="L">Subledger', ledger) and 'data-ledger-for="U" hidden' in ledger
+    assert "takes a posting only with a subledger" in ledger
+    assert "JDE_SUBLEDGER_NEEDED" in page.findings and page.approve()["ok"] is False
+    form = {**page.form, "line_subledger": ["4500777"], "line_subledger_type": ["w"]}
+    answer = chart_company_client.post(f"/review/{page.id}/check", data=form, headers=PAGE).json()
+    assert answer["allow"] and answer["lines"][0]["ledger"] == {"needs": "L", "subledger": "4500777",
+                                                                "subledger_type": "W", "units": ""}  # fmt: skip
+    page.open()
+    assert page.form["line_subledger"] == ["4500777"] and page.approve()["ok"]
+    (stored,) = chart_company.store.get_invoice(page.id)["final_output"]["line_items"]
+    assert (stored["subledger"], stored["subledger_type"]) == ("4500777", "W")
+
+
+def test_a_line_on_an_ordinary_account_shows_no_subledger_or_units_box(chart_company, chart_company_client):
+    page = _page(chart_company, chart_company_client, "one_line")
+    (row,) = _rows(page.text)
+    assert re.search(r'<td class="c-ledger" data-ledger=""[^>]* hidden>', row)
+    assert page.form["line_subledger"] == [""] and page.form["line_units"] == [""]

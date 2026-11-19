@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 from ..capture.bridge import review_issues
 from ..capture.layout import PDF_LOCK, CannotRead
 from ..capture.workflow import AUTONOMOUS_REVIEWER, WAITING_FOR_PAGE_READER, autonomy_decision, capture_invoice
-from ..coding import banks, companies
+from ..coding import banks, companies, posting_edits
 from ..coding.claim import claim_findings
 from ..coding.po import po_findings
 from ..coding.remark import fill_remarks
@@ -291,6 +291,7 @@ def finalise_coding(
         js = jde_settings.load(store) if jde_settings.in_use(store) else None
     remarks_typed = js is not None and js.remarks == jde_settings.REMARKS_TYPED
     fill_remarks(coding, store, reference, wanted=reference.pairs is not None or remarks_typed)
+    posting_edits.fill(coding, store, reference, exclude_invoice_id)  # an account's subledger or units (D-268)
     output = coding.to_output()
     if not coding.ship_to_province:  # no ship-to printed: where it is delivered to us (tax.supply_source)
         place, source = supply_source(coding, reference.tax)

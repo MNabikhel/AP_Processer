@@ -6592,3 +6592,38 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     suppliers 1 s. Each invoice: its company 3 ms, the suggestions 12 ms, the PO match 15 ms, the duplicate check 2 ms,
     the whole check 51 ms. *Left as it is:* the workbook's survey reads every row with openpyxl (about 10,000 rows a
     second): a full 50 MB workbook takes minutes to show; the chart of millions goes by the command line's CSV.
+- **D-268** · **A line coded to an account whose posting edit code is L carries its subledger and type, one coded to a
+  U account its units** (`coding/posting_edits.py`; L and U became postable in D-267, what they require is this).
+  - **On the line** (`LineItem.subledger`, `subledger_type`, `units`; left out of the stored coding when empty, never
+    asked of the model). `posting_edits.fill` (in `finalise_coding`, after the remarks) gives an L line the subledger and
+    type of the PO line it bills (the purchase orders' "Subledger" and "Sub Type": PDSBL, PDSBLT, added to the build
+    sheet's report 6), else the commonest of the supplier's past lines to that account (the account ledger's
+    "Subledger", "Sub Type", "Units": GLSBL, GLSBLT, GLU, added to report 5, kept on `journal_lines` and counted per
+    supplier and account in the prior: `AccountUse.subledger`); a U line the invoice line's quantity, else the units
+    the supplier's past lines to the account all had. A person's own always first; a line whose account requires
+    neither keeps none (what is not shown is never sent).
+  - **The check**: `JDE_SUBLEDGER_NEEDED` and `JDE_UNITS_NEEDED`, errors "Approve anyway" never covers (JD Edwards
+    would refuse the line), no confidence taken off (a JD Edwards finding).
+  - **The review screen** shows Subledger, Sub type (an L account) or Units (a U account) under the line, for such an
+    account only, filled as above; the boxes are emptied when the account changes and filled by the next check.
+  - **Sent**: the keying sheet's G/L lines get three columns, Subledger, Sub Type, Units, only when a line of the
+    sheet has one (a sheet without keeps its four), and a voucher match's rows the PO line's subledger and type (two
+    columns, likewise); F0911Z1 gets VNU (units) and the line's own VNSBL/VNSBLT before the account mapping's; the PO
+    match file SBL and SBLT.
+  - **Settings → JD Edwards E1 → Accounts AP posts to**: L and U are tick boxes (ticked by default), any other code
+    typed; nothing ticked or typed is blank alone (saved as "blank": a setting saved blank is the default, so
+    `chart settings --postable ""` had stopped meaning blank alone, B-2648).
+  - *To confirm with the JD Edwards team*: that F0911Z1's VNU and the PO match file's SBL/SBLT are read by their
+    R04110ZA version; that a U account's units are the invoice's quantity (litres, hours) and not another unit of
+    measure; which subledger types their L accounts use. *Not done:* a person's typed subledger is not learned from
+    the approval (the next past coding loaded brings it).
+- **D-269** · **Control accounts are never suggested, and a line coded to one is warned** (the never-offered setting,
+  reused). The objects of the lines JD Edwards adds to a voucher itself, as the past coding says them (the Learning
+  page's trade and intercompany payable objects and tax objects, `chart.CONTROL_KEYS`), are read with the chart's
+  settings (`ChartSettings.control`, never saved with them: the Learning page changes them) and held back as the
+  accounts never offered are (`held_back`): never in a suggestion, the supplier's accounts, the Account box's list or
+  search, on any business unit or subsidiary. A line coded to one is `ACCOUNT_CONTROL` (a warning, counted in the
+  Coding like `ACCOUNT_RESERVED`: "JD Edwards posts to it itself"), and a fixed coding rule may not code to one. The
+  tax lines are AP Coder's own: never warned. Others a person adds (retainage payable) go in the never-offered list,
+  now on Settings → JD Edwards E1 → Accounts AP posts to (also still under JD Edwards files' chart settings, where the
+  pilot tester's guide sets it), and are `ACCOUNT_RESERVED` as before.

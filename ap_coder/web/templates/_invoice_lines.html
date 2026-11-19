@@ -127,6 +127,16 @@
   <td class="c-keyed" data-live-line="keyed">{{ acct_keyed(a) }}</td>
   <td class="c-taxcap" data-live-line="tax">{{ acct_tax(a) }}</td>
   <td class="c-slot" data-live-line="slot">{{ acct_slot(a) }}</td>
+  {# What JD Edwards requires of an account whose posting edit code is L (a subledger and its type) or U (units),
+     D-268: the boxes shown for such an account only, filled from the PO line, the past coding or the quantity when
+     they can be. Posted in order whatever is shown (blank for another account); invoice.js empties them when the
+     account changes, and each check shows them for the account in the box. #}
+  {%- set l = a.ledger or g.acct_empty.ledger %}
+  <td class="c-ledger" data-ledger="{{ l.needs }}" data-ledger-account="{{ a.text }}"{% if not l.needs %} hidden{% endif %}>
+    <label class="field" data-ledger-for="L"{% if l.needs != "L" %} hidden{% endif %}>Subledger<input type="text" name="line_subledger" value="{{ l.subledger }}" maxlength="8" form="inv" autocomplete="off" spellcheck="false" aria-label="{{ line_label(row, 'Subledger') }}"></label>
+    <label class="field" data-ledger-for="L"{% if l.needs != "L" %} hidden{% endif %}>Sub type<input type="text" name="line_subledger_type" value="{{ l.subledger_type }}" maxlength="1" form="inv" autocomplete="off" spellcheck="false" aria-label="{{ line_label(row, 'Subledger type') }}"></label>
+    <label class="field" data-ledger-for="U"{% if l.needs != "U" %} hidden{% endif %}>Units<input type="number" name="line_units" value="{{ l.units }}" step="any" form="inv" aria-label="{{ line_label(row, 'Units') }}"></label>
+    <span class="ledger-note" data-live-line="ledger_note">{{ l.note }}</span></td>
   <td class="c-more" data-row-more hidden>
     <label class="field wide">The line as the invoice prints it<textarea name="line_description" rows="1" form="inv" data-one-line>{{ (row.description or '') | replace('\r', ' ') | replace('\n', ' ') }}</textarea>
       {%- if row.read_as %}<span class="inv-readas" data-read-as title="This supplier's line is printed “{{ row.read_as }}”: AP approved it as described here on an earlier invoice, so it is named so again"><span class="ms" aria-hidden="true">school</span>Named as approved before · printed “{{ row.read_as }}”</span>{% endif %}</label>

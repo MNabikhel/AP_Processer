@@ -55,10 +55,11 @@ _VOUCHER_COLUMNS = ("id", "file_id", "row", "doc_type", "company", "gl_date", "s
                     "supplier_name", "gross", "tax", "affiliate", "credit", "balanced", "both_columns",
                     "coding_lines", "identity")  # fmt: skip
 _LINE_COLUMNS = ("voucher_id", "n", "row", "account", "business_unit", "object", "subsidiary", "description",
-                 "amount", "remark", "kind")  # fmt: skip
+                 "amount", "remark", "kind", "subledger", "subledger_type", "units")  # fmt: skip
 _INSERT_VOUCHER = (f"INSERT INTO journal_vouchers ({', '.join(_VOUCHER_COLUMNS)}) "
                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")  # fmt: skip
-_INSERT_LINE = f"INSERT INTO journal_lines ({', '.join(_LINE_COLUMNS)}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+_INSERT_LINE = (f"INSERT INTO journal_lines ({', '.join(_LINE_COLUMNS)}) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")  # fmt: skip
 _FLAGS = ("affiliate", "credit", "balanced", "both_columns")
 # Which of a voucher's copies count: those of the finished file that holds the most of them, the earliest on a tie.
 _RECOUNT = """UPDATE journal_vouchers SET counted = CASE WHEN file_id = (
@@ -71,7 +72,7 @@ _VOUCHERS = """SELECT v.id, v.file_id, v.row, v.doc_type, v.company, v.gl_date, 
     WHERE v.counted = 1"""
 _LINES_FOR = """SELECT v.id AS voucher_id, l.n, v.gl_date, v.company, v.doc_type, v.supplier_number, v.supplier_name,
     l.account, l.business_unit, l.object, l.subsidiary, l.description, l.amount, l.remark, l.kind,
-    v.coding_lines AS voucher_coding_lines, v.affiliate, v.credit, v.balanced
+    l.subledger, l.subledger_type, l.units, v.coding_lines AS voucher_coding_lines, v.affiliate, v.credit, v.balanced
     FROM journal_vouchers v JOIN journal_lines l ON l.voucher_id = v.id
     WHERE v.supplier_key = ? AND v.counted = 1 AND """
 _SUPPLIERS = """SELECT MAX(v.supplier_number) AS supplier_number, MAX(v.supplier_name) AS supplier_name,
@@ -271,7 +272,8 @@ class JournalMixin:
                          supplier_key(v.supplier_number), v.supplier_name, v.gross, v.tax, int(v.affiliate),
                          int(v.credit), int(v.balanced), int(v.both_columns), coding, voucher_identity(v)))  # fmt: skip
             lines += [(voucher_id, n, line.row, line.account, line.business_unit, line.object, line.subsidiary,
-                       line.description, line.amount, line.remark, line.kind)
+                       line.description, line.amount, line.remark, line.kind, line.subledger,
+                       line.subledger_type, line.units)
                       for n, line in enumerate(v.lines, start=1)]  # fmt: skip
         conn.executemany(_INSERT_VOUCHER, rows)
         conn.executemany(_INSERT_LINE, lines)
@@ -391,7 +393,8 @@ class JournalMixin:
         could not be read), "company", "doc_type", "supplier_number" (as printed), "supplier_name" (26 characters at
         most), "account" ("0021061010.7340.2210"), "business_unit", "object", "subsidiary" ("" for none),
         "description" (the account's name as printed, 24 characters at most), "amount" (debit - credit, so a credit
-        is negative), "remark" (AP's words, 30 characters at most, may be ""), "kind", "voucher_coding_lines" (1: the
+        is negative), "remark" (AP's words, 30 characters at most, may be ""), "kind", "subledger" and "subledger_type"
+        ("" for none) and "units" (None for none: D-268), "voucher_coding_lines" (1: the
         whole voucher went to this account), "affiliate", "credit", "balanced" (True or False)}."""
         kinds = [kinds] if isinstance(kinds, str) else list(kinds)
         sql = _LINES_FOR + _in_list("l.kind")

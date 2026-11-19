@@ -20,6 +20,7 @@ from ..ai.extraction import ExtractionResult
 from ..core import chart
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import InvoiceCoding
+from . import posting_edits
 from .money import CENT, EXACT, LINE_MATH_SHARE, READ_AGAIN, add_up, cash_rounded, half_up, nil, per_line, within
 from .remark import long_remarks
 from .tax import build_gl_distribution, check_taxes
@@ -38,7 +39,7 @@ SETUP_PREFIXES = ("JDE_", "PAY_FROM_")
 # its business unit does not have, or that is not to be posted to there, with a chart of accounts imported (D-209).
 COUNTED_IN_CODING = frozenset({"GL_UNASSIGNED", "CC_UNASSIGNED", "GL_UNKNOWN", "CC_UNKNOWN", "GL_IS_TAX_ACCOUNT",
                                "PST_EXEMPTION_TO_CONFIRM", "ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE",
-                               "BU_INACTIVE", "ACCOUNT_RESERVED"})  # fmt: skip
+                               "BU_INACTIVE", "ACCOUNT_RESERVED", "ACCOUNT_CONTROL"})  # fmt: skip
 # Findings about the business, not about how the invoice was read or coded (the vendor master, a purchase order, a
 # possible duplicate, an unusual amount): like setup findings they keep Approve closed (an error), go to a person and
 # are said, but take nothing off the Reading or the Coding: every value can be read right and still not be in the
@@ -181,6 +182,8 @@ def validate_coding(
     _header_issues(coding, add)
     # --- Line items -------------------------------------------------------
     _line_issues(coding, reference, add)
+    for severity, code, message, line in posting_edits.findings(coding, reference):  # an account's L or U (D-268)
+        add(severity, code, message, line)
     guesses = [li for li in coding.line_items if (li.decided_by or {}).get("source") in GUESS_SOURCES]
     if guesses and len(guesses) == len(coding.line_items):
         # Not one account a person, a rule, the past invoice coding or an approval decided: "Approve anyway" with a
@@ -268,6 +271,11 @@ def _pair_issue(reference: ReferenceData, li: Any, tax_gls: Any) -> tuple[str, s
         return None
     status = chart.OK if gl in tax_gls else pairs.status(cc, gl)
     account = chart.join_account(cc, gl)
+    control = pairs.settings.control_account(cc, gl) if status == chart.RESERVED else ""
+    if control:  # (D-269) JD Edwards posts to it itself: the payable, an intercompany payable, a tax
+        return (WARNING, "ACCOUNT_CONTROL", f"account {account} is a control account ({control}, "
+                f"{dict(pairs.settings.control)[control]}): JD Edwards posts to it itself, so a line coded to it "
+                "would count it twice. Code the line to the expense or asset it is for")  # fmt: skip
     if status == chart.RESERVED:
         return (WARNING, "ACCOUNT_RESERVED", f"account {account} exists but is not offered for invoices: "
                 f"{pairs.why_reserved(cc, gl)}. Check it is the one meant")  # fmt: skip
@@ -293,10 +301,11 @@ def _pair_issue(reference: ReferenceData, li: Any, tax_gls: Any) -> tuple[str, s
 
 def account_problem(reference: ReferenceData, gl: str, cc: str) -> str:
     """Why nothing may be coded to GL account ``gl`` on business unit ``cc``, in the words a line's check says it
-    (``_pair_issue``'s errors), for what codes lines without being one: a fixed coding rule. "" for a pair that
-    exists and may be posted to (one never offered too: the line's check warns of it), and with no chart."""
+    (``_pair_issue``'s errors, and a control account's warning: D-269), for what codes lines without being one: a
+    fixed coding rule. "" for a pair that exists and may be posted to (one never offered too: the line's check warns
+    of it), and with no chart."""
     found = _pair_issue(reference, SimpleNamespace(predicted_gl_code=gl, predicted_cost_center=cc), ())
-    return found[2] if found and found[0] == ERROR else ""
+    return found[2] if found and (found[0] == ERROR or found[1] == "ACCOUNT_CONTROL") else ""
 
 
 def _line_issues(coding: InvoiceCoding, reference: ReferenceData, add: Any) -> None:

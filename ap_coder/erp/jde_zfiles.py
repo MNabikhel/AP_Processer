@@ -54,12 +54,13 @@ HEADER_COLUMNS = [
 DIST_COLUMNS = [
     "VNEDUS", "VNEDBT", "VNEDTN", "VNEDLN", "VNEDSP", "VNEDTC", "VNEDTR",
     "VNCO", "VNDGJ", "VNDCT",
-    "VNAM", "VNANI", "VNMCU", "VNOBJ", "VNSUB", "VNSBL", "VNSBLT",
+    "VNAM", "VNANI", "VNMCU", "VNOBJ", "VNSUB", "VNSBL", "VNSBLT", "VNU",
     "VNLT", "VNAA", "VNCRCD", "VNACR", "VNEXA", "VNEXR", "VNTXA1", "VNEXR1",
 ]  # fmt: skip
 # PO receipt-match lines: the layout is NOT a standard Oracle table; to be confirmed with the JDE team.
 MATCH_COLUMNS = [
     "EDUS", "EDBT", "EDTN", "EDLN", "DOCO", "DCTO", "KCOO", "LNID", "LITM", "DSC1", "UORG", "PRRC", "AEXP", "CRCD",
+    "SBL", "SBLT",
 ]  # fmt: skip
 
 HEADER_FILE, DIST_FILE, MATCH_FILE = "F0411Z1.csv", "F0911Z1.csv", "F0411Z1T.csv"
@@ -201,20 +202,26 @@ def voucher_rows(
                 "LNID": li.get("line_number") or "", "LITM": "", "DSC1": _text(li.get("description"), 30),
                 "UORG": _plain(li.get("quantity")), "PRRC": _plain(li.get("unit_price"), 4),
                 "AEXP": _amount(_units(li.get("amount")), settings, v.decimals), "CRCD": v.currency,
+                "SBL": str(li.get("subledger") or ""), "SBLT": str(li.get("subledger_type") or ""),
             })  # fmt: skip
         return [header], [], matches
+
+    behind = entry_lines(v.entries, items)
 
     def dist_row(n: int, e: dict[str, Any]) -> dict[str, Any]:
         account: GlMap | None = e["account"]
         acct = account or GlMap(e.get("gl_code") or "")
         amount = _amount(e["cents"], settings, v.decimals)
+        li = behind[n - 1] or {}  # the line's own subledger and units, its account's L or U (D-268); else the mapping's
+        sbl, sblt = (str(li["subledger"]), str(li.get("subledger_type") or "")) if li.get("subledger") else \
+            (acct.sbl, acct.sblt)  # fmt: skip
         row = {
             **_keys("VN", settings, batch, invoice, v.inv_id, site), "VNEDLN": n, "VNCO": company_of(final, settings),
             "VNDGJ": julian(gl_date), "VNDCT": doc_type, "VNLT": "AA",
             "VNAA": "" if v.foreign else amount, "VNCRCD": v.currency, "VNACR": amount if v.foreign else "",
             "VNEXA": line_remark(e),
             "VNEXR": line_remark(e) if typed else str(final.get("invoice_number") or "").strip()[:30],
-            "VNSBL": acct.sbl, "VNSBLT": acct.sblt,
+            "VNSBL": sbl, "VNSBLT": sblt, "VNU": _plain(li.get("units"), 4) if li.get("units") else "",
             "VNTXA1": v.tax_area if settings.dist_tax_columns else "",
             "VNEXR1": line_codes[n - 1] if settings.dist_tax_columns else "",
         }  # fmt: skip

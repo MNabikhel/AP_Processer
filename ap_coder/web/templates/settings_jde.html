@@ -286,6 +286,27 @@
 </section>
 {% endset %}{% if not team %}{{ team_map }}{% endif %}
 
+<section class="card" id="posting">
+  <h4>Accounts AP posts to</h4>
+  <p class="muted">Which accounts of the chart of accounts an invoice line may be coded to{% if not posting.chart %} (once the chart is loaded, on JD Edwards files){% endif %}.
+    An account takes postings when its posting edit code is blank, or one ticked here.</p>
+  <form method="post" action="/settings/jde/posting" class="stack" data-busy="Saving…">
+    <fieldset class="stack"><legend>Posting edit codes AP may post to besides blank</legend>
+      {% for code, said in posting.codes %}<label class="check"><input type="checkbox" name="code" value="{{ code }}"{% if code in posting.ticked %} checked{% endif %}> {{ code }}: {{ said }}</label>
+      {% endfor %}<label class="field">Other codes (commas between; ask the JD Edwards team first: N is a title, B budget only, I inactive, M machine only)
+        <input type="text" name="other_codes" value="{{ posting.others }}" autocomplete="off" spellcheck="false"></label>
+    </fieldset>
+    <fieldset class="stack"><legend>Control accounts: never suggested, and a warning on a line coded to one</legend>
+      {% if posting.control %}<p>From the past invoice coding (the payable and tax lines JD Edwards adds; change them on <a href="/learning">Learning</a>):
+        {% for c in posting.control %}<span class="apc-pill">{{ c.object }} · {{ c.said }}</span> {% endfor %}</p>
+      {% else %}<p class="muted">The payable and tax objects come from the past invoice coding once it is loaded (Learning).</p>{% endif %}
+      <label class="field">Other control accounts and accounts never offered: an object (2150 retainage payable), object.subsidiary, or business unit.object.subsidiary (commas between; * stands for any characters, so *.7701 is that subsidiary of any object)
+        <input type="text" name="never_offered" value="{{ posting.never_offered }}" autocomplete="off" spellcheck="false"></label>
+    </fieldset>
+    <div class="row"><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save the accounts AP posts to</button></div>
+  </form>
+</section>
+
 <section class="card" id="tax-map">
   <h4>Province → tax area and explanation code</h4>
   <p class="muted">The tax area names are placeholders: use your E1 tax areas (F4008). Codes: V = GST/HST/QST recoverable,

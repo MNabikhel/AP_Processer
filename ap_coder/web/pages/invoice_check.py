@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
+from markupsafe import escape
 
 from ap_coder.core import ui
 from ap_coder.core.store import Store
@@ -75,6 +76,8 @@ def _line_views(grid: dict[str, Any]) -> list[dict[str, str]] | None:
              "tax": str(mod.acct_tax(a)), "keyed": str(mod.acct_keyed(a)),
              "remark": str(mod.acct_remark(a["remark"])),
              "remark_box": {k: a["remark"][k] for k in ("text", "typed", "posted", "why")},
+             "ledger": {k: a["ledger"][k] for k in ("needs", "subledger", "subledger_type", "units")},
+             "ledger_note": str(escape(a["ledger"]["note"])),
              "has_keyed": bool(a["taxes"] and a["taxes"]["keyed"])}
             for a in (row["acct"] for row in grid["lines"])]  # fmt: skip
 

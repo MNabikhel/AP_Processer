@@ -206,6 +206,27 @@ function syncAccount(row) {
   const cc = row.querySelector('[name="line_cc"]');
   if (gl) gl.value = (dot > 0 && text.slice(dot + 1)) || "UNASSIGNED";
   if (cc) cc.value = (dot > 0 ? text.slice(0, dot) : "") || "UNASSIGNED";
+  // Another account: its subledger and units are its own, filled by the next check (D-268)
+  const ledger = row.querySelector("[data-ledger]");
+  if (ledger && ledger.dataset.ledgerAccount !== text) {
+    ledger.dataset.ledgerAccount = text;
+    ledger.querySelectorAll("input").forEach((box) => { box.value = ""; });
+  }
+}
+
+/** A line's Subledger, Sub type and Units boxes as the check answered them (D-268): shown for an account whose
+    posting edit code is L or U only; an empty box takes what the check filled, a box with something in it, or the
+    one being typed in, is left as it is. */
+function applyLedger(row, view) {
+  const cell = row.querySelector("[data-ledger]");
+  if (!cell || !view) return;
+  cell.dataset.ledger = view.needs || "";
+  cell.hidden = !view.needs;
+  cell.querySelectorAll("[data-ledger-for]").forEach((label) => { label.hidden = label.dataset.ledgerFor !== view.needs; });
+  const filled = { line_subledger: view.subledger, line_subledger_type: view.subledger_type, line_units: view.units };
+  cell.querySelectorAll("input").forEach((box) => {
+    if (!box.value && box !== document.activeElement && filled[box.name]) box.value = filled[box.name];
+  });
 }
 
 /** Put ``text`` (a whole account string, or "" to clear it) in a line's Account box, as typing it would. */
@@ -302,6 +323,7 @@ function applyLineViews(views, posted) {
     const view = views[i];
     // (a remark typed in since the check was sent waits for the next one)
     if (!sentRemarks || row.querySelector('[name="line_remark"]')?.value === sentRemarks[i]) applyRemark(row, view.remark_box);
+    applyLedger(row, view.ledger);
     row.classList.toggle("is-fix", view.state === "fix");
     row.classList.toggle("is-check", view.state === "check");
     row.classList.toggle("has-keyed", Boolean(view.has_keyed));
