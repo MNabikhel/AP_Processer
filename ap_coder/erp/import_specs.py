@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..ai import history
-from ..coding import banks, po, terms, vendor_info
+from ..coding import banks, companies, po, terms, vendor_info
 from ..coding.vendors import MASTER_ALIASES
 from ..core import chart
 from ..core.headers import header_key, jde_names, match_columns
@@ -135,14 +135,19 @@ CHART = ImportSpec(
     source="JD Edwards' account master: list your company's accounts in its grid, every column shown, and export the "
            "grid to Excel (.xlsx).",
     more="Business unit, object and subsidiary make the account string (business unit.object.subsidiary). The "
-         "posting edit code tells a title from an account that can be posted to. A newer export replaces the chart "
-         "whole; what you changed by hand is kept.",
+         "posting edit code tells a title from an account that can be posted to. A newer export replaces the "
+         "accounts of the companies it has (its Company column), the other companies' kept, so a chart split by "
+         "company loads a file at a time; without that column it replaces the chart whole. What you changed by hand "
+         "is kept.",
     report="JD Edwards' account master export (the chart of accounts)", file_types=(XLSX,), fix=JDE_FIX,
     columns=_columns(chart.CHART_ALIASES, (*chart.CHART_NEEDS, *chart.CHART_WANTS), {
         "business_unit": ("Business unit", "Business Unit"), "object": ("Object account", "Object Account"),
         "subsidiary": ("Subsidiary", "Subsidiary"), "description": ("Account description", "Account Description"),
         "lod": ("Level of detail", "L D"), "posting_edit": ("Posting edit code", "P E"),
+        "company": ("Company", "Company"),
     }, {"business_unit": "the first part of every account string", "object": "the account itself",
+        "company": "the account's company: a chart split by company loads a file at a time, each replacing only "
+                   "its companies' accounts",
         **{f: f"{why[1][0].upper()}{why[1][1:]}" for f, why in chart.CHART_WANTS.items()},
         "description": "the account's name, shown wherever the account is", "lod": "the title an account sits "
         "under (its level of detail), so suggestions and the review screen group accounts as JD Edwards does"}),
@@ -153,7 +158,8 @@ UNITS = ImportSpec(
     key="units", card="2. Business units", title="Business units", jde=True, page="/jde-files#units",
     purpose="Which business units are open, what they are called and the company each belongs to.",
     source="JD Edwards' business unit master: export its grid to Excel (.xlsx), every column shown.",
-    more="A newer export replaces the business units whole; what you changed by hand is kept.",
+    more="A newer export replaces the business units of the companies it has, the others kept; what you changed by "
+         "hand is kept.",
     report="JD Edwards' business unit master export", file_types=(XLSX,), fix=JDE_FIX,
     columns=_columns(chart.BU_ALIASES, chart.BU_NEEDS, {
         "code": ("Business unit", "Job Number"), "name": ("Name", "Job Name"), "company": ("Company", "Co"),
@@ -361,6 +367,27 @@ TAX_AREAS = ImportSpec(
         "effective": ("Effective date", "Effective Date"), "expired": ("Expired date", "Expired Date"),
     }, {"area": "the tax area a voucher names", "rate1": "with the other rates, the area's rate"}),
     find=_matcher(jde_settings.TAX_AREA_ALIASES),
+)  # fmt: skip
+
+COMPANIES = ImportSpec(
+    key="companies", card="9. Companies", title="Companies", jde=True, page="/jde-files#companies",
+    purpose="Each of JD Edwards' companies, its name, currency and country: with two or more, each invoice is told "
+            "which company it is for, and only a company whose country is CA and currency CAD is checked for "
+            "Canadian tax.",
+    source="A query of JD Edwards' companies (F0010, with the country of each company's address) in ReportsNow or a "
+           "like tool, exported to Excel (.xlsx).",
+    more="Optional: one company needs none. A newer file replaces the list whole. JD Edwards' default company "
+         "(00000) is left out. Each company's name joins your company's names, never read as a supplier.",
+    report="JD Edwards' companies (F0010)", file_types=(XLSX, CSV),
+    fix="Add the column to the query, export it again and load that file.",
+    columns=_columns(companies.COMPANY_ALIASES, companies.COMPANY_NEEDS, {
+        "company": ("Company", "Company"), "name": ("Company name", "Company Name"),
+        "currency": ("Currency code", "Currency Code"), "country": ("Country", "Country"),
+    }, {"company": "the company a voucher is keyed under", "name": "how an invoice names it",
+        "currency": "its currency, for its invoices' and the Canadian tax checks",
+        "country": "with its currency, whether it is checked for Canadian tax (CA and CAD)"}),
+    one_of=companies.COMPANY_ONE_OF,
+    find=_matcher(companies.COMPANY_ALIASES),
 )  # fmt: skip
 
 # --- The imports of any ERP's lists, on their own pages -----------------------------------------------------------
@@ -573,11 +600,15 @@ JDE_WORKSHEET = ImportSpec(
 )  # fmt: skip
 
 SPECS: dict[str, ImportSpec] = {spec.key: spec for spec in (
-    CHART, UNITS, SUPPLIER_MASTER, VENDOR_INFO, JOURNAL, GL_LINES, VOUCHERS, PAYMENT_TERMS, TAX_AREAS, GL_ACCOUNTS,
+    CHART, UNITS, SUPPLIER_MASTER, VENDOR_INFO, JOURNAL, GL_LINES, VOUCHERS, PAYMENT_TERMS, TAX_AREAS, COMPANIES,
+    GL_ACCOUNTS,
     COST_CENTERS, BANK_ACCOUNTS, VENDOR_MASTER, PURCHASE_ORDERS, STATEMENTS, ERP_REGISTER, PAST_CODING, GL_MAP,
     JDE_WORKSHEET,
 )}  # fmt: skip
 JDE_REPORTS = tuple(key for key, spec in SPECS.items() if spec.jde)
+# The reports a file's columns name whole (``identify``): JD Edwards' companies only by ``company_list`` (a company and
+# a name are any list's: the business units' grid has "Co" and "Company Name", D-267).
+IDENTIFIED = tuple(key for key in JDE_REPORTS if key != "companies")
 
 
 # --- A file's header row against a spec ------------------------------------------------------------------------------
@@ -682,7 +713,7 @@ def check(spec: ImportSpec, headers: Iterable[Any]) -> HeaderCheck:
     return HeaderCheck(spec, tuple(named), found, missing, optional, none_of, unused, twice, guessed)
 
 
-def identify(headers: Iterable[Any], keys: Iterable[str] = JDE_REPORTS) -> ImportSpec | None:
+def identify(headers: Iterable[Any], keys: Iterable[str] = IDENTIFIED) -> ImportSpec | None:
     """Which of the reports ``keys`` a file with these column names is: the one with the most of its required columns
     there (a chart has a business unit column too, but more besides), then whole, then with the most columns found;
     None when that one is not whole (a chart without its posting edit column is a chart missing a column, not the
@@ -738,6 +769,9 @@ JDE_MARKS: dict[str, tuple[str, ...]] = {
                   *_fields("F4008", "TA", "TXA1", "DL01", "EFDJ", "EFTJ", *(f"TA{n}" for n in range(1, 6)),
                            *(f"TXR{n}" for n in range(1, 6))),
                   "EFDJ", "EFTJ", *(f"TXR{n}" for n in range(1, 6))),
+    # (not "Co", "Name", "Company Name" or "Country": other lists' too; the build sheet's and ReportsNow's titles:
+    # ``company_list``, D-267)
+    "companies": _fields("F0010", "CC", "CO", "NAME", "CRCD"),
     "gl_distribution": ("Explanation -Remark-", "Sub- ledger", "Subledger Description", "JE Line Number",
                         "Tax ExpCode", "TaxRate Area", "Track Taxes", "Alternate Home Business Unit",
                         "Employee Pool Grouping Code", "Job Pool Grouping Code", "Short Item No"),
@@ -781,8 +815,19 @@ def recognise(headers: Iterable[Any]) -> str | None:
         return None
     if counts[best] >= MARKS:
         return best
+    if company_list(named):
+        return "companies"
     whole = identify(named)
     return whole.key if whole is not None and counts.get(whole.key, 0) >= 2 else None
+
+
+def company_list(headers: Iterable[Any]) -> bool:
+    """Whether a file with these column names is JD Edwards' companies (report 9, D-267): a company, a name and a
+    currency or a country ("Co", "Name", "Cur Cod"; "Company", "Company Name", "Country"; CCCO, CCNAME, CCCRCD,
+    ALCTR); a company and a name alone are any list's, never this one's. Asked once the other reports' own marks have
+    not told the file."""
+    found = match_columns([_text(h) for h in headers if _text(h)], companies.COMPANY_ALIASES)
+    return {"company", "name"} <= set(found) and bool(set(companies.COMPANY_ONE_OF) & set(found))
 
 
 def order_lines(headers: Iterable[Any]) -> bool:

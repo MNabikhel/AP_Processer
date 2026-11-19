@@ -184,6 +184,18 @@ class Prior:
     def use(self, account: str) -> AccountUse | None:
         return next((u for u in self.accounts if u.account == account), None)
 
+    def within(self, units: frozenset[str]) -> Prior:
+        """The supplier's coding to ``units`` alone (one company's business units, D-267), each account's share of
+        theirs: a supplier billing two companies is never suggested the other company's accounts."""
+        kept = tuple(u for u in self.accounts if u.business_unit in units)
+        if len(kept) == len(self.accounts):
+            return self
+        weight = sum(u.weight for u in kept)
+        kept = tuple(replace(u, share=u.weight / weight if weight else 0.0) for u in kept)
+        return replace(self, accounts=kept, lines=sum(u.lines for u in kept), weight=weight,
+                       units_of={code: tuple(bu for bu in found if bu in units)
+                                 for code, found in self.units_of.items() if set(found) & units})  # fmt: skip
+
     def sure(self, line_text: str | None = None) -> AccountUse | None:
         """The one account a line of this supplier may be coded to with no one picking, or None: it has
         ``SURE_SHARE`` of the supplier's lines (by weight), of ``SURE_LINES`` lines at least, and the latest line a

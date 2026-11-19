@@ -44,7 +44,7 @@
 <section class="card stack" id="{{ card }}">
   {{ card_head(n, card, card_titles[card], spec.purpose) }}
   {{ what_was_said(card) }}
-  {% if loaded[card] %}<p id="{{ card }}-now" class="imp-now"><span class="ms" aria-hidden="true">inventory_2</span><span><b>{{ loaded[card] | plural(rows_of[card][:-1]) }}</b>{% if last[card] %}
+  {% if loaded[card] %}<p id="{{ card }}-now" class="imp-now"><span class="ms" aria-hidden="true">inventory_2</span><span><b>{{ loaded[card] | plural(rows_one.get(card, rows_of[card][:-1]), rows_of[card]) }}</b>{% if last[card] %}
     <span class="muted">· last loaded {{ last[card].when }}{% if last[card].by %} by {{ last[card].by }}{% endif %}</span>{% endif %}</span></p>{% endif %}
   {% if caller %}{{ caller() }}{% endif %}
   {{ imp.report(spec, false, template) }}
@@ -117,7 +117,7 @@
 <section class="card imp-steps-card" id="checklist" aria-labelledby="checklist-title">
   <div class="imp-steps-head">
     <h2 id="checklist-title">What is loaded</h2>
-    <p class="muted">Five exports from JD Edwards, loaded top to bottom, and three more if you have them (the open purchase order lines, the payment terms, the tax areas). Each file is shown first: nothing is kept until you click Load.</p>
+    <p class="muted">Five exports from JD Edwards, loaded top to bottom, and four more if you have them (the open purchase order lines, the payment terms, the tax areas, the companies). Each file is shown first: nothing is kept until you click Load.</p>
   </div>
   <ol class="imp-steps">
     {% for item in checklist %}
@@ -191,6 +191,7 @@
       {% set gl = gl_replaced if gl_replaced is defined else none %}{% if gl and (gl.removed or gl.changed) %}
       <p class="imp-then" id="chart-gl"><span class="ms" aria-hidden="true">swap_horiz</span><span>{% if gl.removed %}Replaces {{ gl.removed | num }} of the GL accounts on GL accounts &amp; tax{% if gl.changed %} and changes {{ gl.changed | num }}{% endif %}{% else %}Changes {{ gl.changed | num }} of the GL accounts on GL accounts &amp; tax{% endif %}.</span></p>
       {% endif %}
+      {% if loaded.chart and not looks.chart.problem %}<label class="check"><input type="checkbox" name="whole" value="1"> Start over: replace the whole chart with this file, every company's accounts</label>{% endif %}
       <div class="row">
       {% if looks.chart.loading %}{{ being_loaded("chart") }}{% elif not looks.chart.problem %}<button class="btn primary" type="submit" data-load="chart"><span class="ms" aria-hidden="true">account_tree</span>{{ load.chart.button }}</button>{% endif %}
       {{ cancel("chart") }}
@@ -222,7 +223,7 @@
   {{ card_head(2, "units", "Business units", specs.units[0].purpose) }}
   {{ what_was_said("units") }}
   {{ loaded_now("units", loaded.units, "business unit", last.units) }}
-  {% if loaded.units %}<p class="muted">A newer export replaces the business units whole.</p>{% endif %}
+  {% if loaded.units %}<p class="muted">A newer export replaces the business units of the companies it has; the others are kept.</p>{% endif %}
   {% if company and can("/jde-files/company") %}
   <form method="post" action="/jde-files/company" class="row imp-offer" id="company-offer" data-busy="Saving…">
     <span>JD Edwards' company number is still the one a new installation starts with, and the keying sheet prints it.</span>
@@ -236,6 +237,7 @@
     <form method="post" action="/jde-files/units/load" class="stack" data-busy="Loading…" data-long data-refusal>
       <input type="hidden" name="token" value="{{ looks.units.token }}">
       {{ load_then("units") }}
+      {% if loaded.units and not looks.units.problem %}<label class="check"><input type="checkbox" name="whole" value="1"> Start over: replace every business unit with this file's</label>{% endif %}
       <div class="row">
       {% if looks.units.loading %}{{ being_loaded("units") }}{% elif not looks.units.problem %}<button class="btn primary" type="submit" data-load="units"><span class="ms" aria-hidden="true">domain</span>{{ load.units.button }}</button>{% endif %}
       {{ cancel("units") }}
@@ -380,6 +382,10 @@
 {% endcall %}
 {% call table_card(8, "areas", "map", "JD Edwards' tax areas (F4008), an Excel workbook (.xlsx) or CSV") %}
   {% if areas_table %}<ul class="imp-said" id="areas-said">{% for line in areas_said %}<li>{{ line }}</li>{% else %}<li>Every tax area Settings gives a province is one of JD Edwards', at the rate of its taxes.</li>{% endfor %}</ul>{% endif %}
+{% endcall %}
+{% call table_card(9, "companies", "domain", "JD Edwards' companies (F0010), an Excel workbook (.xlsx) or CSV") %}
+  {% if companies_said %}<details class="imp-more" id="companies-table"><summary>The {{ loaded.companies | plural("company", "companies") }} loaded</summary>
+    <ul class="imp-said">{% for line in companies_said %}<li>{{ line }}</li>{% endfor %}</ul></details>{% endif %}
 {% endcall %}
 </div>
 {% endblock %}

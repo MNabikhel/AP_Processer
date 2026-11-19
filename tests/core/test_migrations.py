@@ -202,11 +202,18 @@ _JDE_PO_COLUMNS = (("purchase_orders", "order_type"), ("purchase_orders", "order
                    ("po_lines", "tax_area"))  # fmt: skip
 
 
+def _without_order_keys(conn):
+    """A database as schema 31 made it: no PO kept its number apart from its identity (D-267)."""
+    conn.execute("DROP INDEX purchase_orders_number")
+    conn.execute("ALTER TABLE purchase_orders DROP COLUMN number_key")
+
+
 def test_a_purchase_order_kept_before_pos_had_a_currency_has_none(tmp_path):
     """B-2612: a PO imported at schema 29, before a PO kept its currency, is kept with none ('': taken as CAD); the
     database is then a new one."""
     db = Store(tmp_path / "old" / "ap_coder.db").path
     with closing(sqlite3.connect(db)) as conn, conn:
+        _without_order_keys(conn)
         for table, column in (("purchase_orders", "currency"), *_JDE_PO_COLUMNS):  # (schema 31's too: D-264)
             conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
         conn.execute("INSERT INTO purchase_orders (po_key, po_number, updated_at) VALUES ('81', 'PO-81', '2026-11')")
@@ -221,6 +228,7 @@ def test_a_purchase_order_kept_before_the_voucher_match_names_no_jd_edwards_line
     waits for the lines loaded again. The database is then a new one."""
     db = Store(tmp_path / "old" / "ap_coder.db").path
     with closing(sqlite3.connect(db)) as conn, conn:
+        _without_order_keys(conn)
         for table, column in _JDE_PO_COLUMNS:
             conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
         conn.execute("INSERT INTO purchase_orders (po_key, po_number, updated_at) VALUES ('82', 'PO-82', '2026-11')")

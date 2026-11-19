@@ -16,6 +16,7 @@ from .jde_settings import (
     GL_DATE_EXPORT,
     HST_PROVINCES,
     JdeSettings,
+    company_of,
     gl_date_of,
     moved_note,
     settings_problems,
@@ -236,7 +237,7 @@ def voucher_view(
     if settings.amount_mode == AMOUNT_TAX:
         amounts = f"{money(v.gross)} gross · {money(v.atxa)} taxable · {money(v.stam)} tax"
     rows = [
-        ("Company", "VLCO", settings.company_code, "settings"),
+        ("Company", "VLCO", company_of(final, settings), "invoice" if final.get("company") else "settings"),
         ("Supplier (AN8)", "VLAN8", str(an8 or "").strip() or "none", "vendor"),
         ("Invoice number", "VLVINV", str(final.get("invoice_number") or "").strip()[:25] or "—", "invoice"),
         ("Invoice date", "VLDIVJ", invoice_date.isoformat() if invoice_date else "—", "invoice"),

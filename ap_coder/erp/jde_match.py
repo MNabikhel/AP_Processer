@@ -33,7 +33,7 @@ from ..coding.line_tax import tax_name
 from .jde_accounts import account_for, ani
 from .jde_formats import _date, _units
 from .jde_remarks import line_remark
-from .jde_settings import JdeSettings
+from .jde_settings import JdeSettings, company_of
 from .jde_voucher import (
     RECOVERABLE_BY_CODE,
     _area_types,
@@ -143,7 +143,7 @@ def keyed_match(v: _Voucher, matched: VoucherMatch, settings: JdeSettings) -> Ke
     items = {li.get("line_number"): li for li in final.get("line_items") or [] if isinstance(li, dict)}
     exempt = settings.exempt_code.strip().upper()
     company = settings.po_company.strip()
-    company = (company.zfill(5) if company.isdigit() else company) or settings.company_code
+    company = (company.zfill(5) if company.isdigit() else company) or company_of(final, settings)
     charged = {t["tax_type"] for t in v.charged}
     area = row_taxes(v, settings)
     on_rows = charged & set(area)  # JD Edwards works them out on the rows taxed Y

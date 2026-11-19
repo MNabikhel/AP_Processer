@@ -46,13 +46,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..coding import po as po_mod
-from ..coding.vendors import master_rows, norm_invoice_number
+from ..coding.vendors import entered_finding, master_rows, norm_invoice_number
 from ..core.caches import MB, Bounded
+from ..core.keys import order_key_of
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
 from ..core.store.register import CLEARED_KEY
 from . import jde_accounts, jde_ais, jde_formats, jde_settings
-from .jde_review import ERROR, INFO
+from .jde_review import INFO
 from .registers import iso_date
 
 log = logging.getLogger(__name__)
@@ -309,7 +310,7 @@ def _with_lines_kept(rows: list[dict[str, Any]], before: dict[str, dict[str, Any
     out: list[dict[str, Any]] = []
     by_po: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
-        by_po.setdefault(po_mod.po_key(r["po_number"]), []).append(r)
+        by_po.setdefault(order_key_of(r), []).append(r)
     for key, lines in by_po.items():
         given = {r.get("line_number") for r in lines}
         had = before.get(key)
@@ -317,6 +318,7 @@ def _with_lines_kept(rows: list[dict[str, Any]], before: dict[str, dict[str, Any
             status = po_mod.CLOSED if had["status"] == po_mod.CLOSED else po_mod.OPEN
             name = lines[0].get("vendor_name") or had["vendor_name"]
             out += [{"po_number": lines[0]["po_number"], "vendor_name": name, "line_number": li["line_number"],
+                     **{f: lines[0].get(f) or "" for f in ("order_type", "order_company", "supplier_number")},
                      "description": li["description"], "quantity": li["quantity"], "unit_price": li["unit_price"],
                      "amount": li["amount"], "amount_only": bool(li.get("amount_only")),
                      "open_amount": li.get("open_amount"), "received_quantity": li["received_quantity"],
@@ -354,7 +356,7 @@ def _purchase_orders(store: Any, found: list[dict[str, Any]], run: _Run, read: d
         })  # fmt: skip
     rows, skipped = po_mod.rows_from_records(records, {k: k for k in records[0]} if records else {})
     run.report["skipped"] = run.report.get("skipped", 0) + skipped
-    keys = sorted({po_mod.po_key(r["po_number"]) for r in rows} - {""})
+    keys = sorted({order_key_of(r) for r in rows} - {""})
     before = store.purchase_orders_by_key(keys)
     if run.mode == CHANGES:
         rows = _with_lines_kept(rows, before)
@@ -851,11 +853,13 @@ def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None
         if parse_amount(r.get("open_amount")) == 0 and gross:
             paid = "paid"
         date = iso_date(_text(r.get("invoice_date")))
-        out.append((ERROR, "DUPLICATE_IN_ERP",
-                    f"invoice {_text(r.get('invoice_number'))} from this vendor is already in JD Edwards: voucher "
-                    f"{_text(r.get('document'))} {_text(r.get('doc_type'))}{' dated ' + date if date else ''}"
-                    + (f", total {gross:,.2f}" if gross is not None else "") + (f", {paid}" if paid else "")
-                    + ": possible duplicate payment"))  # fmt: skip
+        voucher = (
+            f": voucher {_text(r.get('document'))} {_text(r.get('doc_type'))}{' dated ' + date if date else ''}"
+            + (f", total {gross:,.2f}" if gross is not None else "")
+            + (f", {paid}" if paid else "")
+        )
+        out.append(entered_finding({"invoice_number": _text(r.get("invoice_number"))}, [_text(r.get("company"))],
+                                   getattr(coding, "company", ""), "JD Edwards", voucher))  # fmt: skip
         if len(out) >= 2:
             break
     return out
@@ -875,10 +879,7 @@ def _in_register(store: Any, coding: Any, an8: str, ids: dict[str, str]) -> list
             if (bill := (posted["invoice_number"], posted["invoice_date"], posted["total"])) in said:
                 continue
             said.add(bill)
-            out.append((ERROR, "DUPLICATE_IN_ERP",
-                        f"invoice {posted['invoice_number']} from this vendor is already in the ERP"
-                        f"{' (dated ' + posted['invoice_date'] + ')' if posted['invoice_date'] else ''}, total "
-                        f"{posted['total']:,.2f}: possible duplicate payment"))  # fmt: skip
+            out.append(entered_finding(posted, posted["companies"], getattr(coding, "company", ""), "the ERP"))
     return out[:2]
 
 

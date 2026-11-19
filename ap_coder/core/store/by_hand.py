@@ -29,11 +29,11 @@ import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
-from ..chart import TEXT_MOST, account_lists, clean, code_of, join_account
+from ..chart import TEXT_MOST, clean, code_of, join_account
 from . import dialect
 from ._base import _in_list, _now
 from .accounts import EVENT_ACTOR, count_masters_change
-from .chart import NAMED, _chart, _settings, _units
+from .chart import NAMED, _lists, _settings
 
 EDITS_KEY = "hand_edits"  # (settings, JSON)
 CHART, UNITS, SUPPLIERS = "chart_accounts", "business_units", "vendors"
@@ -216,7 +216,7 @@ class ByHandMixin:
                 wanted["posting_edit"] = "" if postable else (NOT_POSTED if said in settings.postable_codes else said)
             changes = {field: (row[field], value) for field, value in wanted.items() if row[field] != value}
             if changes:
-                was = account_lists(_chart(conn), _units(conn), settings)[0]
+                was = _lists(conn, settings)[0]
                 conn.execute(f"UPDATE chart_accounts SET {', '.join(f'{field} = ?' for field in changes)} "
                              f"WHERE {where}", (*(after for _, after in changes.values()), *key))  # fmt: skip
                 _note(kept, CHART, text, changes, actor)
@@ -256,7 +256,7 @@ class ByHandMixin:
                 wanted["status"] = clean(status).upper()[:TEXT_MOST]
             changes = {field: (row[field], value) for field, value in wanted.items() if row[field] != value}
             if changes:
-                was = account_lists(_chart(conn), _units(conn), _settings(conn))[0]
+                was = _lists(conn)[0]
                 conn.execute(f"UPDATE business_units SET {', '.join(f'{field} = ?' for field in changes)} "
                              "WHERE code = ?", (*(after for _, after in changes.values()), code))  # fmt: skip
                 kept = held(conn)

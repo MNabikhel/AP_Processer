@@ -22,6 +22,7 @@ Entry points: ``read_chart``, ``read_business_units`` (a path, or an upload's by
 
 from __future__ import annotations
 
+import csv
 import io
 import itertools
 import zipfile
@@ -233,6 +234,34 @@ def read_chart(source: str | Path | bytes, anyway: bool = False, sheet: str = ""
     without its posting edit or subsidiary column, unless ``anyway`` (``Rows.without`` then names them). ``sheet``:
     the sheet of that name (else the first)."""
     return _read(source, chart.chart_columns, chart.chart_rows, chart.CHART_WANTS, anyway, sheet)
+
+
+def stream_chart_csv(path: str | Path, anyway: bool = False) -> tuple[chart.Rows, Iterator[chart.ChartRow]]:
+    """A chart of accounts saved as CSV (UTF-8, its column names in one of its first rows: the account master's
+    export, or the build sheet's query, D-267), read from disk a row at a time: (what was left out and the columns it
+    came without, as they are read; its clean rows, given one at a time and never held, so a chart of millions of
+    accounts is read in the memory of one). Up to ``chart.STREAMED_MOST`` rows; ``chart.ColumnsMissing`` as
+    ``read_chart``'s, unless ``anyway``; ``ChartError`` naming the file when it is no chart."""
+    name = Path(path).name
+    handle = open(path, encoding="utf-8-sig", newline="")  # noqa: SIM115  (closed by the rows once read)
+    try:
+        rows = (tuple(row) for row in csv.reader(handle))
+        about: dict[str, Any] = {}
+        kept = _columns(rows, chart.chart_columns, name, "CSV", about)
+        without = tuple(field for field in chart.CHART_WANTS if field not in about["found"])
+        if without and not anyway:
+            raise chart.ColumnsMissing(name, without)
+    except BaseException:
+        handle.close()
+        raise
+    out = chart.Rows(without=without)
+
+    def records() -> Iterator[dict[str, Any]]:
+        with handle:
+            for row in rows:
+                yield {column: row[at] if at < len(row) else None for at, column in kept}
+
+    return out, chart.iter_chart_rows(records(), out, about["found"], about["header_row"], chart.STREAMED_MOST)
 
 
 def read_business_units(source: str | Path | bytes, sheet: str = "") -> chart.Rows:

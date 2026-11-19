@@ -15,6 +15,8 @@ expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a
 * POSSIBLE_DUPLICATE_AMOUNT (warning): same vendor, same total, close date, different invoice number
 * VENDOR_NEW (info): first invoice from this vendor, or none approved yet (no penalty, but never touchless)
 * DUPLICATE_IN_ERP (error): the same vendor and invoice number is in the ERP's invoice register
+* DUPLICATE_OTHER_COMPANY (warning): the same vendor and invoice number is entered in JD Edwards, but only under
+  another company than the invoice's (D-267): keyed to the wrong company?
 * DUPLICATE_OTHER_VENDOR (warning): same invoice number and total under another vendor name
 * VENDOR_NOT_IN_MASTER (error): a vendor master was imported from the ERP and this vendor is not in it
   (by name or GST/HST number): pick the vendor from the list, or add it as a new vendor
@@ -47,6 +49,7 @@ from ..core.keys import ACCOUNT_LABEL as _ACCOUNT_LABEL
 from ..core.keys import (  # noqa: F401  (the names this module had: imported from here too)
     ADDED_HERE,
     IN_ERP,
+    company_code,
     mask_account,
     master_vendor_id,
     norm_invoice_number,
@@ -349,14 +352,9 @@ def vendor_findings(
     live = _jde_live_findings(coding, store, exclude_invoice_id)
     # JD Edwards' own answer says more (the voucher, paid or not) than the register the sync filled: said instead
     # of it (B-1217)
-    jde_said = any(code == "DUPLICATE_IN_ERP" for _, code, _ in live)
+    jde_said = any(code in ("DUPLICATE_IN_ERP", "DUPLICATE_OTHER_COMPANY") for _, code, _ in live)
     for posted in [] if jde_said else store.in_erp(coding.vendor_name, coding.invoice_number, coding.grand_total)[:2]:
-        findings.append(
-            (ERROR, "DUPLICATE_IN_ERP",
-             f"invoice {posted['invoice_number']} from this vendor is already in the ERP"
-             f"{' (dated ' + posted['invoice_date'] + ')' if posted['invoice_date'] else ''}, total "
-             f"{posted['total']:,.2f}: possible duplicate payment")
-        )  # fmt: skip
+        findings.append(entered_finding(posted, posted["companies"], coding.company, "the ERP"))
     findings += live
     for other in store.duplicates_elsewhere(
         coding.vendor_name, coding.invoice_number, coding.grand_total, exclude_invoice_id, key=key
@@ -681,6 +679,24 @@ def moved_off_hold(store: Store, read: dict[str, Any], coding: InvoiceCoding) ->
             return [(ERROR, MOVED_OFF_HOLD, f"this invoice {why}, a vendor on hold, but is coded to "
                      "another vendor: only someone who may lift holds can approve it")]  # fmt: skip
     return []
+
+
+def entered_finding(posted: dict[str, Any], companies: list[str], company: str, where: str,
+                    voucher: str = "") -> tuple[str, str, str]:  # fmt: skip
+    """What a bill already entered in the ERP (``posted``: its invoice number, date and total) says of an invoice of
+    ``company`` (its coding's; "": none decided): DUPLICATE_IN_ERP, unless it is entered under ``companies`` that are
+    all others (JD Edwards' vouchers name theirs; a register file names none), then DUPLICATE_OTHER_COMPANY (D-267).
+    ``where``: "the ERP" or "JD Edwards"; ``voucher``: JD Edwards' document, type, date, total and paid, as said."""
+    date = f" (dated {posted['invoice_date']})" if posted.get("invoice_date") else ""
+    said = voucher or f"{date}, total {posted['total']:,.2f}"
+    mine = company_code(company)
+    others = sorted({company_code(c) for c in companies if str(c or "").strip()})
+    if mine and others and mine not in others:
+        return (WARNING, "DUPLICATE_OTHER_COMPANY",
+                f"invoice {posted['invoice_number']} from this vendor is already in {where} under company "
+                f"{' and '.join(others)}{said}, not {mine}: check it isn't keyed to the wrong company")  # fmt: skip
+    return (ERROR, "DUPLICATE_IN_ERP", f"invoice {posted['invoice_number']} from this vendor is already in {where}"
+            f"{said}: possible duplicate payment")  # fmt: skip
 
 
 def _jde_live_findings(

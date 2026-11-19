@@ -13,7 +13,7 @@ import pytest
 
 from ap_coder.ai import history
 from ap_coder.bench import jde_exports as made
-from ap_coder.coding import banks, po, terms, vendor_info
+from ap_coder.coding import banks, companies, po, terms, vendor_info
 from ap_coder.coding.vendors import master_columns, master_rows
 from ap_coder.core import chart, chart_file
 from ap_coder.core.headers import match_columns
@@ -142,6 +142,7 @@ READERS = {
     "gl_lines": _gl_lines_take,
     "payment_terms": _table_takes(terms.JDE_TERMS_ALIASES, terms.jde_table),
     "tax_areas": _table_takes(jde_settings.TAX_AREA_ALIASES, jde_settings.tax_area_table),
+    "companies": _table_takes(companies.COMPANY_ALIASES, companies.company_table),
     "vouchers": lambda s, f: bool(registers.voucher_columns([s.column(x).header for x in f])),
     "gl_accounts": _accounts_take,
     "cost_centers": _accounts_take,
@@ -198,7 +199,7 @@ def test_every_column_is_found_by_its_header_and_each_other_name_the_reader_read
 
 def test_the_specs_are_the_readers_own_tables():
     assert {c.field for c in SPECS["chart"].required} == {*chart.CHART_NEEDS, *chart.CHART_WANTS}
-    assert [c.field for c in SPECS["chart"].columns if not c.required] == ["description", "lod"]
+    assert [c.field for c in SPECS["chart"].columns if not c.required] == ["description", "lod", "company"]
     assert {c.field for c in SPECS["vouchers"].required} == set(registers.VOUCHER_REQUIRED)
     assert {c.field for c in SPECS["vendor_info"].required} == set(vendor_info.NEEDS)
     assert {c.field for c in SPECS["purchase_orders"].required} == set(po.REQUIRED_COLUMNS)
@@ -343,7 +344,7 @@ def test_jd_edwards_reports_are_told_by_their_own_headers_and_other_lists_are_no
 # --- The build sheet's reports, queried in ReportsNow (D-266) --------------------------------------------------------
 
 TABLES = {"GM": "F0901", "MC": "F0006", "AB": "F0101", "A6": "F0401", "AL": "F0116", "EA": "F01151", "RP": "F0411",
-          "GL": "F0911", "PD": "F4311", "PN": "F0014", "TA": "F4008"}  # fmt: skip
+          "GL": "F0911", "PD": "F4311", "PN": "F0014", "TA": "F4008", "CC": "F0010"}  # fmt: skip
 
 
 @pytest.mark.parametrize("key", list(made.BUILD_SHEET))

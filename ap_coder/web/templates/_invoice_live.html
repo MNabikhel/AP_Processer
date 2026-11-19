@@ -166,7 +166,10 @@
 {% set p = live.po %}
 {% if p %}
 <section class="card">
-  {% if not p.found %}
+  {% if not p.found and p.several %}
+  {{ head(p.label, aside=ui.pill("Several orders", "warn")) }}
+  <p class="muted">This number is several purchase orders ({{ p.several }}). Pick the invoice's company to tell which one it bills.</p>
+  {% elif not p.found %}
   {{ head(p.label, aside=ui.pill("Not found", "warn")) }}
   <p class="muted">This PO is not in the purchase orders list. Check the number, or import the PO.</p>
   <a class="link" href="/purchase-orders"><span class="ms" aria-hidden="true">shopping_cart</span>Purchase orders</a>

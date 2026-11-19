@@ -5,9 +5,10 @@ Each sheet is told by its column names (``import_specs.workbook_report``: its he
 read a row at a time within the workbook reader's bounds (``core/chart_file``). The page shows, before anything is
 kept, each sheet with the report it was recognised as, its rows (and how many of each company), the columns found
 and the ones missing (``look``); a sheet that is none of the reports is listed and never guessed at, and two sheets of
-a report that is replaced whole (the chart, the business units, the payment terms, the tax areas) are both left out,
-said. Several sheets of a report that adds up (the supplier ledger, the G/L lines, the PO lines, split by company or
-year) are loaded one after the other, an overlap counted once.
+a report that is replaced whole (the payment terms, the tax areas, the companies) are both left out, said. Several
+sheets of a report that adds up (the supplier ledger, the G/L lines, the PO lines, split by company or year) are
+loaded one after the other, an overlap counted once; so are the chart's and the business units' split by company
+(each replaces its companies' rows, D-267: a company in two of them leaves both out).
 
 "Load all" loads every sheet that can be, in the order the cards depend on each other (``ORDER``), through each card's
 own loader (``jde_files``, ``ops/chart_cmd``, ``ops/journal_cmd``); a sheet that cannot be loaded is said, and the
@@ -42,13 +43,17 @@ router = page_router()
 
 KIND = "jde-workbook"  # a workbook as surveyed at its upload: its sheets, their reports and rows
 CARD = "workbook"
-# The order the reports are loaded in: the chart and the business units first (the rest is checked against them),
-# the payment terms and tax areas (the suppliers' terms read with them), the suppliers, then the rest.
-ORDER = ("chart", "units", "payment_terms", "tax_areas", "supplier_master", "vendor_info", "vouchers", "gl_lines",
-         "purchase_orders")  # fmt: skip
-WHOLE = ("chart", "units", "payment_terms", "tax_areas")  # a newer file replaces it whole: one sheet only
+# The order the reports are loaded in: the companies (their names are never read as a supplier, D-267), the chart and
+# the business units (the rest is checked against them), the payment terms and tax areas (the suppliers' terms read
+# with them), the suppliers, then the rest.
+ORDER = ("companies", "chart", "units", "payment_terms", "tax_areas", "supplier_master", "vendor_info", "vouchers",
+         "gl_lines", "purchase_orders")  # fmt: skip
+WHOLE = ("payment_terms", "tax_areas", "companies")
+# Loaded in parts, a sheet each (a chart split by company, D-267): no company in two of its sheets.
+PARTS = ("chart", "units")  # a newer file replaces it whole: one sheet only
 # The column of each report a row's company is in.
-COMPANY = {"units": "company", "vouchers": "company", "gl_lines": "company", "purchase_orders": "order_company"}
+COMPANY = {"units": "company", "vouchers": "company", "gl_lines": "company", "purchase_orders": "order_company",
+           "chart": "company"}  # fmt: skip
 NOT_XLSX = "Upload the workbook as Excel saves it (.xlsx), a sheet for each report."
 NOT_ONE = "None of the reports: not loaded."
 
@@ -105,9 +110,20 @@ def _verdicts(sheets: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if key in WHOLE and times[key] > 1 and not view["problem"]:
                 view["problem"] = (f"{times[key]} sheets are {spec.report}, which is replaced whole: neither is "
                                    "loaded. Keep the one to load and upload the workbook again.")  # fmt: skip
+            twice = sorted(_in_two(sheets, sheet)) if key in PARTS and times[key] > 1 else []
+            if twice and not view["problem"]:  # (each sheet replaces its companies': a company in two, one lost)
+                view["problem"] = (f"Company {', '.join(twice)} is in another sheet of {spec.report} too, and each "
+                                   "sheet replaces its companies' rows: neither is loaded. Keep each company in one "
+                                   "sheet and upload the workbook again.")  # fmt: skip
         view["by_company"] = ", ".join(f"{co} {n:,}" for co, n in sorted(sheet["companies"].items()))
         out.append(view)
     return out
+
+
+def _in_two(sheets: list[dict[str, Any]], sheet: dict[str, Any]) -> set[str]:
+    """The companies of ``sheet`` that another sheet of its report has too."""
+    others = {co for s in sheets if s is not sheet and s["key"] == sheet["key"] for co in s["companies"]}
+    return set(sheet["companies"]) & others
 
 
 def look(store: Store, token: str) -> dict[str, Any] | None:
@@ -189,8 +205,9 @@ def _load_sheet(store: Store, key: str, content: bytes, name: str, sheet: dict[s
     df = _frame(content, name, sheet)
     if key == "supplier_master":
         return jde_files.load_supplier_master(store, df)
-    if key in ("payment_terms", "tax_areas"):
-        return jde_files.load_table(store, "terms" if key == "payment_terms" else "areas", df)
+    if key in ("payment_terms", "tax_areas", "companies"):
+        card = {"payment_terms": "terms", "tax_areas": "areas", "companies": "companies"}[key]
+        return jde_files.load_table(store, card, df)
     found = jde_vouchers(store, df)  # (the supplier ledger: added to the vouchers loaded, never replacing them)
     if found is None:
         raise ValueError(NO_ROWS)

@@ -209,7 +209,8 @@ def vouchers(
                                 "takes its own default bank unless one is typed.")  # fmt: skip
         ready.append(Voucher(
             invoice_id=v.inv_id, supplier_number=an8, supplier_name=str(final.get("vendor_name") or ""),
-            company=settings.company_code, invoice_number=str(final.get("invoice_number") or "").strip(),
+            company=jde_settings.company_of(final, settings),
+            invoice_number=str(final.get("invoice_number") or "").strip(),
             invoice_date=jde_formats._date(final.get("invoice_date")),
             gl_date=jde_settings.gl_date_of(final, settings, on)[0],
             currency=v.currency, gross=v.gross / 100,
@@ -307,7 +308,7 @@ def _said(v: jde_voucher._Voucher, settings: jde_settings.JdeSettings, taxed: bo
             "amount is the claimed part only: less than the area's rate on the taxable amount."
         )
     if v.foreign:
-        home = settings.domestic_currency.strip().upper()
+        home = jde_settings.domestic_of(v.final, settings)
         rate = jde_zfiles._rate(fx_rates, v.currency, home)
         notes.append(
             f"{v.currency} voucher: type the amounts as shown, in {v.currency} (foreign entry), not in {home}. "

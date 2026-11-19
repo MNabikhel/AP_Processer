@@ -103,7 +103,8 @@ def test_load_all_loads_every_report_in_order_and_po_matching_and_suggestions_wo
 
 
 def test_two_sheets_of_a_report_replaced_whole_are_left_out_and_said(client, store, workbook):
-    """Two charts in one workbook: neither is loaded (which one is meant cannot be told); two ledgers add up."""
+    """Two charts in one workbook with the same company: neither is loaded (each replaces its companies' accounts, so
+    one would be lost: D-267); two ledgers add up."""
     book = openpyxl.load_workbook(io.BytesIO(workbook))
     book.copy_worksheet(book["Accounts"]).title = "Accounts 2"
     out = io.BytesIO()
@@ -111,8 +112,8 @@ def test_two_sheets_of_a_report_replaced_whole_are_left_out_and_said(client, sto
     _token_, page = _upload(client, out.getvalue())
     shown = _summary(page)
     assert (
-        "2 sheets are" in shown["Accounts"]
-        and "replaced whole: neither is loaded" in shown["Accounts"]
+        "Company 00210 is in another sheet of" in shown["Accounts"]
+        and "neither is loaded" in shown["Accounts"]
         and "Not loaded" in shown["Accounts 2"]
     )
     assert "Loads" in shown["Ledger Jan-Jun"] and "Loads" in shown["Ledger Jul-Dec"]

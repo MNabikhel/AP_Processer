@@ -353,3 +353,27 @@ def test_an_account_half_typed_is_not_flagged_until_the_box_is_left(browser, cha
     page.wait_for_selector('[data-grid="lines"] [data-row]:nth-child(1).is-fix')
     assert "is not an account" in page.inner_text("body")
     assert not errors
+
+
+def test_a_chart_too_big_to_send_is_searched_as_the_box_is_typed_in(browser, chart_company, monkeypatch):
+    """D-267: a chart of more than LIST_MOST accounts (a group's, of millions) is never sent whole: the box asks the
+    chart for the words typed, digits without dots too, and Enter picks the first."""
+    from ap_coder.web.pages import invoice_lookups
+
+    monkeypatch.setattr(invoice_lookups, "LIST_MOST", 10)
+    invoice, invoice_id = chart_company.invoices["four_lines"]
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": 1366, "height": 768})
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base}/review/{invoice_id}")
+    page.wait_for_load_state("networkidle")
+    wanted = invoice.parts[0].account
+    unit, code = chart.split_account(wanted)
+    page.click(FIRST)
+    page.wait_for_selector(LIST)
+    with page.expect_response(lambda r: "/review/accounts.json?company=&q=" in r.url):
+        page.keyboard.type(f"{code.replace('.', '')} {unit}")
+    wait_until(page, lambda: _options(page)[:1] == [wanted])
+    page.keyboard.press("Enter")
+    assert page.input_value(FIRST) == wanted and not errors

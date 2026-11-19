@@ -157,10 +157,12 @@ def validate_coding(
     erp_findings: list[tuple[str, str, str, int | None]] | None = None,
     remarks_typed: bool = False,
     erp_posts_tax: frozenset[str] = frozenset(),
+    canadian_tax: bool = True,
 ) -> ValidationReport:
     """``history`` is ``memory.compare_with_history`` output; ``duplicate_of`` lists stored invoice ids
     with the same vendor and invoice number; ``remarks_typed``: the lines' remarks go to JD Edwards as typed;
-    ``erp_posts_tax``: the taxes JD Edwards posts itself from the pay item (no sales-tax GL account of ours)."""
+    ``erp_posts_tax``: the taxes JD Edwards posts itself from the pay item (no sales-tax GL account of ours);
+    ``canadian_tax``: False for a company not checked for Canadian tax (``companies.canadian``, D-267)."""
     issues: list[Issue] = []
 
     def add(severity: str, code: str, message: str, line: int | None = None) -> None:
@@ -190,7 +192,7 @@ def validate_coding(
     checks = _totals_checks(coding, reference, add)
     # --- Canadian sales tax ------------------------------------------------------
     known = set(reference.chart_of_accounts.codes)
-    for f in check_taxes(coding, reference.tax, known, erp_posts_tax):
+    for f in check_taxes(coding, reference.tax, known, erp_posts_tax, canadian=canadian_tax):
         add(f.severity, f.code, f.message, f.line_number)
     checks["tax_lines"] = [f"{t.tax_type} {t.province} {t.rate:g}".strip() for t in coding.tax_lines]
 

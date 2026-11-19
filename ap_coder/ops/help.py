@@ -241,6 +241,14 @@ CHECKS: dict[str, CheckHelp] = {
         "checked: then the message names the voucher and whether it is paid.",
         "Check the ERP. If it is the same bill, reject this one so it is not paid twice.",
     ),
+    "DUPLICATE_OTHER_COMPANY": CheckHelp(
+        FRAUD, "Already entered under another company",
+        "JD Edwards already has this vendor's invoice with the same number, but under another company than this "
+        "invoice's. It may be another company's bill with the same number, or the same bill keyed to the wrong "
+        "company: AP Coder never approves it without a person.",
+        "Open the voucher in JD Edwards. If it is this bill keyed to the wrong company, have it voided there and "
+        "enter this one; if it is the same bill under the right company, reject this one.",
+    ),
     "JDE_NOT_REACHED": CheckHelp(
         ERP, "JD Edwards not asked",
         "The JD Edwards API connection is on, but JD Edwards could not be asked just now whether this invoice is "
@@ -431,11 +439,36 @@ CHECKS: dict[str, CheckHelp] = {
         "approved without a person, even when it prints a touchless vendor's GST/HST number.",
         "Make sure the vendor is set up in the ERP and is a supplier you expect.",
     ),
+    "COMPANY_UNKNOWN": CheckHelp(
+        ERP, "Pick the company",
+        "With several JD Edwards companies loaded (JD Edwards files, card 9), nothing on the invoice decides which one "
+        "it is for: not its PO, not a company's name printed on it, not the supplier's history (it has billed several "
+        "companies, or none yet), not the business units its lines are coded to. AP Coder never guesses between two.",
+        "Pick the company in the Company box on the review screen. A trade name of yours that would decide it can be "
+        "added in Settings → Review, Your company's names, written \"name = company\".",
+    ),
+    "US_TAX_NOT_CHECKED": CheckHelp(
+        TAX, "Tax not checked for this company",
+        "The invoice is for a company that is not checked for Canadian tax: only a company whose country is CA and "
+        "whose currency is CAD in JD Edwards' companies is (a US company, one in another country, or one whose "
+        "country is blank or whose currency is USD is not), unless Settings → JD Edwards E1 says otherwise for it. "
+        "Every other check runs; its sales tax is not checked here, so it is never approved without a person.",
+        "Check the tax charged is right for where the goods or services were delivered, and that the voucher's tax "
+        "area (from the PO line, or the supplier's default) is the one to use.",
+    ),
     # --- Purchase orders ---------------------------------------------------------------------------------
     "PO_UNKNOWN": CheckHelp(
         PO, "PO not found",
         "The invoice quotes a purchase order that is not in the Purchase orders list.",
         "Check the PO number for typos, or import the latest open POs from the ERP.",
+    ),
+    "PO_AMBIGUOUS": CheckHelp(
+        PO, "PO number of several orders",
+        "The PO number on the invoice is the number of more than one purchase order (two companies, or two order "
+        "types, use the same number) and neither its supplier nor its company tells which one it bills. AP Coder "
+        "never guesses: it is not matched to either, and never approved without a person.",
+        "Pick the invoice's company on the review screen; if both orders are in that company, ask the buyer which "
+        "one it bills.",
     ),
     "PO_CLOSED": CheckHelp(
         PO, "PO is closed",

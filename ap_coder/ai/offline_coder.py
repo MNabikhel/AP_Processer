@@ -36,6 +36,7 @@ from ..capture.workflow import (
     supplier_for,
     supplier_record,
 )
+from ..coding import companies
 from ..coding.tax import OUTSIDE_CANADA, TaxRateTable
 from ..coding.vendors import bank_digit_count, cut_bank_details
 from ..core.memory import vendor_key
@@ -587,14 +588,17 @@ class _Evidence:
     addressed: str = ""
 
 
-def supplier_evidence(store: Any, vendor: Any, key: str,
-                      reference: ReferenceData) -> tuple[Prior | None, tuple[str, ...]]:  # fmt: skip
+def supplier_evidence(store: Any, vendor: Any, key: str, reference: ReferenceData,
+                      company: str = "") -> tuple[Prior | None, tuple[str, ...]]:  # fmt: skip
     """(the supplier's prior, the cost centers the vendor's approved lines used) for an invoice's vendor: the vendor
     list's row, or the name printed. (None, ()) without a store that keeps them; no cost centers when lines are
-    suggested GL codes as before (``suggest.by_pairs``)."""
+    suggested GL codes as before (``suggest.by_pairs``). ``company``: the invoice's, with several companies: the
+    supplier's coding to that company's business units alone (D-267)."""
     if store is None or not vendor or not hasattr(store, "prior_stamp"):
         return None, ()
     prior = prior_for(store, vendor, always=reference.pairs is not None)
+    if company and reference.pairs is not None and (units := reference.pairs.units_of(company)):
+        prior = prior.within(units)
     if not by_pairs(reference, prior):
         return prior, ()
     name = vendor if isinstance(vendor, str) else str(vendor.get("display_name") or "")
@@ -774,7 +778,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         readings_data.append((tip[0], 1.0, tip[1], tip[1]))
         flags.append("")
         subtotal = round(subtotal + tip[1], 2)
-    prior, units = supplier_evidence(store, found or vendor, key, reference)
+    company = companies.early(store, vendor, values.get("gst_hst_registration_number"), values.get("po_number"), text)
+    prior, units = supplier_evidence(store, found or vendor, key, reference, company)
     evidence = _Evidence(vendor, feedback, reference, default_gl, key, prior, units, addressed_to(text))
     hints: dict[int, str] = {}
     offered: dict[int, list[Candidate]] = {}

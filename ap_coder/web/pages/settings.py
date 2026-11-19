@@ -29,6 +29,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ap_coder import __version__
 from ap_coder.ai import lessons
+from ap_coder.coding import companies
 from ap_coder.coding.tax import PROVINCE_NAMES
 from ap_coder.core import paths, ui
 from ap_coder.core.envfile import one_line, read_env, write_env
@@ -197,6 +198,7 @@ def review_context(request: Request, stamped: bool = True) -> dict[str, Any]:
         "fx_rates": store.get_setting("fx_rates"),
         "our_province": store.our_province(),
         "our_names": "\n".join(store.our_names()),
+        "several_companies": companies.several(store),  # (a name may then name its company, D-267)
         "why_after": lessons.why_after(store),
         "why_surprise": lessons.asks_why(store),
         "site_provinces": store.get_setting("site_provinces"),
