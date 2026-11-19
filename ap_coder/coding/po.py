@@ -680,8 +680,9 @@ def _header_findings(coding: InvoiceCoding, po: dict[str, Any]) -> list[Finding]
     # The invoice's company picked, or decided before the POs were loaded, another than its order's (B-2686)
     theirs, mine = company_code(po.get("order_company")), company_code(coding.company)
     if theirs and mine and theirs != mine:
-        findings.append((WARNING, "PO_COMPANY_DIFFERS", f"{po_label(number)} is an order of company {theirs}, not of "
-                         f"{mine}, the company this invoice is for: check the company, or the PO number", None))  # fmt: skip
+        findings.append((WARNING, "PO_COMPANY_DIFFERS", f"{po_label(number)} is an order of company {theirs}, not "
+                         f"of {mine}, the company this invoice is for: check the company, or the PO number",
+                         None))  # fmt: skip
     return findings
 
 

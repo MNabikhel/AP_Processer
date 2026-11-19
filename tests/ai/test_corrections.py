@@ -293,8 +293,10 @@ def test_a_supplier_corrected_has_its_company_decided_again_for_the_supplier_it_
                                 "invoice_number": "PR-1"},
                                {**voucher, "key": "00210-PV-700102-001", "vendor_name": ONE_ROW_SUPPLIER,
                                 "invoice_number": "PP-1"}])  # fmt: skip
-    page = (f"PRAIRIE PROMO\nInvoice #: 118204\nBill to: Maple Ridge Holdings Ltd.\nShip to: Maple Ridge Constructors "
-            f"Ltd., Yard 4\nGST/HST Registration No: {ONE_ROW_GST[:9]} {ONE_ROW_GST[9:]}\n")  # (two of the group)
+    page = (
+        f"PRAIRIE PROMO\nInvoice #: 118204\nBill to: Maple Ridge Holdings Ltd.\nShip to: Maple Ridge Constructors "
+        f"Ltd., Yard 4\nGST/HST Registration No: {ONE_ROW_GST[:9]} {ONE_ROW_GST[9:]}\n"
+    )  # (two of the group)
     misread = gt(vendor_name="Prairie Rentals Co", gst_hst_registration_number="", invoice_number="118204")
     misread["company"] = "00230"  # as it was read: the only company Prairie Rentals billed
     iid = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", misread, {"issues": []}, extraction_md=page)

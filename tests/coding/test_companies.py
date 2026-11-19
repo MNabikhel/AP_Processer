@@ -175,8 +175,9 @@ def test_report_9_loaded_after_an_invoice_was_read_its_checks_again_read_the_nam
     iid = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", gt(vendor_name=supplier, invoice_number="KF-118"),
                             {"requires_review": False, "adjusted_confidence": 0.97}, extraction_md=page)  # fmt: skip
     _load_group(store)
-    store.import_erp_vouchers([{"key": "00220-PV-700101-001", "vendor_name": supplier, "invoice_number": "KF-90",
-                                "total": 10.0, "invoice_date": "2026-01-02", "an8": "", "document": "700101"}])  # fmt: skip
+    voucher = {"total": 10.0, "invoice_date": "2026-01-02", "an8": "", "document": "700101"}
+    store.import_erp_vouchers([{**voucher, "key": "00220-PV-700101-001", "vendor_name": supplier,
+                                "invoice_number": "KF-90"}])  # fmt: skip
     assert "US_TAX_NOT_CHECKED" in {i["code"] for i in bulk.issues_today(store, [iid])[iid]}
     result = bulk.bulk_approve(store, store.reference_data(), web_settings(), [iid], "Sam")
     assert result["approved"] == [] and store.get_invoice(iid)["status"] == REVIEW
