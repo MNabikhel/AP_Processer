@@ -70,6 +70,28 @@ def test_one_supplier_with_the_number_in_two_companies_is_held_until_its_company
     assert {f[1] for f in picked.findings} == {"PO_MATCHED"}
 
 
+def test_an_invoice_of_another_company_than_its_orders_is_said_and_always_goes_to_a_person(store, tmp_path):
+    """B-2686: an invoice given company 00100 (picked on the review screen, or decided by the supplier's history before
+    the POs were loaded) quoting 7001, an order of Prairie Rentals Co alone, of company 00300, was matched to that
+    order and nothing said: approved in bulk, its voucher keyed under 00100 naming an order of 00300."""
+    from ap_coder.capture.supplier import ALWAYS_A_PERSON
+    from ap_coder.ops.help import CHECKS
+
+    picked = match_invoice(InvoiceCoding.model_validate(_invoice("Prairie Rentals Co", "7001", 900.0, "100",
+                                                                 quantity=1)), store)  # fmt: skip
+    assert picked.found and picked.po["order_company"] == "00300"
+    found = {f[1]: f for f in picked.findings}
+    assert found["PO_COMPANY_DIFFERS"][0] == "warning"
+    assert found["PO_COMPANY_DIFFERS"][2] == ("PO 7001 is an order of company 00300, not of 00100, the company this "
+                                              "invoice is for: check the company, or the PO number")  # fmt: skip
+    assert "PO_COMPANY_DIFFERS" in ALWAYS_A_PERSON and CHECKS["PO_COMPANY_DIFFERS"].title == "PO of another company"
+    same = match_invoice(InvoiceCoding.model_validate(_invoice("Prairie Rentals Co", "7001", 900.0, "300",
+                                                               quantity=1)), store)  # fmt: skip
+    assert "PO_COMPANY_DIFFERS" not in {f[1] for f in same.findings}  # (its own company's, or none decided)
+    none = match_invoice(InvoiceCoding.model_validate(_invoice("Prairie Rentals Co", "7001", 900.0, quantity=1)), store)
+    assert "PO_COMPANY_DIFFERS" not in {f[1] for f in none.findings}
+
+
 def test_what_an_invoice_bills_counts_on_its_own_companys_order_only(store, tmp_path):
     store.add_invoice(tmp_path / "a.pdf", _invoice("Lakeside Steel Ltd", "4512", 14.0, "00200"), {})
     store.add_invoice(tmp_path / "b.pdf", _invoice("Lakeside Steel Ltd", "4512", 14.0, invoice="INV-2"), {})  # held

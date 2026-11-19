@@ -498,6 +498,15 @@ CHECKS: dict[str, CheckHelp] = {
         "The quoted purchase order was raised for a different vendor.",
         "Check the PO number on the invoice; a wrong PO is a common reason for misallocated spend.",
     ),
+    "PO_COMPANY_DIFFERS": CheckHelp(
+        PO, "PO of another company",
+        "With several JD Edwards companies, the purchase order the invoice is matched to is an order of another "
+        "company than the one the invoice is for (a company picked on the review screen, or decided before the "
+        "purchase orders were loaded). Its voucher would be keyed under one company naming an order of another, so "
+        "it is never approved without a person.",
+        "Check the company in the Company box: an invoice billing that order is usually that company's. If the "
+        "company is right, check the PO number with the buyer.",
+    ),
     "PO_LINE_NOT_ON_PO": CheckHelp(
         PO, "Line not on the PO",
         "Nothing on the purchase order resembles this invoice line.",
