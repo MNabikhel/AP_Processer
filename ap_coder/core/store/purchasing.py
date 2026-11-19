@@ -537,14 +537,16 @@ class PurchasingMixin:
                 for r in conn.execute(
                     """SELECT p.*, COUNT(l.line_number) lines, COALESCE(SUM(l.amount), 0) total,
                        SUM(l.received_quantity IS NOT NULL) received_lines, MIN(l.amount_only) by_amount,
-                       SUM(CASE WHEN l.open_amount IS NULL THEN 1 ELSE 0 END) no_open
+                       SUM(CASE WHEN l.open_amount IS NULL THEN 1 ELSE 0 END) no_open, SUM(l.open_amount) open_total
                        FROM purchase_orders p LEFT JOIN po_lines l ON l.po_key = p.po_key
                        GROUP BY p.po_key ORDER BY p.po_number"""
                 )
             ]
             for r in rows:
-                by_amount, no_open = r.pop("by_amount"), r.pop("no_open")
+                by_amount, no_open, open_total = r.pop("by_amount"), r.pop("no_open"), r.pop("open_total")
                 r["by_open"] = bool(r["lines"] and by_amount and not no_open)
+                if r["by_open"]:
+                    r["total"] = round(open_total, 2)
             by_open = {r["po_key"] for r in rows if r["by_open"]}
             billed: dict[str, dict[str, Any]] = {}
             ordered = {r["po_key"]: r["currency"] or "CAD" for r in rows}  # each PO's currency (none: CAD)

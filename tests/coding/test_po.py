@@ -1269,6 +1269,11 @@ def test_a_po_line_billed_by_amount_is_checked_against_what_jd_edwards_has_open_
     (listed,) = store.purchase_orders()
     assert (listed["by_open"], listed["total"], listed["billed"], status_pill(listed)[0]) == (True, 329.1, 0.0, "Open")
     assert po_detail(store, listed)["lines"][0]["flag"] is None
+    # (a line billed by amount whose file gives its ordered amount too: the list totals what is open on it)
+    store.import_purchase_orders([{"po_number": "88", "description": "SITE SERVICES", "quantity": 1.0,
+                                   "unit_price": 1000.0, "amount": 1000.0, "amount_only": True, "open_amount": 400.0,
+                                   "status": "open"}])  # fmt: skip
+    assert next(p for p in store.purchase_orders() if p["po_number"] == "88")["total"] == 400.0
     # A third invoice in review beside it, before the second is exported: over what is open
     store.add_invoice(tmp_path / "b.pdf", second.model_dump(), {})
     over = match_invoice(bags(10, "118206"), store)
