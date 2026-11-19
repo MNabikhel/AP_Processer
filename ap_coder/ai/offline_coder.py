@@ -451,9 +451,9 @@ def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.da
 # The supplier's banking details: words only banking details use ("Transit", "Institution", "IBAN", "SWIFT", "bank
 # account", "direct deposit", "virement"...), on a line with an account's digits (amounts don't count: "Deposit
 # 500.00" is a line item). "Remit by EFT within 30 days" has none; "100 Bank Street" is an address. A word may run into
-# its number, as a scan's OCR reads it ("Transit10184", B-2721).
+# the numbers around it, as a scan's OCR reads them ("Transit10184Institution005", B-2721).
 _BANKING = re.compile(
-    r"(?i)\b(?:transit|institution|iban|swift|bic|routing|aba|bank\s+(?:account|acct)|banking|banque|bancaires?|"
+    r"(?i)(?<![a-z])(?:transit|institution|iban|swift|bic|routing|aba|bank\s+(?:account|acct)|banking|banque|bancaires?|"
     r"direct\s+deposit|d[ée]p[ôo]t\s+direct|virement|wire\s+transfer|eft)(?![a-z])"
 )
 _BANK_WORDS = re.compile(

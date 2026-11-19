@@ -99,11 +99,12 @@ def bank_digits(value: Any) -> tuple[str, tuple[str, ...]]:
 _MONEY = re.compile(r"\d[\d,. ]*[.,]\d{2}(?!\d)")
 # Where the banking details end: a number after its own label (an IBAN or SWIFT code after theirs), and the words that
 # start something else on the same line ("..., quoting invoice NW-2026-0912", "ref. 88231", "Call 416-555-1212"). A
-# label's number may follow it with no space, as a scan's OCR reads it ("Institution005", B-2721).
+# label and its number may run into each other, as a scan's OCR reads them ("Transit10184Institution005", B-2721).
 _BANK_NUMBER = re.compile(
     r"(?i)\biban\b\W{0,3}[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?\b"
     r"|\b(?:swift|bic)\b\W{0,3}[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b"
-    r"|\b(?:transit|institution|inst|branch|account|acct|a/c|compte|routing|aba)(?![a-z])\D{0,15}?\d(?:[\d -]*\d)?"
+    r"|(?<![a-z])(?:transit|institution|inst|branch|account|acct|a/c|compte|routing|aba)(?![a-z])\D{0,15}?\d"
+    r"(?:[\d -]*\d)?"
 )
 _BANK_END = re.compile(
     r"(?i)\b(?:quot(?:e|ing)|invoices?|inv|facture|ref|reference|r[ée]f[ée]rence|date|order|po|questions?|call|"

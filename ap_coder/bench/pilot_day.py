@@ -59,7 +59,8 @@ CATEGORIES = (
     ("po_partial", 14, "some lines of an order, one of them in part"),
     ("po_credit", 4, "a credit for goods returned on an order"),
     ("po_subledger", 8, "an order of equipment rental: an L account, the subledger on the PO line"),
-    ("office", 38, "no PO: the supplier's one account at the company's office"),
+    ("office", 33, "no PO: the supplier's one account at the company's office"),
+    ("credit", 3, "no PO: a credit note for goods returned"),
     ("units", 4, "no PO: fuel to a U account, its units the quantity"),
     ("subledger", 4, "no PO: equipment rental to an L account, the subledger of the past coding"),
     ("jobs", 12, "no PO: the job named on the invoice; the supplier's history on five jobs, two closed"),
@@ -71,6 +72,7 @@ CATEGORIES = (
     ("outside_pilot", 8, "a company outside the pilot"),
     ("dup_erp", 6, "already in JD Edwards under the same company"),
     ("dup_other_company", 4, "its number already in JD Edwards under the supplier's other company"),
+    ("dup_day_other", 2, "the number of an invoice of the day, from the same supplier to its other company"),
     ("dup_resent", 3, "an invoice of the day sent again, scanned"),
     ("multipage", 6, "lines over several pages"),
     ("several", 3, "two or three invoices in one file"),
@@ -409,6 +411,20 @@ class Planner:
                     out.append(self.intercompany(k))
                 elif category in ("us", "usd_ca", "outside_pilot"):
                     out.append(self.foreign(category, k))
+                elif category == "credit":
+                    made = self.office("credit", k)
+                    made.lines = [DayLine(f"Returned - {li.description}", -li.quantity, li.unit_price, li.uom,
+                                          li.account) for li in made.lines[:1]]  # fmt: skip
+                    out.append(made)
+                elif category == "dup_day_other":  # (both are bills of their own: a person approves each)
+                    first = [i for i in out if i.category == "two_companies"][k]
+                    s = self.supplier(first.supplier)
+                    company = next(c for c in s.companies if c != first.company)
+                    first.must_not = tuple(c for c in first.must_not if c != "DUPLICATE_INVOICE_OTHER_COMPANY")
+                    lines = [self.line(s, company, self.unit_of(s, company), k + 7)]
+                    must = ("DUPLICATE_INVOICE_OTHER_COMPANY",)
+                    out.append(self.invoice(category, s, company, lines, number=first.number, must=must,
+                                            must_not=NEVER_CLEAN))  # fmt: skip
                 elif category in ("dup_erp", "dup_other_company"):
                     out.append(self.duplicate(category, k))
                 elif category == "multipage":

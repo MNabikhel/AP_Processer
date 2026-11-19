@@ -86,11 +86,14 @@ def test_a_banking_line_that_quotes_the_invoice_number_keeps_only_the_account():
 def test_bank_details_a_scan_reads_run_together_are_read_whole():
     """B-2721: a scan's OCR runs a label into its number ("Institution005 Account9067397"): the details were cut at
     "Transit 10184", so the vendor's next invoice, printed alike, was a changed bank account (VENDOR_BANK_CHANGED, an
-    error to approve anyway); all run together, no details were read at all."""
+    error to approve anyway); all run together, no details were read at all, or only the first number.
+    """
     printed = bank_details("Transit 10184 Institution 005 Account 9067397")
     scanned = bank_details("Transit 10184 Institution005 Account9067397")
     assert scanned == "Transit 10184 Institution005 Account9067397" and same_bank_account(scanned, printed)
     assert bank_details("Transit10184 Institution005 Account9067397") == "Transit10184 Institution005 Account9067397"
+    glued = bank_details("Transit10184Institution005Account 9067397")  # (a number run into the next label too)
+    assert glued == "Transit10184Institution005Account 9067397" and same_bank_account(glued, printed)
 
 
 def test_bank_details_stored_before_they_were_cut_at_the_account_are_the_same_account(
