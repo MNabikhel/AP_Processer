@@ -118,6 +118,7 @@ export function fetchWithin(url, options = {}, ms = LOOK_MS) {
   };
   const deadline = new AbortController();
   setTimeout(() => deadline.abort(), ms); // (once the body is read, aborting changes nothing)
+  options.signal?.addEventListener("abort", () => deadline.abort()); // (the caller's own: a question called off)
   return fetch(url, { ...options, signal: deadline.signal }).then(said);
 }
 
