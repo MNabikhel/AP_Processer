@@ -42,7 +42,8 @@ from ..chart import (
     split_code,
 )
 from ..keys import company_code
-from ._base import _held_connections
+from . import dialect
+from ._base import _held_connections, _in_list
 
 ACCOUNTS_KEPT = 20_000  # the accounts asked lately, each kept with its description and posting edit code
 SEARCH_MOST = 50  # an Account box's search: the accounts it draws at most (more are found by typing more)
@@ -111,11 +112,9 @@ class IndexedPairs:
             patterns = self.settings.never_offered
             codes: set[str] = set()
             units: set[str] = set()
-            postable = list(self.settings.postable_codes)
-            sql = (f"SELECT bu, object, subsidiary FROM chart_accounts WHERE object != '' AND posting_edit IN "
-                   f"({', '.join('?' * len(postable))})")  # fmt: skip
+            sql = f"SELECT bu, object, subsidiary FROM chart_accounts WHERE object != '' AND {_in_list('posting_edit')}"
             with self._reader() as conn:
-                for bu, obj, sub in conn.execute(sql, postable):
+                for bu, obj, sub in conn.execute(sql, (json.dumps(list(self.settings.postable_codes)),)):
                     if bu in closed or bu in skipped:
                         continue
                     code = code_of(obj, sub)
@@ -204,13 +203,13 @@ class IndexedPairs:
         obj, sub = split_code(code)
         if not obj:
             return ()
-        postable = list(self.settings.postable_codes)
         skipped, patterns = self._unit_facts()[3], self.settings.never_offered
         closed = f"SELECT code FROM business_units WHERE status NOT IN ({', '.join('?' * len(ACTIVE))})"
-        sql = (f"SELECT bu FROM chart_accounts WHERE object = ? AND subsidiary = ? AND posting_edit IN "
-               f"({', '.join('?' * len(postable))}) AND bu NOT IN ({closed}) ORDER BY bu")  # fmt: skip
+        sql = (f"SELECT bu FROM chart_accounts WHERE object = ? AND subsidiary = ? AND {_in_list('posting_edit')} "
+               f"AND bu NOT IN ({closed}) ORDER BY bu")  # fmt: skip
+        postable = json.dumps(list(self.settings.postable_codes))
         with self._reader() as conn:
-            rows = conn.execute(sql, (obj, sub, *postable, *ACTIVE)).fetchall()
+            rows = conn.execute(sql, (obj, sub, postable, *ACTIVE)).fetchall()
         return tuple(bu for (bu,) in rows
                      if bu not in skipped and not (patterns and _never_offered(patterns, bu, code)))  # fmt: skip
 
@@ -285,18 +284,16 @@ class IndexedPairs:
         clauses, params = [], []
         for word in words:
             if any(c.isdigit() for c in word):
-                clauses.append(
-                    "(bu LIKE ? OR object LIKE ? OR subsidiary LIKE ? OR object || subsidiary LIKE ? OR "
-                    "bu || object || subsidiary LIKE ?)"
-                )  # (typed without its dots: "14509309")
-                params += [f"{word}%"] * 5
+                # (the last two: typed without its dots, "14509309")
+                starts = ("bu", "object", "subsidiary", "object || subsidiary", "bu || object || subsidiary")
+                clauses.append(f"({' OR '.join(dialect.like(s) for s in starts)})")
+                params += [f"{word}%"] * len(starts)
             else:
                 named = sorted(bu for bu, name in names.items() if word in name.upper())[:500]
-                marks = ", ".join("?" * len(named)) or "''"
-                clauses.append(f"(UPPER(description) LIKE ? OR bu IN ({marks}))")
-                params += [f"%{word}%", *named]
+                clauses.append(f"({dialect.like('description')} OR {_in_list('bu')})")
+                params += [f"%{word}%", json.dumps(named)]
         if units is not None:  # (one company's: its business units', by the chart's key)
-            clauses.append("bu IN (SELECT value FROM json_each(?))")
+            clauses.append(_in_list("bu"))
             params.append(json.dumps(sorted(units)))
         out: list[list[str]] = []
         sql = (f"SELECT bu, object, subsidiary, description, posting_edit FROM chart_accounts WHERE object != '' AND "

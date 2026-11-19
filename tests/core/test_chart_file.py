@@ -251,5 +251,5 @@ def test_a_chart_of_the_real_size_is_read_in_well_under_a_minute(tmp_path):
     assert len(read.rows) == len(rows) == 14_740 and read.skipped == {}
     assert len({r.bu for r in read.rows}) == 134 and sum(r.is_header for r in read.rows) == 134
     assert read.rows[-1] == chart.ChartRow("0731066133", "5027", "1003", "Expense Account 107", 7, "",
-                                           "Operating Expenses")  # fmt: skip
+                                           "Operating Expenses", "07310")  # fmt: skip
     assert took < 45, f"a chart of the real size took {took:.0f} s to read"

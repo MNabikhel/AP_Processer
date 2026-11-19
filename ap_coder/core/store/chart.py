@@ -93,10 +93,9 @@ def _lists(conn: sqlite3.Connection, settings: ChartSettings | None = None) -> t
     {business unit: name} of the accounts that may be posted to on business units that are not closed; of two texts
     as common, the first met in the chart's order (the lower business unit)."""
     settings = settings or _settings(conn)
-    postable = list(settings.postable_codes)
-    where = (f"c.object != '' AND c.posting_edit IN ({', '.join('?' * len(postable))}) AND c.bu NOT IN (SELECT code "
-             f"FROM business_units WHERE status NOT IN ({', '.join('?' * len(ACTIVE))}))")  # fmt: skip
-    params = (*postable, *ACTIVE)
+    where = (f"c.object != '' AND {_in_list('c.posting_edit')} AND c.bu NOT IN (SELECT code FROM business_units "
+             f"WHERE status NOT IN ({', '.join('?' * len(ACTIVE))}))")  # fmt: skip
+    params = (json.dumps(list(settings.postable_codes)), *ACTIVE)
     best: dict[str, dict[str, tuple[int, str, str]]] = {"description": {}, "category": {}}
     for column, found in best.items():
         for obj, sub, text, n, first in conn.execute(
@@ -185,11 +184,8 @@ def _write(conn: sqlite3.Connection, table: str, key: tuple[str, ...], columns: 
     where = " AND ".join(f"{k} = ?" for k in key)
     gone = [k if isinstance(k, tuple) else (k,) for k in before if k not in after]
     conn.executemany(f"DELETE FROM {table} WHERE {where}", gone)
-    marks = ", ".join("?" * len(columns))
-    sets = ", ".join(f"{c} = excluded.{c}" for c in columns if c not in key)
     conn.executemany(
-        f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({marks}) ON CONFLICT ({', '.join(key)}) "
-        f"DO UPDATE SET {sets}",
+        dialect.upsert(table, columns, key),
         [tuple(getattr(r, c) for c in columns) for k, r in after.items() if before.get(k) != r],
     )  # (a row's fields are its table's columns)
 
@@ -385,8 +381,8 @@ class ChartMixin:
                          "WHERE 0")  # fmt: skip
             conn.execute("CREATE UNIQUE INDEX temp.chart_load_key ON chart_load (bu, object, subsidiary)")
             read = 0
-            insert = (f"INSERT OR IGNORE INTO temp.chart_load ({', '.join(CHART_COLUMNS)}) VALUES "
-                      f"({', '.join('?' * len(CHART_COLUMNS))})")  # fmt: skip
+            insert = dialect.insert_or_ignore(f"INSERT INTO temp.chart_load ({', '.join(CHART_COLUMNS)}) VALUES "
+                                              f"({', '.join('?' * len(CHART_COLUMNS))})")  # fmt: skip
             for batch in _batches(rows, LOAD_BATCH):
                 conn.executemany(insert, [(r.bu, r.object, r.subsidiary, r.description, r.lod, r.posting_edit,
                                            r.category, company_code(r.company)) for r in batch])  # fmt: skip
