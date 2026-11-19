@@ -1279,3 +1279,30 @@ def test_a_po_line_billed_by_amount_is_checked_against_what_jd_edwards_has_open_
     over = match_invoice(bags(10, "118206"), store)
     assert over.findings == [("warning", "PO_QTY_OVER", "$299.50 billed on PO 40917 line 12, more than the $239.60 "
                               "open, $239.60 on invoices not exported yet", 1)]  # fmt: skip
+
+
+def test_a_two_way_match_never_says_a_po_line_was_not_received(tmp_path):
+    """B-2668: JD Edwards' exports give Quantity Received 0 on every line nothing was received on through it, and the
+    pilot tester matches straight to the PO lines (2-way: Receipt Line blank on their voucher match), so every line of
+    every PO-matched invoice was PO_NOT_RECEIVED. Settings → JD Edwards E1 says what an invoice is matched to: PO lines
+    (2-way, the default), its quantity received not checked; or receipts (3-way), checked as before."""
+    from ap_coder.erp import jde_settings
+    from ap_coder.web.invoice_coding import po_section
+
+    store = Store(tmp_path / "ap.db")
+    _jde_pos(store)  # (nothing received: 0 on every line)
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
+    jde_settings.save(store, jde_settings.JdeSettings(po_matched=True))
+    match = match_invoice(_freight_invoice(), store)
+    assert [f[1:3] for f in match.findings] == [("PO_MATCHED", "matches PO 40917: 3 line(s) within price and quantity "
+                                                 "ordered")]  # fmt: skip
+    assert not po_section(store, _freight_invoice(), 0, match)["received"]
+    billing = store.add_invoice(tmp_path / "a.pdf", _freight_invoice().model_dump(), {})
+    (listed,) = store.purchase_orders()  # (the Purchase orders page: no line "Not received")
+    assert [line["flag"] for line in po_detail(store, listed)["lines"]] == [("Billed", "ok", "check")] * 2 + [None]
+    jde_settings.save(store, jde_settings.JdeSettings(po_matched=True, po_match_to=jde_settings.MATCH_RECEIPTS))
+    assert [(f[1], f[3]) for f in match_invoice(_freight_invoice(), store, billing).findings] == [
+        ("PO_NOT_RECEIVED", 1), ("PO_NOT_RECEIVED", 2)]  # fmt: skip
+    assert [line["flag"][0] for line in po_detail(store, listed)["lines"][:2]] == ["Not received"] * 2
+    store.set_setting(jde_settings.SHOW_SETTING, "0")  # no JD Edwards: the quantity received checked, as before
+    assert {f[1] for f in match_invoice(_freight_invoice(), store, billing).findings} == {"PO_NOT_RECEIVED"}

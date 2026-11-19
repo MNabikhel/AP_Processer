@@ -168,6 +168,12 @@
     </div>
     <label class="check"><input type="checkbox" name="po_matched" value="1"{% if js.po_matched %} checked{% endif %}>
       PO-matched vouchers: invoices with a PO number get no G/L lines, to be matched in E1 (the keying sheet gives each one's Voucher Match rows, a row for each PO line, from the purchase orders loaded)</label>
+    <fieldset class="st-radios" data-po-match-to><legend>Match to</legend>
+      {% for key, text in po_match_to.items() %}
+      <label class="check"><input type="radio" name="po_match_to" value="{{ key }}"{% if js.po_match_to == key %} checked{% endif %}> {{ text }}</label>
+      {% endfor %}
+      <small class="muted">What an invoice on a purchase order is matched to in JD Edwards. PO lines: Receipt Line left blank in Voucher Match, and what was received is not checked (JD Edwards' exports give 0 received on a line nothing was received on through it). Receipts: each line's quantity billed is checked against what was received, and a line billed before it is received is said.</small>
+    </fieldset>
     <fieldset class="st-radios" data-po-charges><legend>Charges not on the purchase order</legend>
       {% for key, text in po_charges.items() %}
       <label class="check"><input type="radio" name="po_charges" value="{{ key }}"{% if js.po_charges == key %} checked{% endif %}> {{ text }}</label>

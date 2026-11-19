@@ -70,6 +70,11 @@ PO_CHARGES = {
     CHARGES_HOLD: "Hold the voucher for a person to match by hand",
     CHARGES_GL: "Add each as its own G/L line, with its tax, on this account",
 }
+# What an invoice on a purchase order is matched to in JD Edwards (D-281): its PO lines (2-way, Receipt Line left blank:
+# the pilot tester's), its quantity received not checked, as JD Edwards' exports give 0 received on a line nothing was
+# received on through it; or the receipts (3-way), the quantity billed held against what was received.
+MATCH_PO_LINES, MATCH_RECEIPTS = "po_lines", "receipts"
+PO_MATCH_TO = {MATCH_PO_LINES: "PO lines (2-way)", MATCH_RECEIPTS: "Receipts (3-way)"}
 # Seconds more than a voucher's wait before a lost answer's "not there" is believed (``JdeSettings.resend_seconds``).
 RESEND_MARGIN = 60.0
 
@@ -205,6 +210,7 @@ class JdeSettings:
     send_po_reference: bool = True
     po_charges: str = CHARGES_HOLD  # a charge not on the purchase order (D-265)
     po_charge_account: str = ""  # its account with CHARGES_GL: BU.Object.Subsidiary ("freight in")
+    po_match_to: str = MATCH_PO_LINES  # 2-way or 3-way (D-281)
     domestic_currency: str = "CAD"
     currencies: list[str] = field(default_factory=lambda: ["CAD", "USD"])
     header_bu: str = ""
@@ -307,6 +313,8 @@ class JdeSettings:
             out.remarks = REMARKS_REFERENCE
         if out.po_charges not in PO_CHARGES:
             out.po_charges = CHARGES_HOLD
+        if out.po_match_to not in PO_MATCH_TO:
+            out.po_match_to = MATCH_PO_LINES
         out.open_from, out.open_to = (str(_date(d) or "") for d in (out.open_from, out.open_to))
         if out.closed_period not in CLOSED_PERIODS:
             out.closed_period = CLOSED_MOVE
@@ -462,3 +470,10 @@ def in_use(store: Any) -> bool:
         return bool(store.get_setting(SETTING_KEY)) or any(b["format"] == FORMAT for b in store.export_batches())
     except Exception:  # noqa: BLE001 - a setting that can't be read: no JD Edwards checks
         return False
+
+
+def receipts_checked(store: Any) -> bool:
+    """Whether an invoice's quantities are held against what its PO lines received (PO_NOT_RECEIVED, 3-way): without
+    JD Edwards in use whenever the purchase orders loaded give it, as before; with it only when Settings → JD Edwards
+    E1 matches to receipts (D-281)."""
+    return not in_use(store) or JdeSettings.from_json(store.get_setting(SETTING_KEY)).po_match_to == MATCH_RECEIPTS

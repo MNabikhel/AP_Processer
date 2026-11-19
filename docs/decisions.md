@@ -6727,3 +6727,17 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     load it is counted by neither; an invoice that over-bills the line in that window is not warned. *Not chosen:*
     counting an export made after the PO's load (`purchase_orders.updated_at` is also moved by a person closing or
     opening a PO by hand, so it is no load time); the quantity lines (their quantity ordered is the original).
+- **D-281** · **With JD Edwards in use, an invoice on a purchase order is matched to its PO lines (2-way) unless
+  Settings → JD Edwards E1 says receipts (3-way): only then is what a PO line received checked** (`JdeSettings.
+  po_match_to`, `jde_settings.receipts_checked`, `coding/po.py` `match_invoice`, the Purchase orders page's flags;
+  B-2668).
+  - **Why:** JD Edwards' exports (Open Order Inquiry, the order details grid, F4311) give Quantity Received 0 on every
+    line nothing was received on through JD Edwards, which is every line of a company that matches straight to the
+    PO lines: the pilot tester's Voucher Match has Receipt Line blank (D-264). Every line of every PO-matched invoice
+    was PO_NOT_RECEIVED.
+  - **What:** *Match to* under *PO-matched vouchers*: PO lines (2-way, the default, also for a setup saved before) or
+    receipts (3-way: PO_NOT_RECEIVED, "ordered and received" and the review screen's received column as before).
+    Without JD Edwards in use nothing changes: a PO file that gives what was received is checked against it.
+  - *Not chosen:* telling 2-way from the file (a 0 received is also a line not received yet); the receipts' own lines
+    on the keying sheet (Receipt Line): not typed by the pilot tester. Month-end's received-not-billed accruals read
+    what was received whatever the setting (they are about receipts).

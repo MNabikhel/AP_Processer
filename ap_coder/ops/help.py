@@ -522,7 +522,8 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "PO_NOT_RECEIVED": CheckHelp(
         PO, "Not received yet",
-        "More has been billed than the ERP shows as received (three-way match).",
+        "More has been billed than the ERP shows as received (three-way match; with JD Edwards, only when Settings → "
+        "JD Edwards E1 matches to receipts).",
         "Check with receiving. Hold the invoice until the goods arrive, or approve only what was received.",
     ),
     "PO_OVER_BILLED": CheckHelp(

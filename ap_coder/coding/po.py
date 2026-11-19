@@ -567,6 +567,7 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     opened = any(pl["open_amount"] is not None for pl in po_lines)
     not_exported = live.billed(po, waiting, amounts=True, matched=matched) if opened else {}
     exported = any(o["id"] == exclude_invoice_id and o["export_batch"] is not None for o in live.rows)
+    received = _receipts_checked(store)  # (2-way, D-281: what was received not checked)
 
     items = [li.model_dump() for li in coding.line_items]
     billed_now: dict[int, float] = {}
@@ -586,7 +587,8 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
             )  # fmt: skip
             continue
         m.po_line, m.po_description = pl["line_number"], pl["description"]
-        m.po_quantity, m.po_unit_price, m.received = pl["quantity"], pl["unit_price"], pl["received_quantity"]
+        m.po_quantity, m.po_unit_price = pl["quantity"], pl["unit_price"]
+        m.received = pl["received_quantity"] if received else None
         m.billed_before = billed_before.get(pl["line_number"], 0.0)
         m.billed_before_amount = billed_before_amount.get(pl["line_number"], 0.0)
         m.po_amount, m.amount_only = pl["amount"], bool(pl.get("amount_only"))
@@ -636,6 +638,13 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
              + (" ordered and received" if three_way else " ordered"), None)
         )  # fmt: skip
     return result
+
+
+def _receipts_checked(store: Store) -> bool:
+    """Whether what a PO line received is checked (3-way): ``jde_settings.receipts_checked`` (D-281)."""
+    from ..erp.jde_settings import receipts_checked
+
+    return receipts_checked(store)
 
 
 def _left_to_expense(

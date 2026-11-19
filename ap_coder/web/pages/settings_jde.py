@@ -133,6 +133,7 @@ def jde_context(store: Store, query: Any = None) -> dict[str, Any]:
         "closed_periods": jde_settings.CLOSED_PERIODS,
         "remarks": jde_settings.REMARKS,
         "po_charges": jde_settings.PO_CHARGES,
+        "po_match_to": jde_settings.PO_MATCH_TO,
         "currencies": ", ".join(js.currencies),
         "extras": ", ".join(f"{k}={v}" for k, v in js.po_extra_columns.items()),
         "bank_rows": bank_rows(store, js),
@@ -286,6 +287,10 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
             return refuse("Give the account charges not on the purchase order go to as JD Edwards writes it: business "
                           "unit.object.subsidiary, e.g. 0021061010.7420.4207.")  # fmt: skip
         new.po_charges, new.po_charge_account = text("po_charges"), account
+    if "po_match_to" in form:  # 2-way or 3-way (D-281)
+        if text("po_match_to") not in jde_settings.PO_MATCH_TO:
+            return refuse("Choose what an invoice on a purchase order is matched to.")
+        new.po_match_to = text("po_match_to")
     if "remarks" in form:  # (D-210)
         if text("remarks") not in jde_settings.REMARKS:
             return refuse("Choose what the remarks carry.")
