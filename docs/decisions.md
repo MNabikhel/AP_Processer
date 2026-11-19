@@ -6708,3 +6708,22 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     company, 0.6 s for words found nowhere; the reference data 0.2 s. The database 361 MB. *Left as it is:* the
     staging's 31 s (a row's Python, outside the lock); the swap's 9 to 18 s under the write lock (the dashboard's writes
     wait, up to their 30 s); the search for words found nowhere (a scan, as D-267).
+- **D-280** · **A PO line billed by amount, with what JD Edwards has open on it in the PO file, is checked against
+  that open amount as its left to expense is (D-139): the invoices not exported yet and this one; a PO all of such lines
+  likewise** (`coding/po.py` `match_invoice`, `LineMatch.po_open_amount`; `Store.purchase_orders` `by_open`; the
+  Purchase orders page's line flags; B-2666).
+  - **Why:** the pilot tester's order details grid as it comes (D-264) gives a line's Amount To Receive alone, which
+    becomes its amount: what JD Edwards has open at the load, its vouchers already off it. Billing such a line by
+    progress invoices, the PO loaded again after the first was keyed, counted the first again against an open amount
+    that had counted it: the next invoice was PO_QTY_OVER and PO_OVER_BILLED, the list and the PO page "Over-billed",
+    while the Left to expense beside them (D-139) said 0.00 left, which was right.
+  - **What:** an amount-only line with an open amount (`amount_only`, `open_amount`): PO_QTY_OVER when the other
+    invoices not exported yet and this one (none of it when it is exported: JD Edwards' open amount has it) bill more
+    than the open amount and its 2%, said "more than the $239.60 open, $239.60 on invoices not exported yet"; the
+    review screen's billed / ordered cell is billed / open. A PO whose every line is so: PO_OVER_BILLED, the list's
+    Invoiced and Remaining, against the open amounts' total. Any other line (a quantity ordered, an amount without an
+    open amount) is checked as before, against what was ordered, every invoice counted.
+  - *Left as it is* (as D-139): the open amount is as of the last PO load, so between an invoice's export and the next
+    load it is counted by neither; an invoice that over-bills the line in that window is not warned. *Not chosen:*
+    counting an export made after the PO's load (`purchase_orders.updated_at` is also moved by a person closing or
+    opening a PO by hand, so it is no load time); the quantity lines (their quantity ordered is the original).

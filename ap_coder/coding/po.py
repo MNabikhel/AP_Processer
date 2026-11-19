@@ -444,6 +444,9 @@ class LineMatch:
     po_open_quantity: float | None = None
     po_tax: tuple[str, str, str] = ("", "", "")  # the PO line's own Tax Y/N, explanation code, rate/area ("": none)
     po_subledger: tuple[str, str] = ("", "")  # the PO line's subledger and its type ("": none, D-268)
+    # A line billed by amount whose ERP gave what it had open on it (D-280): that amount, checked against as its left
+    # to expense is (``billed_before_amount`` then the invoices not exported yet); None: its amount, every invoice.
+    po_open_amount: float | None = None
 
 
 @dataclass
@@ -558,6 +561,12 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     matched: dict[Any, int | None] = {}
     billed_before = live.billed(po, others, matched=matched)
     billed_before_amount = live.billed(po, others, amounts=True, matched=matched)
+    # What the ERP has open has counted the invoices exported to it (D-139): a line billed by amount is checked
+    # against it with the others not exported yet, and this one unless it is exported (D-280)
+    waiting = [o for o in others if o["export_batch"] is None]
+    opened = any(pl["open_amount"] is not None for pl in po_lines)
+    not_exported = live.billed(po, waiting, amounts=True, matched=matched) if opened else {}
+    exported = any(o["id"] == exclude_invoice_id and o["export_batch"] is not None for o in live.rows)
 
     items = [li.model_dump() for li in coding.line_items]
     billed_now: dict[int, float] = {}
@@ -592,25 +601,31 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
         m.po_subledger = (pl.get("subledger") or "", pl.get("subledger_type") or "")
         if m.amount_only:  # a PO line with no quantity (JD Edwards' order details give amounts only): matched by amount
             m.matched_quantity = billed_quantity(li) or None
+        if m.amount_only and pl["open_amount"] is not None:  # against what the ERP has open (D-280)
+            m.po_open_amount, m.billed_before_amount = pl["open_amount"], not_exported.get(m.po_line, 0.0)
         this_invoice[m.po_line] = this_invoice.get(m.po_line, 0.0) + m.amount
         if m.amount_only:
-            _amount_findings(m, li, result, billed_now_amount)
+            _amount_findings(m, li, result, billed_now_amount, counted=not (exported and m.po_open_amount is not None))
         else:
             _line_findings(m, li, result, billed_now)
     if not result.currencies:
-        _left_to_expense(result, po, live, billed_before_amount, this_invoice, exclude_invoice_id)
+        _left_to_expense(result, po, billed_before_amount, not_exported, this_invoice, exported)
 
     subtotal = float(coding.subtotal or 0)
     total = float(po.get("total") or 0)
+    before, said, limit = result.billed_before, "on earlier invoices", f"the PO total {_money(total)}"
+    if po_lines and all(pl.get("amount_only") and pl["open_amount"] is not None for pl in po_lines):  # (D-280)
+        total = round(sum(pl["open_amount"] for pl in po_lines), 2)
+        before, said, limit = (sum(float(o["coding"].get("subtotal") or 0) for o in waiting),
+                               "on invoices not exported yet", f"the {_money(total)} open on the PO")  # fmt: skip
+        subtotal = 0.0 if exported else subtotal
     if subtotal > 0 and total > 0 and not result.currencies:
-        billed = result.billed_before + subtotal
+        billed = before + subtotal
         if billed > total * (1 + TOTAL_TOLERANCE) + 0.01:
-            earlier = f" ({_money(result.billed_before)} on earlier invoices)" if result.billed_before else ""
+            earlier = f" ({_money(before)} {said})" if before else ""
             result.findings.append(
                 (WARNING, "PO_OVER_BILLED",
-                 f"invoices on {po_label(number)} add up to {_money(billed)}{earlier}, "
-                 f"more than the PO total {_money(total)}",
-                 None)
+                 f"invoices on {po_label(number)} add up to {_money(billed)}{earlier}, more than {limit}", None)
             )  # fmt: skip
     if not any(f[0] in (ERROR, WARNING) for f in result.findings):
         matched = sum(1 for m in result.lines if m.po_line is not None)
@@ -626,18 +641,14 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
 def _left_to_expense(
     result: PoMatch,
     po: dict[str, Any],
-    live: PoBilling,
     billed_before: dict[int, float],
+    not_exported: dict[int, float],
     this_invoice: dict[int, float],
-    invoice_id: int | None,
+    exported: bool,
 ) -> None:
     """``result.left``: each PO line's ``LineLeft``, from what the other invoices bill on it (``billed_before``, in
-    amounts) and this one; with an open amount, the invoices exported to the ERP don't count (this one included)."""
-    not_exported: dict[int, float] = {}
-    exported = any(o["id"] == invoice_id and o["export_batch"] is not None for o in live.rows)
-    if any(pl["open_amount"] is not None for pl in po["lines"]):
-        waiting = [o for o in live.rows if o["export_batch"] is None and o["id"] != invoice_id]
-        not_exported = live.billed(po, waiting, amounts=True)
+    amounts) and this one; with an open amount, the invoices exported to the ERP don't count (``not_exported``: what
+    the others not exported yet bill on it; ``exported``: this one is)."""
     for pl in po["lines"]:
         n, opened = pl["line_number"], pl["open_amount"]
         if opened is None:
@@ -681,18 +692,23 @@ def _header_findings(coding: InvoiceCoding, po: dict[str, Any]) -> list[Finding]
     return findings
 
 
-def _amount_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_now: dict[int, float]) -> None:
-    """A PO line with only an amount (services, a lump sum): what has been billed against the amount."""
+def _amount_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_now: dict[int, float],
+                     counted: bool = True) -> None:  # fmt: skip
+    """A PO line with only an amount (services, a lump sum): what has been billed against the amount, or against what
+    the ERP has open on it (``LineMatch.po_open_amount``, D-280); ``counted``: this invoice's amount counts (not when
+    the ERP's open amount has it, exported)."""
     assert m.po_line is not None and m.po_amount is not None
-    billed_now[m.po_line] = billed_now.get(m.po_line, 0.0) + m.amount
+    billed_now[m.po_line] = billed_now.get(m.po_line, 0.0) + (m.amount if counted else 0.0)
     billed = m.billed_before_amount + billed_now[m.po_line]
-    if m.amount > 0 and not result.currencies and billed > m.po_amount * (1 + TOTAL_TOLERANCE) + 0.01:
-        earlier = f", {_money(m.billed_before_amount)} on earlier invoices" if m.billed_before_amount else ""
+    limit, held, said = (m.po_amount, "ordered", "on earlier invoices") if m.po_open_amount is None else (
+        m.po_open_amount, "open", "on invoices not exported yet")  # fmt: skip
+    if m.amount > 0 and not result.currencies and billed > limit * (1 + TOTAL_TOLERANCE) + 0.01:
+        earlier = f", {_money(m.billed_before_amount)} {said}" if m.billed_before_amount else ""
         m.problems.append("quantity")
         result.findings.append(
             (WARNING, "PO_QTY_OVER",
              f"{_money(billed)} billed on {po_label(result.po_number)} line {m.po_line}, more than the "
-             f"{_money(m.po_amount)} ordered{earlier}", m.invoice_line)
+             f"{_money(limit)} {held}{earlier}", m.invoice_line)
         )  # fmt: skip
     _coding_findings(m, li, result)
 

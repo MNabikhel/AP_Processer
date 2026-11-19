@@ -1220,3 +1220,57 @@ def test_a_lump_sum_line_jd_edwards_exports_with_a_quantity_and_cost_of_0_is_mat
     assert [f[1] for f in match.findings] == ["PO_MATCHED"], match.findings
     matched = po_mod.voucher_match(match, ONE_ROW_PO)
     assert [(r.line, r.quantity, r.amount, r.no_quantity) for r in matched.rows][1] == ("13.000", 1, 57.5, True)
+
+
+def test_a_po_line_billed_by_amount_is_checked_against_what_jd_edwards_has_open_as_its_left_to_expense_is(tmp_path):
+    """B-2666: the pilot's order details grid as it comes (D-264) gives each open line's Amount To Receive alone: the
+    line is billed by amount, that open amount its only amount. Progress billing (a line billed by several invoices)
+    with the PO loaded again after the first was keyed (JD Edwards' open amount down by it) warned the next one over
+    the line (PO_QTY_OVER "$599.00 billed ... more than the $239.60 ordered") and over the PO (PO_OVER_BILLED): the
+    first invoice was counted again, though JD Edwards' open amount had counted it. Such a line is checked as its left
+    to expense is (D-139): what is open less the invoices not exported yet and this one; the PO likewise."""
+    from ap_coder.bench import jde_exports
+    from ap_coder.erp import jde_keying
+    from ap_coder.web.files import read_sheet
+    from ap_coder.web.invoice_coding import po_section
+    from tests.pdfs import one_row_po_lines
+
+    store = Store(tmp_path / "ap.db")
+
+    def load(*lines):
+        sheet, _ = read_sheet("order_details.xlsx", jde_exports.order_details_xlsx(lines, short=True))
+        store.import_purchase_orders(rows_from_records(sheet.to_dict("records"), map_columns(list(sheet.columns)))[0])
+
+    def bags(quantity, number):
+        coding = _freight_invoice(invoice_number=number)
+        coding.line_items = coding.line_items[:1]
+        coding.line_items[0].quantity, coding.line_items[0].amount = quantity, round(quantity * 5.99, 2)
+        coding.subtotal = coding.line_items[0].amount
+        return coding
+
+    bags_line, setup, freight = one_row_po_lines()
+    load(bags_line, setup, freight)
+    first = store.add_invoice(tmp_path / "a.pdf", bags(60, "118204").model_dump(), {})
+    store.approve_invoice(first, bags(60, "118204").model_dump(), "Pat Tester")
+    before = match_invoice(bags(60, "118205"), store).findings  # (the first not exported yet: it counts)
+    assert [f[1] for f in before] == ["PO_QTY_OVER", "PO_OVER_BILLED"]
+    assert before[1][2] == ("invoices on PO 40917 add up to $718.80 ($359.40 on invoices not exported yet), more "
+                            "than the $688.50 open on the PO")  # fmt: skip
+    store.create_export_batch([first], jde_keying.FORMAT, actor="Pat Tester")  # keyed in JD Edwards
+    load(replace(bags_line, vouchered=60), setup, freight)  # JD Edwards has 40 bags open: 239.60
+    second = bags(40, "118205")
+    match = match_invoice(second, store)
+    assert [f[1] for f in match.findings] == ["PO_MATCHED"], match.findings
+    assert match.left[12].left == 0.0
+    assert po_section(store, second, 0, match)["rows"][0]["qty"] == "239.60 / 239.60"
+    # The Purchase orders list and page say the same: not over-billed
+    from ap_coder.web.pages.purchase_orders import po_detail, status_pill
+
+    (listed,) = store.purchase_orders()
+    assert (listed["by_open"], listed["total"], listed["billed"], status_pill(listed)[0]) == (True, 329.1, 0.0, "Open")
+    assert po_detail(store, listed)["lines"][0]["flag"] is None
+    # A third invoice in review beside it, before the second is exported: over what is open
+    store.add_invoice(tmp_path / "b.pdf", second.model_dump(), {})
+    over = match_invoice(bags(10, "118206"), store)
+    assert over.findings == [("warning", "PO_QTY_OVER", "$299.50 billed on PO 40917 line 12, more than the $239.60 "
+                              "open, $239.60 on invoices not exported yet", 1)]  # fmt: skip

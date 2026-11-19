@@ -528,24 +528,31 @@ class PurchasingMixin:
     def purchase_orders(self) -> list[dict[str, Any]]:
         """Every PO with its total and how much has been invoiced against it (invoices in review included), in its
         currency: an invoice in another (a PO with none taken as CAD) is counted in ``invoices`` and
-        ``other_currency``, never added to ``billed`` (B-2613)."""
+        ``other_currency``, never added to ``billed`` (B-2613). A PO billed by amount whose lines all have what the ERP
+        has open on them (``by_open``: JD Edwards' order details grid as it comes, D-264) totals that, and only the
+        invoices not exported yet are added to ``billed``: the ERP's open amounts have counted the others (D-280)."""
         with self._conn() as conn:
             rows = [
                 dict(r)
                 for r in conn.execute(
                     """SELECT p.*, COUNT(l.line_number) lines, COALESCE(SUM(l.amount), 0) total,
-                       SUM(l.received_quantity IS NOT NULL) received_lines
+                       SUM(l.received_quantity IS NOT NULL) received_lines, MIN(l.amount_only) by_amount,
+                       SUM(CASE WHEN l.open_amount IS NULL THEN 1 ELSE 0 END) no_open
                        FROM purchase_orders p LEFT JOIN po_lines l ON l.po_key = p.po_key
                        GROUP BY p.po_key ORDER BY p.po_number"""
                 )
             ]
+            for r in rows:
+                by_amount, no_open = r.pop("by_amount"), r.pop("no_open")
+                r["by_open"] = bool(r["lines"] and by_amount and not no_open)
+            by_open = {r["po_key"] for r in rows if r["by_open"]}
             billed: dict[str, dict[str, Any]] = {}
             ordered = {r["po_key"]: r["currency"] or "CAD" for r in rows}  # each PO's currency (none: CAD)
             self._summary_fresh(conn)  # each invoice's subtotal billed, from the invoices' summary (D-110)
             quoting = fetch_rows(
                 conn,
-                "SELECT id, po_key, vendor_key, status, po_billed, broken, currency FROM invoice_summary WHERE "
-                "po_key != '' AND status IN "
+                "SELECT id, po_key, vendor_key, status, po_billed, broken, currency, export_batch FROM invoice_summary "
+                "WHERE po_key != '' AND status IN "
                 + _ACTIVE_IN
                 + " AND po_key IN (SELECT number_key FROM purchase_orders) ORDER BY id",  # a PO we have
                 ACTIVE_STATUSES,
@@ -563,6 +570,8 @@ class PurchasingMixin:
                 entry["in_review"] += r["status"] == REVIEW
                 if ((r["currency"] or "").strip().upper() or "CAD") != ordered[owner]:
                     entry["other_currency"] += 1  # in another currency: never added to this one (B-2613)
+                    continue
+                if owner in by_open and r["export_batch"] is not None:  # in the ERP's open amounts already (D-280)
                     continue
                 amount = r["po_billed"]
                 if r["broken"] & BIT["po"]:  # what the summary could not read: read again, failing as it did before

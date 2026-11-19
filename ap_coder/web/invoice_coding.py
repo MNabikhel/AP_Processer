@@ -130,7 +130,8 @@ def po_section(store: Store, coding: InvoiceCoding, invoice_id: int,
                          "pills": [("Not on PO", "warn")]})  # fmt: skip
             continue
         if m.amount_only:  # a PO line with only an amount: compare amounts
-            qty = f"{signed(m.billed_before_amount + m.amount)} / {signed(m.po_amount)}"
+            limit = m.po_amount if m.po_open_amount is None else m.po_open_amount  # (what the ERP has open, D-280)
+            qty = f"{signed(m.billed_before_amount + m.amount)} / {signed(limit)}"
         else:
             qty = f"{_fmt_qty(m.billed_before + m.quantity)} / {_fmt_qty(m.po_quantity)}"
             if received:
