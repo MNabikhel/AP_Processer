@@ -81,7 +81,7 @@ class Scale:
     """How big the group's books are, all its companies together."""
 
     companies: int = 20
-    chart_rows: int = 50_000
+    chart_rows: int = 3_000_000  # (D-267: a group's chart, mostly job cost codes)
     suppliers: int = 20_000
     ledger_rows: int = 1_000_000
     journal_lines: int = 3_000_000
@@ -121,6 +121,13 @@ def chart_rows(scale: Scale) -> tuple[list[ChartRow], list[BuRow]]:
                 rows.append(ChartRow(unit, obj, "", f"Cost {obj}", 7, "", "", code))
                 rows.append(ChartRow(unit, obj, "0100", f"Cost {obj} labour", 8, "", "", code))
     return rows[: scale.chart_rows], units
+
+
+def unit_rows(scale: Scale) -> list[BuRow]:
+    """The business units of ``chart_rows``' chart, without the chart."""
+    codes = [c[0] for c in group(scale.companies)]
+    units_each = max(1, scale.chart_rows // (len(OBJECTS) * 2 * len(codes)))
+    return [BuRow(unit, f"Job {unit}", code, "JB", "") for code in codes for unit in units_of(code, units_each)]
 
 
 CHART_HEADER = ("Company", "Business Unit", "Object Account", "Subsidiary", "Account Description", "L D", "P E")

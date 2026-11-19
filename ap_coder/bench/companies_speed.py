@@ -1,6 +1,6 @@
 """How fast AP Coder is for a group of many JD Edwards companies (D-267): ``python -m ap_coder.bench companies``.
 
-The made-up group (``jde_group``) at ``Scale`` x ``--share`` (default 0.1 of 20 companies, 50,000 chart rows, 20,000
+The made-up group (``jde_group``) at ``Scale`` x ``--share`` (default 0.1 of 20 companies, 3,000,000 chart rows, 20,000
 suppliers, 1,000,000 ledger rows, 3,000,000 past-coding lines and 100,000 open PO lines) is loaded into a new database
 through each card's loader, each load timed; then, for invoices of suppliers billing one or two companies and quoting
 PO numbers several companies share, the checks an invoice's check runs are timed one by one (which company, the
@@ -47,9 +47,14 @@ def load_all(store: Any, scale: Scale) -> dict[str, float]:
     records = [dict(zip(rows[0], row, strict=True)) for row in rows[1:]]
     seconds["companies"], _ = _timed(lambda: store.set_setting(companies.COMPANIES_SETTING, json.dumps(
         companies.company_table(records, match_columns(rows[0], companies.COMPANY_ALIASES))[0])))  # fmt: skip
-    chart, units = jde_group.chart_rows(scale)
+    from ..ops import chart_cmd
+
+    units = jde_group.unit_rows(scale)
     seconds["business units"], _ = _timed(lambda: store.import_business_units(units))
-    seconds["chart"], _ = _timed(lambda: store.import_chart(chart))
+    path = Path(store.path).parent / "chart.csv"
+    jde_group.write_chart_csv(path, scale)  # (report 1 as one CSV, streamed from disk: D-267)
+    seconds["chart (CSV, streamed)"], _ = _timed(lambda: chart_cmd.import_files(store, path))
+    seconds["reference data (the chart's offered accounts)"], _ = _timed(store.reference_data)
     suppliers = _supplier_rows(scale)
     seconds["suppliers"], _ = _timed(lambda: store.import_vendor_master(suppliers))
     ledger = list(jde_group.ledger_rows(scale))
@@ -99,7 +104,10 @@ def per_invoice(store: Any, scale: Scale, n: int) -> dict[str, dict[str, float]]
     reference = store.reference_data()
     settings = Settings()
     took: dict[str, list[float]] = {"which company": [], "suggestions": [], "PO match": [], "duplicate check": [],
+                                    "a line's account check": [], "an account search": [],
                                     "whole check": []}  # fmt: skip
+    pairs = reference.pairs
+    units = jde_group.unit_rows(scale)
     docs = _invoices(scale, n + 1)
     for at, doc in enumerate(docs):
         coding = InvoiceCoding.model_validate(doc)
@@ -110,6 +118,12 @@ def per_invoice(store: Any, scale: Scale, n: int) -> dict[str, dict[str, float]]
             "suggestions": lambda c=coding, k=key: supplier_evidence(store, c.vendor_name, k, reference, "00220"),
             "PO match": lambda c=coding: match_invoice(c.model_copy(update={"company": "00220"}), store),
             "duplicate check": lambda c=coding: store.in_erp(c.vendor_name, c.invoice_number, c.grand_total),
+            "a line's account check": lambda a=at: pairs.status(
+                units[(a * 7919) % len(units)].code, jde_group.OBJECTS[a % len(jde_group.OBJECTS)]
+            ),
+            "an account search": lambda a=at: pairs.search(
+                f"cost {jde_group.OBJECTS[a % len(jde_group.OBJECTS)]}", pairs.units_of(units[a % len(units)].company)
+            ),
             "whole check": lambda c=coding: finalise_coding(c.model_copy(), reference, settings, store=store),
         }
         for name, step in steps.items():
@@ -218,7 +232,7 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
         "--share",
         type=float,
         default=0.1,
-        help="of the full size (20 companies, 50,000 chart rows, "
+        help="of the full size (20 companies, 3,000,000 chart rows, "
         "20,000 suppliers, 1,000,000 ledger rows, 3,000,000 past-coding lines, 100,000 PO lines)",
     )
     p.add_argument("--invoices", type=int, default=30, help="invoices whose checks are timed (default 30)")

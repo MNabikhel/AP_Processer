@@ -6562,3 +6562,23 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     wins. Any other: every check but those (`check_taxes(canadian=False)`: the tax lines' sums only),
     `US_TAX_NOT_CHECKED` (warning, never approved without a person), and its voucher's tax area from its PO line or
     the supplier's default (F0401 Tax Rate/Area, `vendor_info.tax_area`) with the exempt code, else held.
+  - **The chart is asked in the database, never held** (the owner's decision: a group's postable chart is 2 to 3
+    million accounts, mostly job cost codes). `core/store/chart_index.IndexedPairs` answers what `AccountPairs`
+    answered (an account's status, description, posting edit code; a unit's accounts; a code's units; the codes and
+    units offered) by indexed queries (the key; `chart_accounts_code` on object and subsidiary), the 20,000 accounts
+    asked last kept, the units' names and status read once; a test proves it answers as `AccountPairs` on every pair
+    of the test chart under three settings. One code path for every size: at 10,000 accounts a line's check is 4 to 6
+    µs asked, 1.4 µs kept, against 1.7 µs in memory, nothing a person notices. The GL accounts and cost centers
+    (`chart.account_lists`) are worked out by SQLite (`store/chart._lists`, proven equal), the chart's hash a row at a
+    time. The Account box gets the list whole up to 20,000 accounts (`invoice_lookups.LIST_MOST`) and, above, or for
+    one company of several, searches as it is typed (`GET /review/accounts.json?q=`, `IndexedPairs.search`).
+  - **A chart split by company** (the account's company, F0901's GMCO, on `chart_accounts.company`): a file replaces
+    its companies' accounts (and those kept without a company on its business units), the others kept; the same for
+    the business units; "Start over" (`--whole`) replaces all. The rows go through a temporary table, 50,000 at a time,
+    and the chart is changed by SQL from it. The master workbook loads several chart sheets as parts (a company in two
+    of them: neither loaded). A chart saved as CSV is streamed from disk by `python -m ap_coder chart import --chart
+    FILE.csv`, with progress, up to 10,000,000 rows (`chart.STREAMED_MOST`), never held; the page's upload keeps its
+    50 MB (a workbook of about 1,000,000 rows at most: `chart.ROWS_MOST`), so a chart of millions is loaded by the
+    command, or a range of companies a file. JD Edwards' L and U are postable by default with blank (N, B, I, M not);
+    what they require is a later change. An account on a closed or unknown business unit, on a PO line or in the
+    past coding, never stops a load: an invoice using it is told (`BU_INACTIVE`, `ACCOUNT_NOT_IN_CHART`).
