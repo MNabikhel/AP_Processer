@@ -16,6 +16,7 @@ import io
 import random
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import Any
 
 from openpyxl import Workbook
 
@@ -120,6 +121,30 @@ def chart_rows(scale: Scale) -> tuple[list[ChartRow], list[BuRow]]:
                 rows.append(ChartRow(unit, obj, "", f"Cost {obj}", 7, "", "", code))
                 rows.append(ChartRow(unit, obj, "0100", f"Cost {obj} labour", 8, "", "", code))
     return rows[: scale.chart_rows], units
+
+
+CHART_HEADER = ("Company", "Business Unit", "Object Account", "Subsidiary", "Account Description", "L D", "P E")
+
+
+def write_chart_csv(path: Any, scale: Scale) -> int:
+    """The group's chart as one CSV (the build sheet's report 1, every company's), written a row at a time: as
+    ``chart_rows`` makes it, ``scale.chart_rows`` rows. How many rows."""
+    codes = [c[0] for c in group(scale.companies)]
+    units_each = max(1, scale.chart_rows // (len(OBJECTS) * 2 * len(codes)))
+    n = 0
+    with open(path, "w", encoding="utf-8", newline="") as out:
+        out.write(",".join(CHART_HEADER) + "\r\n")
+        for code in codes:
+            for unit in units_of(code, units_each):
+                rows = [(unit, "", "", f"Job {unit}", 3, "N")] + [
+                    row for obj in OBJECTS for row in ((unit, obj, "", f"Cost {obj}", 7, ""),
+                                                       (unit, obj, "0100", f"Cost {obj} labour", 8, ""))]  # fmt: skip
+                for bu, obj, sub, description, lod, edit in rows:
+                    if n >= scale.chart_rows:
+                        return n
+                    out.write(f"{code},{bu},{obj},{sub},{description},{lod},{edit}\r\n")
+                    n += 1
+    return n
 
 
 def supplier_rows(scale: Scale) -> list[dict[str, str]]:

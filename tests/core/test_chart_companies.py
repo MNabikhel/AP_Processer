@@ -88,3 +88,21 @@ def test_a_chart_saved_as_csv_is_streamed_from_disk_a_company_at_a_time(store, t
     said = chart_cmd.import_files(store, second)
     assert "Chart of accounts (company 00310's; the other companies' kept): 1 rows added, 0 changed, 0 removed." in said
     assert store.account_pairs().status("3100101", "5110.0100") == chart.OK and len(store.account_pairs()) == 6
+
+
+def test_an_account_not_in_the_chart_or_on_a_closed_unit_never_stops_a_load_and_is_said_on_the_invoice(store):
+    store.import_business_units([BuRow("2100101", "Job A", "00210"), BuRow("2100199", "Old job", "00210", "", "CL")])
+    store.import_chart(_rows("00210", "2100101", "5110"))
+    line = {"po_number": "4512", "vendor_name": "Lakeside Steel Ltd", "line_number": 1, "description": "Rebar",
+            "quantity": 1, "unit_price": 5, "amount": 5, "status": "open"}  # fmt: skip
+    loaded = store.import_purchase_orders(
+        [
+            {**line, "cost_center": "2100199", "gl_code": "5110"},
+            {**line, "line_number": 2, "cost_center": "9999999", "gl_code": "5110"},
+        ]
+    )
+    assert loaded["lines"] == 2
+    pairs = store.account_pairs()
+    assert (
+        pairs.status("2100199", "5110") == chart.BU_INACTIVE and pairs.status("9999999", "5110") == chart.NOT_IN_CHART
+    )
