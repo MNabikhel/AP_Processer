@@ -306,6 +306,27 @@
         </tbody>
       </table>
     </div>
+    {% if company_rows %}
+    <h4 id="company-tax">Companies: the Canadian tax checks</h4>
+    <p class="muted">The tax areas above are for the companies checked for Canadian tax. Only a company whose country is
+      CA and whose currency is CAD in JD Edwards' companies is, as worked out; any other is checked like a US company:
+      every check but the Canadian tax ones, a warning that its tax is not checked, and never approved without a person.
+      Turn them on or off for a company when its country or currency in JD Edwards is not what it is.</p>
+    <div class="table-wrap">
+      <table class="apc-table st-edit">
+        <thead><tr><th>Company</th><th>Name</th><th>Currency, country</th><th>As worked out</th><th>Canadian tax checks</th></tr></thead>
+        <tbody>
+          {% for c in company_rows %}
+          <tr><td><input type="hidden" name="company" value="{{ c.code }}">{{ c.code }}</td><td>{{ c.name }}</td>
+            <td>{{ c.currency }}, {{ c.country }}</td><td>{{ c.worked_out }}</td>
+            <td><select name="company_tax" aria-label="Canadian tax checks for {{ c.name }}">
+              {% for value, label in [("auto", "As worked out"), ("on", "On"), ("off", "Off")] %}<option value="{{ value }}"{% if c.choice == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
     <div><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save the tax areas</button></div>
   </form>
 </section>

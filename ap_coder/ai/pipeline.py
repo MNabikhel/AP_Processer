@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 from ..capture.bridge import review_issues
 from ..capture.layout import PDF_LOCK, CannotRead
 from ..capture.workflow import AUTONOMOUS_REVIEWER, WAITING_FOR_PAGE_READER, autonomy_decision, capture_invoice
-from ..coding import banks
+from ..coding import banks, companies
 from ..coding.claim import claim_findings
 from ..coding.po import po_findings
 from ..coding.remark import fill_remarks
@@ -44,7 +44,7 @@ from ..coding.vendors import vendor_findings
 from ..core.config import Settings
 from ..core.memory import compare_patterns, compare_with_history, format_examples, select_examples, vendor_key
 from ..core.reference_data import ReferenceData, short_name
-from ..core.schema import InvoiceCoding, decided
+from ..core.schema import COMPANY_TAX, InvoiceCoding, decided
 from ..core.store.imports import ClaimLost
 from ..core.store.joined import CLAIM
 from ..core.store.reports import anywhere_in
@@ -256,6 +256,20 @@ def finalise_coding(
         if store is not None
         else None
     )
+    # Which of JD Edwards' companies it is ours under, with several (D-267): decided before the checks that read it
+    # (its PO, the duplicates, its voucher); none decided holds it for a person. A company not checked for Canadian
+    # tax (a US one) has every check but those, and a warning that its tax was not checked.
+    company_said: list[tuple[str, str, str]] = []
+    canadian_tax, decision = True, None
+    if store is not None and companies.several(store):
+        decision = companies.decide(store, coding, extraction.content if extraction is not None else "")
+        coding.company = companies.company_code(coding.company or decision.company)
+        if not coding.company.strip():
+            company_said.append(companies.unknown_finding(decision, store))
+        else:
+            canadian_tax, why = companies.canadian(store, coding.company)
+            if not canadian_tax:
+                company_said.append(companies.us_tax_finding(companies.company_code(coding.company), why))
     # The bank account it is paid from (ours, D-66): the vendor's last one, else the currency's default, when none is
     # chosen yet; checked once our accounts are set up.
     bank_findings: list[tuple[str, str, str]] = []
@@ -284,6 +298,8 @@ def finalise_coding(
         # each time); never the vendor's province: it stays a guess.
         if source in (SUPPLY_SITE, SUPPLY_OURS):
             output[PLACE_OF_SUPPLY] = place
+    if not canadian_tax:  # a US company's voucher: its tax area from the PO line or the supplier (D-267)
+        output[COMPANY_TAX] = companies.voucher_tax(store, coding)
     output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
     # JD Edwards in use: what its batch would hold back, asked before approval (D-75).
     erp_findings: list[tuple[str, str, str, int | None]] = []
@@ -296,7 +312,8 @@ def finalise_coding(
         review_threshold=settings.engine.review_threshold,
         history=history,
         duplicate_of=duplicates,
-        vendor_findings=(vendor_findings(coding, store, exclude_invoice_id) if store is not None else [])
+        vendor_findings=company_said
+        + (vendor_findings(coding, store, exclude_invoice_id) if store is not None else [])
         + bank_findings
         + payment_findings(
             coding.to_output(),
@@ -308,7 +325,11 @@ def finalise_coding(
         erp_findings=erp_findings,
         remarks_typed=remarks_typed,
         erp_posts_tax=jde_review.taxes_e1_posts(output, js) if js is not None else frozenset(),
+        canadian_tax=canadian_tax,
     )
+    if decision is not None:  # (why this company, for the review screen's company box)
+        report.checks["company"] = {"company": companies.company_code(coding.company), "how": decision.how,
+                                    "said": decision.said, "could_be": decision.could_be}  # fmt: skip
     if store is not None and exclude_invoice_id is not None:  # the receipts of one expense claim say so (D-216)
         claim_findings(report, store.joined_files(invoice_id=exclude_invoice_id), coding)
     return output, report

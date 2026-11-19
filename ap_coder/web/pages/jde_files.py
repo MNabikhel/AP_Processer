@@ -14,7 +14,8 @@ one place, in the order they depend on each other.
 5. the vouchers already in JD Edwards (the voucher list, as on Exports: ``erp/registers``,
    ``Store.import_erp_vouchers``), added to those loaded;
 6. the open purchase order lines (as on Purchase orders, which Simple screens hide: ``load_orders``), 7. the
-   payment terms (F0014) and 8. the tax areas (F4008), both optional (``load_table``, D-266).
+   payment terms (F0014) and 8. the tax areas (F4008), both optional (``load_table``, D-266); 9. the companies
+   (F0010, optional: ``coding/companies``, D-267).
 
 All of them in one workbook, a sheet each, are loaded by one click (``pages/jde_workbook.py``).
 
@@ -41,8 +42,8 @@ from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from ap_coder.coding import companies, vendor_info
 from ap_coder.coding import po as po_mod
-from ap_coder.coding import vendor_info
 from ap_coder.coding.terms import JDE_TERMS_ALIASES, JDE_TERMS_SETTING, jde_table, jde_words
 from ap_coder.coding.vendors import master_columns, master_rows
 from ap_coder.core import chart, chart_file, ui
@@ -83,8 +84,9 @@ VOUCHERS_KIND = "jde-files-vouchers"  # the voucher list as read at its upload, 
 ORDER = ("Load them in this order: the chart of accounts and the business units first, because the suppliers, the "
          "past invoice coding and the vouchers are checked against them; then the suppliers; then the past invoice "
          "coding; then the invoices already in JD Edwards, its voucher list; then the open purchase order lines, if "
-         "you use them. The payment terms and the tax areas are optional, at any time. All of them in one workbook, a "
-         "sheet each, are loaded in this order by one click.")  # fmt: skip
+         "you use them. The payment terms, the tax areas and the companies are optional, at any time (with several "
+         "companies, load them first). All of them in one workbook, a sheet each, are loaded in the right order by one "
+         "click.")  # fmt: skip
 # Each card: its title, and the reports loaded on it (``import_specs.SPECS``), in the order the page names them.
 CARDS = {
     "chart": ("Chart of accounts", ("chart",)),
@@ -95,8 +97,10 @@ CARDS = {
     "orders": ("Open purchase order lines", ("purchase_orders",)),
     "terms": ("Payment terms", ("payment_terms",)),
     "areas": ("Tax areas", ("tax_areas",)),
+    "companies": ("Companies", ("companies",)),
 }
-OPTIONAL = ("orders", "terms", "areas")  # (D-266: the reports a company may not have, never the next to load)
+# (D-266: the reports a company may not have, never the next to load)
+OPTIONAL = ("orders", "terms", "areas", "companies")
 TABLE_EVENT = "jde_table_loaded"  # the payment terms or the tax areas loaded: {"table", "rows"}
 NOT_XLSX = "Upload the export as JD Edwards saves it, an Excel workbook (.xlsx)."
 GONE = files.GONE  # (one message for an upload no longer kept, on every page)
@@ -481,7 +485,7 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
     settings = store.chart_settings()
     journals = learning._journal_context(store, q.get("journal"), q)
     said = current_store().ephemeral(SAID_KIND, q.get("said"))
-    terms_table, areas_table = store.jde_terms_table(), tax_areas_of(store)
+    terms_table, areas_table, company_table = store.jde_terms_table(), tax_areas_of(store), companies.companies(store)
     loaded = {
         "chart": accounts,
         "units": len(units),
@@ -491,6 +495,7 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
         "orders": store.open_po_count(),
         "terms": len(terms_table),
         "areas": len(areas_table),
+        "companies": len(company_table),
     }
     # Each opens its rows (pages/jde_loaded.py, D-221); the three a person may change say how many rows were. The
     # purchase orders are on their own page; the payment terms and tax areas are listed on their card.
@@ -503,8 +508,10 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
         "orders": "purchase orders",
         "terms": "terms codes",
         "areas": "tax areas",
+        "companies": "companies",
     }
-    see = {"orders": "/purchase-orders", "terms": _url("terms"), "areas": _url("areas")}  # fmt: skip
+    see = {"orders": "/purchase-orders", "terms": _url("terms"), "areas": _url("areas"),
+           "companies": _url("companies")}  # fmt: skip
     edits = store.hand_edits()
     by_hand = {"chart": len(edits["chart_accounts"]), "units": len(edits["business_units"]),
                "suppliers": len(edits["vendors"])}  # fmt: skip
@@ -529,6 +536,7 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
         "orders": _last(store, "pos_imported"),
         "terms": _last(store, TABLE_EVENT, "payment_terms"),
         "areas": _last(store, TABLE_EVENT, "tax_areas"),
+        "companies": _last(store, TABLE_EVENT, "companies"),
     }
     tax_ids = store.vendor_info_count()
     gl = store.list_accounts("gl_accounts")  # (read once: B-2436)
@@ -571,9 +579,14 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
         "card_titles": {card: title for card, (title, _keys) in CARDS.items()},
         "optional": OPTIONAL,
         "rows_of": rows_of,
+        "rows_one": {"companies": "company"},
         "terms_table": sorted(terms_table.items()),
         "areas_table": sorted(areas_table.items()),
         "areas_said": jde_settings.tax_areas_compared(areas_table, jde_settings.load(store)) if areas_table else [],
+        "companies_said": companies_said(
+            {c.code: {"name": c.name, "currency": c.currency, "country": c.country} for c in company_table.values()},
+            store,
+        ),
         "workbook": _workbook_look(store, q["workbook"]) if q.get("workbook") else None,
         **journals,
     }
@@ -589,11 +602,14 @@ def _load_words(card: str, look: dict[str, Any] | None, loaded: int, by_hand: in
     if card == "chart":
         accounts = look.get("accounts")
         button = f"Load {ui.plural(accounts or look['count'], 'account' if accounts else 'row')}"
-        then = f"Replaces the {ui.plural(loaded, 'account')} loaded now: the chart is taken whole from this file.{kept}"
+        then = (f"Replaces the accounts of the companies in this file (its Company column) among the "
+                f"{ui.plural(loaded, 'account')} loaded now, the other companies' kept; a file without a Company "
+                f"column replaces the chart whole.{kept}")  # fmt: skip
     elif card == "units":
         button = f"Load {ui.plural(look['count'], 'business unit')}"
-        then = (f"Replaces the {ui.plural(loaded, 'business unit')} loaded now: the list is taken whole from this "
-                f"file.{kept}")  # fmt: skip
+        then = (f"Replaces the business units of the companies in this file among the "
+                f"{ui.plural(loaded, 'business unit')} loaded now, the other companies' kept; a file without a "
+                f"company column replaces the list whole.{kept}")  # fmt: skip
     elif card == "suppliers":
         button = f"Load {ui.plural(look['kept'], 'supplier')}"
         new = look.get("new", 0)
@@ -609,7 +625,7 @@ def _load_words(card: str, look: dict[str, Any] | None, loaded: int, by_hand: in
         then = (f"Added to the {ui.plural(loaded, 'open purchase order')} loaded now: an order in this file replaces "
                 "its lines, the others are kept.")  # fmt: skip
     elif card in TABLE_CARDS:
-        button = f"Load {ui.plural(look.get('kept', 0), 'terms code' if card == 'terms' else 'tax area')}"
+        button = f"Load {ui.plural(look.get('kept', 0), TABLE_WHAT[card], TABLE_MANY.get(card, ''))}"
         then = f"Replaces the {ui.plural(loaded, 'row')} loaded now: the table is taken whole from this file."
     else:
         button, then = f"Load {ui.plural(look.get('kept', 0), 'voucher')}", ""
@@ -718,19 +734,20 @@ def _keep_export(request: Request, card: str, name: str, content: bytes) -> JSON
 
 
 @router.post(HERE + "/chart/load")
-async def chart_load(request: Request, token: str = Form("")) -> JSONResponse:
-    return await run_in_threadpool(_chart_import, request, "chart", token)  # (a chart of 15,000 rows: 10 to 20 s)
+async def chart_load(request: Request, token: str = Form(""), whole: str = Form("")) -> JSONResponse:
+    return await run_in_threadpool(_chart_import, request, "chart", token, bool(whole))  # (15,000 rows: 10 to 20 s)
 
 
 @router.post(HERE + "/units/load")
-async def units_load(request: Request, token: str = Form("")) -> JSONResponse:
-    return await run_in_threadpool(_chart_import, request, "units", token)
+async def units_load(request: Request, token: str = Form(""), whole: str = Form("")) -> JSONResponse:
+    return await run_in_threadpool(_chart_import, request, "units", token, bool(whole))
 
 
 @one_connection
-def _chart_import(request: Request, card: str, token: str) -> JSONResponse:
+def _chart_import(request: Request, card: str, token: str, whole: bool = False) -> JSONResponse:
     """Load the uploaded chart or business unit file as its card showed it: only a file with every column the
-    report needs (no "load it anyway" here; the command line keeps its --anyway)."""
+    report needs (no "load it anyway" here; the command line keeps its --anyway). ``whole``: it replaces the whole
+    chart or every business unit (start over), not only the companies it names (D-267)."""
     look, upload = _export_look(card, token), json.loads(current_store().ephemeral(LOOK_KIND, token) or b"{}")
     kept = get_upload(upload.get("upload"))
     if look is None or kept is None:
@@ -742,7 +759,7 @@ def _chart_import(request: Request, card: str, token: str) -> JSONResponse:
         return refuse(BEING_LOADED)
     given = {"chart_source": kept.content} if card == "chart" else {"units_source": kept.content}
     try:
-        said = chart_cmd.import_files(get_store(request), **given, actor=reviewer())
+        said = chart_cmd.import_files(get_store(request), **given, actor=reviewer(), whole=whole)
     except ValueError as exc:  # (a ChartError too: the file cannot be read as what it should be)
         return refuse(f"Not loaded: {exc}")
     finally:
@@ -907,9 +924,10 @@ def load_supplier_master(store: Store, df: Any) -> list[str]:
     return said + _duplicates_said(result)
 
 
-# --- 6, 7, 8: the open purchase order lines, the payment terms, the tax areas (D-266) ------------------------------
+# --- 6 to 9: the open purchase order lines, the payment terms, the tax areas (D-266), the companies (D-267) ----------
 
-TABLE_CARDS = ("orders", "terms", "areas")  # read as a sheet with every column of its report: no column is picked
+# read as a sheet with every column of its report: no column is picked
+TABLE_CARDS = ("orders", "terms", "areas", "companies")
 
 
 def tax_areas_of(store: Store) -> dict[str, dict[str, Any]]:
@@ -975,22 +993,56 @@ def _table_of(card: str, df: Any) -> tuple[dict[str, dict[str, Any]], int]:
     headers = [str(c) for c in df.columns]
     if card == "terms":
         return jde_table(records, match_columns(headers, JDE_TERMS_ALIASES))
+    if card == "companies":
+        return companies.company_table(records, match_columns(headers, companies.COMPANY_ALIASES))
     return jde_settings.tax_area_table(records, match_columns(headers, jde_settings.TAX_AREA_ALIASES))
 
 
+TABLE_WHAT = {"terms": "terms code", "areas": "tax area", "companies": "company"}
+TABLE_MANY = {"companies": "companies"}
+TABLE_SETTING = {"terms": JDE_TERMS_SETTING, "areas": jde_settings.TAX_AREAS_SETTING,
+                 "companies": companies.COMPANIES_SETTING}  # fmt: skip
+
+
+def companies_said(table: dict[str, dict[str, Any]], store: Store | None = None) -> list[str]:
+    """Each company of report 9 as its card says it: its name, currency and country, and whether it is checked for
+    Canadian tax and why (``companies.worked_out``; with ``store``, as Settings may have turned it on or off:
+    ``companies.canadian``, D-267)."""
+    out = []
+    for code, row in sorted(table.items()):
+        checked, why = (
+            companies.canadian(store, code)
+            if store is not None and len(table) > 1
+            else companies.worked_out(companies.Company(code, row["name"], row["currency"], row["country"]))
+        )
+        out.append(
+            f"{code} {row['name']} · {row['currency'] or 'no currency'}, {row['country'] or 'no country'}: "
+            + ("checked for Canadian tax" if checked else "not checked for Canadian tax")
+            + f" ({why})"
+        )
+    return out
+
+
 def load_table(store: Store, card: str, df: Any) -> list[str]:
-    """Load JD Edwards' payment terms (``card`` "terms") or tax areas ("areas") of a sheet, replacing those loaded,
-    and what that says. ``ValueError`` when no row can be read."""
+    """Load JD Edwards' payment terms (``card`` "terms"), tax areas ("areas") or companies ("companies") of a sheet,
+    replacing those loaded, and what that says. ``ValueError`` when no row can be read."""
     table, left = _table_of(card, df)
-    what = "terms code" if card == "terms" else "tax area"
+    what = TABLE_WHAT[card]
     if not table:
         raise ValueError(f"No {what} of this file can be read: nothing was loaded.")
-    key = JDE_TERMS_SETTING if card == "terms" else jde_settings.TAX_AREAS_SETTING
+    key = TABLE_SETTING[card]
     store.set_setting(key, json.dumps(table, sort_keys=True), actor=reviewer())
     store.log_event(TABLE_EVENT, actor=reviewer(), detail={"table": SPECS[CARDS[card][1][0]].key, "rows": len(table)})
-    out = f", {ui.plural(left, 'row')} left out (no {what}, or no rate or days that read)." if left else "."
-    said = [f"{CARDS[card][0]}: {ui.plural(len(table), what)} loaded{out}"]
-    if card == "terms":
+    why = "no company or name, or JD Edwards' default company 00000" if card == "companies" else \
+        f"no {what}, or no rate or days that read"  # fmt: skip
+    out = f", {ui.plural(left, 'row')} left out ({why})." if left else "."
+    said = [f"{CARDS[card][0]}: {ui.plural(len(table), what, TABLE_MANY.get(card, ''))} loaded{out}"]
+    if card == "companies":
+        said += companies_said(table)
+        if len(table) > 1:
+            said.append("Each invoice is now told which company it is for; one nothing decides is held for a person "
+                        "to pick.")  # fmt: skip
+    elif card == "terms":
         said.append(
             "A supplier's terms code now counts as its terms: "
             + "; ".join(f"{code} {jde_words(row)}" for code, row in sorted(table.items())[:6])
@@ -1030,11 +1082,13 @@ def _table_look(store: Store, card: str, token: str) -> dict[str, Any]:
         }
     table, left = _table_of(card, df)
     said = [
-        f"{ui.plural(len(table), 'terms code' if card == 'terms' else 'tax area')} to load"
+        f"{ui.plural(len(table), TABLE_WHAT[card], TABLE_MANY.get(card, ''))} to load"
         + (f", {ui.plural(left, 'row')} left out." if left else ".")
     ]
     if card == "areas" and table:
         said += jde_settings.tax_areas_compared(table, jde_settings.load(store))
+    if card == "companies" and table:
+        said += companies_said(table)
     return {**look, "kept": len(table), "said": said, "problem": "" if table else "No row of this file can be read."}
 
 

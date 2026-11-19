@@ -79,7 +79,7 @@ from ..coding.vendors import held_index, hold_reason, norm_invoice_number
 from ..core.memory import vendor_key
 from .jde_accounts import VendorLookup, resolve_an8
 from .jde_formats import _negative, _norm
-from .jde_settings import AMOUNT_GL, AMOUNT_GROSS, AMOUNT_TAX, IMPLIED, JdeSettings, settings_problems
+from .jde_settings import AMOUNT_GL, AMOUNT_GROSS, AMOUNT_TAX, IMPLIED, JdeSettings, company_of, settings_problems
 from .jde_voucher import (
     TERMS_CREDIT,
     TERMS_DEFAULT,
@@ -217,6 +217,13 @@ def validate(
 UNDO_TEXT = "in AP Coder, Exports → Past batches → Undo this batch, fix, and export again."
 
 
+def companies_of(invoices: list[dict[str, Any]], settings: JdeSettings) -> str:
+    """The companies a batch's vouchers are keyed under (VLCO), each once ("00210, 00310"): Settings' company, or the
+    invoices' own with several companies (D-267)."""
+    found = {company_of(inv.get("final_output") or {}, settings) for inv in invoices}
+    return ", ".join(sorted(found)) or settings.company_code
+
+
 def readme(
     files: dict[str, bytes], settings: JdeSettings, batch: int | str, invoices: list[dict[str, Any]],
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
@@ -249,7 +256,7 @@ def readme(
         "=" * 60,
         "",
         f"Vouchers: {len(invoices)}   Totals: {money}",
-        f"User (EDUS): {settings.user.strip()}   Batch (EDBT): {edbt}   Company: {settings.company_code}",
+        f"User (EDUS): {settings.user.strip()}   Batch (EDBT): {edbt}   Company: {companies_of(invoices, settings)}",
         f"Amounts: {decimals}; {amounts}",
         "Dates: E1 Julian CYYDDD (2026-10-09 is 126282).",
         "",
@@ -398,7 +405,7 @@ def dry_run(
     out: dict[str, Any] = {
         "batch": batch_number(settings, batch, site),
         "user": settings.user.strip(),
-        "company": settings.company_code,
+        "company": companies_of(invoices, settings),
         "blocking": blocking,
         "vouchers": [],
         "held": [],

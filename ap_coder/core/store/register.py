@@ -19,11 +19,12 @@ import sqlite3
 import time
 from typing import Any
 
-from ..keys import master_vendor_id, register_keys
+from ..keys import company_code, master_vendor_id, register_keys
 from ..memory import vendor_key
 from ._base import _in_list, _norm_number, _now
 from .dialect import ROWID, add_column, begin_write, table_names
 from .dialect import columns as table_columns
+from .journal import supplier_key as journal_supplier
 from .learning import one_snapshot
 from .summary import fetch_rows, fts_available
 
@@ -56,6 +57,13 @@ ISO_DAY = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"  # a voucher's date as th
 SEARCH_SCHEMA = "CREATE VIRTUAL TABLE register_search USING fts5(plain_name, raw_number, tokenize = 'trigram')"
 SEARCH_STEP = "register_search_step"
 _COUNT = "COALESCE((SELECT value FROM settings WHERE key = 'changes/register'), '0')"
+# The companies a bill's JD Edwards vouchers are entered under (a JSON list, each once: a voucher is kept once by its
+# key "company-type-document-...", however many lists gave it), of the register's row ``b``.
+_BILL_COMPANIES = (
+    "(SELECT json_group_array(DISTINCT substr(v.erp_key, 1, instr(v.erp_key, '-') - 1)) FROM erp_vouchers v "
+    "WHERE v.vendor_key = b.vendor_key AND v.number_key = b.number_key AND v.total = b.total "
+    "AND instr(v.erp_key, '-') > 1)"
+)
 _LAST_ROWID = 2**63 - 1  # SQLite's largest rowid: past it, a row added gets one at random (not above the others)
 
 
@@ -227,7 +235,9 @@ class RegisterMixin:
                an8: str | None = None) -> list[dict[str, Any]]:  # fmt: skip
         """This vendor's invoices with the same number already in the ERP (a credit note is not a duplicate
         of the invoice it reverses): filed under its name, or synced from JD Edwards under its supplier number
-        (``an8``; None: the vendor list's ERP ID of the vendor) whatever name they were filed under (R7)."""
+        (``an8``; None: the vendor list's ERP ID of the vendor) whatever name they were filed under (R7). Each with
+        the companies its JD Edwards vouchers are entered under (``companies``, sorted; none for a bill of a register
+        file, which names no company: D-267)."""
         key, number = vendor_key(vendor_name), _norm_number(invoice_number)
         if not key or not number:
             return []
@@ -237,14 +247,32 @@ class RegisterMixin:
             rows = [
                 dict(r)
                 for r in conn.execute(
-                    "SELECT invoice_number, invoice_date, total FROM erp_invoices "
+                    f"SELECT invoice_number, invoice_date, total, {_BILL_COMPANIES} AS companies FROM erp_invoices b "
                     "WHERE number_key = ? AND (vendor_key = ? OR (? != '' AND ltrim(an8, '0') = ?))",
                     (number, key, an8, an8),
                 )
             ]
+        for r in rows:
+            r["companies"] = sorted(json.loads(r["companies"] or "[]"))
         if grand_total is None:
             return rows
         return [r for r in rows if (r["total"] < 0) == (grand_total < 0)]
+
+    def supplier_companies(self, vendor: str, supplier: str = "") -> set[str]:
+        """The companies a supplier has billed (D-267): of its vouchers in the past invoice coding loaded (by its
+        supplier number ``supplier``) and in JD Edwards' vouchers already entered (by its vendor key ``vendor``), each
+        company once, as ``keys.company_code`` writes it. Each read off its index, the supplier's rows only."""
+        found: set[str] = set()
+        with self._conn() as conn:
+            if str(supplier or "").strip():
+                found |= {r[0] for r in conn.execute(
+                    "SELECT DISTINCT company FROM journal_vouchers WHERE supplier_key = ? AND counted = 1",
+                    (journal_supplier(supplier),))}  # fmt: skip
+            if vendor:
+                found |= {r[0] for r in conn.execute(
+                    "SELECT DISTINCT substr(erp_key, 1, instr(erp_key, '-') - 1) FROM erp_vouchers "
+                    "WHERE vendor_key = ?", (vendor,))}  # fmt: skip
+        return {company_code(c) for c in found if str(c or "").strip()}
 
     # --- JD Edwards' vouchers, from the API's sync (D-181) ----------------------------------------------
 

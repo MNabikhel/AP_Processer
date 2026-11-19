@@ -23,6 +23,7 @@ from fastapi import File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response
 
+from ap_coder.coding import companies
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCES, province_label
 from ap_coder.coding.terms import terms_key
 from ap_coder.core import ui
@@ -78,7 +79,13 @@ Confirm with your JDE team before the first live load:
 
 # (field, label, max characters, help) of the voucher header and the "More fields" group.
 HEADER_FIELDS = [
-    ("company", "Company (VLCO)", 5, "Up to 5 digits; zero-padded."),
+    (
+        "company",
+        "Company (VLCO)",
+        5,
+        "Up to 5 digits; zero-padded. The default: with several companies (JD Edwards "
+        "files, card 9) each invoice is keyed under its own.",
+    ),
     ("user", "User ID (VLEDUS)", 10, "The user R04110ZA is run for."),
     ("batch_prefix", "Batch prefix (VLEDBT)", 9, "Batch number = prefix + AP Coder batch."),
     ("document_type", "Document type (VLDCT)", 2, "PV, or blank."),
@@ -143,6 +150,7 @@ def jde_context(store: Store, query: Any = None) -> dict[str, Any]:
             if p in js.tax_map
         ],
         "tax_codes": TAX_CODES,
+        "company_rows": company_rows(store, js),
         "an8_rows": [{"vendor": names.get(k, k), "an8": a} for k, a in js.an8_overrides.items()],
         # The payment terms table (D-91): the examples, pre-filled and not in use, until the pilot tester saves it.
         "terms_examples": not js.terms_codes,
@@ -157,6 +165,21 @@ def jde_context(store: Store, query: Any = None) -> dict[str, Any]:
         "gl_map_look": _gl_map_look(query.get("gl_map")) if query.get("gl_map") else None,
         "worksheet_look": _worksheet_look(js, query.get("worksheet")) if query.get("worksheet") else None,
     }
+
+
+def company_rows(store: Store, js: jde_settings.JdeSettings) -> list[dict[str, str]]:
+    """With several of JD Edwards' companies (D-267): each with its Canadian tax checks as worked out from report 9
+    and why ("CA and CAD", "currency USD", "no country"), and Settings' choice ("auto", "on" or "off"); [] with one."""
+    table = companies.companies(store)
+    if len(table) < 2:
+        return []
+    rows = []
+    for code, c in table.items():
+        checked, why = companies.worked_out(c)
+        rows.append({"code": code, "name": c.name, "currency": c.currency or "—", "country": c.country or "—",
+                     "worked_out": f"{'checked' if checked else 'not checked'} ({why})",
+                     "choice": js.company_tax.get(code, companies.AUTO)})  # fmt: skip
+    return rows
 
 
 def api_context(store: Store) -> dict[str, Any]:
@@ -383,6 +406,11 @@ def _save_tax_map(request: Request, form: Any) -> JSONResponse:
         if code not in TAX_CODES:
             return refuse(f"The code for {province} must be V, C, B, E or blank.")
         new.tax_map[province] = jde_settings.TaxArea(area[:10], code)
+    # With several companies (D-267): each one's Canadian tax checks, as worked out or turned on or off.
+    chosen = dict(zip([str(c) for c in form.getlist("company")], [str(c) for c in form.getlist("company_tax")],
+                      strict=False))  # fmt: skip
+    if chosen:
+        new.company_tax = {code: choice for code, choice in chosen.items() if choice in (companies.ON, companies.OFF)}
     changed = jde_settings.save(store, new, actor=reviewer())
     return done(request, URL + "#tax-map", "Tax areas saved." if changed else "Nothing changed.")
 

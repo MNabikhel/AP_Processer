@@ -154,13 +154,13 @@ def test_a_posting_edit_code_made_postable_lists_its_accounts_at_once(store):
 def test_the_import_takes_the_write_lock_before_it_reads_what_it_compares_with(store, monkeypatch):
     _loaded(store)
     read_in_a_transaction = []
-    rows = store_chart._chart
+    lists = store_chart._lists  # (what the chart gives is read in SQL, never the rows: D-267)
 
-    def reading(conn):
+    def reading(conn, settings=None):
         read_in_a_transaction.append(conn.in_transaction)
-        return rows(conn)
+        return lists(conn, settings)
 
-    monkeypatch.setattr(store_chart, "_chart", reading)
+    monkeypatch.setattr(store_chart, "_lists", reading)
     store.import_chart(_chart(WITHOUT_OTHER))
     store.import_business_units(_units(cf.UNITS[:-1]))
     assert read_in_a_transaction and all(read_in_a_transaction)

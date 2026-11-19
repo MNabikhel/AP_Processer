@@ -169,7 +169,7 @@ def test_each_business_unit_has_a_header_row_and_the_reserved_subsidiaries_are_p
     assert all(account.postable and account.reserved for account in truth.accounts
                if account.subsidiary in (RECOVERIES, ALLOCATION))  # fmt: skip
     suggestable = truth.suggestable()
-    assert suggestable and not any(account.reserved or account.posting_edit for account in suggestable)
+    assert suggestable and not any(account.reserved or not account.postable for account in suggestable)  # (L, U: D-267)
 
 
 # --- the business units and the suppliers -------------------------------------------------------

@@ -35,7 +35,7 @@ from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unre
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104) and
 # vendor_aliases (by _SCHEMA: a vendor name read wrong, as AP corrected it, D-119), line_texts (by _SCHEMA: a
 # supplier's line descriptions as AP approved them, D-120)
-SCHEMA_VERSION = 31  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
+SCHEMA_VERSION = 32  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
 # (B-1581), 22: the ERP register's vendor names and invoice numbers as the quick search compares them (D-157), 24: the
 # events' indexes by day and by person, the register's by number (D-156), 25: the lessons' approvals counted off an
 # index (B-1714), 26: the import queue (import_batches, import_files, import_turns by _SCHEMA, its indexes; D-168),
@@ -60,6 +60,9 @@ SCHEMA_VERSION = 31  # 19: the invoices' summary and its triggers (summary.py, `
 # 31: purchase_orders.order_type, order_company and supplier_number, po_lines.erp_line, uom, open_quantity, tax_flag,
 # tax_code and tax_area: what JD
 # Edwards' voucher match names of an order and its lines ('' and NULL for a PO imported before, D-264)
+# 32: purchase_orders.number_key, the PO number as people mean it (``keys.po_key``), and po_key the order's identity
+# (``keys.order_key``: its company, type and number when the file gave them), each such PO kept again under it (D-267):
+# an older AP Coder would look such a PO up by its number alone and find none
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -167,9 +170,13 @@ ANSWER_WANTS = ("CREATE TABLE IF NOT EXISTS answer_wants (name TEXT NOT NULL, as
 CHART_TABLES = (
     "CREATE TABLE IF NOT EXISTS chart_accounts (bu TEXT NOT NULL, object TEXT NOT NULL DEFAULT '', subsidiary TEXT NOT "
     "NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', lod INTEGER NOT NULL DEFAULT 0, posting_edit TEXT NOT NULL "
-    "DEFAULT '', category TEXT NOT NULL DEFAULT '', PRIMARY KEY (bu, object, subsidiary))",
+    "DEFAULT '', category TEXT NOT NULL DEFAULT '', company TEXT NOT NULL DEFAULT '', PRIMARY KEY (bu, object, "
+    "subsidiary))",
     "CREATE TABLE IF NOT EXISTS business_units (code TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', company TEXT NOT "
     "NULL DEFAULT '', type TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '')",
+    # (asked an account at a time, never held whole: ``chart_index``, D-267)
+    "CREATE INDEX IF NOT EXISTS chart_accounts_code ON chart_accounts (object, subsidiary)",
+    "CREATE INDEX IF NOT EXISTS business_units_company ON business_units (company)",
 )
 
 _SCHEMA = """
@@ -216,7 +223,7 @@ CREATE TABLE IF NOT EXISTS vendor_info (
     address2 TEXT NOT NULL DEFAULT '', address3 TEXT NOT NULL DEFAULT '', address4 TEXT NOT NULL DEFAULT '',
     city TEXT NOT NULL DEFAULT '', state TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT '',
     postal_code TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', business_unit TEXT NOT NULL DEFAULT '',
-    business_unit_name TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL);
+    business_unit_name TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL, tax_area TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS invoices_vendor ON invoices (vendor_key);
 CREATE TABLE IF NOT EXISTS export_batches (
     id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, actor TEXT, format TEXT NOT NULL,
@@ -225,7 +232,7 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     po_key TEXT PRIMARY KEY, po_number TEXT NOT NULL, vendor_name TEXT NOT NULL DEFAULT '',
     vendor_key TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'open', updated_at TEXT NOT NULL,
     currency TEXT NOT NULL DEFAULT '', order_type TEXT NOT NULL DEFAULT '', order_company TEXT NOT NULL DEFAULT '',
-    supplier_number TEXT NOT NULL DEFAULT '');
+    supplier_number TEXT NOT NULL DEFAULT '', number_key TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS po_lines (
     po_key TEXT NOT NULL, line_number INTEGER NOT NULL, description TEXT NOT NULL, quantity REAL NOT NULL,
     unit_price REAL NOT NULL, amount REAL NOT NULL, received_quantity REAL, gl_code TEXT NOT NULL DEFAULT '',

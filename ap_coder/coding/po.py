@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any
 from ..core.caches import MB, Bounded, size_of
 from ..core.chart import code_of, join_account, split_account
 from ..core.headers import jde_names, match_columns
-from ..core.keys import po_key
+from ..core.keys import company_code, master_vendor_id, order_key_of, po_key
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
 
@@ -243,8 +243,30 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
 def open_lines(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Each PO's open lines (``rows_from_records``' rows): a closed line (JD Edwards' 999) leaves while another line of
     its PO is open, so no invoice is matched to it; with none open, every line stays and the PO is closed."""
-    open_pos = {po_key(r["po_number"]) for r in rows if r.get("status") != CLOSED}
-    return [r for r in rows if r.get("status") != CLOSED or po_key(r["po_number"]) not in open_pos]
+    open_pos = {order_key_of(r) for r in rows if r.get("status") != CLOSED}
+    return [r for r in rows if r.get("status") != CLOSED or order_key_of(r) not in open_pos]
+
+
+def of_supplier(order: dict[str, Any], vendor: str, vendor_id: Any = "") -> bool:
+    """Whether a PO (``Store.orders_numbered``' row) is the supplier's: by its vendor key, or its supplier number."""
+    supplier = str(vendor_id or "").strip().lstrip("0")
+    return bool((vendor and order.get("vendor_key") == vendor)
+                or (supplier and str(order.get("supplier_number") or "").strip().lstrip("0") == supplier))  # fmt: skip
+
+
+def pick_order(
+    orders: list[dict[str, Any]], vendor: str, vendor_id: Any = "", company: Any = ""
+) -> dict[str, Any] | None:
+    """The order an invoice quoting a PO number bills, of ``orders`` (the POs of that number: ``Store.orders_numbered``,
+    D-267): the only one; else the only one of its supplier (``vendor``: its vendor key, ``vendor_id``: its supplier
+    number); else, of the supplier's, the only one of the invoice's ``company``. None: no one answer, held for a person,
+    never a guess."""
+    if len(orders) <= 1:
+        return orders[0] if orders else None
+    mine = [o for o in orders if of_supplier(o, vendor, vendor_id)]
+    if len(mine) > 1 and str(company or "").strip():
+        mine = [o for o in mine if company_code(o.get("order_company")) == company_code(company)]
+    return mine[0] if len(mine) == 1 else None
 
 
 def _erp_line(value: Any) -> str:
@@ -448,6 +470,7 @@ class PoMatch:
     # Why the invoice's prices and amounts are not compared with the PO's ("": they are, both in one currency, B-2612);
     # then nothing is left to expense either (``left`` empty).
     currencies: str = ""
+    orders: list[dict[str, Any]] = field(default_factory=list)  # the orders of its number, none the one (D-267)
 
     @property
     def coding_differs(self) -> list[LineMatch]:
@@ -457,6 +480,18 @@ class PoMatch:
     def total_left(self) -> float:
         """What is left to expense on the whole PO after this invoice: its lines' together."""
         return round(sum(line.left for line in self.left.values()), 2)
+
+
+def orders_named(orders: list[dict[str, Any]]) -> str:
+    """The orders of one number as a person tells them apart: "company 00100 OP, Lakeside Supply; company 00200 OP,
+    Lakeside Supply"."""
+
+    def one(o: dict[str, Any]) -> str:
+        said = " ".join(p for p in (f"company {o['order_company']}" if o.get("order_company") else "",
+                                    o.get("order_type") or "") if p)  # fmt: skip
+        return ", ".join(p for p in (said, o.get("vendor_name") or "") if p) or str(o.get("po_number") or "")
+
+    return "; ".join(one(o) for o in orders)
 
 
 def po_label(number: str) -> str:
@@ -478,9 +513,20 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     number = (coding.po_number or "").strip()
     if not number or not store.has_purchase_orders():
         return None
-    key = po_key(number)
-    po = store.purchase_order(key)
+    orders = store.orders_numbered(po_key(number))
+    vendor = vendor_key(coding.vendor_name)
+    supplier = master_vendor_id(store.vendor_ids(), coding.vendor_name, coding.gst_hst_registration_number)
+    head = pick_order(orders, vendor, supplier, coding.company)
+    key = head["po_key"] if head else ""
+    po = store.purchase_order(key) if key else None
     result = PoMatch(po_number=number, found=po is not None, po=po)
+    if po is None and len(orders) > 1:  # the number of several orders, none of them told by supplier or company
+        result.orders = orders
+        said = (
+            f"{po_label(number)} is {len(orders)} purchase orders ({orders_named(orders)}): pick the invoice's company"
+        )
+        result.findings.append((WARNING, "PO_AMBIGUOUS", f"{said} to tell which it bills", None))
+        return result
     if po is None:
         result.findings.append((WARNING, "PO_UNKNOWN", f"{po_label(number)} is not in the purchase orders list", None))
         return result

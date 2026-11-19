@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..keys import po_key
+from ..keys import order_key_of
 from ..memory import vendor_key
 
 if TYPE_CHECKING:
@@ -70,4 +70,4 @@ def load_sample_purchase_orders(store: Store, data_dir: Path = SAMPLE_DATA_DIR) 
         records = list(csv.DictReader(fh))
     rows, _ = rows_from_records(records, map_columns(list(records[0]) if records else []))
     store.import_purchase_orders(rows)
-    return sorted({po_key(r["po_number"]) for r in rows})
+    return sorted({order_key_of(r) for r in rows})

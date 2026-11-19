@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 from ap_coder.bench.harness import READERS, _pct, default_workers, prepare_cases, run
 
@@ -34,6 +35,24 @@ QUICK = {
     "coding": {"vendors": 8, "invoices": 12, "took": "~5 s"},
     "triage": {"n": 60, "took": "~10 s"},
 }
+
+
+def _add_parts(sub: Any) -> Any:
+    """The commands of the bench's parts, each its own module's (``add_parser``); the load test's module."""
+    from ap_coder.bench import (
+        adversarial,
+        coding_journal,
+        companies_speed,
+        di_compare,
+        jde_po_vouchers,
+        load,
+        seed,
+        volume,
+    )
+
+    for part in (load, seed, volume, coding_journal, di_compare, adversarial, jde_po_vouchers, companies_speed):
+        part.add_parser(sub)
+    return load
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,10 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, sizes in QUICK.items():
         took = sizes["took"]
         parsers[name].add_argument("--quick", action="store_true", help=f"a small run to check a change ({took})")
-    from ap_coder.bench import adversarial, coding_journal, di_compare, jde_po_vouchers, load, seed, volume  # parts
-
-    for part in (load, seed, volume, coding_journal, di_compare, adversarial, jde_po_vouchers):
-        part.add_parser(sub)
+    load = _add_parts(sub)
     a = p.parse_args(argv)
     if a.cmd == "load":
         return load.main_load(a)

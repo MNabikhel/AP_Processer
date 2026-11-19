@@ -34,7 +34,8 @@ guides, the bug log (BUGS.md), decisions (decisions.md) and the owner's to-do li
   (D-225; Windows CI `windows-first-day`).
 - With a JD Edwards chart of accounts loaded (D-209 to D-214; the one-laptop guide: `docs/PROTOTYPE.md`): a line's
   account string `business unit.object.subsidiary` is joined and split only in `core/chart.py` (`AccountPairs`: which
-  pairs exist and can be posted to); the chart's tables `core/store/chart.py`, its reader `core/chart_file.py`; the past
+  pairs exist and can be posted to), answered from the database, never held in memory (`core/store/chart_index.py`,
+  D-267); the chart's tables `core/store/chart.py`, its reader `core/chart_file.py`; the past
   invoice coding (journal) `erp/journal.py` + `core/store/journal.py`, the suggestions from it `ai/supplier_prior.py`;
   the 30-character remark `coding/remark.py`; each line's taxes `coding/taxmath.py` (`invoice_taxes`); the keying sheet
   `erp/jde_keying.py`; the review row with one Account box `web/account_lines.py`; the uploads `web/pages/jde_files.py`
@@ -49,7 +50,8 @@ guides, the bug log (BUGS.md), decisions (decisions.md) and the owner's to-do li
   tab of `web/pages/accounts.py`.
 - Checks (findings with a code): `coding/validation.py` (`validate_coding` gathers them), payment terms
   `coding/terms.py`, tax `coding/tax.py` (`check_taxes`, `place_of_supply`), the Tax check `coding/taxmath.py`, line
-  tax codes `coding/line_tax.py`, ITCs and self-assessment `coding/taxreturn.py`, vendors `coding/vendors.py`. Every
+  tax codes `coding/line_tax.py`, ITCs and self-assessment `coding/taxreturn.py`, vendors `coding/vendors.py`, which JD Edwards company an invoice is for `coding/companies.py` (D-267; made-up
+  companies `bench/jde_group.py`, speed `bench/companies_speed.py`). Every
   check code needs a `CheckHelp` in `ops/help.py` (`tests/ops/test_help.py` enforces it).
 - Exports: `erp/exports.py` (Excel/CSV), Finance Hub `erp/hub/`. Reports: the rest of `erp/`.
 - Imports (D-234, D-236): one spec each of the columns a file needs, from its reader's own tables

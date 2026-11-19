@@ -18,11 +18,12 @@ from __future__ import annotations
 import fnmatch
 import re
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 from .headers import jde_names, match_columns
+from .keys import company_code
 
 SEPARATOR = "."
 
@@ -61,9 +62,11 @@ def split_account(text: Any) -> tuple[str, str]:
 
 # --- The chart's settings ----------------------------------------------------------------------------------------
 
-# The posting edit codes of an account AP may post to: blank alone (a title, an inactive or a budget-only account, a
-# machine-only one or one that wants a subledger has a letter). CONFIRM with the JD Edwards team before adding one.
-POSTABLE = ("",)
+# The posting edit codes of an account AP may post to: blank, and JD Edwards' L (a subledger is required) and U (units
+# are required), standard codes of accounts posted to (D-267; what they require is not checked yet). A title (N), a
+# budget-only (B), an inactive (I) or a machine-only (M) account has another. CONFIRM with the JD Edwards team before
+# adding one.
+POSTABLE = ("", "L", "U")
 HEADER_EDIT = "N"  # the posting edit code of a title account: the accounts under it roll up into it
 # The business unit master's status of a business unit that takes postings; blank: the file gives no status.
 ACTIVE = ("ACT", "")
@@ -109,8 +112,9 @@ class ChartSettings:
         (``Store.skip_words``): commas between, and saved blank they are none."""
         labels = _listed(saved.get("account_labels"))
         words = str(saved.get(SKIP_WORDS_SETTING, SKIP_WORDS_SAVED) or "").split(",")
+        codes = [c.upper() for c in _listed(saved.get("postable_codes"))]
         return cls(
-            postable_codes=tuple(dict.fromkeys(("", *(c.upper() for c in _listed(saved.get("postable_codes")))))),
+            postable_codes=tuple(dict.fromkeys(("", *codes))) if codes else POSTABLE,
             never_offered=tuple(p.upper() for p in _listed(saved.get("never_offered"))),
             skip_words=tuple(word.strip() for word in words if word.strip()),
             home_business_unit=clean(saved.get("home_business_unit")),
@@ -169,6 +173,8 @@ CHART_ALIASES: dict[str, tuple[str, ...]] = {
     "description": ("Account Description", "Description", *jde_names("F0901", "GM", "DL01")),
     "lod": ("L D", "LOD", "Level of Detail", "Account Level of Detail", *jde_names("F0901", "GM", "LDA")),
     "posting_edit": ("P E", "Posting Edit", "Posting Edit Code", *jde_names("F0901", "GM", "PEC")),
+    # Optional (D-267): the account's company, so a chart split by company loads a file a company at a time.
+    "company": ("Company", "Co", *jde_names("F0901", "GM", "CO")),
 }
 # The columns of the business unit master's export, then its table's (F0006).
 BU_ALIASES: dict[str, tuple[str, ...]] = {
@@ -236,6 +242,7 @@ class ChartRow:
     lod: int = 0
     posting_edit: str = ""
     category: str = ""
+    company: str = ""  # its company (F0901's GMCO, ``keys.company_code``; "" when the file gave none, D-267)
 
     @property
     def code(self) -> str:
@@ -313,7 +320,10 @@ def bu_columns(headers: Iterable[Any], name: str = FILE) -> dict[str, str]:
 # that many are read, before any is kept (B-2123).
 BU_MOST, OBJECT_MOST, SUBSIDIARY_MOST = 12, 6, 8
 TEXT_MOST = 80
-ROWS_MOST = 200_000
+# A group's chart is millions of accounts (D-267): a workbook loaded on the page holds its rows while they are read
+# (ROWS_MOST, about 350 MB at 1,000,000), a CSV streamed from disk by the command line never does (STREAMED_MOST).
+ROWS_MOST = 1_000_000
+STREAMED_MOST = 10_000_000
 
 
 def _whole(value: Any) -> int:
@@ -355,16 +365,18 @@ class _Rows:
     ``header_row``: row 1, or lower under a grid's title rows), the rows whose codes are not text, and the bound on
     how many rows are read."""
 
-    def __init__(self, header_row: int = 1) -> None:
+    def __init__(self, header_row: int = 1, most: int = 0) -> None:
         self.header_row = self.row = header_row
+        self.most = most or ROWS_MOST
         self.not_text: list[int] = []
 
     def next(self) -> int:
         self.row += 1
-        if self.row - self.header_row > ROWS_MOST:
+        if self.row - self.header_row > self.most:
             raise ChartError(
-                f"This file has more than {ROWS_MOST:,} rows, many times what a chart of accounts holds, so it was "
-                "not read. Export the chart or the business units from JD Edwards again and use the file as it comes."
+                f"This file has more than {self.most:,} rows, more than AP Coder reads of one file, so it was not "
+                "read. Export the chart a range of companies at a time (each file adds its companies' accounts), or "
+                "import it as a CSV with python -m ap_coder chart import --chart <file>.csv."
             )
         return self.row
 
@@ -396,8 +408,19 @@ def chart_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] 
     account above it (posting edit code N, a lower level of detail), which says what the description, cut at 30
     characters, no longer does. ``header_row``: the row the column names are on. The grid's total row ("Total"
     where the business unit is) is no row of the chart."""
-    out, count = Rows(), _Rows(header_row)
-    seen: set[tuple[str, str, str]] = set()
+    out = Rows()
+    out.rows = list(iter_chart_rows(records, out, columns, header_row))
+    return out
+
+
+def iter_chart_rows(records: Iterable[Mapping[str, Any]], out: Rows, columns: Mapping[str, str] | None = None,
+                    header_row: int = 1, most: int | None = None) -> Iterator[ChartRow]:  # fmt: skip
+    """``chart_rows``' rows one at a time, what is left out counted in ``out.skipped``, as they are read: a chart of
+    millions of accounts is never held (D-267). ``most``: the rows read at most (``ROWS_MOST``; a file streamed
+    from disk, ``STREAMED_MOST``); with it given, an account repeated is not looked for here (the store keeps it
+    once: ``Store.import_chart``)."""
+    count = _Rows(header_row, most or ROWS_MOST)
+    seen: set[tuple[str, str, str]] | None = set() if most is None else None
     titles: list[tuple[int, str]] = []  # the title accounts above this row in its business unit: (level, description)
     last_bu = None
     for record in records:
@@ -420,10 +443,11 @@ def chart_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] 
         if subsidiary and not obj:
             out.skip("rows with a subsidiary but no object account")
             continue
-        if (bu, obj, subsidiary) in seen:
+        if seen is not None and (bu, obj, subsidiary) in seen:
             out.skip("rows repeating an account already read")
             continue
-        seen.add((bu, obj, subsidiary))
+        if seen is not None:
+            seen.add((bu, obj, subsidiary))
         if bu != last_bu:
             titles, last_bu = [], bu
         lod, edit = _whole(cell.get("lod")), clean(cell.get("posting_edit")).upper()
@@ -433,9 +457,9 @@ def chart_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] 
         category = titles[-1][1] if lod and titles else ""
         if lod and obj and edit == HEADER_EDIT:
             titles.append((lod, description))
-        out.rows.append(ChartRow(bu, obj, subsidiary, description, lod, edit, category))
+        yield ChartRow(bu, obj, subsidiary, description, lod, edit, category,
+                       company_code(cell.get("company"))[:BU_MOST])  # fmt: skip
     count.end()
-    return out
 
 
 def bu_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] | None = None,
@@ -523,6 +547,8 @@ class AccountPairs:
         self._accounts: dict[str, dict[str, tuple[str, str]]] = {}  # business unit: {code: (description, edit code)}
         self._names: dict[str, str] = {}
         self._closed: set[str] = set()  # the business units the master says take no postings
+        self._company: dict[str, str] = {}  # business unit: its company (F0006's Co, D-267)
+        self._of_company: dict[str, frozenset[str]] | None = None  # (``units_of``, made at its first ask)
         for row in rows:
             if row.is_header:
                 self._names.setdefault(row.bu, row.description)
@@ -531,6 +557,8 @@ class AccountPairs:
         for unit in units:
             if unit.name:
                 self._names[unit.code] = unit.name
+            if unit.company:
+                self._company[unit.code] = company_code(unit.company)
             if unit.status not in ACTIVE:
                 self._closed.add(unit.code)
         # The business units held back for their name, with the word; then, of each code, the business units it is
@@ -551,6 +579,19 @@ class AccountPairs:
     def tally(self) -> Counter[str]:
         """How many of the chart's accounts are of each status (``OK``, ``RESERVED``...)."""
         return Counter(self.status(bu, code) for bu, codes in self._accounts.items() for code in codes)
+
+    def company_of(self, business_unit: Any) -> str:
+        """The company a business unit belongs to (the business unit master's; "" when not known)."""
+        return self._company.get(str(business_unit or "").strip(), "")
+
+    def units_of(self, company: str) -> frozenset[str]:
+        """The business units of ``company`` (``keys.company_code``) as the business unit master gives them."""
+        if self._of_company is None:
+            found: dict[str, set[str]] = {}
+            for bu, co in self._company.items():
+                found.setdefault(co, set()).add(bu)
+            self._of_company = {co: frozenset(units) for co, units in found.items()}
+        return self._of_company.get(company_code(company), frozenset())
 
     def closed_units(self) -> list[str]:
         """The business units the business unit master says are not active, in order."""

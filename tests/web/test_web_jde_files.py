@@ -50,10 +50,11 @@ def _accounts(store) -> int:
     return len([row for row in store.chart_accounts() if not row.is_header])
 
 
-def _upload_and_load(client, card: str, name: str, data: bytes):
-    """A chart or business unit file sent, shown, then loaded: the page after the load."""
+def _upload_and_load(client, card: str, name: str, data: bytes, whole: bool = False):
+    """A chart or business unit file sent, shown, then loaded (``whole``: starting over, D-267): the page after."""
     token = _token(client.post(f"/jde-files/{card}/upload", files={"file": (name, data)}, headers=PAGE))
-    return follow(client, client.post(f"/jde-files/{card}/load", data={"token": token}, headers=PAGE))
+    form = {"token": token, **({"whole": "1"} if whole else {})}
+    return follow(client, client.post(f"/jde-files/{card}/load", data=form, headers=PAGE))
 
 
 def _load_chart(client, exports) -> None:
@@ -66,9 +67,9 @@ def test_the_page_starts_with_nothing_loaded_and_says_the_order(client):
     assert page.count("Not yet") == 10 and "Loaded</span>" not in page  # the checklist's five lines, and each card
     assert page.count("Optional") >= 6  # (and the three D-266 added, which a company may not have)
     assert str(escape(jde_files.ORDER)) in page
-    for card in ("chart", "units", "suppliers", "journal", "vouchers", "orders", "terms", "areas"):
+    for card in ("chart", "units", "suppliers", "journal", "vouchers", "orders", "terms", "areas", "companies"):
         assert f'<section class="card stack" id="{card}">' in page and f'href="#{card}"' in page
-    assert page.count('type="file"') == 9  # (and the workbook's, at the top: D-266)
+    assert page.count('type="file"') == 10  # (and the workbook's, at the top: D-266; the companies', D-267)
 
 
 def test_the_chart_and_the_business_units_load_and_say_what_was_read(client, store, exports):
@@ -164,7 +165,9 @@ def test_the_one_company_of_the_business_units_is_offered_as_jd_edwards_company(
     assert "/jde-files/company" not in page
     refused = client.post("/jde-files/company", headers=PAGE)
     assert refused.status_code == 400 and jde_settings.load(store).company == "00001"
-    _load_chart(client, exports)
+    _load_chart(client, exports)  # (the other companies' business units kept: D-267)
+    assert {unit.company for unit in store.business_units()} == {"00002", "00210", "07310"}
+    _upload_and_load(client, "units", made.UNITS_FILE, (exports / made.UNITS_FILE).read_bytes(), whole=True)
     (company,) = {unit.company for unit in store.business_units()}
     page = client.get("/jde-files").text
     assert company != "00001" and f"Use company {company} (the one your business units belong to)" in page
@@ -451,7 +454,7 @@ def test_the_chart_is_shown_first_its_columns_in_any_order_and_loaded_only_on_lo
     assert "every column it needs is here." in summary and 'role="alert"' not in summary
     for header in ("Business Unit", "Object Account", "Subsidiary", "P E", "Account Description", "L D"):
         assert f'<span class="muted">as</span> “{header}”' in summary, header
-    assert "104 other columns of the file are not used:" in summary
+    assert "103 other columns of the file are not used:" in summary  # (its Company column is: D-267)
     offered = re.search(r"Load ([\d,]+) accounts</button>", summary)
     assert summary.count("<tr>") == 1 + 5 and offered
     assert store.chart_accounts() == []
@@ -526,7 +529,7 @@ def test_in_a_browser_a_shuffled_chart_is_shown_then_loaded_and_one_without_a_co
             page.locator("#chart .imp-upload button[type=submit]").click()
             page.wait_for_selector("#chart-summary")
             assert "every column it needs is here." in page.locator("#chart-summary").inner_text()
-            assert page.locator("#chart-summary .imp-check li.ok").count() == 6
+            assert page.locator("#chart-summary .imp-check li.ok").count() == 7  # (and its Company column: D-267)
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), width
             if width == 390:
                 assert store.chart_accounts() == []
@@ -792,9 +795,12 @@ def test_each_load_button_says_what_it_loads_and_what_that_replaces_or_adds_to(c
     accounts, units = _accounts(store), len(store.business_units())
     card = _card_of(client, "chart", _token(_send(client, "/jde-files/chart/upload", exports, made.CHART_FILE)))
     assert f"Load {accounts:,} accounts</button>" in card
-    assert f"Replaces the {accounts:,} accounts loaded now: the chart is taken whole from this file." in card
+    assert (
+        f"Replaces the accounts of the companies in this file (its Company column) among the {accounts:,} "
+        "accounts loaded now, the other companies&#39; kept"
+    ) in card  # (D-267)
     card = _card_of(client, "units", _token(_send(client, "/jde-files/units/upload", exports, made.UNITS_FILE)))
-    assert f"Load {units:,} business units</button>" in card and f"Replaces the {units:,} business units loaded" in card
+    assert f"Load {units:,} business units</button>" in card and f"among the {units:,} business units loaded" in card
     token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.SUPPLIERS_FILE))
     assert "Updates the" not in _card_of(client, "suppliers", token)  # (nothing loaded yet: nothing to update)
     follow(client, client.post("/jde-files/suppliers/load", data={"token": token}, headers=PAGE))
@@ -1058,7 +1064,7 @@ def test_each_more_is_named_after_what_it_is_about(client):
     times. Each names its report."""
     names = re.findall(r'<details class="imp-more"><summary>([^<]*)</summary>', client.get("/jde-files").text)
     more = [name for name in names if name.startswith("More")]
-    assert "More" not in names and len(more) == 8 and len(set(more)) == 8, names  # (and D-266's three)
+    assert "More" not in names and len(more) == 9 and len(set(more)) == 9, names  # (and D-266's three, D-267's one)
     assert "More about chart of accounts" in more and "More about invoices already in JD Edwards" in more
 
 

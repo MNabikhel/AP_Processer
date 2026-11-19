@@ -18,10 +18,11 @@ from typing import Any
 
 from ap_coder.capture.normalize import parse_dates
 from ap_coder.capture.types import DATE_FIELDS, MISSING, CaptureResult
-from ap_coder.coding import banks
+from ap_coder.coding import banks, companies
 from ap_coder.coding.po import po_label
 from ap_coder.coding.validation import ERROR, INFO, Issue
 from ap_coder.coding.vendors import expected_tax_numbers
+from ap_coder.core.keys import company_code
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store
@@ -255,6 +256,25 @@ def field_help(store: Store, coding: InvoiceCoding, draft: Draft, capture: Captu
             out[name] = {"text": "Boxed on the page, but the field is empty.",
                          "actions": [{"label": f"Use {short} from the page", "value": value}]}  # fmt: skip
     return out
+
+
+def company_choices(store: Store, header: dict[str, str], report: Any = None) -> dict[str, Any]:
+    """The Company box, with several of JD Edwards' companies (D-267; ``any`` False with one): each company as
+    "00210 Maple Ridge Constructors Ltd", the one chosen (the screen's, else the one its check decided), why it was
+    decided ("" picked or none), and a company not checked for Canadian tax said so (``tax``)."""
+    table = companies.companies(store)
+    if len(table) < 2:
+        return {"any": False}
+    checks = getattr(report, "checks", None) or {}
+    decided = checks.get("company") or {}
+    chosen = company_code(header.get("company") or decided.get("company") or "")
+    canadian, why = companies.canadian(store, chosen) if chosen else (True, "")
+    options = [(c.code, f"{c.code} {c.name}") for c in table.values()]
+    if chosen and chosen not in table:
+        options.append((chosen, f"{chosen} (not in JD Edwards' companies)"))
+    return {"any": True, "options": options, "value": chosen,
+            "said": decided.get("said", "") if decided.get("how") not in ("", "picked") else "",
+            "tax": "" if canadian else f"Not checked for Canadian tax ({why})"}  # fmt: skip
 
 
 def pay_from_choices(store: Store, header: dict[str, str]) -> dict[str, Any]:

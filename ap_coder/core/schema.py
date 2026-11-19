@@ -507,6 +507,10 @@ class LineItem(BaseModel):
 # The tax registration numbers filled from the vendor list, not printed on the invoice (the review screen, D-65): a list
 # of field names stored beside the coding, like the place of supply worked out.
 FROM_VENDOR_LIST = "tax_numbers_from_vendor_list"
+# A company not checked for Canadian tax (a US one, D-267): its voucher's tax area and where it came from, worked out
+# beside the coding ({"tax_area", "from"}: ``coding/companies.voucher_tax``) for the JD Edwards voucher.
+COMPANY_TAX = "company_tax"
+WORKED_OUT = (PLACE_OF_SUPPLY, FROM_VENDOR_LIST, COMPANY_TAX)
 
 
 def as_read(final: dict[str, Any], proposed: dict[str, Any]) -> dict[str, Any]:
@@ -538,6 +542,9 @@ class InvoiceCoding(BaseModel):
     original_invoice_number: str = ""
     remit_bank_account: str = ""  # the vendor's banking details as printed: evidence for the fraud check, never paid to
     pay_from_account: str = ""  # the code of OUR bank account it is paid from (coding/banks.py, D-66)
+    # The JD Edwards company it is ours under ("00210"), with several companies (D-267): AP Coder's answer
+    # (``coding/company.py``) or a person's pick; "" when none is decided (one company: always).
+    company: str = ""
     subtotal: float
     tax_lines: list[TaxLine] = Field(default_factory=list)
     tax_total: float
@@ -551,8 +558,8 @@ class InvoiceCoding(BaseModel):
         # A stored invoice keeps the place of supply worked out when no ship-to is printed beside the coding
         # (pipeline.finalise_coding); it is worked out again from the lines each time, so it is dropped here.
         # Likewise the tax numbers the review screen filled from the vendor list (D-65): kept beside the coding.
-        if isinstance(data, dict) and (PLACE_OF_SUPPLY in data or FROM_VENDOR_LIST in data):
-            data = {k: v for k, v in data.items() if k not in (PLACE_OF_SUPPLY, FROM_VENDOR_LIST)}
+        if isinstance(data, dict) and any(k in data for k in WORKED_OUT):
+            data = {k: v for k, v in data.items() if k not in WORKED_OUT}
         return data
 
     @model_validator(mode="after")
@@ -599,9 +606,11 @@ class InvoiceCoding(BaseModel):
         return province_code(value)
 
     def to_output(self) -> dict[str, Any]:
-        """The target schema; ``pay_from_account`` only when one is chosen (it is ours, not read from the invoice:
-        an invoice coded without bank accounts set up keeps the target schema exactly, D-66)."""
+        """The target schema; ``pay_from_account`` and ``company`` only when one is chosen (they are ours, not read
+        from the invoice: an invoice coded without bank accounts or several companies keeps the target schema exactly,
+        D-66, D-267)."""
         out = self.model_dump()
-        if not out.get("pay_from_account"):
-            out.pop("pay_from_account", None)
+        for name in ("pay_from_account", "company"):  # (ours, only when chosen: D-66, D-267)
+            if not out.get(name):
+                out.pop(name, None)
         return out

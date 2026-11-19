@@ -48,7 +48,7 @@ CHART = [
     (HOME, "5410", "2210", "Coffee and Refreshments", 7, ""),
     (HOME, "5410", "7701", "Recoveries", 7, ""),
     (HOME, "5430", "", "Courier", 6, "I"),
-    (HOME, "5440", "", "Travel by Employee", 6, "L"),
+    (HOME, "5440", "", "Travel by Employee", 6, "M"),  # (L and U are postable since D-267)
     (HOME, "5700", "", "Computer Software", 5, "N"),
     (HOME, "5710", "", "Software Subscriptions", 6, ""),
     (OTHER, "", "", "People and Culture", 3, "N"),

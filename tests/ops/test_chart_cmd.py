@@ -50,7 +50,7 @@ def test_the_lists_are_worked_out_again_on_demand(tmp_path, capsys):
 
 def test_the_charts_settings_are_set_and_shown_from_the_console(tmp_path, capsys):
     code, out, _ = _run(tmp_path, capsys, action="settings")
-    assert code == 0 and "Posting edit codes AP may post to: blank only." in out
+    assert code == 0 and "Posting edit codes AP may post to: blank and L, U." in out
     assert (
         "Never offered: none." in out
         and "Skip words: DO NOT USE, DNU." in out
@@ -64,7 +64,7 @@ def test_the_charts_settings_are_set_and_shown_from_the_console(tmp_path, capsys
     assert code == 0
     assert "Posting edit codes AP may post to: blank and M." in out and "Never offered: *.7701, 2140." in out
     assert f"Home business unit: {cf.HOME} (Head Office General)." in out
-    assert "GL accounts: 14 now (1 added, 0 changed, 0 removed)." in out  # the account with code M is listed at once
+    assert "GL accounts: 15 now (2 added, 0 changed, 0 removed)." in out  # the accounts with code M are listed at once
     store = Store(tmp_path / "ap_coder.db")
     assert (
         store.chart_settings().never_offered == ("*.7701", "2140") and "5620" in store.reference_data().line_accounts()
@@ -72,7 +72,7 @@ def test_the_charts_settings_are_set_and_shown_from_the_console(tmp_path, capsys
     assert store.events(actions=["settings_changed"])[0]["actor"] == chart_cmd.ACTOR
     code, out, _ = _run(tmp_path, capsys, action="show")
     assert code == 0 and "Chart of accounts: 32 accounts on 9 business units; 9 business units in the master." in out
-    assert "Never offered: *.7701, 2140." in out and "Accounts a line may be coded to: 14" in out
+    assert "Never offered: *.7701, 2140." in out and "Accounts a line may be coded to: 15" in out
     assert "In all, 4 accounts may be posted to but are never offered" in out
     # A setting is cleared with an empty value; a home business unit the chart does not have is refused.
     code, out, _ = _run(tmp_path, capsys, "--never-offered", "", "--skip-words", "closed", action="settings")
@@ -89,7 +89,7 @@ def test_both_files_are_imported_and_what_was_read_is_said(tmp_path, capsys):
     assert "Read 9 business units: 8 active, 1 not active." in out
     assert "Business units: 9 added, 0 changed, 0 removed." in out
     assert "Read 41 rows of the chart: 32 accounts on 9 business units; 19 may be posted to." in out
-    assert "Not for posting, by posting edit code: 1 with B, 1 with I, 1 with L, 1 with M, 9 with N." in out
+    assert "Not for posting, by posting edit code: 1 with B, 1 with I, 2 with M, 9 with N." in out
     assert "Chart of accounts: 41 rows added, 0 changed, 0 removed." in out
     assert "GL accounts: 13 now (13 added, 0 changed, 0 removed)." in out
     assert "Cost centers: 8 now (8 added, 0 changed, 0 removed)." in out

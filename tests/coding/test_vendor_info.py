@@ -253,7 +253,7 @@ def test_the_supplier_master_queried_with_its_address_book_carries_the_vendor_in
     assert vendor_info.in_master(made.SUPPLIERS_HEADER) == {}  # (the screen's grid: no vendor information)
     found = vendor_info.in_master(head)
     assert set(found) == {"tax_id", "tax_id2", "currency", "terms", "address1", "address2", "address3", "address4",
-                          "city", "state", "country", "postal_code", "email"}  # fmt: skip
+                          "city", "state", "country", "postal_code", "email", "tax_area"}  # fmt: skip
     assert vendor_info.in_master(["ABAN8", "ABALPH", "ABTAX", "A6CRRP", "EAEMAL"]).keys() == {"tax_id", "currency",
                                                                                                "email"}  # fmt: skip
     records = [dict(zip(head, row, strict=False)) for row in (

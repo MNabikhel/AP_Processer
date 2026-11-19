@@ -27,6 +27,26 @@ def po_key(value: Any) -> str:
     return text.lstrip("0") or text
 
 
+def company_code(value: Any) -> str:
+    """A JD Edwards company as it compares: five characters, zero-padded ("1" → "00001"); "" for none."""
+    text = str(value or "").strip()
+    return text.zfill(5) if text.isdigit() else text.upper()
+
+
+def order_key(number: Any, order_type: Any = "", order_company: Any = "") -> str:
+    """Which purchase order this is (D-267): its number as people mean it (``po_key``) when the file names no order
+    type or company, as before; else the company, the type and that number ("00210-OP-4512"): the same number in two
+    companies, or of two order types, is two orders whose lines never mix. "" for no number."""
+    number = po_key(number)
+    kind, company = str(order_type or "").strip().upper(), company_code(order_company)
+    return f"{company}-{kind}-{number}" if number and (kind or company) else number
+
+
+def order_key_of(row: dict[str, Any]) -> str:
+    """``order_key`` of a PO line as ``po.rows_from_records`` gives it."""
+    return order_key(row.get("po_number"), row.get("order_type"), row.get("order_company"))
+
+
 _NUMBER_PREFIXES = re.compile(r"^(invoice|inv|facture|fact|bill|no|num|nr|n°|#)+")
 
 

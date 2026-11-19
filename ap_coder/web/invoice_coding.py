@@ -14,7 +14,7 @@ from typing import Any
 
 from ap_coder.ai.offline_coder import supplier_evidence
 from ap_coder.ai.suggest import by_pairs, suggest_gl
-from ap_coder.coding.po import LineLeft, PoMatch, match_invoice, po_label
+from ap_coder.coding.po import LineLeft, PoMatch, match_invoice, orders_named, po_label
 from ap_coder.coding.remark import PERSON, one_line
 from ap_coder.core.chart import join_account
 from ap_coder.core.memory import pair_lines
@@ -64,7 +64,7 @@ def suggestions(store: Store, reference: ReferenceData, coding: InvoiceCoding) -
     feedback = store.learning_rows(coding.vendor_name, key)
     vendor = store.get_vendor(key)
     default_gl = (vendor or {}).get("default_gl") or ""
-    prior, units = supplier_evidence(store, vendor or coding.vendor_name, key, reference)
+    prior, units = supplier_evidence(store, vendor or coding.vendor_name, key, reference, coding.company)
     whole = by_pairs(reference, prior)
     out = []
     for pos, li in lines:
@@ -116,7 +116,7 @@ def po_section(store: Store, coding: InvoiceCoding, invoice_id: int,
         return None
     label = po_label(match.po_number)
     if not match.found:
-        return {"found": False, "label": label}
+        return {"found": False, "label": label, "several": orders_named(match.orders) if match.orders else ""}
     po = match.po or {}
     jde = bool(po.get("order_type"))  # a JD Edwards order (its export or the sync): keyed as a voucher match
     problems = sum(1 for m in match.lines if set(m.problems) - {"coding"})

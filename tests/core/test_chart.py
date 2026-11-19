@@ -151,7 +151,7 @@ def test_the_business_units_rows_come_clean():
 def test_the_settings_defaults():
     settings = ChartSettings.read({})
     assert settings == ChartSettings()
-    assert settings.postable_codes == ("",) and settings.never_offered == ()
+    assert settings.postable_codes == ("", "L", "U") and settings.never_offered == ()  # (D-267: JD Edwards' standard)
     assert settings.skip_words == ("DO NOT USE", "DNU") and settings.home_business_unit == ""
     assert settings.account_labels == ("Business unit", "Object", "Subsidiary")
 
@@ -208,7 +208,7 @@ def test_a_name_that_carries_a_skip_word(name, word):
         (HOME, "5430", NOT_POSTABLE),  # I: inactive
         ("0550421", "5620", NOT_POSTABLE),  # M
         ("05504218", "5720", NOT_POSTABLE),  # B
-        (HOME, "5440", NOT_POSTABLE),  # L
+        (HOME, "5440", NOT_POSTABLE),  # M
         (CLOSED, "5410", BU_INACTIVE),
         (CLOSED, "5460", BU_INACTIVE),
         (CLOSED, "9999", BU_INACTIVE),  # whatever the account: the business unit takes nothing

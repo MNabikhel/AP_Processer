@@ -6522,3 +6522,73 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     guessed; two sheets of a report replaced whole (chart, business units, terms, tax areas) both left out, said.
     "Load all" loads in order: chart, business units, terms, tax areas, suppliers, ledger, past coding, PO lines, each
     through its card's loader; one that fails is said and the rest load.
+- **D-267** · **Every JD Edwards company at once: a PO is its number, type and company; duplicates, the invoice's
+  company and what follows from it are per company** (the pilot tester: a construction group of many companies,
+  Canadian and US).
+  - **A purchase order is its number, order type and order company** (`keys.order_key`: "00210-OP-4512"; a file that
+    names neither keeps the number as its key, as before). `purchase_orders.number_key` keeps the number as people
+    mean it (schema 32 keeps each JD Edwards PO loaded before under its identity, lines and all). The same number in
+    two companies is two orders whose lines never mix. An invoice quotes a number only: it bills the one order of
+    that number, else the one of its supplier (name or supplier number), else of those the one of its company
+    (`po.pick_order`); none of these giving one answer is `PO_AMBIGUOUS` (never approved without a person), matched
+    to neither and billing neither (the PO page's totals, the billing of each PO, month-end's accruals:
+    `Store._order_owners`). `Store.purchase_order` still takes a number that is one order's alone.
+  - **Duplicates per company.** A JD Edwards voucher is kept by its key (company-type-document), so a bill of the
+    register knows the companies it is entered under (`Store.in_erp`'s `companies`; a register file names none). An
+    invoice whose company is decided and a bill entered only under other companies: `DUPLICATE_OTHER_COMPANY`
+    (warning, never approved without a person: "check it isn't keyed to the wrong company"); under its own, under
+    none, or no company decided: `DUPLICATE_IN_ERP`, the error it always was. JD Edwards' live answer is told the
+    same way (`vendors.entered_finding`). Two loads listing a voucher count it once (its key).
+  - **Which company** (`coding/companies.py`, `decide`). Report 9 (F0010: Company, Company Name, Currency Code,
+    with the address book's Country) is card 9 of JD Edwards files and a sheet of the master workbook (loaded first:
+    its names join "Your company's names", never read as a supplier). It is told by the build sheet's titles,
+    ReportsNow's defaults ("Co", "Name", "Cur Cod", "Country") or the fields (CCCO, CCNAME, CCCRCD, ALCTR), and only
+    with a company, a name and a currency or a country (`import_specs.company_list`, asked after every other report's
+    own marks: the business units' grid has "Co" and "Company Name", the vendor information list "Company Name" and
+    "Country"). Company 00000, JD Edwards' default, is left out. With two companies or more, an invoice's company is
+    the first rule giving one answer: its PO with its supplier; a company's name (or a name of Settings → Review
+    written "name = company") on the page, the supplier's own left out; the supplier's history (the past coding's
+    and the vouchers' companies); the business units of its lines; else `COMPANY_UNKNOWN` (error, never approved
+    anyway or in bulk) and a Company box on the review screen. The coding keeps it (`InvoiceCoding.company`, left out
+    of the target schema when blank: one company changes nothing). *Not chosen:* the default company for an
+    undecided invoice with several (a guess).
+  - **What follows.** VLCO and VNCO, the keying sheet's company and the PO's (VLPKCO when Settings gives none) are
+    the invoice's (`jde_settings.company_of`); the company's currency (report 9) is the voucher's domestic one
+    (`domestic_of`: a US company's USD invoice is no foreign voucher); the supplier's suggestions are of that
+    company's business units alone (`Prior.within`, from the first coding: `companies.early`).
+  - **Canadian tax or not** (the pilot tester: report 9's Country is unreliable). A company gets the GST/HST, PST and
+    QST checks only when its country is CA and its currency CAD (`companies.canadian`, said with why: "CA and CAD",
+    "currency USD", "no country"); Settings → JD Edwards E1's tax areas card turns them on or off per company, which
+    wins. Any other: every check but those (`check_taxes(canadian=False)`: the tax lines' sums only),
+    `US_TAX_NOT_CHECKED` (warning, never approved without a person), and its voucher's tax area from its PO line or
+    the supplier's default (F0401 Tax Rate/Area, `vendor_info.tax_area`) with the exempt code, else held.
+  - **The chart is asked in the database, never held** (the owner's decision: a group's postable chart is 2 to 3
+    million accounts, mostly job cost codes). `core/store/chart_index.IndexedPairs` answers what `AccountPairs`
+    answered (an account's status, description, posting edit code; a unit's accounts; a code's units; the codes and
+    units offered) by indexed queries (the key; `chart_accounts_code` on object and subsidiary), the 20,000 accounts
+    asked last kept, the units' names and status read once; a test proves it answers as `AccountPairs` on every pair
+    of the test chart under three settings. One code path for every size: at 10,000 accounts a line's check is 4 to 6
+    µs asked, 1.4 µs kept, against 1.7 µs in memory, nothing a person notices. The GL accounts and cost centers
+    (`chart.account_lists`) are worked out by SQLite (`store/chart._lists`, proven equal), the chart's hash a row at a
+    time. The Account box gets the list whole up to 20,000 accounts (`invoice_lookups.LIST_MOST`) and, above, or for
+    one company of several, searches as it is typed (`GET /review/accounts.json?q=`, `IndexedPairs.search`).
+  - **A chart split by company** (the account's company, F0901's GMCO, on `chart_accounts.company`): a file replaces
+    its companies' accounts (and those kept without a company on its business units), the others kept; the same for
+    the business units; "Start over" (`--whole`) replaces all. The rows go through a temporary table, 50,000 at a time,
+    and the chart is changed by SQL from it. The master workbook loads several chart sheets as parts (a company in two
+    of them: neither loaded). A chart saved as CSV is streamed from disk by `python -m ap_coder chart import --chart
+    FILE.csv`, with progress, up to 10,000,000 rows (`chart.STREAMED_MOST`), never held; the page's upload keeps its
+    50 MB (a workbook of about 1,000,000 rows at most: `chart.ROWS_MOST`), so a chart of millions is loaded by the
+    command, or a range of companies a file. JD Edwards' L and U are postable by default with blank (N, B, I, M not);
+    what they require is a later change. An account on a closed or unknown business unit, on a PO line or in the
+    past coding, never stops a load: an invoice using it is told (`BU_INACTIVE`, `ACCOUNT_NOT_IN_CHART`).
+  - **Measured** (`python -m ap_coder.bench companies`, the made-up group of `bench/jde_group.py`: 20 companies,
+    3,000,000 chart rows, 20,000 suppliers, 1,000,000 ledger rows, 3,000,000 past-coding lines, 100,000 PO lines; run at
+    0.1 and each load extrapolated linearly; the chart measured whole at 1,000,000 and 3,000,000). The chart's 3,000,000
+    rows load from a CSV in 49 s, the process at 152 MB at most (held in memory, 1,000,000 had taken 1.1 GB, its
+    reference data 26 s and 500 MB, its Account list 8 minutes); the codes and units offered, read once after a change,
+    3.3 s; a line's account check 12 µs (1.5 µs kept); a search 3 to 25 ms, 0.5 s for words found nowhere, 7 ms within
+    one company; a code's units (111,000 of them) 120 ms. The ledger 38 s, the past coding 203 s, the PO lines 1 s, the
+    suppliers 1 s. Each invoice: its company 3 ms, the suggestions 12 ms, the PO match 15 ms, the duplicate check 2 ms,
+    the whole check 51 ms. *Left as it is:* the workbook's survey reads every row with openpyxl (about 10,000 rows a
+    second): a full 50 MB workbook takes minutes to show; the chart of millions goes by the command line's CSV.

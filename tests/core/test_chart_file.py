@@ -41,7 +41,8 @@ def test_only_the_columns_the_import_needs_are_kept_a_row_at_a_time(tmp_path):
     assert iter(reading) is reading  # a row at a time: the sheet is never held whole
     records = list(reading)
     assert len(records) == len(cf.CHART)
-    assert list(records[0]) == ["Business Unit", "Object Account", "Subsidiary", "Account Description", "L D", "P E"]
+    assert list(records[0]) == ["Business Unit", "Object Account", "Subsidiary", "Account Description", "Company",
+                                "L D", "P E"]  # fmt: skip
     assert records[3]["Business Unit"] == "       07310" and records[0]["Object Account"] == " "  # cleaned later
 
 
@@ -250,5 +251,5 @@ def test_a_chart_of_the_real_size_is_read_in_well_under_a_minute(tmp_path):
     assert len(read.rows) == len(rows) == 14_740 and read.skipped == {}
     assert len({r.bu for r in read.rows}) == 134 and sum(r.is_header for r in read.rows) == 134
     assert read.rows[-1] == chart.ChartRow("0731066133", "5027", "1003", "Expense Account 107", 7, "",
-                                           "Operating Expenses")  # fmt: skip
+                                           "Operating Expenses", "07310")  # fmt: skip
     assert took < 45, f"a chart of the real size took {took:.0f} s to read"
