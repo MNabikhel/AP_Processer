@@ -158,7 +158,13 @@ Under the chart, **The chart's settings** has three boxes worth a look:
 - *Words in a name that retire a business unit or a supplier* (for example DO NOT USE);
 - *Home business unit*: where a line goes when nothing says otherwise.
 
-Then **Save the settings** under them. Two things the files do not say are offered on the page, each with one click:
+Then **Save the settings** under them. **Settings → JD Edwards E1 → Accounts AP posts to** says which posting edit
+codes take an invoice line (blank, and L and U ticked: a line coded to an L account asks for its subledger and type,
+one coded to a U account for its units, under the line, filled from the PO or the past coding when they can be) and
+lists the control accounts the past coding gives (the payable and tax objects), never suggested; add any other there
+(retainage payable, for example).
+
+Two things the files do not say are offered on the page, each with one click:
 
 - a chart does not say which accounts are meals accounts, so the top of the page has a **Meals accounts** line that
   names the accounts that read like meals; **Mark these ... as meals accounts** ticks them. Until one is ticked, the

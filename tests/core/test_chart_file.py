@@ -253,3 +253,74 @@ def test_a_chart_of_the_real_size_is_read_in_well_under_a_minute(tmp_path):
     assert read.rows[-1] == chart.ChartRow("0731066133", "5027", "1003", "Expense Account 107", 7, "",
                                            "Operating Expenses", "07310")  # fmt: skip
     assert took < 45, f"a chart of the real size took {took:.0f} s to read"
+
+
+def _counted_as_read(data: bytes, title: str, header: int, company: int | None):
+    """The rows under the header with a cell filled, and of each company, as every row read gives them (the survey's
+    way before D-271)."""
+    import itertools
+
+    rows, companies = 0, {}
+    for row in itertools.islice(chart_file.read_rows(data, "book.xlsx", title), header, None):
+        cells = ["" if cell is None else str(cell).strip() for cell in row]
+        if any(cells):
+            rows += 1
+            if company is not None and company < len(cells) and cells[company]:
+                companies[cells[company]] = companies.get(cells[company], 0) + 1
+    return rows, companies
+
+
+@pytest.mark.parametrize("write_only", [False, True], ids=["shared strings", "inline strings"])
+def test_a_sheets_rows_and_companies_are_counted_in_its_xml_as_reading_every_row_counts_them(tmp_path, write_only):
+    """D-271: the survey's counts without a cell made of the rows: shared strings (Excel's way) and inline ones, a
+    title row over the column names, rows of lone spaces and gaps, a company as a number and as text, a short row."""
+    book = openpyxl.Workbook(write_only=write_only)
+    sheet = book.create_sheet("GL lines") if write_only else book.active
+    if not write_only:
+        sheet.title = "GL lines"
+    rows = [["G/L lines of vouchers"], ["Document", "Doc Co", "Amount", "Remark"]]
+    rows += [[5000 + n, 210 if n % 3 else "00310", 12.5 * n, "AT&T <cell>" if n % 2 else " "] for n in range(1, 40)]
+    rows += [[" ", " ", None, " "], [None, None, None, " "], [6001], [None, "00420"], [" ", None, None, "x"]]
+    for row in rows:
+        sheet.append(row)
+    if not write_only:
+        sheet.cell(row=60, column=1, value=7000)  # (a gap of rows before it)
+    other = book.create_sheet("Notes")
+    other.append(["Note"])
+    path = tmp_path / "book.xlsx"
+    book.save(path)
+    data = path.read_bytes()
+    heads = {}
+
+    def pick(title, head):
+        heads[title] = head
+        return (2, 1) if title == "GL lines" else None
+
+    found = {title: (rows, companies) for title, rows, companies in chart_file.sheet_survey(data, pick, "book.xlsx")}
+    assert heads["GL lines"][:3] == [["G/L lines of vouchers"], ["Document", "Doc Co", "Amount", "Remark"],
+                                     ["5001", "210", "12.5", "AT&T <cell>"]]  # fmt: skip
+    assert found["GL lines"] == _counted_as_read(data, "GL lines", 2, 1)
+    assert found["GL lines"][0] == 39 + 3 + (0 if write_only else 1)
+    assert found["GL lines"][1] == {"210": 26, "00310": 13, "00420": 1}
+    assert found["Notes"] == (0, {}) and heads["Notes"] == [["Note"]]
+
+
+def test_a_sheet_whose_xml_names_its_namespace_is_counted_too(tmp_path):
+    """A workbook another program wrote, its elements prefixed ("x:row"), counts the same."""
+    import re
+
+    path = tmp_path / "book.xlsx"
+    _workbook(path, ["Business Unit", "Company"], ["  0880133142", "00210"], ["  0880133150", "00210"], [" ", " "])
+    data = path.read_bytes()
+    prefixed = tmp_path / "prefixed.xlsx"
+    with zipfile.ZipFile(path) as z, zipfile.ZipFile(prefixed, "w") as out:
+        for item in z.infolist():
+            part = z.read(item)
+            if item.filename.startswith("xl/worksheets/"):
+                part = re.sub(rb"<(/?)(?!\?)(\w+)", rb"<\1x:\2", part).replace(
+                    b"<x:worksheet xmlns=", b"<x:worksheet xmlns:x="
+                )
+            out.writestr(item, part)
+    expected = chart_file.sheet_survey(data, lambda title, head: (1, 1))
+    assert [found[1:] for found in expected] == [(2, {"00210": 2})]
+    assert chart_file.sheet_survey(prefixed.read_bytes(), lambda title, head: (1, 1)) == expected

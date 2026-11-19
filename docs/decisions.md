@@ -6633,3 +6633,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   or with none decided (one company, or not known yet), and `DUPLICATE_INVOICE_OTHER_COMPANY`, a warning never
   approved without a person, of those for another company: another company's bill with the same number, or one of the
   two given the wrong company. The re-check after one of them is rejected or deleted says it the same way.
+- **D-271** · **The master workbook's survey counts the rows in the sheets' XML, never reading them as cells**
+  (`chart_file.sheet_survey`; D-266's survey read every row with openpyxl, a 50 MB workbook taking minutes before its
+  summary, D-267's "left as it is"). One pass over the zip, no XML reader: each sheet's first ten rows as text, to
+  tell its report and where its column names are (`pick`), then its XML a block of whole rows at a time (8 MB), of
+  each row the cells up to one filled and the company column's; shared strings (Excel's) and inline ones, a namespace
+  prefix, rows the XML leaves out. The same counts as before (a test against reading every row; the made-up
+  workbooks' summaries compared whole). openpyxl had also parsed each sheet whole to find a size the file does not
+  give (a workbook written without `<dimension>`). *Measured* (`bench/jde_exports.master_workbook_xlsx` of the made-up
+  company's year, its ledger and G/L lines repeated; one process, a shared 4-core machine): 2.4 MB, 33,830 rows: 10.2
+  s before, 0.6 s now; 34 MB, 389,263 rows: 139 s before, 7.8 s now (the process at 172 and 195 MB at most: the
+  upload is held, two blocks read); 51 MB, 576,333 rows (the upload's bound): 12.2 s now, 211 MB. *Not chosen:* the
+  summary shown as it is counted (a few seconds need no progress); the sheet's `<dimension>` (ReportsNow may not
+  write it, and it counts blank rows).

@@ -65,27 +65,25 @@ def _cells(row: Any) -> list[str]:
 def survey(content: bytes, name: str) -> dict[str, Any]:
     """Each sheet of the workbook: its title, the report it is (``import_specs.workbook_report``; None: none), the
     row its column names are on (``at``), its column names, how many rows it has under them with a cell filled
-    (``rows``) and of each company (``companies``). ``ChartError`` for a workbook that cannot be read."""
-    sheets = []
-    for title, head in chart_file.sheet_heads(content, name):
-        cells = [_cells(row) for row in head]
-        key, at = next(((import_specs.workbook_report(row), n) for n, row in enumerate(cells)
+    (``rows``) and of each company (``companies``). The rows are counted in the sheets' XML, of each row the company
+    column alone read (``chart_file.sheet_survey``: a 50 MB workbook in seconds, D-271). ``ChartError`` for a
+    workbook that cannot be read."""
+    sheets: dict[str, dict[str, Any]] = {}
+
+    def pick(title: str, head: list[list[str]]) -> tuple[int, int | None] | None:
+        key, at = next(((import_specs.workbook_report(row), n) for n, row in enumerate(head)
                         if import_specs.workbook_report(row)), (None, 0))  # fmt: skip
-        sheet: dict[str, Any] = {"title": title, "key": key, "at": at, "headers": cells[at] if key else [],
-                                 "rows": 0, "companies": {}}  # fmt: skip
-        if key:
-            spec = SPECS.get(key)
-            found = import_specs.check(spec, cells[at]).found if spec else {}
-            company = cells[at].index(found[COMPANY[key]]) if COMPANY.get(key) in found else None
-            for row in itertools.islice(chart_file.read_rows(content, name, title), at + 1, None):
-                filled = _cells(row)
-                if not any(filled):
-                    continue
-                sheet["rows"] += 1
-                if company is not None and company < len(filled) and filled[company]:
-                    sheet["companies"][filled[company]] = sheet["companies"].get(filled[company], 0) + 1
-        sheets.append(sheet)
-    return {"name": name, "sheets": sheets}
+        sheets[title] = {"title": title, "key": key, "at": at, "headers": head[at] if key else [], "rows": 0,
+                         "companies": {}}  # fmt: skip
+        if not key:
+            return None
+        spec = SPECS.get(key)
+        found = import_specs.check(spec, head[at]).found if spec else {}
+        return at + 1, head[at].index(found[COMPANY[key]]) if COMPANY.get(key) in found else None
+
+    for title, rows, companies in chart_file.sheet_survey(content, pick, name):
+        sheets[title].update(rows=rows, companies=companies)
+    return {"name": name, "sheets": list(sheets.values())}
 
 
 def _verdicts(sheets: list[dict[str, Any]]) -> list[dict[str, Any]]:
