@@ -13,7 +13,9 @@ string, name or business unit's name has every word typed, found by the business
 ``SEARCH_MOST``.
 
 It is the chart for every size (measured, D-267: 10,000 accounts as fast as in memory for a line's check, 3,000,000
-without holding them): ``Store.account_pairs`` gives one, kept with the reference data.
+without holding them): ``Store.account_pairs`` gives one, kept with the reference data. Each thread asks on a
+connection of its own, kept open; ``close`` closes them all (the reference data built again, a restore: Windows
+refuses to replace or remove a database file a connection holds, B-2653).
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import weakref
 from collections import Counter, OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -29,6 +32,7 @@ from typing import Any
 from ..chart import (
     ACTIVE,
     BU_INACTIVE,
+    BU_UNKNOWN,
     NOT_IN_CHART,
     NOT_POSTABLE,
     OK,
@@ -51,6 +55,27 @@ CODE_INDEX = "CREATE INDEX IF NOT EXISTS chart_accounts_code ON chart_accounts (
 UNIT_COMPANY_INDEX = "CREATE INDEX IF NOT EXISTS business_units_company ON business_units (company)"
 
 
+def _globbed(patterns: tuple[str, ...]) -> tuple[str, list[str]] | None:
+    """The accounts never offered (``chart._never_offered``'s patterns) as SQL: (the condition, its values), each
+    pattern matched against the object, the ``object.subsidiary`` or the whole string as its dots say, by GLOB
+    (``*`` and ``?`` as ``fnmatch``'s; ``[!...]`` as GLOB's ``[^...]``); None for no pattern."""
+    if not patterns:
+        return None
+    told = ("object", "object || '.' || subsidiary", "bu || '.' || object || '.' || subsidiary")
+    return (" OR ".join(f"{told[min(p.count('.'), 2)]} GLOB ?" for p in patterns),
+            [p.replace("[!", "[^") for p in patterns])  # fmt: skip
+
+
+class _Own:
+    """A thread's own connection to the chart (``IndexedPairs._reader``): how many of its questions are asked on it
+    now, and whether ``close`` was asked meanwhile (then it is closed once they are answered)."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self.conn: sqlite3.Connection | None = conn
+        self.asking = 1
+        self.closing = False
+
+
 class IndexedPairs:
     """The chart of ``store`` as the checks and the suggestions ask it (``AccountPairs``' answers), with its settings
     ``settings``. Shared by the threads of a process: read it, don't change it."""
@@ -60,9 +85,13 @@ class IndexedPairs:
         self._store = store
         self._lock = threading.Lock()
         self._local = threading.local()  # (each thread's own connection, when it holds no session)
-        self._kept: OrderedDict[tuple[str, str], tuple[str, str] | None] = OrderedDict()
-        self._units: tuple[dict[str, str], set[str], dict[str, str], dict[str, str]] | None = None
+        # Every thread's own connection open now, for ``close`` (one of a thread that has ended is closed with it).
+        self._own: weakref.WeakSet[_Own] = weakref.WeakSet()
+        self._kept: OrderedDict[tuple[str, str], tuple[str, str, str] | None] = OrderedDict()
+        self._units: tuple[dict[str, str], set[str], dict[str, str], dict[str, str], set[str]] | None = None
         self._offered: tuple[frozenset[str], tuple[str, ...]] | None = None
+        self._pilot: frozenset[str] | None = None
+        self._tally: Counter[str] | None = None
 
     @contextmanager
     def _reader(self) -> Iterator[sqlite3.Connection]:
@@ -74,26 +103,63 @@ class IndexedPairs:
             with self._store._conn() as conn:
                 yield conn
             return
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = self._local.conn = self._store._open()
-        yield conn
+        with self._lock:
+            own = getattr(self._local, "own", None)
+            conn = own.conn if own is not None else None
+            if own is not None and conn is not None:
+                own.asking += 1
+        if own is None or conn is None:  # this thread's first question, or the first since ``close``
+            conn = self._store._open(any_thread=True)  # (``close`` closes it from whichever thread)
+            with self._lock:
+                own = self._local.own = _Own(conn)
+                self._own.add(own)
+        try:
+            yield conn
+        finally:
+            with self._lock:
+                own.asking -= 1
+                done = own.conn if own.closing and not own.asking else None
+                if done is not None:
+                    own.conn, own.closing = None, False
+                    self._own.discard(own)
+            if done is not None:
+                done.close()
+
+    def close(self) -> None:
+        """Close the connection each thread opened to ask the chart; one a question is asked on now is closed by its
+        thread once the question is answered. Then nothing of it holds the database file open. A question asked
+        after opens one again (an invoice being checked with the reference data this belonged to, replaced
+        meanwhile, still finishes); what was read once (the business units, the codes offered) is kept."""
+        idle: list[sqlite3.Connection] = []
+        with self._lock:
+            for own in list(self._own):
+                if own.asking:
+                    own.closing = True
+                elif own.conn is not None:
+                    idle.append(own.conn)
+                    own.conn = None
+                    self._own.discard(own)
+        for conn in idle:
+            conn.close()
 
     # --- What is read once: the business units, and the codes and units offered ------------------------------------
 
-    def _unit_facts(self) -> tuple[dict[str, str], set[str], dict[str, str], dict[str, str]]:
-        """({business unit: name}, the closed ones, {business unit: company}, {business unit: skip word}): the master's
-        and each business unit's title row in the chart, read once."""
+    def _unit_facts(self) -> tuple[dict[str, str], set[str], dict[str, str], dict[str, str], set[str]]:
+        """({business unit: name}, the closed ones, {business unit: company}, {business unit: skip word}, the business
+        units of the business units report): the master's and each business unit's title row in the chart, read
+        once."""
         if self._units is None:
             names: dict[str, str] = {}
             closed: set[str] = set()
             companies: dict[str, str] = {}
+            listed: set[str] = set()
             with self._reader() as conn:
                 for bu, description in conn.execute("SELECT bu, description FROM chart_accounts WHERE object = '' "
                                                      "AND subsidiary = '' ORDER BY bu"):  # fmt: skip
                     names.setdefault(bu, description)
                 for code, name, company, status in conn.execute("SELECT code, name, company, status FROM "
                                                                 "business_units"):  # fmt: skip
+                    listed.add(code)
                     if name:
                         names[code] = name
                     if company:
@@ -101,21 +167,31 @@ class IndexedPairs:
                     if status not in ACTIVE:
                         closed.add(code)
             skipped = {bu: word for bu, name in names.items() if (word := skip_word(name, self.settings.skip_words))}
-            self._units = (names, closed, companies, skipped)
+            self._units = (names, closed, companies, skipped, listed)
         return self._units
+
+    def _unit_held(self, bu: str, company: str) -> bool:
+        """Whether nothing on business unit ``bu`` is offered, whatever the account (its own ``company`` given): it is
+        closed, named to be skipped, not in the business units report, or of a company held back (D-272)."""
+        _names, closed, companies, skipped, listed = self._unit_facts()
+        return (bu in closed or bu in skipped or bool(listed and bu not in listed)
+                or bool(self.settings.company_held(companies.get(bu) or company)))  # fmt: skip
 
     def _offered_once(self) -> tuple[frozenset[str], tuple[str, ...]]:
         """(the GL codes offered on a business unit at least, the business units with an account offered), of one
         pass over the accounts that may be posted to, holding the two sets alone."""
         if self._offered is None:
-            _names, closed, _companies, skipped = self._unit_facts()
             patterns = self.settings.held_back
             codes: set[str] = set()
             units: set[str] = set()
-            sql = f"SELECT bu, object, subsidiary FROM chart_accounts WHERE object != '' AND {_in_list('posting_edit')}"
+            sql = (f"SELECT bu, object, subsidiary, company FROM chart_accounts WHERE object != '' AND "
+                   f"{_in_list('posting_edit')}")  # fmt: skip
+            held: dict[tuple[str, str], bool] = {}
             with self._reader() as conn:
-                for bu, obj, sub in conn.execute(sql, (json.dumps(list(self.settings.postable_codes)),)):
-                    if bu in closed or bu in skipped:
+                for bu, obj, sub, company in conn.execute(sql, (json.dumps(list(self.settings.postable_codes)),)):
+                    if (bu, company) not in held:
+                        held[(bu, company)] = self._unit_held(bu, company)
+                    if held[(bu, company)]:
                         continue
                     code = code_of(obj, sub)
                     if patterns and _never_offered(patterns, bu, code):
@@ -127,8 +203,9 @@ class IndexedPairs:
 
     # --- One account ------------------------------------------------------------------------------------------------
 
-    def _found(self, business_unit: Any, code: Any) -> tuple[str, str, tuple[str, str] | None]:
-        """(the business unit, the GL code, (its description, its posting edit code) or None: no such account)."""
+    def _found(self, business_unit: Any, code: Any) -> tuple[str, str, tuple[str, str, str] | None]:
+        """(the business unit, the GL code, (its description, its posting edit code, its company) or None: no such
+        account)."""
         bu, code = _code(business_unit), _gl(code)
         key = (bu, code)
         with self._lock:
@@ -137,38 +214,45 @@ class IndexedPairs:
                 return bu, code, self._kept[key]
         obj, sub = split_code(code)
         with self._reader() as conn:
-            row = conn.execute("SELECT description, posting_edit FROM chart_accounts WHERE bu = ? AND object = ? AND "
-                               "subsidiary = ?", (bu, obj, sub)).fetchone() if obj else None  # fmt: skip
-        found = (row[0], row[1]) if row is not None else None
+            row = conn.execute("SELECT description, posting_edit, company FROM chart_accounts WHERE bu = ? AND "
+                               "object = ? AND subsidiary = ?", (bu, obj, sub)).fetchone() if obj else None  # fmt: skip
+        found = (row[0], row[1], row[2]) if row is not None else None
         with self._lock:
             self._kept[key] = found
             while len(self._kept) > ACCOUNTS_KEPT:
                 self._kept.popitem(last=False)
         return bu, code, found
 
-    def _status(self, bu: str, code: str, found: tuple[str, str] | None) -> str:
-        if bu in self._unit_facts()[1]:
+    def _status(self, bu: str, code: str, found: tuple[str, str, str] | None) -> str:
+        facts = self._unit_facts()
+        if bu in facts[1]:
             return BU_INACTIVE
         if found is None:
             return NOT_IN_CHART
         if found[1] not in self.settings.postable_codes:
             return NOT_POSTABLE
-        return RESERVED if self._why(bu, code) else OK
+        if facts[4] and bu not in facts[4]:
+            return BU_UNKNOWN
+        return RESERVED if self._why(bu, code, found[2]) else OK
 
-    def _why(self, bu: str, code: str) -> str:
+    def _why(self, bu: str, code: str, company: str) -> str:
         pattern = _never_offered(self.settings.held_back, bu, code)
         if pattern:
             return self.settings.why_held(pattern)
         word = self._unit_facts()[3].get(bu)
-        return f"the name of business unit {bu} says {word}" if word else ""
+        if word:
+            return f"the name of business unit {bu} says {word}"
+        held = self.settings.company_held(self._unit_facts()[2].get(bu) or company)
+        return f"business unit {bu}: {held}" if held else ""
 
     def status(self, business_unit: Any, code: Any) -> str:
-        """``AccountPairs.status``: ``OK``, ``BU_INACTIVE``, ``NOT_IN_CHART``, ``NOT_POSTABLE`` or ``RESERVED``."""
+        """``AccountPairs.status``: ``OK``, ``BU_INACTIVE``, ``NOT_IN_CHART``, ``NOT_POSTABLE``, ``BU_UNKNOWN`` or
+        ``RESERVED``."""
         return self._status(*self._found(business_unit, code))
 
     def why_reserved(self, business_unit: Any, code: Any) -> str:
         bu, code, found = self._found(business_unit, code)
-        return self._why(bu, code) if found is not None else ""
+        return self._why(bu, code, found[2]) if found is not None else ""
 
     def offered(self, business_unit: Any, code: Any) -> bool:
         return self.status(business_unit, code) == OK
@@ -187,12 +271,12 @@ class IndexedPairs:
         """The GL codes offered on a business unit, in order (its accounts, by the chart's key)."""
         bu = _code(business_unit)
         with self._reader() as conn:
-            rows = conn.execute("SELECT object, subsidiary, description, posting_edit FROM chart_accounts WHERE bu = ? "
-                                "AND object != ''", (bu,)).fetchall()  # fmt: skip
+            rows = conn.execute("SELECT object, subsidiary, description, posting_edit, company FROM chart_accounts "
+                                "WHERE bu = ? AND object != ''", (bu,)).fetchall()  # fmt: skip
         out = []
-        for obj, sub, description, edit in rows:
+        for obj, sub, description, edit, company in rows:
             code = code_of(obj, sub)
-            if self._status(bu, code, (description, edit)) == OK:
+            if self._status(bu, code, (description, edit, company)) == OK:
                 out.append(code)
         return sorted(out)
 
@@ -203,15 +287,18 @@ class IndexedPairs:
         obj, sub = split_code(code)
         if not obj:
             return ()
-        skipped, patterns = self._unit_facts()[3], self.settings.held_back
+        patterns = self.settings.held_back
         closed = f"SELECT code FROM business_units WHERE status NOT IN ({', '.join('?' * len(ACTIVE))})"
-        sql = (f"SELECT bu FROM chart_accounts WHERE object = ? AND subsidiary = ? AND {_in_list('posting_edit')} "
-               f"AND bu NOT IN ({closed}) ORDER BY bu")  # fmt: skip
+        sql = (f"SELECT bu, company FROM chart_accounts WHERE object = ? AND subsidiary = ? AND "
+               f"{_in_list('posting_edit')} AND bu NOT IN ({closed}) ORDER BY bu")  # fmt: skip
         postable = json.dumps(list(self.settings.postable_codes))
         with self._reader() as conn:
             rows = conn.execute(sql, (obj, sub, postable, *ACTIVE)).fetchall()
-        return tuple(bu for (bu,) in rows
-                     if bu not in skipped and not (patterns and _never_offered(patterns, bu, code)))  # fmt: skip
+        return tuple(
+            bu
+            for bu, company in rows
+            if not self._unit_held(bu, company) and not (patterns and _never_offered(patterns, bu, code))
+        )
 
     def offered_codes(self) -> frozenset[str]:
         return self._offered_once()[0]
@@ -256,19 +343,67 @@ class IndexedPairs:
     def skipped_units(self) -> dict[str, str]:
         return dict(sorted(self._unit_facts()[3].items()))
 
+    def unlisted_units(self, most: int) -> list[str]:
+        if not self._unit_facts()[4]:
+            return []
+        with self._reader() as conn:
+            return [
+                r[0]
+                for r in conn.execute(
+                    "SELECT DISTINCT bu FROM chart_accounts WHERE object != '' AND bu NOT IN "
+                    "(SELECT code FROM business_units) ORDER BY bu LIMIT ?",
+                    (most,),
+                )
+            ]
+
     def __len__(self) -> int:
         with self._reader() as conn:
             return int(conn.execute("SELECT COUNT(*) FROM chart_accounts WHERE object != ''").fetchone()[0])
 
     def tally(self) -> Counter[str]:
-        """How many of the chart's accounts are of each status, in one pass."""
+        """How many of the chart's accounts are of each status: counted by SQLite by business unit, company and
+        whether the posting edit code is one AP posts to, the accounts never offered by their patterns as SQLite's
+        GLOB (``fnmatch``'s own wildcards), never a row at a time (D-272: 3,500,000 accounts in 3 s), once for the
+        chart and its settings (a page shows it at each view)."""
+        if self._tally is not None:
+            return Counter(self._tally)
         out: Counter[str] = Counter()
+        _names, closed, companies, skipped, listed = self._unit_facts()
+        postable = json.dumps(list(self.settings.postable_codes))
+        open_units: Counter[tuple[str, str]] = Counter()  # (business unit, company): accounts that may be offered
         with self._reader() as conn:
-            for bu, obj, sub, description, edit in conn.execute(
-                "SELECT bu, object, subsidiary, description, posting_edit FROM chart_accounts WHERE object != ''"
-            ):
-                out[self._status(bu, code_of(obj, sub), (description, edit))] += 1
-        return out
+            for bu, company, edit_ok, n in conn.execute(
+                f"SELECT bu, company, {_in_list('posting_edit')}, COUNT(*) FROM chart_accounts WHERE object != '' "
+                "GROUP BY bu, company, 3", (postable,)):  # fmt: skip
+                if bu in closed:
+                    out[BU_INACTIVE] += n
+                elif not edit_ok:
+                    out[NOT_POSTABLE] += n
+                elif listed and bu not in listed:
+                    out[BU_UNKNOWN] += n
+                elif bu in skipped or self.settings.company_held(companies.get(bu) or company):
+                    out[RESERVED] += n
+                else:
+                    open_units[(bu, company)] += n
+            matched = _globbed(self.settings.held_back)
+            if matched:
+                for bu, company, n in conn.execute(
+                    f"SELECT bu, company, COUNT(*) FROM chart_accounts WHERE object != '' AND "
+                    f"{_in_list('posting_edit')} AND ({matched[0]}) GROUP BY bu, company",
+                    (postable, *matched[1]),
+                ):
+                    if (bu, company) in open_units:
+                        open_units[(bu, company)] -= n
+                        out[RESERVED] += n
+        out[OK] += sum(open_units.values())
+        self._tally = +out
+        return Counter(self._tally)
+
+    def _pilot_units(self) -> frozenset[str]:
+        """The business units of the companies in the pilot, as the business units report gives them (read once)."""
+        if self._pilot is None:
+            self._pilot = frozenset(bu for bu, co in self._unit_facts()[2].items() if co in self.settings.pilot)
+        return self._pilot
 
     # --- The Account box's search ---------------------------------------------------------------------------------
 
@@ -292,17 +427,29 @@ class IndexedPairs:
                 named = sorted(bu for bu, name in names.items() if word in name.upper())[:500]
                 clauses.append(f"({dialect.like('description')} OR {_in_list('bu')})")
                 params += [f"%{word}%", json.dumps(named)]
+        # What may be posted to, of the companies in the pilot and the business units of the report, asked of SQLite
+        # (D-272): the accounts held back are half a group's chart, never the most * 20 rows read.
+        listed = self._unit_facts()[4]
+        if self.settings.pilot and listed:
+            units = self._pilot_units() if units is None else units & self._pilot_units()
+        elif self.settings.pilot:
+            clauses.append(_in_list("company"))
+            params.append(json.dumps(list(self.settings.pilot)))
         if units is not None:  # (one company's: its business units', by the chart's key)
             clauses.append(_in_list("bu"))
             params.append(json.dumps(sorted(units)))
+        elif listed:
+            clauses.append("bu IN (SELECT code FROM business_units)")
+        clauses.append(_in_list("posting_edit"))
+        params.append(json.dumps(list(self.settings.postable_codes)))
         out: list[list[str]] = []
-        sql = (f"SELECT bu, object, subsidiary, description, posting_edit FROM chart_accounts WHERE object != '' AND "
-               f"{' AND '.join(clauses)} ORDER BY bu, object, subsidiary LIMIT ?")  # fmt: skip
+        sql = (f"SELECT bu, object, subsidiary, description, posting_edit, company FROM chart_accounts WHERE object != "
+               f"'' AND {' AND '.join(clauses)} ORDER BY bu, object, subsidiary LIMIT ?")  # fmt: skip
         with self._reader() as conn:
             rows = conn.execute(sql, (*params, most * 20)).fetchall()
-        for bu, obj, sub, description, edit in rows:
+        for bu, obj, sub, description, edit, company in rows:
             code = code_of(obj, sub)
-            if self._status(bu, code, (description, edit)) == OK:
+            if self._status(bu, code, (description, edit, company)) == OK:
                 out.append([f"{bu}.{code}", description, names.get(bu, "")])
                 if len(out) >= most:
                     break

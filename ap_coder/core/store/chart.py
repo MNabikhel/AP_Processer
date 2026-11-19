@@ -11,22 +11,26 @@ the lists is set aside (``chart_set_aside``) and put back when the code is in th
 
 Which pairs exist and may be posted to (``account_pairs``) is built once for a chart and its settings, and kept with
 the reference data: ``accounts._REFERENCE_STAMP`` reads the settings, ``chart_version`` (the count of changes) and
-``chart_hash`` (what the two tables hold, written with them: another chart never passes for the one kept, B-2125).
+``chart_hash`` (a random mark written with each change: another chart never passes for the one kept, B-2125, D-272).
 A database with no chart imported has none: nothing of this is used.
 """
 
 from __future__ import annotations
 
-import hashlib
 import itertools
 import json
+import secrets
 import sqlite3
+from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..chart import (
     ACTIVE,
+    COMPANIES_KEY,
     CONTROL_KEYS,
+    EXAMPLES,
     SETTING_KEYS,
     VERSION_KEY,
     WITHOUT_KEY,
@@ -42,6 +46,7 @@ from .chart_index import IndexedPairs
 
 CHART_COLUMNS = ("bu", "object", "subsidiary", "description", "lod", "posting_edit", "category", "company")
 BU_COLUMNS = ("code", "name", "company", "type", "status")
+STAGED_COLUMNS = (*CHART_COLUMNS, "line")  # a row staged (``chart_load``): its row of the file too (D-272)
 HASH_KEY = "chart_hash"  # what the two tables hold (settings: read by the reference data's stamp)
 ASIDE_KEY = "chart_set_aside"  # what a person typed on the codes that left the lists (settings, JSON)
 NAMED = 50  # the codes an import's result and its event name of each kind (the counts say them all)
@@ -69,7 +74,7 @@ def _units(conn: sqlite3.Connection) -> list[BuRow]:
 
 def _settings(conn: sqlite3.Connection) -> ChartSettings:
     rows = conn.execute(f"SELECT key, value FROM settings WHERE {_in_list('key')}",
-                        (json.dumps([*SETTING_KEYS, *CONTROL_KEYS]),))  # fmt: skip
+                        (json.dumps([*SETTING_KEYS, *CONTROL_KEYS, COMPANIES_KEY]),))  # fmt: skip
     return ChartSettings.read({r["key"]: r["value"] for r in rows})
 
 
@@ -99,11 +104,18 @@ def _lists(conn: sqlite3.Connection, settings: ChartSettings | None = None) -> t
              f"WHERE status NOT IN ({', '.join('?' * len(ACTIVE))}))")  # fmt: skip
     params = (json.dumps(list(settings.postable_codes)), *ACTIVE)
     best: dict[str, dict[str, tuple[int, str, str]]] = {"description": {}, "category": {}}
+    # (one pass for both: each code's descriptions and titles counted from its distinct pairs of the two, D-272)
+    counted: dict[str, dict[tuple[str, str], list[Any]]] = {"description": {}, "category": {}}
+    for obj, sub, description, category, n, first in conn.execute(
+            f"SELECT c.object, c.subsidiary, c.description, c.category, COUNT(*), MIN(c.bu) FROM chart_accounts c "
+            f"WHERE {where} GROUP BY c.object, c.subsidiary, c.description, c.category", params):  # fmt: skip
+        code = code_of(obj, sub)
+        for column, text in (("description", description), ("category", category)):
+            had = counted[column].setdefault((code, text), [0, first])
+            had[0] += n
+            had[1] = min(had[1], first)
     for column, found in best.items():
-        for obj, sub, text, n, first in conn.execute(
-                f"SELECT c.object, c.subsidiary, c.{column}, COUNT(*), MIN(c.bu) FROM chart_accounts c WHERE {where} "
-                f"GROUP BY c.object, c.subsidiary, c.{column}", params):  # fmt: skip
-            code = code_of(obj, sub)
+        for (code, text), (n, first) in counted[column].items():
             had = found.get(code)
             if text and (had is None or not had[2] or n > had[0] or (n == had[0] and first < had[1])):
                 found[code] = (n, first, text)
@@ -138,12 +150,13 @@ def _batches(rows: Iterable[Any], size: int) -> Iterator[list[Any]]:
         yield batch
 
 
-def _scope(conn: sqlite3.Connection, whole: bool) -> tuple[str, list[str]]:
+def _scope(conn: sqlite3.Connection, whole: bool, named: Iterable[str] | None = None) -> tuple[str, list[str]]:
     """(the chart's rows a load replaces, as SQL of ``chart_accounts``; the companies said: those of the file, when
     another company's rows are kept): the file's companies' accounts, and those kept without a company on its
-    business units; ``whole``, or a file naming no company, every row (D-267)."""
-    companies = [r[0] for r in conn.execute("SELECT DISTINCT company FROM temp.chart_load WHERE company != '' ORDER BY "
-                                            "company")]  # fmt: skip
+    business units; ``whole``, or a file naming no company, every row (D-267). ``named``: the file's companies, when
+    the caller counted them (``Staged.by_company``)."""
+    companies = sorted(c for c in named if c) if named is not None else [r[0] for r in conn.execute(
+        "SELECT DISTINCT company FROM temp.chart_load WHERE company != '' ORDER BY company")]  # fmt: skip
     if whole or not companies:
         return "1", []
     listed = ", ".join(f"'{c}'" for c in companies if "'" not in c)
@@ -155,10 +168,10 @@ def _scope(conn: sqlite3.Connection, whole: bool) -> tuple[str, list[str]]:
 def _staged_changes(conn: sqlite3.Connection, scope: str) -> dict[str, int]:
     """How the chart's rows in ``scope`` differ from the rows loaded (``chart_load``): added, changed and removed."""
     differs = " OR ".join(f"c.{col} IS NOT l.{col}" for col in CHART_COLUMNS[3:])
-    added = conn.execute("SELECT COUNT(*) FROM temp.chart_load l WHERE NOT EXISTS (SELECT 1 FROM chart_accounts WHERE "
-                         f"{_SAME})").fetchone()[0]  # fmt: skip
-    updated = conn.execute("SELECT COUNT(*) FROM temp.chart_load l JOIN chart_accounts c ON c.bu = l.bu AND c.object "
-                           f"= l.object AND c.subsidiary = l.subsidiary WHERE {differs}").fetchone()[0]  # fmt: skip
+    added, updated = conn.execute(  # (one pass over the rows loaded: D-272)
+        f"SELECT COALESCE(SUM(c.bu IS NULL), 0), COALESCE(SUM(c.bu IS NOT NULL AND ({differs})), 0) FROM "
+        "temp.chart_load l LEFT JOIN chart_accounts c ON c.bu = l.bu AND c.object = l.object AND c.subsidiary = "
+        "l.subsidiary").fetchone()  # fmt: skip
     removed = conn.execute(f"SELECT COUNT(*) FROM chart_accounts WHERE {scope} AND NOT EXISTS (SELECT 1 FROM "
                            f"temp.chart_load l WHERE {_SAME})").fetchone()[0]  # fmt: skip
     return {"added": int(added), "updated": int(updated), "removed": int(removed)}
@@ -289,6 +302,128 @@ class _Lists:
                 "brought_back": {kind: codes[:NAMED] for kind, codes in self.brought_back.items()}}  # fmt: skip
 
 
+SHRINK_MOST = 0.5  # a refresh with less than this share of a company's accounts now is refused unless asked (D-272)
+CHART_PARTS = "chart_parts"  # {company: [the files its accounts came from at its last load]} (settings, JSON)
+
+
+class ChartRefused(ValueError):
+    """A chart that is not loaded, the live one kept as it is; the message says why and what to do, ``said`` what was
+    read of its files (``chart_cmd.read_lines``)."""
+
+    said: list[str] = []  # noqa: RUF012  (each refusal's own, set where it is raised again)
+
+
+@dataclass
+class Staged:
+    """A chart read into ``chart_load`` (``Store.stage_chart``): the files (``parts``), the rows given (``given``),
+    those repeating an account already given (``repeats``, the first ``chart.EXAMPLES`` of their rows in
+    ``repeat_rows``), the accounts and title rows kept, the accounts by company and by posting edit code, the business
+    units, and of each company the files it is in (``company_parts``)."""
+
+    parts: list[str] = field(default_factory=list)
+    given: int = 0
+    repeats: int = 0
+    repeat_rows: list[int] = field(default_factory=list)
+    accounts: int = 0
+    titles: int = 0
+    by_company: Counter[str] = field(default_factory=Counter)
+    edits: Counter[str] = field(default_factory=Counter)
+    units: int = 0
+    company_parts: dict[str, set[str]] = field(default_factory=dict)
+
+    @property
+    def kept(self) -> int:
+        """The rows staged: the accounts and the business units' title rows."""
+        return self.accounts + self.titles
+
+    def repeated(self, conn: sqlite3.Connection, values: list[tuple[Any, ...]], left: int) -> None:
+        """Of a batch ``left`` rows of which were not staged: rows repeating an account given before (in the batch or
+        one before; the first given kept), counted, the first of them named by their row of the file."""
+        self.repeats += left
+        for value in values:
+            if len(self.repeat_rows) >= EXAMPLES or not value[-1]:
+                break
+            found = conn.execute("SELECT line FROM temp.chart_load WHERE bu = ? AND object = ? AND subsidiary = ?",
+                                 value[:3]).fetchone()  # fmt: skip
+            if found is not None and found[0] != value[-1]:
+                self.repeat_rows.append(value[-1])
+
+    def counted(self, part: str, values: list[tuple[Any, ...]]) -> None:
+        """A batch given (``values``: as written, a row's company eighth): of each company, the files it is in."""
+        self.given += len(values)
+        for company in {value[7] for value in values}:
+            if company:
+                self.company_parts.setdefault(company, set()).add(part)
+
+    def tallied(self, conn: sqlite3.Connection) -> None:
+        """What was staged, counted by SQLite once the rows are in: the accounts by company and posting edit code, the
+        title rows, the business units."""
+        for company, edit, account, n in conn.execute(
+                "SELECT company, posting_edit, object != '', COUNT(*) FROM temp.chart_load GROUP BY company, "
+                "posting_edit, object != ''"):  # fmt: skip
+            if account:
+                self.accounts += n
+                self.by_company[company] += n
+                self.edits[edit] += n
+            else:
+                self.titles += n
+        self.units = int(conn.execute("SELECT COUNT(DISTINCT bu) FROM temp.chart_load").fetchone()[0])
+
+
+def _live_accounts(conn: sqlite3.Connection) -> Counter[str]:
+    """The live chart's accounts by company."""
+    return Counter({company: int(n) for company, n in conn.execute(
+        "SELECT company, COUNT(*) FROM chart_accounts WHERE object != '' GROUP BY company")})  # fmt: skip
+
+
+def _parts(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (CHART_PARTS,)).fetchone()
+    try:
+        kept = json.loads(row[0]) if row else {}
+    except ValueError:
+        kept = {}
+    return {str(k): [str(p) for p in v] for k, v in kept.items() if isinstance(v, list)} if isinstance(kept, dict) \
+        else {}  # fmt: skip
+
+
+def _refuse_cut_short(conn: sqlite3.Connection, staged: Staged, by_company: bool) -> None:
+    """``ChartRefused`` for a refresh that looks cut short (D-272): of each company it loads (``by_company``; else the
+    whole chart), less than ``SHRINK_MOST`` of the accounts it has now; a company loaded last time from several files
+    (``CHART_PARTS``) found in fewer of this load's."""
+    live = _live_accounts(conn)
+    anyway = " If that is what JD Edwards has now, import it again with --anyway (python -m ap_coder chart import)."
+    if by_company:
+        short = [f"{co} ({staged.by_company[co]:,} accounts, {live[co]:,} now)" for co in sorted(staged.by_company)
+                 if co and live[co] and staged.by_company[co] < live[co] * SHRINK_MOST]  # fmt: skip
+        if short:
+            raise ChartRefused(f"Not loaded: the file has less than half the accounts loaded now of company "
+                               f"{', '.join(short)}, so it looks cut short or filtered, and the chart was left as it "
+                               f"was.{anyway}")  # fmt: skip
+    elif sum(live.values()) and staged.accounts < sum(live.values()) * SHRINK_MOST:
+        raise ChartRefused(f"Not loaded: the file has {staged.accounts:,} accounts, less than half the "
+                           f"{sum(live.values()):,} loaded now, so it looks cut short or filtered, and the chart was "
+                           f"left as it was.{anyway}")  # fmt: skip
+    before = _parts(conn)
+    split = []
+    for company, now in sorted(staged.company_parts.items()):
+        had = before.get(company) or []
+        if len(had) > 1 and len(now) < len(had):
+            split.append(f"company {company} came from {len(had)} files last time ({', '.join(had)}); this import "
+                         f"has it in {len(now)} ({', '.join(sorted(now))})")  # fmt: skip
+    if split:
+        raise ChartRefused(f"Not loaded: {'; '.join(split)}. A company split across files is loaded with all of them "
+                           "in one import (python -m ap_coder chart import --chart a.txt --chart b.txt), so that "
+                           "no part of it is lost; the chart was left as it was. If it now comes in fewer files, "
+                           "import it with --anyway.")  # fmt: skip
+
+
+def _keep_parts(conn: sqlite3.Connection, staged: Staged, whole: bool) -> None:
+    """Remember which files each company loaded came from (``CHART_PARTS``): all of them for a whole chart."""
+    kept = {} if whole else _parts(conn)
+    kept.update({company: sorted(parts) for company, parts in staged.company_parts.items()})
+    _put(conn, CHART_PARTS, json.dumps(kept, sort_keys=True))
+
+
 class ChartMixin:
     def chart_accounts(self) -> list[ChartRow]:
         """Every row of the chart as imported (``core/chart.ChartRow``; a business unit's header row has no
@@ -303,6 +438,18 @@ class ChartMixin:
             row = conn.execute("SELECT COUNT(CASE WHEN object != '' THEN 1 END), COUNT(DISTINCT bu) FROM "
                                "chart_accounts").fetchone()  # fmt: skip
         return int(row[0]), int(row[1])
+
+    def chart_edit_counts(self) -> dict[str, int]:
+        """{posting edit code: the chart's accounts with it}, counted once a change of the chart (D-272: what the
+        Accounts AP posts to card lists as not yet decided)."""
+
+        def count() -> dict[str, int]:
+            with self._conn() as conn:
+                rows = conn.execute("SELECT posting_edit, COUNT(*) FROM chart_accounts WHERE object != '' GROUP BY "
+                                    "posting_edit")  # fmt: skip
+                return {code: int(n) for code, n in rows}
+
+        return dict(self.summary_memo("chart_edit_counts", count, topic="", asked=self.chart_version()))
 
     def chart_lists(self) -> tuple[dict[str, tuple[str, str]], dict[str, str]]:
         """The GL accounts and cost centers the chart gives (``chart.account_lists``), worked out by SQLite."""
@@ -362,58 +509,96 @@ class ChartMixin:
         return tuple(part for part in (row["value"] if row else "").split(",") if part)
 
     def import_chart(self, rows: Iterable[ChartRow], actor: str | None = None, without: Iterable[str] = (),
-                     whole: bool = False, progress: Callable[[int], None] | None = None) -> dict[str, Any]:  # fmt: skip
-        """Load the chart's ``rows`` (``core/chart.chart_rows``, or ``iter_chart_rows`` streamed from a file) and work
-        the GL accounts and cost centers out again, even when the rows are those already imported. Rows naming their
-        company replace the accounts of those companies alone (and the accounts kept without one on their business
-        units), the other companies' kept: a chart split by company loads a file at a time, the files adding up, and
-        one company's file again refreshes that company (D-267). ``whole``, or rows naming none, replace the whole
-        chart, as before. The rows go through a table of their own (``chart_load``, LOAD_BATCH at a time: an
-        account given twice is kept once), and the chart is changed by SQLite from it: a chart of millions of
-        accounts is never held. Returns {"rows", "added", "updated", "removed"} of the chart, "companies" (those
-        replaced, when another company's accounts were kept) and what the lists' rebuild did
-        (``_rebuild_account_lists``). With nothing to change, nothing is written or recorded. ``without``: the
-        columns the export did not have (``Rows.without``), kept for ``chart_without``. ``progress``: told the rows
-        read so far after each batch. ``ValueError``, nothing changed, for rows with no account at all (the wrong
-        file) or none that may be posted to."""
+                     whole: bool = False, progress: Callable[[int], None] | None = None,
+                     anyway: bool = False) -> dict[str, Any]:  # fmt: skip
+        """Load the chart's ``rows`` (``core/chart.chart_rows``, or ``iter_chart_rows`` streamed from a file): staged
+        (``stage_chart``), then swapped in (``swap_chart``), on one connection. ``progress``: told the rows read so far
+        after each batch."""
+        with self.session():
+            staged = self.stage_chart([("", rows)], progress)
+            return self.swap_chart(staged, actor=actor, without=without, whole=whole, anyway=anyway)
+
+    def stage_chart(self, parts: Iterable[tuple[str, Iterable[ChartRow]]],
+                    progress: Callable[[int], None] | None = None) -> Staged:  # fmt: skip
+        """Read the chart's rows into a table of their own (``chart_load``, LOAD_BATCH at a time), the live chart not
+        touched and the write lock not taken (D-272): the files of one import (``parts``: (its name, its rows) each; a
+        company split across files is loaded with all of them), an account given twice kept once (the first;
+        counted, its rows named). Within ``session()``: ``swap_chart`` swaps it in, on the same connection. What was
+        staged, counted (``Staged``). ``progress``: told the rows read so far after each batch."""
+        staged = Staged()
+        with self._conn() as conn:
+            conn.execute("DROP TABLE IF EXISTS temp.chart_load")
+            conn.execute(f"CREATE TEMP TABLE chart_load AS SELECT {', '.join(CHART_COLUMNS)}, 0 AS line FROM "
+                         "chart_accounts WHERE 0")  # fmt: skip
+            conn.execute("CREATE UNIQUE INDEX temp.chart_load_key ON chart_load (bu, object, subsidiary)")
+            insert = dialect.insert_or_ignore(f"INSERT INTO temp.chart_load ({', '.join(STAGED_COLUMNS)}) VALUES "
+                                              f"({', '.join('?' * len(STAGED_COLUMNS))})")  # fmt: skip
+            for name, rows in parts:
+                staged.parts.append(name)
+                for batch in _batches(rows, LOAD_BATCH):
+                    values = [(r.bu, r.object, r.subsidiary, r.description, r.lod, r.posting_edit, r.category,
+                               company_code(r.company), r.line) for r in batch]  # fmt: skip
+                    before = conn.total_changes
+                    conn.executemany(insert, values)
+                    if conn.total_changes - before < len(values):
+                        staged.repeated(conn, values, len(values) - (conn.total_changes - before))
+                    staged.counted(name, values)
+                    if progress is not None:
+                        progress(staged.given)
+            staged.tallied(conn)
+        return staged
+
+    def swap_chart(self, staged: Staged, actor: str | None = None, without: Iterable[str] = (), whole: bool = False,
+                   anyway: bool = False, summary: Iterable[str] = ()) -> dict[str, Any]:  # fmt: skip
+        """Put the chart staged (``stage_chart``, on this session's connection) in place of the live one's rows it
+        replaces, in one transaction, and work the GL accounts and cost centers out again, even when the rows are those
+        already imported. Rows naming their company replace the accounts of those companies alone (and the accounts
+        kept without one on their business units), the other companies' kept: a chart split by company loads a file
+        at a time, or its files together, the files adding up (D-267). ``whole``, or rows naming none, replace the
+        whole chart. Refused (``ChartRefused``, a ``ValueError``; nothing changed) for no account at all (the wrong
+        file) or none that may be posted to; and, unless ``anyway``, for a load that looks cut short (D-272): a company
+        (or the whole chart) with less than ``SHRINK_MOST`` of the accounts it has now, or a company loaded before from
+        several files with fewer of them now (``CHART_PARTS``). Returns {"rows", "added", "updated", "removed"} of the
+        chart, "companies" (those replaced, when another company's accounts were kept) and what the lists' rebuild did
+        (``_rebuild_account_lists``). ``without``: the columns the export did not have (``Rows.without``), kept for
+        ``chart_without``; ``summary``: what the import said of its files, kept with its event for the page."""
         with self._conn() as conn:
             dialect.begin_write(conn)
-            conn.execute("DROP TABLE IF EXISTS temp.chart_load")
-            conn.execute(f"CREATE TEMP TABLE chart_load AS SELECT {', '.join(CHART_COLUMNS)} FROM chart_accounts "
-                         "WHERE 0")  # fmt: skip
-            conn.execute("CREATE UNIQUE INDEX temp.chart_load_key ON chart_load (bu, object, subsidiary)")
-            read = 0
-            insert = dialect.insert_or_ignore(f"INSERT INTO temp.chart_load ({', '.join(CHART_COLUMNS)}) VALUES "
-                                              f"({', '.join('?' * len(CHART_COLUMNS))})")  # fmt: skip
-            for batch in _batches(rows, LOAD_BATCH):
-                conn.executemany(insert, [(r.bu, r.object, r.subsidiary, r.description, r.lod, r.posting_edit,
-                                           r.category, company_code(r.company)) for r in batch])  # fmt: skip
-                read += len(batch)
-                if progress is not None:
-                    progress(read)
-            if not conn.execute("SELECT EXISTS (SELECT 1 FROM temp.chart_load WHERE object != '')").fetchone()[0]:
-                raise ValueError("No row of this file has an object account, so it is not a chart of accounts: "
-                                 "nothing was changed.")  # fmt: skip
+            if not staged.accounts:
+                conn.execute("DROP TABLE IF EXISTS temp.chart_load")
+                raise ChartRefused("No row of this file has an object account, so it is not a chart of accounts: "
+                                   "nothing was changed.")  # fmt: skip
             by_hand = self._loaded_by_hand(conn)  # (D-221: kept across a load)
-            scope, companies = _scope(conn, whole)
+            scope, companies = _scope(conn, whole, staged.by_company)
+            if not anyway:
+                _refuse_cut_short(conn, staged, scope != "1")
             result = {**_staged_changes(conn, scope), **({"companies": companies} if companies else {})}
             if by_hand:
                 result["by_hand"] = by_hand[:NAMED]
-            was = _lists(conn)[0]
+            lists = _lists(conn)
+            was, same = lists[0], lists  # (the chart as it was: its lists are the ones it gives again, D-272)
             if result["added"] or result["updated"] or result["removed"]:
+                same = None
                 conn.execute(f"DELETE FROM chart_accounts WHERE {scope} AND NOT EXISTS (SELECT 1 FROM temp.chart_load "
                              f"l WHERE {_SAME})")  # fmt: skip
                 sets = ", ".join(f"{c} = excluded.{c}" for c in CHART_COLUMNS[3:])
-                conn.execute(f"INSERT INTO chart_accounts ({', '.join(CHART_COLUMNS)}) SELECT "
-                             f"{', '.join(CHART_COLUMNS)} FROM temp.chart_load WHERE 1 ON CONFLICT (bu, object, "
-                             f"subsidiary) DO UPDATE SET {sets}")  # fmt: skip
+                differs = " OR ".join(f"c.{col} IS NOT l.{col}" for col in CHART_COLUMNS[3:])
+                conn.execute(f"INSERT INTO chart_accounts ({', '.join(CHART_COLUMNS)}) SELECT "  # (the new and changed)
+                             f"{', '.join('l.' + c for c in CHART_COLUMNS)} FROM temp.chart_load l LEFT JOIN "
+                             "chart_accounts c ON c.bu = l.bu AND c.object = l.object AND c.subsidiary = l.subsidiary "
+                             f"WHERE c.bu IS NULL OR {differs} ON CONFLICT (bu, object, subsidiary) DO UPDATE SET "
+                             f"{sets}")  # fmt: skip
             conn.execute("DROP TABLE temp.chart_load")
+            _keep_parts(conn, staged, scope == "1")
             result["rows"] = _count(conn)
-            result.update(self._rebuild_account_lists(conn, was))
+            result.update(self._rebuild_account_lists(conn, was, same))
             missing = list(without)
             if missing:
                 result["without"] = missing
             _put(conn, WITHOUT_KEY, ",".join(missing))
+            said = list(summary)
+            if said:
+                result["summary"] = said
             self._chart_changed(conn, "chart_accounts", result, actor, loaded=True)
         return result
 
@@ -510,35 +695,35 @@ class ChartMixin:
 
     @staticmethod
     def _chart_stamped(conn: sqlite3.Connection) -> None:
-        """One more change to the chart (``chart_version``) and what its tables now hold (``chart_hash``): the
-        reference data and the checks are worked out again. An import's, a rebuild's, and a row changed by hand
-        (``by_hand``, which records its own event)."""
+        """One more change to the chart (``chart_version``) and a mark of it never written before (``chart_hash``):
+        the reference data and the checks are worked out again. An import's, a rebuild's, and a row changed by hand
+        (``by_hand``, which records its own event). The mark is random, not a hash of every row (D-272: 9 s of 3,500,000
+        accounts under the write lock): another chart, after a backup restored and the same count of changes, still
+        never passes for the one a process kept (B-2125)."""
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?, '1') "
             "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1",
             (VERSION_KEY,),
         )
-        held = hashlib.sha256()  # (a row at a time: a chart of millions is never held, D-267)
-        for row in conn.execute(f"SELECT {', '.join(CHART_COLUMNS)} FROM chart_accounts ORDER BY bu, object, "
-                                "subsidiary"):  # fmt: skip
-            held.update(repr(tuple(row)).encode("utf-8"))
-        held.update(repr(_units(conn)).encode("utf-8"))
-        _put(conn, HASH_KEY, held.hexdigest()[:20])
+        _put(conn, HASH_KEY, secrets.token_hex(10))
 
-    def _rebuild_account_lists(self, conn: sqlite3.Connection, was: dict[str, tuple[str, str]]) -> dict[str, Any]:
+    def _rebuild_account_lists(self, conn: sqlite3.Connection, was: dict[str, tuple[str, str]],
+                               given: tuple[dict[str, tuple[str, str]], dict[str, str]] | None = None
+                               ) -> dict[str, Any]:  # fmt: skip
         """The GL accounts and the cost centers made what the chart, the business units and the chart's settings
         give (``chart.account_lists``), in this transaction; with no chart imported they are left as they are.
         ``was``: the GL accounts the chart gave before, so a category that came from the chart follows it and one a
         person typed stays. Returns {"gl_accounts", "cost_centers"} ({"now", "added", "updated", "removed"}),
         "left" (the codes that left each list), "set_aside" and "brought_back" (the codes whose meals tick,
         category or manager was kept aside or put back), "unmapped" (what else points at a GL account no longer
-        listed). ``ValueError`` when no GL account would be left."""
+        listed). ``ValueError`` when no GL account would be left. ``given``: what ``_lists`` gives now, when the
+        caller has it already (a chart loaded again unchanged)."""
         lists = _Lists(conn, _aside(conn))
         if not _count(conn):
             for table in LISTS:
                 lists.counts[table]["now"] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             return {**lists.result(), "unmapped": []}
-        accounts, centers = _lists(conn)
+        accounts, centers = given if given is not None else _lists(conn)
         if not accounts:
             raise ValueError(NO_ACCOUNT)
         before = json.dumps(lists.aside, sort_keys=True)

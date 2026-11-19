@@ -1,16 +1,25 @@
 """D-267: the chart asked in the database (``core/store/chart_index.IndexedPairs``) answers every question exactly as
 the chart held in memory (``core/chart.AccountPairs``) does, never holding it whole; the Account box searches it."""
 
+import sqlite3
+import threading
+from contextlib import contextmanager
+
 import pytest
 
+from ap_coder.core import chart
 from ap_coder.core.chart import AccountPairs, ChartSettings
 from ap_coder.core.store import Store
 from ap_coder.core.store.chart_index import IndexedPairs
 from tests import chart_files as cf
 from tests.core.test_chart import _chart, _units
+from tests.core.test_chart_store import _loaded
 
 SETTINGS = (ChartSettings(), ChartSettings(never_offered=("*.7701", "0731066150.*.*"), postable_codes=("", "M")),
-            ChartSettings(skip_words=("annex",), never_offered=("5410",)))  # fmt: skip
+            ChartSettings(skip_words=("annex",), never_offered=("5410",)),
+            # The companies in the pilot, and report 9 (D-272): the made-up chart's company 07310 in it, or not.
+            ChartSettings(pilot=("07310",)), ChartSettings(pilot=("00999",)), ChartSettings(companies=("00999",)),
+            ChartSettings(companies=("07310", "00999")))  # fmt: skip
 
 
 @pytest.fixture(scope="module")
@@ -38,6 +47,7 @@ def test_the_chart_asked_in_the_database_answers_as_the_chart_in_memory(loaded, 
     assert indexed.offered_codes() == memory.offered_codes()
     assert indexed.business_units() == memory.business_units()
     assert (indexed.closed_units(), indexed.skipped_units()) == (memory.closed_units(), memory.skipped_units())
+    assert indexed.unlisted_units(5) == memory.unlisted_units(5) == [cf.UNLISTED]
     assert (len(indexed), indexed.tally()) == (len(memory), memory.tally())
     assert indexed.units_of("07310") == memory.units_of("07310")
 
@@ -62,3 +72,104 @@ def test_the_two_lists_are_worked_out_by_sqlite_as_from_the_rows(loaded, setting
 
     with loaded._conn() as conn:
         assert _lists(conn, settings) == chart.account_lists(_chart().rows, _units().rows, settings)
+
+
+def test_a_search_finds_the_accounts_offered_past_a_thousand_that_are_not(tmp_path):
+    """B-2652: the Account box's search read the first 1,000 accounts matching the words (50 x 20) and kept those
+    offered: a group's chart is half accounts AP does not post to (titles, budget, inactive), so a word they share
+    found nothing offered past them. What may be posted to is asked of SQLite with the words."""
+    from ap_coder.core.chart import ChartRow
+
+    store = Store(tmp_path / "ap.db")
+    titles = [ChartRow(f"1{n:05d}", "5110", "", "Widget costs", 5, "N") for n in range(1100)]
+    store.import_chart([*titles, ChartRow("200000", "5110", "", "Widget costs", 6, "")])
+    assert [row[0] for row in store.account_pairs().search("widget")] == ["200000.5110"]
+
+
+def _opened(monkeypatch) -> list[sqlite3.Connection]:
+    """Every connection a Store opens from now on."""
+    made: list[sqlite3.Connection] = []
+    real = Store._open
+
+    def recorded(self, *args, **kwargs):
+        made.append(real(self, *args, **kwargs))
+        return made[-1]
+
+    monkeypatch.setattr(Store, "_open", recorded)
+    return made
+
+
+def _closed(conn: sqlite3.Connection) -> bool:
+    try:
+        conn.execute("SELECT 1")
+    except sqlite3.ProgrammingError as exc:
+        return "closed" in str(exc)  # (not "created in a thread": one of another thread's, still open)
+    return False
+
+
+@contextmanager
+def _asked_on_another_thread(pairs):
+    """``pairs`` asked on a thread of its own, which stays alive (as a web worker's does) until the block ends."""
+    asked, done = threading.Event(), threading.Event()
+
+    def ask() -> None:
+        len(pairs)  # (asked of the database every time)
+        asked.set()
+        done.wait(10)
+
+    worker = threading.Thread(target=ask)
+    worker.start()
+    assert asked.wait(10)
+    try:
+        yield
+    finally:
+        done.set()
+        worker.join()
+
+
+def test_a_closed_chart_holds_no_connection_open_on_any_thread(loaded, monkeypatch):
+    """Windows refuses to remove or replace a database file a connection holds (the benchmark's temporary folder:
+    WinError 32): ``close`` closes the connection each thread opened, one asking now once its question is answered,
+    and a question asked after opens one again."""
+    made = _opened(monkeypatch)
+    pairs = IndexedPairs(loaded)
+    assert pairs.status(cf.HOME, "5410") == chart.OK
+    with _asked_on_another_thread(pairs):
+        assert len(made) == 2 and not any(_closed(c) for c in made)
+        pairs.close()
+        assert all(_closed(c) for c in made)
+    assert len(pairs) > 0 and len(made) == 3  # (opened again)
+    with pairs._reader() as conn:
+        pairs.close()
+        assert conn.execute("SELECT 1").fetchone()[0] == 1  # (the question under way is answered)
+    assert _closed(conn) and all(_closed(c) for c in made)
+
+
+def test_reference_data_built_again_closes_the_old_charts_connections(store, monkeypatch):
+    _loaded(store)
+    made = _opened(monkeypatch)
+    pairs = store.reference_data().pairs
+    assert pairs.status(cf.HOME, "5410.7701") == chart.OK
+    with _asked_on_another_thread(pairs):
+        asked = [c for c in made if not _closed(c)]
+        assert len(asked) == 2
+        store.set_setting("never_offered", "*.7701")
+        again = store.reference_data().pairs
+        assert again is not pairs and again.status(cf.HOME, "5410.7701") == chart.RESERVED
+        assert all(_closed(c) for c in asked)
+
+
+def test_a_restore_closes_the_charts_connections_asked_on_two_threads(store, monkeypatch):
+    _loaded(store)
+    before = store.account_pairs().status(cf.UNLISTED, "5470")
+    backup = store.backup_now("manual")
+    store.import_chart(_chart([r for r in cf.CHART if r[0] != cf.UNLISTED]).rows)
+    made = _opened(monkeypatch)
+    pairs = store.account_pairs()
+    assert pairs.status(cf.UNLISTED, "5470") == chart.NOT_IN_CHART
+    with _asked_on_another_thread(pairs):
+        asked = [c for c in made if not _closed(c)]
+        assert len(asked) == 2
+        store.restore_from(backup)
+        assert all(_closed(c) for c in asked)
+    assert store.account_pairs().status(cf.UNLISTED, "5470") == before != chart.NOT_IN_CHART

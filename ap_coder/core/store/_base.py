@@ -820,10 +820,11 @@ class StoreCore:
             hit = held.memo[key] = (stamp, compute())
         return hit[1] if shared else [dict(r) for r in hit[1]]
 
-    def _open(self) -> sqlite3.Connection:
+    def _open(self, any_thread: bool = False) -> sqlite3.Connection:
+        """A new connection; ``any_thread``: one another thread may close (``chart_index.IndexedPairs.close``)."""
         fresh = not self.path.exists()  # e.g. the file was deleted while the dashboard was running
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.path, timeout=30)
+        conn = sqlite3.connect(self.path, timeout=30, check_same_thread=not any_thread)
         conn.row_factory = sqlite3.Row
         conn.create_function("ap_fold", 1, fold_text, deterministic=True)
         dialect.settle(conn)

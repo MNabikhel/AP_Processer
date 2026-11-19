@@ -40,7 +40,8 @@ SETUP_PREFIXES = ("JDE_", "PAY_FROM_")
 # its business unit does not have, or that is not to be posted to there, with a chart of accounts imported (D-209).
 COUNTED_IN_CODING = frozenset({"GL_UNASSIGNED", "CC_UNASSIGNED", "GL_UNKNOWN", "CC_UNKNOWN", "GL_IS_TAX_ACCOUNT",
                                "PST_EXEMPTION_TO_CONFIRM", "ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE",
-                               "BU_INACTIVE", "ACCOUNT_RESERVED", "ACCOUNT_CONTROL"})  # fmt: skip
+                               "BU_INACTIVE", "ACCOUNT_RESERVED", "ACCOUNT_CONTROL",
+                               "BU_NOT_IN_UNITS_REPORT"})  # fmt: skip
 # Findings about the business, not about how the invoice was read or coded (the vendor master, a purchase order, a
 # possible duplicate, an unusual amount): like setup findings they keep Approve closed (an error), go to a person and
 # are said, but take nothing off the Reading or the Coding: every value can be read right and still not be in the
@@ -302,8 +303,16 @@ def _pair_issue(reference: ReferenceData, li: Any, tax_gls: Any) -> tuple[str, s
         return (ERROR, "BU_INACTIVE", f"business unit {cc} is not active in JD Edwards, so nothing can be posted to "
                 "it: pick another business unit")  # fmt: skip
     if status == chart.NOT_POSTABLE:
-        return (ERROR, "ACCOUNT_NOT_POSTABLE", f"account {account} cannot be posted to (its posting edit code is "
-                f"{pairs.posting_edit(cc, gl)}): pick an account that takes postings")  # fmt: skip
+        edit = pairs.posting_edit(cc, gl)
+        undecided = pairs.settings.undecided([edit])
+        why = (f"its posting edit code {edit} is not decided yet: Settings → JD Edwards E1 → Accounts AP posts to"
+               if undecided else f"its posting edit code is {edit}")  # fmt: skip
+        return (ERROR, "ACCOUNT_NOT_POSTABLE", f"account {account} cannot be posted to ({why}): pick an account "
+                "that takes postings")  # fmt: skip
+    if status == chart.BU_UNKNOWN:  # (D-272) an error approved anyway, with a reason, by someone who may approve
+        return (ERROR, "BU_NOT_IN_UNITS_REPORT", f"business unit {cc} is not in the business units report (JD Edwards "
+                "files, card 2), so whether it is active and whose it is are not known: pick another, or approve "
+                "anyway saying why")  # fmt: skip
     if status != chart.NOT_IN_CHART:
         return None
     others = pairs.bus_of(gl)

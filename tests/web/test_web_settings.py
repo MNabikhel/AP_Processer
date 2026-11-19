@@ -813,3 +813,32 @@ def test_jde_the_accounts_ap_posts_to_are_set_on_the_page(client, store):
     assert settings.held_back == ("2150", "*.7701", "2110", "2120", "2310")
     follow(client, post(client, "/settings/jde/posting", {"never_offered": "2150"}))
     assert store.chart_settings().postable_codes == ("",)  # nothing ticked: blank only
+
+
+def test_jde_a_posting_edit_code_not_decided_yet_is_listed_with_its_accounts_until_a_person_decides(client, store):
+    """D-272: a code of the chart JD Edwards' own list does not have (Z) is closed and listed on the card with how
+    many accounts have it; "Leave closed" decides it (it is then listed as decided, and may be opened again), or it is
+    typed among the codes AP posts to. The companies in the pilot are set on the same card."""
+    from ap_coder.core.chart import ChartRow
+
+    store.import_chart(
+        [
+            ChartRow("0731066120", "", "", "Head Office", 3, "N"),
+            *(ChartRow("0731066120", f"54{n}0", "", f"Cost {n}", 6, "Z" if n < 3 else "") for n in range(5)),
+        ]
+    )
+    card = client.get("/settings/jde").text.split('id="posting"', 1)[1].split("</section>", 1)[0]
+    assert "Codes found in the chart, not yet decided:" in card and "Z (3 accounts)" in card
+    assert 'name="closed" value="Z">' in card
+    follow(client, post(client, "/settings/jde/posting", {"code": ["L", "U"], "closed": ["Z"],
+                                                          "pilot_companies": "210, 00310"}))  # fmt: skip
+    settings = store.chart_settings()
+    assert settings.closed_codes == ("Z",) and settings.pilot == ("00210", "00310") and settings.undecided(["Z"]) == []
+    card = client.get("/settings/jde").text.split('id="posting"', 1)[1].split("</section>", 1)[0]
+    assert "not yet decided" not in card and 'name="closed" value="Z" checked' in card and "Z decided closed" in card
+    assert 'name="pilot_companies" value="00210, 00310"' in card
+    assert store.account_pairs().status("0731066120", "5400") == "not_postable"
+    follow(client, post(client, "/settings/jde/posting", {"code": ["L", "U"], "other_codes": "Z"}))
+    settings = store.chart_settings()
+    assert settings.postable_codes == ("", "L", "U", "Z") and settings.closed_codes == () and settings.pilot == ()
+    assert store.account_pairs().status("0731066120", "5400") == "ok"

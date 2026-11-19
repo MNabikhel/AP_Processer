@@ -45,7 +45,7 @@ _REFERENCE: dict[str, tuple[tuple[Any, ...], ReferenceData]] = {}
 _REFERENCE_LOCK = threading.Lock()
 REFERENCE_KEPT, WITH_PAIRS_KEPT = 8, 2
 # Everything ``reference_data`` is built from, in one query: compared, it says whether the one kept still holds. The
-# chart of accounts' pairs (D-209) by the count of its changes, what its tables hold (``chart_hash``, written with
+# chart of accounts' pairs (D-209) by the count of its changes, a mark of each change (``chart_hash``, written with
 # them: B-2125) and its settings (``chart.SETTING_KEYS``, and the control accounts of the past coding: ``CONTROL_KEYS``,
 # D-269), not by its rows.
 _REFERENCE_STAMP = """SELECT
@@ -58,6 +58,7 @@ _REFERENCE_STAMP = """SELECT
     (SELECT group_concat(key || '=' || value, char(10))
      FROM (SELECT * FROM settings WHERE key IN ('our_province', 'site_provinces', 'policy_notes', 'chart_version',
            'chart_hash', 'postable_codes', 'never_offered', 'skip_words', 'home_business_unit', 'account_labels',
+           'closed_codes', 'pilot_companies', 'jde_companies',
            'journal_payable_trade', 'journal_payable_intercompany', 'journal_tax_objects')
            ORDER BY key))"""
 
@@ -659,12 +660,24 @@ class AccountsMixin:
                 return kept[1]
         built = dataclasses.replace(self._reference_data(TaxRateTable.load(path)), stamp=_short(stamp))
         with _REFERENCE_LOCK:
-            _REFERENCE.pop(key, None)  # (put last: the one used now)
+            gone = [_REFERENCE.pop(key, None)]  # (put last: the one used now)
             _REFERENCE[key] = (stamp, built)
             with_pairs = any(kept.pairs is not None for _, kept in _REFERENCE.values())
             while len(_REFERENCE) > (WITH_PAIRS_KEPT if with_pairs else REFERENCE_KEPT):
-                _REFERENCE.pop(next(iter(_REFERENCE)))
+                gone.append(_REFERENCE.pop(next(iter(_REFERENCE))))
+        for old in gone:  # its chart's connections closed (B-2653)
+            if old is not None and old[1].pairs is not None:
+                old[1].pairs.close()
         return built
+
+    def forget_reference(self) -> None:
+        """The reference data kept for this database forgotten, its chart's connections closed
+        (``chart_index.IndexedPairs.close``): before the database file is replaced or removed (a restore, a temporary
+        folder taken away), which Windows refuses while a connection holds it (B-2653)."""
+        with _REFERENCE_LOCK:
+            kept = _REFERENCE.pop(str(self.path.resolve()), None)
+        if kept is not None and kept[1].pairs is not None:
+            kept[1].pairs.close()
 
     def reference_stamp(self) -> str:
         """A short fingerprint of what ``reference_data`` is built from now: the ``stamp`` of the reference data it

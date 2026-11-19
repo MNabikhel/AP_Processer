@@ -300,6 +300,20 @@ def unknown_finding(decision: Decision, store: Any) -> tuple[str, str, str]:
     return (ERROR, "COMPANY_UNKNOWN", f"Pick the company this invoice is for{could}: nothing on it decides one")
 
 
+def pilot_finding(store: Any, company: str) -> tuple[str, str, str] | None:
+    """``COMPANY_NOT_IN_PILOT``: with companies in the pilot (the chart's settings, D-272), an invoice of another one
+    is held, whoever approves it (``invoice_findings.HARD_CODES``); None for one in the pilot, or with no pilot."""
+    pilot = store.chart_settings().pilot
+    code = company_code(company)
+    if not pilot or not code or code in pilot:
+        return None
+    table = companies(store)
+    named = f"{code} {table[code].name}" if code in table else code
+    return (ERROR, "COMPANY_NOT_IN_PILOT", f"Company {named} is not in the pilot (Settings → JD Edwards E1 → "
+            f"Accounts AP posts to: {', '.join(pilot)}), so this invoice can't be approved here: pick the right "
+            "company if it is wrong, or have someone who may change the settings add it to the pilot")  # fmt: skip
+
+
 def us_tax_finding(company: str, why: str) -> tuple[str, str, str]:
     """``US_TAX_NOT_CHECKED``: a company without the Canadian tax checks (``canadian``)."""
     return (WARNING, "US_TAX_NOT_CHECKED", f"Company {company} is not checked for Canadian tax ({why}): its tax "

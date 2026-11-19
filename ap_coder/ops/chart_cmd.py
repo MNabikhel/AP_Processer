@@ -1,17 +1,22 @@
 """``python -m ap_coder chart import|settings|show|rebuild``: the chart of accounts and the business unit master
 loaded from JD Edwards' exports as they come (D-209), from the console.
 
-* ``import --chart <file> --business-units <file> [--anyway]``: either file alone or both (the business units
-  first, so the chart knows which are active). A chart exported without its posting edit or subsidiary column is
-  imported only with ``--anyway``, and says so each time it is shown. Each replaces what was imported before (a file
-  whose rows name their company, the accounts or business units of those companies alone, the others kept: a chart
-  split by company, D-267; ``--whole``: all of it, to start over); the
-  GL accounts and the cost centers are worked out again from the two, even when the file is the one already
-  imported. What was read, what may be posted to, what was left out, what left the lists and what a person had
-  typed that was set aside is said in plain words (``import_files``, which a page can call with an upload's
-  bytes).
-* ``settings [--postable …] [--never-offered …] [--skip-words …] [--home-business-unit …] [--labels …]``: the chart's
-  settings, shown, and changed for the ones named (an empty value clears one).
+* ``import --chart <file> [--chart <file> ...] --business-units <file> [--anyway]``: either alone or both (the
+  business units first, so the chart knows which are active). A chart as JD Edwards exports it (.xlsx) or as a query
+  saves it (.csv, or tab-delimited .txt/.tsv, UTF-8 or UTF-16: streamed from disk, D-272); several --chart files are
+  one import, read and checked in full before one swap (a company split across files is loaded with all of them),
+  and the summary says the rows read, accepted and rejected (each reason with its first rows) and each posting edit
+  code. A load that looks cut short (a company with less than half its accounts, or in fewer files than last time)
+  is refused unless --anyway, the chart left as it was. A chart exported without its posting edit or subsidiary
+  column is imported only with ``--anyway``, and says so each time it is shown. Each replaces what was imported
+  before (a file whose rows name their company, the accounts or business units of those companies alone, the others
+  kept: a chart split by company, D-267; ``--whole``: all of it, to start over); the GL accounts and the cost centers
+  are worked out again from the two, even when the file is the one already imported. What was read, what may be
+  posted to, what was left out, what left the lists and what a person had typed that was set aside is said in plain
+  words (``import_files``, which a page can call with an upload's bytes).
+* ``settings [--postable …] [--never-offered …] [--skip-words …] [--home-business-unit …] [--labels …]
+  [--closed-codes …] [--pilot-companies …]``: the chart's settings, shown, and changed for the ones named (an empty
+  value clears one).
 * ``show``: the chart imported, its settings, and how many accounts a line may be coded to.
 * ``rebuild``: the GL accounts and cost centers worked out again from the chart as it is (a list changed by hand).
 """
@@ -21,12 +26,13 @@ from __future__ import annotations
 import argparse
 import sys
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from ..core import chart, chart_file
 from ..core.store import Store
+from ..core.store.chart import ChartRefused
 from ..core.ui import plural
 
 ACTOR = "the console (chart import)"
@@ -34,7 +40,8 @@ PROGRESS_EVERY = 250_000  # a chart CSV streamed from disk: how many rows were r
 SHOWN = 10  # the codes of a kind, or the business units held back for their name, that are named one by one
 # ``chart settings``' options, each with the setting it writes.
 OPTIONS = {"postable": "postable_codes", "never_offered": "never_offered", "skip_words": "skip_words",
-           "home_business_unit": "home_business_unit", "labels": "account_labels"}  # fmt: skip
+           "home_business_unit": "home_business_unit", "labels": "account_labels", "closed_codes": "closed_codes",
+           "pilot_companies": "pilot_companies"}  # fmt: skip
 
 
 def add_parser(sub: Any) -> None:
@@ -42,8 +49,9 @@ def add_parser(sub: Any) -> None:
                        "settings, show, rebuild")  # fmt: skip
     p.add_argument("action", choices=["import", "settings", "show", "rebuild"])
     options = (
-        ("--chart", "FILE", "import: the account master's export (.xlsx, as JD Edwards saves it): a business unit, "
-         "object and subsidiary a row"),
+        ("--chart", "FILE", "import: the account master's export (.xlsx as JD Edwards saves it, or the query's text: "
+         ".csv, or tab-delimited .txt/.tsv, UTF-8 or UTF-16): a business unit, object and subsidiary a row. Give it "
+         "once a file: a company split across files is loaded with all of them in one import"),
         ("--business-units", "FILE", "import: the business unit master's export (.xlsx): which business units are "
          "active"),
         ("--postable", "CODES", 'settings: the posting edit codes AP may post to besides blank, e.g. "M" ("": blank '
@@ -55,15 +63,21 @@ def add_parser(sub: Any) -> None:
         ("--home-business-unit", "BUSINESS_UNIT", "settings: where a line is suggested to go when nothing says "
          "otherwise"),
         ("--labels", "NAMES", "settings: what the three parts are called (Business unit, Object, Subsidiary)"),
+        ("--closed-codes", "CODES", "settings: posting edit codes found in the chart and decided never to post to "
+         "(a code AP Coder does not know is closed until decided either way)"),
+        ("--pilot-companies", "COMPANIES", 'settings: the companies in the pilot, with commas between ("": every '
+         "company): an invoice of another company is held, and only their accounts are offered"),
     )  # fmt: skip
     for option, value, about in options:
-        p.add_argument(option, default=None, metavar=value, help=about)
+        p.add_argument(option, default=None, metavar=value, help=about,
+                       **({"action": "append"} if option == "--chart" else {}))  # fmt: skip
     p.add_argument("--whole", action="store_true",
                    help="import: replace the whole chart or all the business units with the file (start over), not "
                         "only the companies it names")  # fmt: skip
     p.add_argument("--anyway", action="store_true",
                    help="import: import a chart exported without its posting edit or subsidiary column (without "
-                        "the posting edit column every account is offered)")  # fmt: skip
+                        "the posting edit column every account is offered), or one that looks cut short: a company "
+                        "with less than half the accounts it has now, or in fewer files than last time")  # fmt: skip
 
 
 def _left_out(skipped: dict[str, int]) -> list[str]:
@@ -89,40 +103,67 @@ def _units_read(read: chart.Rows) -> list[str]:
     return said + _left_out(read.skipped)
 
 
-class _Tally:
-    """What a chart read says of its rows, counted as they go by (a chart streamed from disk is never held, D-267):
-    the rows, the accounts, the business units, the accounts of each posting edit code."""
-
-    def __init__(self) -> None:
-        self.rows = self.accounts = 0
-        self.units: set[str] = set()
-        self.edits: Counter[str] = Counter()
-
-    def counted(self, rows: Iterable[chart.ChartRow], every: int = 0) -> Iterator[chart.ChartRow]:
-        for row in rows:
-            self.rows += 1
-            self.units.add(row.bu)
-            if not row.is_header:
-                self.accounts += 1
-                self.edits[row.posting_edit] += 1
-            if every and self.rows % every == 0:
-                print(f"  {self.rows:,} rows read...", flush=True)
-            yield row
+def _rows_of(numbers: list[int]) -> str:
+    return f"row{'s' if len(numbers) > 1 else ''} {', '.join(f'{n:,}' for n in numbers)}"
 
 
-def _chart_read(read: chart.Rows, settings: chart.ChartSettings, tally: _Tally | None = None) -> list[str]:
-    if tally is None:
-        tally = _Tally()
-        for _row in tally.counted(read.rows):
-            pass
-    edits = Counter({code: n for code, n in tally.edits.items() if code not in settings.postable_codes})
-    said = [f"Read {plural(tally.rows, 'row')} of the chart: {plural(tally.accounts, 'account')} on "
-            f"{plural(len(tally.units), 'business unit')}; "
-            f"{tally.accounts - sum(edits.values()):,} may be posted to."]  # fmt: skip
-    if edits:
-        said.append("  Not for posting, by posting edit code: "
-                    + ", ".join(f"{n:,} with {code}" for code, n in sorted(edits.items())) + ".")  # fmt: skip
-    return said + _left_out(read.skipped)
+def _rejected(reads: list[tuple[str, chart.Rows]], staged: Any) -> list[str]:
+    """The rows left out, a line for each reason: how many, why, and the first of them (by file, with several)."""
+    reasons: dict[str, int] = {}
+    shown: dict[str, list[str]] = {}
+    for name, read in reads:
+        for why, n in read.skipped.items():
+            reasons[why] = reasons.get(why, 0) + n
+            if read.examples.get(why):
+                rows = _rows_of(read.examples[why])
+                shown.setdefault(why, []).append(f"{rows} of {name}" if len(reads) > 1 else rows)
+    if staged.repeats:
+        reasons[chart.REPEATED] = reasons.get(chart.REPEATED, 0) + staged.repeats
+        if staged.repeat_rows:
+            shown.setdefault(chart.REPEATED, []).append(_rows_of(staged.repeat_rows))
+    return [f"  Rejected ({why}): {n:,}" + (f" ({'; '.join(shown[why])}{' …' if n > chart.EXAMPLES else ''})"
+            if shown.get(why) else "") + "." for why, n in reasons.items()]  # fmt: skip
+
+
+def edits_line(edits: Counter[str], settings: chart.ChartSettings) -> str:
+    """Each posting edit code of the chart with its accounts and whether AP posts to it (D-272): a code no setting
+    decides and JD Edwards' list does not have is "not yet decided", closed until a person decides."""
+    undecided = set(settings.undecided(edits))
+    said = []
+    for code, n in sorted(edits.items()):
+        if code in settings.postable_codes:
+            what = "posted to"
+        elif code in undecided:
+            what = "not yet decided: not posted to until decided on Settings → JD Edwards E1 → Accounts AP posts to"
+        else:
+            what = f"not posted to: {chart.KNOWN_EDITS.get(code, 'decided on Settings')}"
+        said.append(f"{code or 'blank'} {n:,} ({what})")
+    return "  Posting edit codes: " + "; ".join(said) + "."
+
+
+def read_lines(reads: list[tuple[str, chart.Rows]], staged: Any, settings: chart.ChartSettings) -> list[str]:
+    """What an import read of its files (D-272): the rows under the column names, accepted and rejected (each reason
+    with the first of its rows), the accounts, business units and companies, and each posting edit code with its
+    accounts and whether AP posts to it. Said at the end of a load, kept with its event for the page."""
+    parsed = sum(read.parsed for _name, read in reads)
+    rejected = sum(sum(read.skipped.values()) for _name, read in reads) + staged.repeats
+    files = (f" in {len(reads)} files ({', '.join(f'{name} {read.parsed:,}' for name, read in reads)})"
+             if len(reads) > 1 else "")  # fmt: skip
+    postable = sum(n for code, n in staged.edits.items() if code in settings.postable_codes)
+    said = [
+        f"Read {plural(parsed, 'row')} of the chart{files}: {staged.kept:,} accepted "
+        f"({plural(staged.accounts, 'account')} on {plural(staged.units, 'business unit')}), {rejected:,} rejected.",
+        f"  {postable:,} of the accounts may be posted to; the others are kept, for their descriptions and to say why "
+        "a line may not use one.",
+    ]
+    said += _rejected(reads, staged)
+    if staged.edits:
+        said.append(edits_line(staged.edits, settings))
+    named = sorted((co, n) for co, n in staged.by_company.items() if co)
+    if named:
+        said.append(f"  By company: {', '.join(f'{co} {n:,}' for co, n in named[:SHOWN])}"
+                    + (f" and {len(named) - SHOWN:,} more" if len(named) > SHOWN else "") + ".")  # fmt: skip
+    return said
 
 
 def _some(codes: list[str], total: int | None = None) -> str:
@@ -175,6 +216,11 @@ def tally_lines(store: Store) -> list[str]:
         closed = pairs.closed_units()
         said.append(f"  Not used: {plural(tally[chart.BU_INACTIVE], 'account')} on a business unit that is not "
                     f"active ({', '.join(closed[:5])}{' …' if len(closed) > 5 else ''}).")  # fmt: skip
+    if tally[chart.BU_UNKNOWN]:  # (D-272)
+        unlisted = pairs.unlisted_units(6)
+        said.append(f"  Not offered: {plural(tally[chart.BU_UNKNOWN], 'account')} on a business unit that is not in "
+                    f"the business units report ({', '.join(unlisted[:5])}{' …' if len(unlisted) > 5 else ''}): a "
+                    "line coded to one is an error to approve anyway, saying why.")  # fmt: skip
     named = [(bu, word) for bu, word in pairs.skipped_units().items() if pairs.has_accounts(bu)]
     for bu, word in named[:SHOWN]:
         said.append(f"  Never offered: business unit {bu}, whose name says {word}.")
@@ -202,38 +248,78 @@ def settings_lines(store: Store) -> list[str]:
         f"Skip words: {', '.join(settings.skip_words)}.",
         f"Home business unit: {home + (f' ({name})' if name else '') if home else 'not set'}.",
         f"The three parts of an account are called: {', '.join(settings.account_labels)}.",
+        f"Posting edit codes decided never to post to: {', '.join(settings.closed_codes) or 'none'}.",
+        f"Companies in the pilot: {', '.join(settings.pilot) or 'every company'}.",
     ]
+
+
+def _chart_parts(sources: list[tuple[Any, str, str]],
+                 anyway: bool) -> tuple[list[tuple[str, chart.Rows]], list[tuple[str, Iterable[Any]]]]:  # fmt: skip
+    """Each chart file opened (its column names checked before a row is staged): (its name and what it read, as it is
+    read; its name and its rows). A text file from disk (``chart_file.TEXT_FILES``: CSV, or tab-delimited) is streamed,
+    never held (D-267, D-272)."""
+    reads, parts = [], []
+    for source, sheet, name in sources:
+        if isinstance(source, (str, Path)) and str(source).lower().endswith(chart_file.TEXT_FILES):
+            read, rows = chart_file.stream_chart_text(source, anyway)
+        else:
+            read = chart_file.read_chart(source, anyway, sheet)
+            rows = read.rows
+        reads.append((name, read))
+        parts.append((name, rows))
+    return reads, parts
 
 
 def import_files(store: Store, chart_source: str | Path | bytes | None = None,
                  units_source: str | Path | bytes | None = None, actor: str | None = None,
                  anyway: bool = False, chart_sheet: str = "", units_sheet: str = "",
-                 whole: bool = False, every: int = 0) -> list[str]:  # fmt: skip
+                 whole: bool = False, every: int = 0,
+                 charts: list[tuple[Any, str, str]] | None = None) -> list[str]:  # fmt: skip
     """Import the business unit master and the chart of accounts (either or both; a path, or a file's bytes; each
     from its sheet of that name, ``chart_sheet`` and ``units_sheet``, else its first) and say what was done, a line
-    each. ``chart.ChartError`` for a file that cannot be read (``chart.ColumnsMissing`` for a chart without its
-    posting edit or subsidiary column, unless ``anyway``) and ``ValueError`` for one that would leave no account to
-    code to: nothing is changed then, of either file. ``whole``: each file replaces all of its table, not only the
-    companies it names (D-267). A chart saved as CSV (a path ending .csv) is streamed from disk as it is loaded, up to
-    ``chart.STREAMED_MOST`` rows, never held; ``every``: say how many rows were read after each that many."""
+    each. ``charts``: several chart files loaded as one ((source, sheet, name) each: a company split across them is
+    loaded whole, D-272). ``chart.ChartError`` for a file that cannot be read (``chart.ColumnsMissing`` for a chart
+    without its posting edit or subsidiary column, unless ``anyway``) and ``ValueError`` for one that would leave no
+    account to code to, or looks cut short (``ChartRefused``, unless ``anyway``; its ``said``: what was read): nothing
+    is changed then, of either file. ``whole``: each file replaces all of its table, not only the companies it names
+    (D-267). The chart's files are read into a table of their own first, the live chart untouched and the write lock
+    not taken (``Store.stage_chart``), then swapped in in one transaction with the business units. A chart saved as
+    text (a path ending .csv, .txt or .tsv) is streamed from disk as it is loaded, up to ``chart.STREAMED_MOST`` rows
+    a file, never held; ``every``: say how many rows were read after each that many."""
     units = chart_file.read_business_units(units_source, units_sheet) if units_source is not None else None
-    streamed = isinstance(chart_source, (str, Path)) and str(chart_source).lower().endswith(".csv")
-    tally, stream = _Tally(), None
-    if streamed:  # (a CSV from disk: read a row at a time as it is loaded, never held, D-267)
-        rows, stream = chart_file.stream_chart_csv(chart_source, anyway)
-    else:
-        rows = chart_file.read_chart(chart_source, anyway, chart_sheet) if chart_source is not None else None
+    if charts is None and chart_source is not None:
+        name = chart.FILE if isinstance(chart_source, bytes) else Path(chart_source).name
+        charts = [(chart_source, chart_sheet, name)]
     said: list[str] = []
     results: list[dict[str, Any]] = []
-    with store.transaction():
-        if units is not None:
-            results.append(store.import_business_units(units.rows, actor=actor, whole=whole))
-            said += [*_units_read(units), _changed("Business units", results[-1])]
-        if rows is not None:
-            given = tally.counted(stream if stream is not None else rows.rows, every if streamed else 0)
-            results.append(store.import_chart(given, actor=actor, without=rows.without, whole=whole))
-            said += [*_chart_read(rows, store.chart_settings(), tally),
-                     _changed("Chart of accounts", results[-1], "rows ")]  # fmt: skip
+    seen = [0]
+
+    def counted(rows: Iterable[Any]) -> Iterable[Any]:  # (how many rows were read, said after each ``every``)
+        for row in rows:
+            seen[0] += 1
+            if seen[0] % every == 0:
+                print(f"  {seen[0]:,} rows read...", flush=True)
+            yield row
+
+    with store.session():
+        staged, read_said, reads = None, [], []
+        if charts:
+            reads, parts = _chart_parts(charts, anyway)
+            staged = store.stage_chart([(name, counted(rows)) for name, rows in parts] if every else parts)
+            read_said = read_lines(reads, staged, store.chart_settings())
+        try:
+            with store.transaction():
+                if units is not None:
+                    results.append(store.import_business_units(units.rows, actor=actor, whole=whole))
+                    said += [*_units_read(units), _changed("Business units", results[-1])]
+                if staged is not None:
+                    without = tuple(dict.fromkeys(f for _name, read in reads for f in read.without))
+                    results.append(store.swap_chart(staged, actor=actor, without=without, whole=whole,
+                                                    anyway=anyway, summary=read_said))  # fmt: skip
+                    said += [*read_said, _changed("Chart of accounts", results[-1], "rows ")]
+        except ChartRefused as exc:
+            exc.said = read_said
+            raise
     return said + lists_lines(results) + tally_lines(store)
 
 
@@ -242,15 +328,21 @@ def _import(args: argparse.Namespace) -> int:
         print("Name the file to import: --chart <file> for the chart of accounts, --business-units <file> for the "
               "business units, or both.", file=sys.stderr)  # fmt: skip
         return 2
-    for path in (args.chart, args.business_units):
+    for path in (*(args.chart or ()), args.business_units):
         if path and not Path(path).is_file():
             print(f"There is no file {path}. Nothing was changed.", file=sys.stderr)
             return 1
     if args.chart:
-        print("Reading the chart of accounts (a chart of 15,000 rows takes 10 to 20 seconds)...", flush=True)
+        print("Reading the chart of accounts (15,000 rows take seconds, 3,500,000 a few minutes)...", flush=True)
+    charts = [(path, "", Path(path).name) for path in args.chart or ()]
     try:
-        said = import_files(Store(args.db), args.chart, args.business_units, actor=ACTOR, anyway=args.anyway,
-                            whole=args.whole, every=PROGRESS_EVERY)  # fmt: skip
+        said = import_files(Store(args.db), None, args.business_units, actor=ACTOR, anyway=args.anyway,
+                            whole=args.whole, every=PROGRESS_EVERY, charts=charts)  # fmt: skip
+    except ChartRefused as exc:
+        for line in exc.said:
+            print(line)
+        print(str(exc), file=sys.stderr)
+        return 1
     except chart.ColumnsMissing as exc:
         offered = ": every account will be offered" if "posting_edit" in exc.fields else ""
         print(f"Not imported: {exc} To import it anyway, add --anyway{offered}.", file=sys.stderr)

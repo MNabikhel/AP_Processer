@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
+import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Callable
@@ -184,10 +187,105 @@ def workbook(scale: Scale) -> dict[str, float]:
                     seconds[f"load {sheet['title']}"], _ = _timed(
                         lambda k=key, s=sheet: jde_workbook._load_sheet(store, k, content, "group.xlsx", s)
                     )
+        store.forget_reference()  # (its chart's connections closed: Windows removes no folder with the file open)
     return seconds
 
 
-def run(share: float, invoices: int, workbook_share: float, out: str) -> dict[str, Any]:
+def _peak_mb_of_children() -> float | None:
+    """The largest resident memory of a child process so far, in MB (None where the platform does not say)."""
+    try:
+        import resource
+    except ImportError:  # (Windows)
+        return None
+    peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    return round(peak / (1024 * 1024 if sys.platform == "darwin" else 1024), 1)
+
+
+def _median_us(work: Callable[[int], Any], times: int) -> float:
+    took = []
+    for k in range(times):
+        started = time.perf_counter()
+        work(k)
+        took.append(time.perf_counter() - started)
+    return round(statistics.median(took) * 1e6, 1)
+
+
+def full_chart(rows: int, companies: int = 20) -> dict[str, Any]:
+    """The group's whole chart unfiltered (D-272: every company's accounts, about half not posted to, some of a code
+    not decided) as ReportsNow's tab-delimited text: loaded by ``python -m ap_coder chart import --chart`` in a process
+    of its own (its time and peak memory), then refreshed in this one, staged and swapped apart, and asked what the
+    pages and the checks ask of it. {step: value}."""
+    from ..coding import companies as companies_mod
+    from ..core import chart_file
+    from ..core.store import Store
+    from ..ops import chart_cmd
+    from ..web.pages import settings_jde
+
+    out: dict[str, Any] = {}
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "f0901_all_companies.txt"
+        out["write the file, s"], written = _timed(lambda: jde_group.write_full_chart(path, rows, companies))
+        out["rows"], out["file MB"] = written, round(path.stat().st_size / 1e6, 1)
+        db = Path(folder) / "ap_coder.db"
+        store = Store(db)
+        table = {code: {"name": name, "currency": cur, "country": country}
+                 for code, name, cur, country in jde_group.group(companies)}  # fmt: skip
+        store.set_setting(companies_mod.COMPANIES_SETTING, json.dumps(table))
+        out["business units"] = len(units := jde_group.full_unit_rows(rows, companies))
+        out["load the business units, s"], _ = _timed(lambda: store.import_business_units(units))
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2])}
+        command = [sys.executable, "-m", "ap_coder", "--db", str(db), "chart", "import", "--chart", str(path)]
+        out["load (the command line, a process of its own), s"], done = _timed(
+            lambda: subprocess.run(command, capture_output=True, text=True, env=env, check=False))  # fmt: skip
+        if done.returncode:
+            raise RuntimeError(f"the chart was not loaded: {done.stderr[-800:]}")
+        out["load, peak memory of its process, MB"] = _peak_mb_of_children()
+        out["what the load said"] = [line for line in done.stdout.splitlines() if "rows read..." not in line][:14]
+        # A refresh of the same file in this process: read and staged (no write lock), then swapped in.
+        with store.session():
+            read, given = chart_file.stream_chart_text(path)
+            out["refresh: read and staged, s"], staged = _timed(lambda: store.stage_chart([(path.name, given)]))
+            out["refresh: the import's summary, s"], said = _timed(
+                lambda: chart_cmd.read_lines([(path.name, read)], staged, store.chart_settings()))  # fmt: skip
+            out["refresh: swapped in (one transaction), s"], _ = _timed(lambda: store.swap_chart(staged, summary=said))
+        # A refresh that changes something: a company's descriptions, and a quarter of another's accounts gone.
+        changed = Path(folder) / "f0901_changed.txt"
+        codes = [c[0] for c in jde_group.group(companies)]
+        with open(path, encoding="utf-8") as source, open(changed, "w", encoding="utf-8", newline="") as target:
+            for n, line in enumerate(source):
+                if not (line.startswith(f"{codes[1]}\t") and n % 4 == 0):
+                    target.write(line.replace("material", "materials") if line.startswith(f"{codes[0]}\t") else line)
+        with store.session():
+            given = chart_file.stream_chart_text(changed)[1]
+            out["refresh with changes: read and staged, s"], staged = _timed(
+                lambda: store.stage_chart([(changed.name, given)]))  # fmt: skip
+            out["refresh with changes: swapped in (one transaction), s"], result = _timed(
+                lambda: store.swap_chart(staged))  # fmt: skip
+        out["refresh with changes: changed, removed"] = (result["updated"], result["removed"])
+        out["the chart's reference data (offered codes and units), s"], reference = _timed(store.reference_data)
+        pairs = reference.pairs
+        out["what the chart holds (the JD Edwards files card), s"], _ = _timed(lambda: chart_cmd.tally_lines(store))
+        out["the Accounts AP posts to card, s"], _ = _timed(lambda: settings_jde.posting_context(store))
+        by_unit = [u.code for u in units]
+        objects = jde_group.OBJECTS
+        out["a line's account check, µs (median)"] = _median_us(
+            lambda k: pairs.status(by_unit[(k * 7919) % len(by_unit)], objects[k % len(objects)]), 2000
+        )
+        out["an account search, ms (median)"] = round(_median_us(
+            lambda k: pairs.search(f"cost {objects[k % len(objects)]}"), 30) / 1000, 1)  # fmt: skip
+        one = pairs.units_of(units[0].company)
+        out["an account search within one company, ms (median)"] = round(_median_us(
+            lambda k: pairs.search(f"{objects[k % len(objects)]} labour", one), 30) / 1000, 1)  # fmt: skip
+        out["a search for words found nowhere, ms"] = round(
+            _median_us(lambda k: pairs.search("qqqq zzzz"), 5) / 1000, 1
+        )
+        out["database MB"] = round(db.stat().st_size / 1e6, 1)
+        pairs.close()  # (Windows removes no folder with the database open: WinError 32, B-2653)
+        store.forget_reference()
+    return out
+
+
+def run(share: float, invoices: int, workbook_share: float, out: str, full_rows: int = 0) -> dict[str, Any]:
     from ..core.store import Store
 
     full = Scale()
@@ -200,8 +298,11 @@ def run(share: float, invoices: int, workbook_share: float, out: str) -> dict[st
         report["loads_at_full_size"] = {name: round(s / share, 1) if name != "companies" else round(s, 2)
                                         for name, s in loads.items()}  # fmt: skip
         report["per_invoice_ms"] = per_invoice(store, scale, invoices)
+        store.forget_reference()  # (its chart's connections closed: Windows removes no folder with the file open)
     report["workbook"] = {name: round(s, 2) for name, s in workbook(full.scaled(workbook_share)).items()}
     report["workbook_share"] = workbook_share
+    if full_rows:
+        report["full_chart"] = full_chart(full_rows, full.companies)
     folder_out = Path(out)
     folder_out.mkdir(parents=True, exist_ok=True)
     (folder_out / "companies_speed.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -221,6 +322,15 @@ def _markdown(report: dict[str, Any]) -> str:
     lines += [f"| {name} | {t['median']} | {t['slowest']} |" for name, t in report["per_invoice_ms"].items()]
     lines += ["", f"Master workbook at {report['workbook_share']:g} of the full size:", ""]
     lines += [f"- {name}: {value}" for name, value in report["workbook"].items()]
+    if report.get("full_chart"):
+        lines += ["", "The whole chart unfiltered, as tab-delimited text (D-272):", ""]
+        lines += [f"- {name}: {value}" for name, value in report["full_chart"].items() if name != "what the load said"]
+        lines += [
+            "",
+            "What its load said:",
+            "",
+            *(f"    {line}" for line in report["full_chart"]["what the load said"]),
+        ]
     return "\n".join(lines) + "\n"
 
 
@@ -238,11 +348,14 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     p.add_argument("--invoices", type=int, default=30, help="invoices whose checks are timed (default 30)")
     p.add_argument("--workbook-share", type=float, default=0.05, help="the master workbook's size (default 0.05)")
     p.add_argument("--out", default="bench_companies", help="output folder (default bench_companies)")
+    p.add_argument("--full-chart", type=int, default=0, metavar="ROWS",
+                   help="also the whole chart unfiltered as tab-delimited text, of ROWS rows (3500000: the pilot "
+                        "tester's), loaded by the command line and asked (D-272)")  # fmt: skip
     p.set_defaults(run=main)
     return p
 
 
 def main(a: argparse.Namespace) -> int:
-    report = run(a.share, a.invoices, a.workbook_share, a.out)
+    report = run(a.share, a.invoices, a.workbook_share, a.out, a.full_chart)
     print(_markdown(report))
     return 0

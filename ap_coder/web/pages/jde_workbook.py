@@ -7,8 +7,9 @@ kept, each sheet with the report it was recognised as, its rows (and how many of
 and the ones missing (``look``); a sheet that is none of the reports is listed and never guessed at, and two sheets of
 a report that is replaced whole (the payment terms, the tax areas, the companies) are both left out, said. Several
 sheets of a report that adds up (the supplier ledger, the G/L lines, the PO lines, split by company or year) are
-loaded one after the other, an overlap counted once; so are the chart's and the business units' split by company
-(each replaces its companies' rows, D-267: a company in two of them leaves both out).
+loaded one after the other, an overlap counted once; so are the business units split by company (each replaces its
+companies' rows, D-267: a company in two of them leaves both out). The chart's sheets are one load (D-272): read and
+checked in full, then swapped in once, a company split across them loaded whole.
 
 "Load all" loads every sheet that can be, in the order the cards depend on each other (``ORDER``), through each card's
 own loader (``jde_files``, ``ops/chart_cmd``, ``ops/journal_cmd``); a sheet that cannot be loaded is said, and the
@@ -49,8 +50,9 @@ CARD = "workbook"
 ORDER = ("companies", "chart", "units", "payment_terms", "tax_areas", "supplier_master", "vendor_info", "vouchers",
          "gl_lines", "purchase_orders")  # fmt: skip
 WHOLE = ("payment_terms", "tax_areas", "companies")
-# Loaded in parts, a sheet each (a chart split by company, D-267): no company in two of its sheets.
-PARTS = ("chart", "units")  # a newer file replaces it whole: one sheet only
+# Loaded in parts, a sheet each (the business units split by company, D-267): no company in two of its sheets. The
+# chart's sheets are one load, read in full and swapped in once (a company split across them loaded whole, D-272).
+PARTS = ("units",)
 # The column of each report a row's company is in.
 COMPANY = {"units": "company", "vouchers": "company", "gl_lines": "company", "purchase_orders": "order_company",
            "chart": "company"}  # fmt: skip
@@ -183,10 +185,11 @@ def _load_sheet(store: Store, key: str, content: bytes, name: str, sheet: dict[s
     """Load one sheet as its card loads its report, and what that says; ``ValueError`` (or ``ChartError``) when it
     cannot be."""
     title = sheet["title"]
-    if key in ("chart", "units"):
-        given = {"chart_source": content, "chart_sheet": title} if key == "chart" else {
-            "units_source": content, "units_sheet": title}  # fmt: skip
-        return chart_cmd.import_files(store, **given, actor=reviewer())
+    if key == "chart":  # (its sheets one load, each named by its title: D-272)
+        parts = sheet.get("parts") or [title]
+        return chart_cmd.import_files(store, charts=[(content, part, part) for part in parts], actor=reviewer())
+    if key == "units":
+        return chart_cmd.import_files(store, units_source=content, units_sheet=title, actor=reviewer())
     if key == "vendor_info":
         read = vendor_info.read(content, name, title)
         if read is None or not read["rows"]:
@@ -218,7 +221,8 @@ def _load_sheet(store: Store, key: str, content: bytes, name: str, sheet: dict[s
 @one_connection
 def _load_all(request: Request, token: str) -> JSONResponse:
     """Load every sheet the workbook's summary showed as loadable, in ``ORDER``: what each said, a sheet that could
-    not be loaded with why. The open PO lines of several sheets are one load (an order's lines replace its own)."""
+    not be loaded with why. The open PO lines of several sheets are one load (an order's lines replace its own), and
+    so are the chart's (one swap, D-272)."""
     store, seen = get_store(request), look(get_store(request), token)
     surveyed = json.loads(current_store().ephemeral(KIND, token) or b"{}")
     upload = get_upload(surveyed.get("upload"))
@@ -234,6 +238,9 @@ def _load_all(request: Request, token: str) -> JSONResponse:
     try:
         for key in ORDER:
             mine = [s for s in sheets if s["key"] == key]
+            if key == "chart" and len(mine) > 1:
+                mine = [{**mine[0], "title": ", ".join(s["title"] for s in mine), "parts": [s["title"] for s in mine],
+                         "sheets": len(mine)}]  # fmt: skip
             if key == "purchase_orders" and mine:
                 frames = [_frame(upload.content, upload.name, s) for s in mine]
                 mine = [{**mine[0], "title": ", ".join(s["title"] for s in mine), "frames": frames,

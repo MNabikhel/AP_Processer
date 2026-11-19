@@ -174,15 +174,22 @@ POSTING_CODES = (("L", "a subledger and its type are required on the line"),
 
 
 def posting_context(store: Store) -> dict[str, Any]:
-    """The accounts AP posts to (D-268, D-269): the posting edit codes it may post to besides blank (the ticked ones
-    and the others), the control accounts the past coding gives (each object and what it is) and the patterns never
-    offered a person typed."""
+    """The accounts AP posts to (D-268, D-269, D-272): the posting edit codes it may post to besides blank (the ticked
+    ones and the others), the codes of the chart no setting decides and JD Edwards' list does not have (each with its
+    accounts: closed until a person decides), those decided never to post to, the control accounts the past coding
+    gives (each object and what it is), the patterns never offered a person typed, and the companies in the pilot
+    (with report 9's, to pick from)."""
     settings = store.chart_settings()
     ticked = [code for code, _ in POSTING_CODES]
+    counts = store.chart_edit_counts() if store.has_chart() else {}
     return {"codes": POSTING_CODES, "ticked": [c for c in settings.postable_codes if c in ticked],
             "others": ", ".join(c for c in settings.postable_codes if c and c not in ticked),
+            "undecided": [{"code": c, "accounts": counts[c]} for c in settings.undecided(counts)],
+            "closed": [{"code": c, "accounts": counts.get(c, 0)} for c in settings.closed_codes],
             "control": [{"object": obj, "said": said} for obj, said in settings.control],
-            "never_offered": ", ".join(settings.never_offered), "chart": store.has_chart()}  # fmt: skip
+            "never_offered": ", ".join(settings.never_offered), "chart": store.has_chart(),
+            "pilot": ", ".join(settings.pilot),
+            "companies": [{"code": c.code, "name": c.name} for c in companies.companies(store).values()]}  # fmt: skip
 
 
 def company_rows(store: Store, js: jde_settings.JdeSettings) -> list[dict[str, str]]:
@@ -493,13 +500,18 @@ def _save_an8(request: Request, form: Any) -> JSONResponse:
 
 @router.post(URL + "/posting")
 def save_posting(request: Request, code: list[str] = Form([]), other_codes: str = Form(""),  # noqa: B008
-                 never_offered: str = Form("")) -> JSONResponse:  # fmt: skip
-    """The posting edit codes AP may post to besides blank (L and U ticked by default, D-268; others typed) and the
-    control accounts and others never offered (D-269): the chart's settings, as ``chart settings`` saves them on the
-    command line."""
+                 never_offered: str = Form(""), closed: list[str] = Form([]),  # noqa: B008
+                 pilot_companies: str = Form("")) -> JSONResponse:  # fmt: skip
+    """The posting edit codes AP may post to besides blank (L and U ticked by default, D-268; others typed), those
+    decided never to post to (``closed``: ticked "Leave closed", D-272), the control accounts and others never offered
+    (D-269) and the companies in the pilot (D-272): the chart's settings, as ``chart settings`` saves them on the
+    command line, the change kept in the activity log."""
     store = get_store(request)
     codes = [c for c in (*code, *other_codes.replace(",", " ").split()) if c.strip()]
-    typed = {"postable_codes": ", ".join(codes) or chart.BLANK_ONLY, "never_offered": never_offered}
+    closed_codes = [c.strip().upper() for c in closed if c.strip() and c.strip().upper() not in
+                    {x.upper() for x in codes}]  # fmt: skip
+    typed = {"postable_codes": ", ".join(codes) or chart.BLANK_ONLY, "never_offered": never_offered,
+             "closed_codes": ", ".join(closed_codes), "pilot_companies": pilot_companies}  # fmt: skip
     wanted = chart.ChartSettings.read({**store.chart_settings().saved(), **typed})
     try:
         changed = store.save_chart_settings(wanted, actor=reviewer())

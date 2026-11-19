@@ -6,7 +6,16 @@ from __future__ import annotations
 import pytest
 
 from ap_coder.core import chart
-from ap_coder.core.chart import BU_INACTIVE, NOT_IN_CHART, NOT_POSTABLE, OK, RESERVED, AccountPairs, ChartSettings
+from ap_coder.core.chart import (
+    BU_INACTIVE,
+    BU_UNKNOWN,
+    NOT_IN_CHART,
+    NOT_POSTABLE,
+    OK,
+    RESERVED,
+    AccountPairs,
+    ChartSettings,
+)
 from tests import chart_files as cf
 from tests.chart_files import CLOSED, HOME, NOT_USED, OTHER, UNLISTED
 
@@ -196,7 +205,7 @@ def test_a_name_that_carries_a_skip_word(name, word):
         ("07310", "2140.QC", OK),  # a letter subsidiary
         ("07310", "2190.7QXR3", OK),  # letters and digits
         ("07310", "2165.60017734", OK),  # an 8-digit subsidiary
-        (UNLISTED, "5470", OK),  # a business unit the master does not list yet
+        (UNLISTED, "5470", BU_UNKNOWN),  # a business unit the master does not list (yet): never offered (D-272)
         ("  0731066120", " 5410.2210 ", OK),  # the export's padding
         (HOME, "5450", NOT_IN_CHART),  # another business unit's account
         (OTHER, "5410.2210", NOT_IN_CHART),
@@ -258,8 +267,8 @@ def test_what_a_business_unit_has_and_where_an_account_is():
     assert pairs.bus_of("5410") == (HOME, OTHER, "07310K")
     assert pairs.bus_of("5450") == (OTHER,) and pairs.bus_of("5460") == pairs.bus_of("5410.7701") == ()
     assert "5410.7701" not in pairs.offered_codes() and "5460" not in pairs.offered_codes()
-    assert {"5410", "2140.QC", "2165.60017734", "5470"} <= pairs.offered_codes()
-    assert pairs.business_units() == ["0550421", "05504218", "07310", HOME, OTHER, UNLISTED, "07310K"]
+    assert {"5410", "2140.QC", "2165.60017734"} <= pairs.offered_codes() and "5470" not in pairs.offered_codes()
+    assert pairs.business_units() == ["0550421", "05504218", "07310", HOME, OTHER, "07310K"]
     assert pairs.description("05504218", "5710.3120") == "Accounting Package Lice"
     assert pairs.posting_edit(HOME, "5430") == "I" and pairs.posting_edit(HOME, "5410") == ""
     assert pairs.name_of(NOT_USED) == "****DO NOT USE**** Old Annex" and pairs.name_of(UNLISTED) == "Facilities"
@@ -267,7 +276,7 @@ def test_what_a_business_unit_has_and_where_an_account_is():
     assert not pairs.has_business_unit("0731066100")
     assert pairs.has_code("5460") and pairs.has_code("5400") and not pairs.has_code("9999")
     assert len(pairs) == 32
-    assert pairs.tally() == {OK: 15, RESERVED: 2, NOT_POSTABLE: 12, BU_INACTIVE: 3}
+    assert pairs.tally() == {OK: 14, RESERVED: 2, NOT_POSTABLE: 12, BU_INACTIVE: 3, BU_UNKNOWN: 1}
     assert pairs.closed_units() == [CLOSED] and pairs.skipped_units() == {NOT_USED: "DO NOT USE"}
 
 

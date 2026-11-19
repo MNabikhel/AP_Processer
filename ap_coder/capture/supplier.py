@@ -1532,6 +1532,7 @@ ALWAYS_A_PERSON: dict[str, str] = {
     "TEXT_ADDRESSED_TO_SOFTWARE": "it contains text addressed to software",
     # With several companies (D-267): none decided, or one not checked for Canadian tax (a US company's).
     "COMPANY_UNKNOWN": "which company it is for is not known",
+    "COMPANY_NOT_IN_PILOT": "its company is not in the pilot",
     "US_TAX_NOT_CHECKED": "its company's tax is not checked here",
     # The AI reviewer corrected values the reading missed, the math confirming them: a person confirms (D-263).
     "VERIFIER_CORRECTED": "the AI reviewer corrected values from the page, for a person to confirm",
