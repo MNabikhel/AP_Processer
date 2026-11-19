@@ -89,3 +89,21 @@ def test_settings_turn_a_companys_canadian_tax_checks_on_or_off_and_say_how_they
     assert client.post("/settings/jde/tax-map", data=form, headers=PAGE).json()["ok"]
     assert jde_settings.load(store).company_tax == {"00220": "off", "00320": "on"}
     assert companies.canadian(store, "00320") == (True, "turned on in Settings")
+
+
+def test_a_chart_too_big_to_send_is_searched_as_an_account_box_is_typed_in(client, store, monkeypatch):
+    from ap_coder.web.pages import invoice_lookups
+    from tests import chart_files as cf
+    from tests.core.test_chart import _chart, _units
+
+    load_sample_setup(store)
+    store.import_business_units(_units().rows)
+    store.import_chart(_chart().rows)
+    reference = store.reference_data()
+    seed = invoice_lookups.account_seed(store, reference, "")
+    assert seed["url"] and "search" not in seed  # a chart of a few accounts: sent whole, as before
+    monkeypatch.setattr(invoice_lookups, "LIST_MOST", 5)
+    seed = invoice_lookups.account_seed(store, reference, "")
+    assert seed["url"] == "" and seed["search"] == "/review/accounts.json?company=&q="
+    found = client.get("/review/accounts.json?q=coffee").json()["list"]
+    assert found == [[f"{cf.HOME}.5410.2210", "Coffee and Refreshments", "Head Office General"]]

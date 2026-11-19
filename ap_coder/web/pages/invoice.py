@@ -191,7 +191,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         bank_shown=mask_account(bank) if (bank := draft.header.get("remit_bank_account")) else "",
         supply=invoice_grid.supply_line(draft.header, draft.lines, reference.tax),
         usual_cc=invoice_grid.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
-        account_seed=account_seed(store, reference, draft.header.get("vendor_name") or ""),
+        account_seed=account_seed(store, reference, draft.header.get("vendor_name") or "", header.get("company") or analysis.output.get("company") or ""),
         draft_from=_when(saved_at),
     )  # fmt: skip
     # What the screen's check did once it opened, a second request (the screen's own checks again, whose answer the

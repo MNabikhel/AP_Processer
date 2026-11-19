@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections import Counter
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ from ..core.store import Store
 from ..core.ui import plural
 
 ACTOR = "the console (chart import)"
+PROGRESS_EVERY = 250_000  # a chart CSV streamed from disk: how many rows were read, said after each that many
 SHOWN = 10  # the codes of a kind, or the business units held back for their name, that are named one by one
 # ``chart settings``' options, each with the setting it writes.
 OPTIONS = {"postable": "postable_codes", "never_offered": "never_offered", "skip_words": "skip_words",
@@ -87,12 +89,36 @@ def _units_read(read: chart.Rows) -> list[str]:
     return said + _left_out(read.skipped)
 
 
-def _chart_read(read: chart.Rows, settings: chart.ChartSettings) -> list[str]:
-    accounts = [r for r in read.rows if not r.is_header]
-    edits = Counter(r.posting_edit for r in accounts if r.posting_edit not in settings.postable_codes)
-    said = [f"Read {plural(len(read.rows), 'row')} of the chart: {plural(len(accounts), 'account')} on "
-            f"{plural(len({r.bu for r in read.rows}), 'business unit')}; "
-            f"{len(accounts) - sum(edits.values()):,} may be posted to."]  # fmt: skip
+class _Tally:
+    """What a chart read says of its rows, counted as they go by (a chart streamed from disk is never held, D-267):
+    the rows, the accounts, the business units, the accounts of each posting edit code."""
+
+    def __init__(self) -> None:
+        self.rows = self.accounts = 0
+        self.units: set[str] = set()
+        self.edits: Counter[str] = Counter()
+
+    def counted(self, rows: Iterable[chart.ChartRow], every: int = 0) -> Iterator[chart.ChartRow]:
+        for row in rows:
+            self.rows += 1
+            self.units.add(row.bu)
+            if not row.is_header:
+                self.accounts += 1
+                self.edits[row.posting_edit] += 1
+            if every and self.rows % every == 0:
+                print(f"  {self.rows:,} rows read...", flush=True)
+            yield row
+
+
+def _chart_read(read: chart.Rows, settings: chart.ChartSettings, tally: _Tally | None = None) -> list[str]:
+    if tally is None:
+        tally = _Tally()
+        for _row in tally.counted(read.rows):
+            pass
+    edits = Counter({code: n for code, n in tally.edits.items() if code not in settings.postable_codes})
+    said = [f"Read {plural(tally.rows, 'row')} of the chart: {plural(tally.accounts, 'account')} on "
+            f"{plural(len(tally.units), 'business unit')}; "
+            f"{tally.accounts - sum(edits.values()):,} may be posted to."]  # fmt: skip
     if edits:
         said.append("  Not for posting, by posting edit code: "
                     + ", ".join(f"{n:,} with {code}" for code, n in sorted(edits.items())) + ".")  # fmt: skip
@@ -182,15 +208,21 @@ def settings_lines(store: Store) -> list[str]:
 def import_files(store: Store, chart_source: str | Path | bytes | None = None,
                  units_source: str | Path | bytes | None = None, actor: str | None = None,
                  anyway: bool = False, chart_sheet: str = "", units_sheet: str = "",
-                 whole: bool = False) -> list[str]:  # fmt: skip
+                 whole: bool = False, every: int = 0) -> list[str]:  # fmt: skip
     """Import the business unit master and the chart of accounts (either or both; a path, or a file's bytes; each
     from its sheet of that name, ``chart_sheet`` and ``units_sheet``, else its first) and say what was done, a line
     each. ``chart.ChartError`` for a file that cannot be read (``chart.ColumnsMissing`` for a chart without its
     posting edit or subsidiary column, unless ``anyway``) and ``ValueError`` for one that would leave no account to
     code to: nothing is changed then, of either file. ``whole``: each file replaces all of its table, not only the
-    companies it names (D-267)."""
+    companies it names (D-267). A chart saved as CSV (a path ending .csv) is streamed from disk as it is loaded, up to
+    ``chart.STREAMED_MOST`` rows, never held; ``every``: say how many rows were read after each that many."""
     units = chart_file.read_business_units(units_source, units_sheet) if units_source is not None else None
-    rows = chart_file.read_chart(chart_source, anyway, chart_sheet) if chart_source is not None else None
+    streamed = isinstance(chart_source, (str, Path)) and str(chart_source).lower().endswith(".csv")
+    tally, stream = _Tally(), None
+    if streamed:  # (a CSV from disk: read a row at a time as it is loaded, never held, D-267)
+        rows, stream = chart_file.stream_chart_csv(chart_source, anyway)
+    else:
+        rows = chart_file.read_chart(chart_source, anyway, chart_sheet) if chart_source is not None else None
     said: list[str] = []
     results: list[dict[str, Any]] = []
     with store.transaction():
@@ -198,8 +230,10 @@ def import_files(store: Store, chart_source: str | Path | bytes | None = None,
             results.append(store.import_business_units(units.rows, actor=actor, whole=whole))
             said += [*_units_read(units), _changed("Business units", results[-1])]
         if rows is not None:
-            results.append(store.import_chart(rows.rows, actor=actor, without=rows.without, whole=whole))
-            said += [*_chart_read(rows, store.chart_settings()), _changed("Chart of accounts", results[-1], "rows ")]
+            given = tally.counted(stream if stream is not None else rows.rows, every if streamed else 0)
+            results.append(store.import_chart(given, actor=actor, without=rows.without, whole=whole))
+            said += [*_chart_read(rows, store.chart_settings(), tally),
+                     _changed("Chart of accounts", results[-1], "rows ")]  # fmt: skip
     return said + lists_lines(results) + tally_lines(store)
 
 
@@ -216,7 +250,7 @@ def _import(args: argparse.Namespace) -> int:
         print("Reading the chart of accounts (a chart of 15,000 rows takes 10 to 20 seconds)...", flush=True)
     try:
         said = import_files(Store(args.db), args.chart, args.business_units, actor=ACTOR, anyway=args.anyway,
-                            whole=args.whole)  # fmt: skip
+                            whole=args.whole, every=PROGRESS_EVERY)  # fmt: skip
     except chart.ColumnsMissing as exc:
         offered = ": every account will be offered" if "posting_edit" in exc.fields else ""
         print(f"Not imported: {exc} To import it anyway, add --anyway{offered}.", file=sys.stderr)
@@ -254,12 +288,10 @@ def _settings(args: argparse.Namespace, store: Store) -> int:
 
 
 def _show(store: Store) -> int:
-    rows, units = store.chart_accounts(), store.business_units()
-    if rows:
-        accounts = [r for r in rows if not r.is_header]
-        print(f"Chart of accounts: {plural(len(accounts), 'account')} on "
-              f"{plural(len({r.bu for r in rows}), 'business unit')}; {plural(len(units), 'business unit')} in the "
-              "master.")  # fmt: skip
+    (accounts, on_units), units = store.chart_counts(), store.business_units()
+    if accounts:
+        print(f"Chart of accounts: {plural(accounts, 'account')} on {plural(on_units, 'business unit')}; "
+              f"{plural(len(units), 'business unit')} in the master.")  # fmt: skip
     for line in settings_lines(store):
         print(line)
     for table, name in (("gl_accounts", "GL accounts"), ("cost_centers", "Cost centers")):

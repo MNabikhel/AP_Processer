@@ -795,8 +795,10 @@ def test_each_load_button_says_what_it_loads_and_what_that_replaces_or_adds_to(c
     accounts, units = _accounts(store), len(store.business_units())
     card = _card_of(client, "chart", _token(_send(client, "/jde-files/chart/upload", exports, made.CHART_FILE)))
     assert f"Load {accounts:,} accounts</button>" in card
-    assert (f"Replaces the accounts of the companies in this file (its Company column) among the {accounts:,} "
-            "accounts loaded now, the other companies&#39; kept") in card  # (D-267)
+    assert (
+        f"Replaces the accounts of the companies in this file (its Company column) among the {accounts:,} "
+        "accounts loaded now, the other companies&#39; kept"
+    ) in card  # (D-267)
     card = _card_of(client, "units", _token(_send(client, "/jde-files/units/upload", exports, made.UNITS_FILE)))
     assert f"Load {units:,} business units</button>" in card and f"among the {units:,} business units loaded" in card
     token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.SUPPLIERS_FILE))

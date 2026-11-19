@@ -70,3 +70,21 @@ def test_the_chart_reads_each_accounts_company_and_an_older_database_gets_the_co
         conn.execute("ALTER TABLE chart_accounts DROP COLUMN company")
         conn.execute("INSERT INTO chart_accounts (bu, object) VALUES ('2100101', '5110')")
     assert Store(db).chart_accounts()[0].company == ""
+
+
+def test_a_chart_saved_as_csv_is_streamed_from_disk_a_company_at_a_time(store, tmp_path, capsys):
+    from ap_coder.ops import chart_cmd
+
+    header = "Company,Business Unit,Object Account,Subsidiary,Account Description,L D,P E\n"
+    first = tmp_path / "chart_00210.csv"
+    first.write_text(header + "".join(f"00210,  21001{n:02d},5110,,Cost,7,\n00210,  21001{n:02d},5110,,Cost,7,\n"
+                                      for n in range(5)), encoding="utf-8")  # fmt: skip
+    said = chart_cmd.import_files(store, first, every=4)
+    assert "Read 10 rows of the chart: 10 accounts on 5 business units; 10 may be posted to." in said
+    assert "  4 rows read..." in capsys.readouterr().out
+    assert len(store.account_pairs()) == 5  # (each account given twice is kept once)
+    second = tmp_path / "chart_00310.csv"
+    second.write_text(header + "00310,3100101,5110,0100,Labour,8,U\n", encoding="utf-8")
+    said = chart_cmd.import_files(store, second)
+    assert "Chart of accounts (company 00310's; the other companies' kept): 1 rows added, 0 changed, 0 removed." in said
+    assert store.account_pairs().status("3100101", "5110.0100") == chart.OK and len(store.account_pairs()) == 6

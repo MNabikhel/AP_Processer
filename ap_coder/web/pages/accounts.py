@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 
 from ap_coder.coding import banks
 from ap_coder.coding.tax import DEFAULT_RATES_PATH, RATES_FILE, TAX_TYPES, TREATMENTS, TaxRateTable, rates_path
-from ap_coder.core import chart, ui
+from ap_coder.core import ui
 from ap_coder.core.reference_data import short_name
 from ap_coder.core.safe import csv_cell
 from ap_coder.core.store import Store, load_sample_setup
@@ -123,14 +123,13 @@ def _from_chart(store: Store, table: str, listed: list[dict[str, Any]]) -> dict[
     """The chart of accounts and business units loaded on JD Edwards files, which give the GL accounts and the cost
     centers (``chart.account_lists``): how many accounts and business units, and how many of the ``listed`` rows of
     ``table`` the chart gives (the others were imported or typed on this page; None while no chart is loaded)."""
-    rows = store.chart_accounts()
-    if not rows:
+    accounts_n, on_units = store.chart_counts()
+    if not store.has_chart():
         return None
-    units = store.business_units()
-    accounts, centers = chart.account_lists(rows, units, store.chart_settings())
+    units = len(store.business_units())
+    accounts, centers = store.chart_lists()
     given = accounts if table == "gl_accounts" else centers
-    return {"accounts": sum(1 for row in rows if not row.is_header),
-            "units": len(units) or len({row.bu for row in rows}),
+    return {"accounts": accounts_n, "units": units or on_units,
             "given": sum(1 for row in listed if row["code"] in given)}  # fmt: skip
 
 

@@ -146,7 +146,7 @@ def _scope(conn: sqlite3.Connection, whole: bool) -> tuple[str, list[str]]:
     if whole or not companies:
         return "1", []
     listed = ", ".join(f"'{c}'" for c in companies if "'" not in c)
-    scope = (f"(company IN ({listed}) OR (company = '' AND bu IN (SELECT DISTINCT bu FROM temp.chart_load)))")
+    scope = f"(company IN ({listed}) OR (company = '' AND bu IN (SELECT DISTINCT bu FROM temp.chart_load)))"
     others = conn.execute(f"SELECT EXISTS (SELECT 1 FROM chart_accounts WHERE NOT {scope})").fetchone()[0]
     return scope, companies if others else []
 
@@ -306,6 +306,11 @@ class ChartMixin:
                                "chart_accounts").fetchone()  # fmt: skip
         return int(row[0]), int(row[1])
 
+    def chart_lists(self) -> tuple[dict[str, tuple[str, str]], dict[str, str]]:
+        """The GL accounts and cost centers the chart gives (``chart.account_lists``), worked out by SQLite."""
+        with self._conn() as conn:
+            return _lists(conn)
+
     def business_units(self) -> list[BuRow]:
         """Every business unit of the business unit master as imported."""
         with self._conn() as conn:
@@ -430,8 +435,11 @@ class ChartMixin:
             if found is not None:
                 rows[key] = ChartRow(*found)
         put = self._hand_edits_put_back(conn, "chart_accounts", rows)
-        conn.executemany("UPDATE temp.chart_load SET description = ?, posting_edit = ? WHERE bu = ? AND object = ? "
-                         "AND subsidiary = ?", [(r.description, r.posting_edit, *key) for key, r in rows.items()])
+        conn.executemany(
+            "UPDATE temp.chart_load SET description = ?, posting_edit = ? WHERE bu = ? AND object = ? "
+            "AND subsidiary = ?",
+            [(r.description, r.posting_edit, *key) for key, r in rows.items()],
+        )
         return put
 
     def import_business_units(self, rows: Iterable[BuRow], actor: str | None = None,

@@ -331,6 +331,31 @@ try {
 const accounts = { entries: null, byValue: new Map(), total: accountSeed?.count || 0, supplier: accountSeed?.supplier || [],
   home: accountSeed?.home || "", failed: false, loading: null };
 
+// A chart too big to send whole (a group's, of millions of accounts: D-267), or one company's of several: searched as
+// a box is typed in (#account-seed's "search"), each answer kept for the words it was asked for.
+const searched = new Map();
+let searching = "";
+let lastFound = [];
+function searchChart(box, typed) {
+  const words = typed.trim();
+  if (!words) return [];
+  if (searched.has(words)) return (lastFound = searched.get(words));
+  if (searching === words) return lastFound; // (its answer on its way: the last one shown meanwhile)
+  searching = words;
+  fetchWithin(accountSeed.search + encodeURIComponent(words), { headers: { Accept: "application/json" } })
+    .then((response) => (response.ok ? response.json() : { list: [] }))
+    .then((answer) => {
+      searched.set(words, prepareAccounts(answer.list || []));
+      if (searched.size > 200) searched.delete(searched.keys().next().value);
+    })
+    .catch(() => {})
+    .finally(() => {
+      if (searching === words) searching = "";
+      if (document.activeElement === box) refresh(box);
+    });
+  return lastFound;
+}
+
 function loadAccounts() {
   if (!accountSeed?.url || accounts.entries || accounts.loading) return accounts.loading;
   accounts.loading = (async () => {
@@ -351,7 +376,11 @@ function loadAccounts() {
 }
 
 registerSections("account", (box, typed) => {
-  if (!accounts.entries) loadAccounts();
+  if (accountSeed?.search) { // searched as typed: the entries are the chart's answer for these words
+    const found = searchChart(box, typed);
+    accounts.entries = found;
+    accounts.byValue = new Map(found.map((e) => [e.value, e]));
+  } else if (!accounts.entries) loadAccounts();
   let candidates = [];
   try {
     candidates = JSON.parse(box.dataset.candidates || "[]");
