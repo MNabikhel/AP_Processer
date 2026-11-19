@@ -291,7 +291,7 @@ def finalise_coding(
     # is imported, or the remarks go to JD Edwards as typed; any other install stores its invoices as before.
     js = None
     if store is not None:
-        from ..erp import jde_accounts, jde_review, jde_settings
+        from ..erp import jde_review, jde_settings
 
         js = jde_settings.load(store) if jde_settings.in_use(store) else None
     remarks_typed = js is not None and js.remarks == jde_settings.REMARKS_TYPED
@@ -308,15 +308,7 @@ def finalise_coding(
         output[COMPANY_TAX] = companies.voucher_tax(store, coding)
     output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
     # JD Edwards in use: what its batch would hold back, asked before approval (D-75).
-    erp_findings: list[tuple[str, str, str, int | None]] = []
-    po_match = None
-    if js is not None:
-        an8 = jde_accounts.resolve_an8(output, store.vendor_ids(), js)
-        erp_findings = jde_review.voucher_findings(output, js, an8)
-        if js.po_matched and (quoted := coding.po_number.strip()):  # its voucher match rows, as the sheet keys them
-            po_match = match_invoice(coding, store, exclude_invoice_id)
-            erp_findings += jde_review.match_findings(output, js, an8,
-                                                      voucher_match(po_match, quoted, js.charge_account))  # fmt: skip
+    erp_findings, po_match = _erp_findings(coding, output, js, store, exclude_invoice_id)
     report = validate_coding(
         coding,
         reference,
@@ -345,6 +337,25 @@ def finalise_coding(
     if store is not None and exclude_invoice_id is not None:  # the receipts of one expense claim say so (D-216)
         claim_findings(report, store.joined_files(invoice_id=exclude_invoice_id), coding)
     return output, report
+
+
+def _erp_findings(coding: InvoiceCoding, output: dict[str, Any], js: Any, store: Store | None,
+                  exclude_invoice_id: int | None) -> tuple[list[tuple[str, str, str, int | None]], Any]:  # fmt: skip
+    """(what JD Edwards' batch would hold back of the voucher ``output``, ``jde_review.voucher_findings``; with
+    PO-matched vouchers, the invoice's PO match, None without one): what holds its voucher match rows back from the
+    keying sheet too (``jde_review.match_findings``, B-2667), its PO match made once for the PO checks as well. None
+    and nothing to say without JD Edwards in use (``js`` None)."""
+    if js is None or store is None:
+        return [], None
+    from ..erp import jde_accounts, jde_review
+
+    an8 = jde_accounts.resolve_an8(output, store.vendor_ids(), js)
+    found = jde_review.voucher_findings(output, js, an8)
+    quoted = coding.po_number.strip()
+    if not (js.po_matched and quoted):
+        return found, None
+    match = match_invoice(coding, store, exclude_invoice_id)  # (its voucher match rows, as the sheet keys them)
+    return found + jde_review.match_findings(output, js, an8, voucher_match(match, quoted, js.charge_account)), match
 
 
 def _say_on(lines: dict[int, Any], said: str | dict[int, str]) -> None:
