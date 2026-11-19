@@ -6646,3 +6646,65 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   upload is held, two blocks read); 51 MB, 576,333 rows (the upload's bound): 12.2 s now, 211 MB. *Not chosen:* the
   summary shown as it is counted (a few seconds need no progress); the sheet's `<dimension>` (ReportsNow may not
   write it, and it counts blank rows).
+- **D-272** · **The group's whole chart is loaded and kept, only what AP may post to is offered or approved; a refresh
+  is read and checked in full before one swap; the pilot is some of the companies** (the pilot tester: F0901
+  unfiltered, every company, about 3,500,000 rows, about 200 MB of ReportsNow's tab-delimited text).
+  - **Text from disk** (`chart_file.stream_chart_text`; `python -m ap_coder chart import --chart FILE.txt`): .csv,
+    .txt or .tsv, tab-delimited when its first line has a tab; UTF-8 or UTF-16 told by the byte-order mark, or by the
+    noughts of UTF-16 without one, else Windows' cp1252. A tab file is never quoted: a line is a row (a carriage
+    return before its line feed dropped, a lone one kept in the text), its cells between tabs, a quotation mark is
+    text; a row whose cells are more or fewer than the column names (a tab or a line break inside a value, the file
+    cut short) is rejected, never read shifted. The codes come as text (leading zeros); the store keeps a business
+    unit without its padding, as JD Edwards compares it and as the lines are (B-2127).
+  - **What a load read**, at its end (`chart_cmd.read_lines`): the rows read, accepted and rejected; each reason with
+    its count and the first five rows (by file, with several: `chart.Rows.examples`; an account given twice, the first
+    kept, from the staging's own count); the accounts and business units; the accounts by company; each posting edit
+    code with its accounts and whether AP posts to it. The same from a workbook. Kept with the load's event
+    (`summary`) and shown on the chart card (What the chart holds), from the page or the command line.
+  - **Stored, not selectable.** Every account is kept (its description; why a line may not use it). Only a posting edit
+    code of Settings → JD Edwards E1 → Accounts AP posts to is posted to (blank, L, U by default). JD Edwards' own list
+    (`chart.KNOWN_EDITS`, UDC H00/PE: B, I, K, L, M, N, P, S, U, X) is known; a code that is none of these and no
+    setting names is *not yet decided*: closed (`ACCOUNT_NOT_POSTABLE`, which says so), never posted to automatically,
+    listed on the card with its accounts until a person types it among the codes AP posts to or ticks "Leave closed"
+    (`closed_codes`). *To confirm with the tester:* K, S and X take postings in JD Edwards but are not ticked (S
+    requires a subledger as L does, which D-268 fills for L only).
+  - **Every path checked by a test** (`tests/web/test_chart_eligible.py`): the supplier's suggestions and the
+    candidates, the Account box (its list, its search, a business unit's), a fixed coding rule (`account_problem`),
+    the PO's coding used on the screen (flagged, not kept quietly), a person's typing, Approve and Approve anyway, bulk
+    approval and the second approval's check again (D-257). None slipped but the box's search, which read the first
+    1,000 matches and kept those offered (B-2652): what may be posted to is now asked of SQLite with the words.
+  - **The pilot** (`pilot_companies`, the same card and `chart settings --pilot-companies`; empty: every company). An
+    invoice of a company outside it is `COMPANY_NOT_IN_PILOT`: an error Approve anyway never covers, always a person,
+    so no approval (single, bulk, touchless, second) passes it until someone who may change the settings adds the
+    company (a settings change, in the activity log); the screen says so. Accounts of other companies are never
+    offered (a line coded to one: `ACCOUNT_RESERVED`, "its company is not in the pilot"); the invoice's own company
+    within them, as before (`Prior.within`). An account's company is its business unit's in report 2, else its own
+    (F0901's GMCO).
+  - **Not in report 2 or report 9** (the safest rule, the tester's): a business unit missing from report 2 (with one
+    loaded) is `BU_UNKNOWN`: never offered, and a line coded to it is `BU_NOT_IN_UNITS_REPORT`, an error approved only
+    with Approve anyway and a reason, kept with who and when in the invoice's history and the activity log. A company
+    missing from report 9 (with it loaded): its accounts kept, offered only when the pilot names it. Without report 2
+    or report 9 loaded, neither rule applies (a chart alone takes every business unit as active, as before).
+  - **A refresh read in full before it replaces anything.** The files are read into a temporary table first
+    (`Store.stage_chart`), the write lock not taken (the dashboard writes meanwhile), then swapped in in one
+    transaction (`swap_chart`): a file that fails, a load stopped, or a refusal leaves the chart as it was. Refused,
+    unless `--anyway`: no account at all; a company (or, for a whole chart, the chart) with less than half the
+    accounts it has now; a company loaded last time from several files found in fewer of this load's
+    (`chart_parts`: the files each company came from). Several files are one import (`--chart a.txt --chart b.txt`),
+    a company in two of them loaded with both; the master workbook's chart sheets likewise (no longer "neither
+    loaded"). The page has no `--anyway`: its refusal names the command line. *Not chosen:* a share other than half
+    (to confirm); comparing files by name (a company's file is named anew at each export: the count of files is
+    compared).
+  - **Measured** (`python -m ap_coder.bench companies --full-chart 3500000`, `jde_group.write_full_chart`: 20
+    companies, 129,620 business units, 3,499,740 rows, 205 MB of tab-delimited UTF-8, half the accounts not posted to,
+    one in 26 of a code not decided, one business unit in 997 missing from report 2; a shared 4-core machine). The
+    first load by the command line 45 s, its process at 162 MB at most (as first built: 61 s, 199 MB); a refresh read and staged in 31 s (no write lock),
+    swapped in in 9.5 s unchanged (21 s as first built: the two lists worked out twice, two passes for what changed)
+    and 18 s with 64,810 accounts changed and 43,747 gone (29 s: every row written again and hashed: the chart's mark
+    is now random, `chart_hash`, and only new and changed rows are written); its summary under 1 ms. What the chart
+    holds (the chart card) 3.4 s once for a chart and its settings, then 0.06 s (8.9 s at every view as first built:
+    each account's status in Python, now counted by SQLite, `IndexedPairs.tally`); the JD Edwards files page 1 s;
+    the Accounts AP posts to card 0.9 s once a chart. A line's account check 13 µs; a search 17 ms, 70 ms within one
+    company, 0.6 s for words found nowhere; the reference data 0.2 s. The database 361 MB. *Left as it is:* the
+    staging's 31 s (a row's Python, outside the lock); the swap's 9 to 18 s under the write lock (the dashboard's
+    writes wait, up to their 30 s); the search for words found nowhere (a scan, as D-267).

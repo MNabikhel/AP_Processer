@@ -247,6 +247,20 @@ def full_chart(rows: int, companies: int = 20) -> dict[str, Any]:
             out["refresh: the import's summary, s"], said = _timed(
                 lambda: chart_cmd.read_lines([(path.name, read)], staged, store.chart_settings()))  # fmt: skip
             out["refresh: swapped in (one transaction), s"], _ = _timed(lambda: store.swap_chart(staged, summary=said))
+        # A refresh that changes something: a company's descriptions, and a quarter of another's accounts gone.
+        changed = Path(folder) / "f0901_changed.txt"
+        codes = [c[0] for c in jde_group.group(companies)]
+        with open(path, encoding="utf-8") as source, open(changed, "w", encoding="utf-8", newline="") as target:
+            for n, line in enumerate(source):
+                if not (line.startswith(f"{codes[1]}\t") and n % 4 == 0):
+                    target.write(line.replace("material", "materials") if line.startswith(f"{codes[0]}\t") else line)
+        with store.session():
+            given = chart_file.stream_chart_text(changed)[1]
+            out["refresh with changes: read and staged, s"], staged = _timed(
+                lambda: store.stage_chart([(changed.name, given)]))  # fmt: skip
+            out["refresh with changes: swapped in (one transaction), s"], result = _timed(
+                lambda: store.swap_chart(staged))  # fmt: skip
+        out["refresh with changes: changed, removed"] = (result["updated"], result["removed"])
         out["the chart's reference data (offered codes and units), s"], reference = _timed(store.reference_data)
         pairs = reference.pairs
         out["what the chart holds (the JD Edwards files card), s"], _ = _timed(lambda: chart_cmd.tally_lines(store))
