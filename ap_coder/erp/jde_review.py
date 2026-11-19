@@ -267,6 +267,9 @@ def voucher_view(
     else:
         keyed = (f"Keyed on the pay item: G/L date {day} · Tax Ex {v.tax_code} · Tax Rate/Area "
                  f"{v.tax_area or 'blank'} · taxable amount {money(taxable)} · tax amount {money(tax)}")  # fmt: skip
+    retainage = _retainage_said(keyed_rows, money)
+    if retainage and not not_ready:  # a subcontract's progress billing (D-273): what is held back, in sight
+        keyed += f" · retained {retainage['retained']} (held back), {retainage['due']} paid now"
     return {"rows": [{"label": a, "column": b, "value": c, "source": d} for a, b, c, d in rows],
             "settings_url": SETTINGS_URL, "terms_sent": bool(code), "terms_code": code,
             "terms_note": terms_note, "gl_date": day, "tax_code": v.tax_code, "tax_area": v.tax_area,
@@ -276,7 +279,7 @@ def voucher_view(
                        else f"{m.quantity:,.4f}".rstrip("0").rstrip("."),
                        "amount_text": money(round(m.amount * 100)),
                        "retained_text": money(round(m.retained * 100))} for m in rows_matched],
-            "retainage": _retainage_said(keyed_rows, money)}  # fmt: skip
+            "retainage": retainage}  # fmt: skip
 
 
 def _retainage_said(keyed: Any, money: Any) -> dict[str, Any] | None:
