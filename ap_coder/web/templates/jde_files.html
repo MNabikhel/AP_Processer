@@ -178,6 +178,8 @@
   <details class="imp-more"><summary>What the chart holds</summary>
     <p class="muted">On {{ chart_units | plural("business unit") }}. A newer export replaces the chart whole.</p>
     <ul id="chart-tally">{% for line in tally %}<li>{{ line }}</li>{% endfor %}</ul>
+    {% if last.chart and last.chart.summary %}<p class="muted">What its last load read ({{ last.chart.when }}):</p>
+    <ul id="chart-read">{% for line in last.chart.summary %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
   </details>
   {% endif %}
   {{ report(specs.chart[0]) }}

@@ -142,11 +142,14 @@ def _gone(token: str) -> str:
     return LOADED if token and current_store().ephemeral(LOADED_KIND, token) is not None else GONE
 
 
-def _last(store: Store, action: str, table: str = "") -> dict[str, str] | None:
-    """When ``action`` was last recorded (for ``table``, an ``accounts_imported``), and by whom."""
+def _last(store: Store, action: str, table: str = "") -> dict[str, Any] | None:
+    """When ``action`` was last recorded (for ``table``, an ``accounts_imported``), by whom, and what it said of the
+    files it read (``summary``: the chart's rows read, accepted and rejected and its posting edit codes, D-272; from
+    the page or the command line)."""
     for event in store.events(actions=[action], limit=50):
         if not table or event["detail"].get("table") == table:
-            return {"when": str(event["created_at"]).replace("T", " ")[:16], "by": event["actor"] or ""}
+            return {"when": str(event["created_at"]).replace("T", " ")[:16], "by": event["actor"] or "",
+                    "summary": [str(line).strip() for line in event["detail"].get("summary") or []]}  # fmt: skip
     return None
 
 
@@ -757,7 +760,7 @@ def _chart_import(request: Request, card: str, token: str, whole: bool = False) 
     owner = secrets.token_urlsafe(8)
     if not current_store().take_lease(LOADING + token, owner, LOADING_MOST):  # (a Load of it under way, B-2437)
         return refuse(BEING_LOADED)
-    given = {"chart_source": kept.content} if card == "chart" else {"units_source": kept.content}
+    given = {"charts": [(kept.content, "", kept.name)]} if card == "chart" else {"units_source": kept.content}
     try:
         said = chart_cmd.import_files(get_store(request), **given, actor=reviewer(), whole=whole)
     except ValueError as exc:  # (a ChartError too: the file cannot be read as what it should be)

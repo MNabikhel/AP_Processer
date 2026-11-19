@@ -151,9 +151,10 @@ def read_lines(reads: list[tuple[str, chart.Rows]], staged: Any, settings: chart
              if len(reads) > 1 else "")  # fmt: skip
     postable = sum(n for code, n in staged.edits.items() if code in settings.postable_codes)
     said = [
-        f"Read {plural(parsed, 'row')} of the chart{files}: {staged.kept:,} accepted, {rejected:,} rejected.",
-        f"  {plural(staged.accounts, 'account')} on {plural(staged.units, 'business unit')}; {postable:,} may be "
-        "posted to (the others are kept, for their descriptions and to say why a line may not use one).",
+        f"Read {plural(parsed, 'row')} of the chart{files}: {staged.kept:,} accepted "
+        f"({plural(staged.accounts, 'account')} on {plural(staged.units, 'business unit')}), {rejected:,} rejected.",
+        f"  {postable:,} of the accounts may be posted to; the others are kept, for their descriptions and to say why "
+        "a line may not use one.",
     ]
     said += _rejected(reads, staged)
     if staged.edits:

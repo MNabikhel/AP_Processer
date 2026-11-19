@@ -103,20 +103,45 @@ def test_load_all_loads_every_report_in_order_and_po_matching_and_suggestions_wo
 
 
 def test_two_sheets_of_a_report_replaced_whole_are_left_out_and_said(client, store, workbook):
-    """Two charts in one workbook with the same company: neither is loaded (each replaces its companies' accounts, so
-    one would be lost: D-267); two ledgers add up."""
+    """Two business units sheets in one workbook with the same company: neither is loaded (each replaces its
+    companies' rows, so one would be lost: D-267); two ledgers add up."""
     book = openpyxl.load_workbook(io.BytesIO(workbook))
-    book.copy_worksheet(book["Accounts"]).title = "Accounts 2"
+    book.copy_worksheet(book["BUs"]).title = "BUs 2"
     out = io.BytesIO()
     book.save(out)
     _token_, page = _upload(client, out.getvalue())
     shown = _summary(page)
     assert (
-        "Company 00210 is in another sheet of" in shown["Accounts"]
-        and "neither is loaded" in shown["Accounts"]
-        and "Not loaded" in shown["Accounts 2"]
+        "Company 00210 is in another sheet of" in shown["BUs"]
+        and "neither is loaded" in shown["BUs"]
+        and "Not loaded" in shown["BUs 2"]
     )
     assert "Loads" in shown["Ledger Jan-Jun"] and "Loads" in shown["Ledger Jul-Dec"]
+
+
+def test_a_chart_split_across_two_sheets_is_one_load_its_company_whole(client, store, truth, workbook):
+    """The chart in two sheets, company 00210 in both (D-272): both read and checked, then swapped in once; the page
+    says what was read of each, an account in both rejected once as a repeat; the card keeps the summary."""
+    book = openpyxl.load_workbook(io.BytesIO(workbook))
+    rows = list(book["Accounts"].iter_rows(values_only=True))
+    half = (len(rows) + 2) // 2
+    second = book.create_sheet("Accounts 2", 1)
+    for row in [rows[1], *rows[half - 1 :]]:  # (its column names, then the second half, from the first half's last row)
+        second.append(row)
+    for _ in range(len(rows) - half):
+        book["Accounts"].delete_rows(half + 1)
+    out = io.BytesIO()
+    book.save(out)
+    token, page = _upload(client, out.getvalue())
+    shown = _summary(page)
+    assert "Loads" in shown["Accounts"] and "Loads" in shown["Accounts 2"]
+    page = follow(client, client.post("/jde-files/workbook/load", data={"token": token}, headers=PAGE))
+    said = page.split('id="workbook-said"', 1)[1].split("</div></div>", 1)[0]
+    assert "Accounts, Accounts 2 (Chart of accounts): Read" in said and " in 2 files (Accounts " in said, said
+    assert "Rejected (rows repeating an account already read): 1" in said
+    assert len(store.chart_accounts()) == len(truth.accounts)
+    card = client.get("/jde-files").text.split('id="chart-read"', 1)[1].split("</ul>", 1)[0]
+    assert "in 2 files (Accounts" in card
 
 
 def test_a_workbook_that_is_none_and_other_files_are_said_in_plain_words(client):

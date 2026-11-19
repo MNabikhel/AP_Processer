@@ -442,11 +442,11 @@ def stream_chart_text(path: str | Path, anyway: bool = False) -> tuple[chart.Row
     rows: the account master's export, or the build sheet's query, D-267) or tab-delimited (.txt, .tsv: ReportsNow's
     text, D-272), UTF-8 or UTF-16 with or without its byte-order mark (``text_encoding``). Returns (what was read
     and left out, with a few rows of each reason, and the columns it came without, as they are read; its clean rows,
-    given one at a time and never held, so a chart of millions of accounts is read in the memory of one). A codes'
+    given one at a time and never held, so a chart of millions of accounts is read in the memory of one). A code's
     leading zeros and padding come as the file has them (the store keeps them without the padding, as JD Edwards
-    compares them). A tab-delimited row whose cells do not line up with the column names (more or fewer of them than
-    the column names: a tab or a line break inside a value, the file cut short) is left out, never read shifted. Up to ``chart.STREAMED_MOST`` rows;
-    ``chart.ColumnsMissing`` as ``read_chart``'s, unless ``anyway``; ``ChartError`` naming the file when it is no
+    compares them). A tab-delimited row whose cells do not line up with the column names (more or fewer of them: a
+    tab or a line break inside a value, the file cut short) is left out, never read shifted. Up to
+    ``chart.STREAMED_MOST`` rows; ``chart.ColumnsMissing`` as ``read_chart``'s, unless ``anyway``; ``ChartError`` naming the file when it is no
     chart, or not text."""
     name = Path(path).name
     handle = open(path, encoding=text_encoding(path), newline="\n")  # noqa: SIM115  (closed by the rows once read)

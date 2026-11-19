@@ -88,8 +88,8 @@ def test_both_files_are_imported_and_what_was_read_is_said(tmp_path, capsys):
     assert code == 0 and err == ""
     assert "Read 9 business units: 8 active, 1 not active." in out
     assert "Business units: 9 added, 0 changed, 0 removed." in out
-    assert "Read 41 rows of the chart: 41 accepted, 0 rejected." in out
-    assert "  32 accounts on 9 business units; 19 may be posted to (the others are kept" in out
+    assert "Read 41 rows of the chart: 41 accepted (32 accounts on 9 business units), 0 rejected." in out
+    assert "  19 of the accounts may be posted to; the others are kept" in out
     assert ("  Posting edit codes: blank 19 (posted to); B 1 (not posted to: budget only); I 1 (not posted to: "
             "inactive); M 2 (not posted to: machine-generated postings only); N 9 (not posted to: a title, takes no "
             "postings).") in out  # fmt: skip
@@ -128,7 +128,7 @@ def test_rows_left_out_and_never_offered_accounts_are_said_with_the_reason(tmp_p
     Store(tmp_path / "ap_coder.db").set_setting("never_offered", "*.7701")
     code, out, _ = _run(tmp_path, capsys, "--chart", str(chart))
     assert code == 0
-    assert "Read 43 rows of the chart: 41 accepted, 2 rejected." in out
+    assert "Read 43 rows of the chart: 41 accepted (32 accounts on 9 business units), 2 rejected." in out
     assert "  Rejected (blank rows): 1 (row 43)." in out
     assert "  Rejected (rows repeating an account already read): 1 (row 44)." in out
     assert "  Never offered: the accounts on the never-offered list (*.7701)." in out
@@ -166,7 +166,7 @@ def test_a_chart_without_its_posting_edit_column_is_imported_only_when_asked_and
     assert store.chart_accounts() == [] and store.chart_without() == ()
     code, out, _ = _run(tmp_path, capsys, "--chart", str(grid), "--anyway")
     said = "Loaded without the posting edit column (“P E”): every account is offered, titles and accounts closed"
-    assert code == 0 and said in out and "32 accounts on 9 business units; 32 may be posted to" in out
+    assert code == 0 and said in out and "32 of the accounts may be posted to" in out
     assert store.chart_without() == ("posting_edit",)
     assert store.events(actions=["accounts_imported"])[0]["detail"]["without"] == ["posting_edit"]
     assert said in _run(tmp_path, capsys, action="show")[1]  # every time the chart is shown
@@ -212,8 +212,9 @@ def test_a_chart_in_two_tab_files_loads_as_one_and_says_what_it_read_accepted_an
              + _unit_rows("00310", "3100101", ["", "U", "M"]) + [_unit_rows("00310", "3100101", [""])[1]])  # fmt: skip
     code, out, err = _run(tmp_path, capsys, "--chart", a, "--chart", b)
     assert code == 0 and err == ""
-    assert "Read 18 rows of the chart in 2 files (chart_a.txt 7, chart_b.txt 11): 16 accepted, 2 rejected." in out
-    assert "  13 accounts on 3 business units; 8 may be posted to (the others are kept" in out
+    assert ("Read 18 rows of the chart in 2 files (chart_a.txt 7, chart_b.txt 11): 16 accepted (13 accounts on 3 "
+            "business units), 2 rejected.") in out  # fmt: skip
+    assert "  8 of the accounts may be posted to; the others are kept" in out
     assert ("  Rejected (rows whose cells do not line up with the column names (a tab inside a value, or the row "
             "cut short)): 1 (row 8 of chart_a.txt).") in out  # fmt: skip
     assert "  Rejected (rows repeating an account already read): 1 (row 12)." in out
@@ -237,7 +238,7 @@ def test_a_refresh_of_part_of_a_split_company_or_far_fewer_accounts_is_refused_a
     store = Store(tmp_path / "ap_coder.db")
     before = store.chart_accounts()
     code, out, err = _run(tmp_path, capsys, "--chart", a)
-    assert code == 1 and "Read 7 rows of the chart: 7 accepted, 0 rejected." in out
+    assert code == 1 and "Read 7 rows of the chart: 7 accepted (6 accounts on 1 business unit), 0 rejected." in out
     assert ("Not loaded: the file has less than half the accounts loaded now of company 00210 (6 accounts, 14 now)"
             in err and "--anyway" in err)  # fmt: skip
     one = _tab(tmp_path / "chart.txt", _unit_rows("00210", "2100101", [""] * 6) + _unit_rows("00210", "2100102",
