@@ -6582,3 +6582,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     command, or a range of companies a file. JD Edwards' L and U are postable by default with blank (N, B, I, M not);
     what they require is a later change. An account on a closed or unknown business unit, on a PO line or in the
     past coding, never stops a load: an invoice using it is told (`BU_INACTIVE`, `ACCOUNT_NOT_IN_CHART`).
+  - **Measured** (`python -m ap_coder.bench companies`, the made-up group of `bench/jde_group.py`: 20 companies, 3,000,000
+    chart rows, 20,000 suppliers, 1,000,000 ledger rows, 3,000,000 past-coding lines, 100,000 PO lines; run at 0.1 and
+    each load extrapolated linearly; the chart measured whole at 1,000,000 and 3,000,000). The chart's 3,000,000 rows
+    load from a CSV in 49 s, the process at 152 MB at most (held in memory, 1,000,000 had taken 1.1 GB, its reference
+    data 26 s and 500 MB, its Account list 8 minutes); the codes and units offered, read once after a change, 3.3 s; a
+    line's account check 12 µs (1.5 µs kept); a search 3 to 25 ms, 0.5 s for words found nowhere, 7 ms within one
+    company; a code's units (111,000 of them) 120 ms. The ledger 38 s, the past coding 203 s, the PO lines 1 s, the
+    suppliers 1 s. Each invoice: its company 3 ms, the suggestions 12 ms, the PO match 15 ms, the duplicate check 2 ms,
+    the whole check 51 ms. *Left as it is:* the workbook's survey reads every row with openpyxl (about 10,000 rows a
+    second): a full 50 MB workbook takes minutes to show; the chart of millions goes by the command line's CSV.
