@@ -6582,8 +6582,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     command, or a range of companies a file. JD Edwards' L and U are postable by default with blank (N, B, I, M not);
     what they require is a later change. An account on a closed or unknown business unit, on a PO line or in the
     past coding, never stops a load: an invoice using it is told (`BU_INACTIVE`, `ACCOUNT_NOT_IN_CHART`).
-  - **Measured** (`python -m ap_coder.bench companies`, the made-up group of `bench/jde_group.py`: 20 companies, 3,000,000
-    chart rows, 20,000 suppliers, 1,000,000 ledger rows, 3,000,000 past-coding lines, 100,000 PO lines; run at 0.1 and
+  - **Measured** (`python -m ap_coder.bench companies`, the made-up group of `bench/jde_group.py`: 20 companies,
+    3,000,000 chart rows, 20,000 suppliers, 1,000,000 ledger rows, 3,000,000 past-coding lines, 100,000 PO lines; run at 0.1 and
     each load extrapolated linearly; the chart measured whole at 1,000,000 and 3,000,000). The chart's 3,000,000 rows
     load from a CSV in 49 s, the process at 152 MB at most (held in memory, 1,000,000 had taken 1.1 GB, its reference
     data 26 s and 500 MB, its Account list 8 minutes); the codes and units offered, read once after a change, 3.3 s; a
