@@ -336,7 +336,9 @@ class IndexedPairs:
             if matched:
                 for bu, company, n in conn.execute(
                     f"SELECT bu, company, COUNT(*) FROM chart_accounts WHERE object != '' AND "
-                    f"{_in_list('posting_edit')} AND ({matched[0]}) GROUP BY bu, company", (postable, *matched[1])):
+                    f"{_in_list('posting_edit')} AND ({matched[0]}) GROUP BY bu, company",
+                    (postable, *matched[1]),
+                ):
                     if (bu, company) in open_units:
                         open_units[(bu, company)] -= n
                         out[RESERVED] += n
