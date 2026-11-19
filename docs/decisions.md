@@ -6741,3 +6741,17 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - *Not chosen:* telling 2-way from the file (a 0 received is also a line not received yet); the receipts' own lines
     on the keying sheet (Receipt Line): not typed by the pilot tester. Month-end's received-not-billed accruals read
     what was received whatever the setting (they are about receipts).
+- **D-283** · **A goods line printed with no quantity matches its amount at its PO line's unit cost when that comes out
+  a whole number; else 1, said** (`coding/po.py` `unprinted_quantity`, `LineMatch.quantity_from`, the keying sheet's
+  notes; B-2669). This changes D-264, where such a line matched 1 whatever its PO line.
+  - **Why:** an invoice that prints the amount of a PO line of 100 bags at 5.99 and no quantity bills the 100 bags:
+    keyed as 1, JD Edwards would leave 99 open on a line billed in full, and the next invoice on it would be over.
+  - **What:** on a PO line with a quantity and a unit cost (not one billed by amount, whose quantity is the
+    invoice's or empty, D-264), the amount ÷ the unit cost, rounded to the nearest whole number, when that number
+    at the amount is the unit cost within the price tolerance (2% or 50 cents, `_same_price`) to the cent; negative
+    on a credit. Said under the voucher ("Quantity Matched is 100, its amount (599.00) at the PO line's unit cost
+    5.99"). When it does not come out so (86.25 of a 57.50 setup), 1 as before, and the sheet says to check the
+    quantity JD Edwards shows. A charge (freight, a fee) still matches 1: it is billed by the shipment.
+  - *Not chosen:* a quantity with decimals (7.69 bags): a quantity printed nowhere is no measure, and a whole number
+    within the price tolerance is what a person would type; the quantity in the PO checks (PO_QTY_OVER is about the
+    quantity printed, none here).

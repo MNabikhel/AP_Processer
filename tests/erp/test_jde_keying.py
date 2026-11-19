@@ -1432,3 +1432,27 @@ def test_a_voucher_match_the_keying_sheet_would_hold_is_a_check_before_approval(
     odd = {**final, "line_items": [final["line_items"][0], {**final["line_items"][1], "description": "Artwork proof"}]}
     assert "PO_VOUCHER_MATCH" not in issues(odd) and "PO_LINE_NOT_ON_PO" in issues(odd)  # (said by the PO check)
     assert "PO_VOUCHER_MATCH" not in issues(case.coding())  # (keyed: nothing to say)
+
+
+def test_a_goods_line_printed_with_no_quantity_matches_its_amount_at_the_po_lines_unit_cost(tmp_path):
+    """B-2669 (D-283): an invoice line of goods printed with no quantity was matched with Quantity Matched 1 whatever
+    its PO line, so 599.00 of the 100 bags at 5.99 open was keyed as 1 bag, and JD Edwards would leave 99 open on a
+    line billed in full. Its amount at the PO line's unit cost is the quantity when that comes out whole (within the
+    unit cost's tolerance, to the cent), said under the voucher; else it stays 1, and the sheet says to check it."""
+    store = po_store(tmp_path)
+    inv = po_invoice()
+    final = inv["final_output"]
+    final["line_items"][0]["quantity"] = 0  # 599.00 of bags, no quantity printed
+    final["line_items"][1].update(quantity=0, amount=86.25)  # 1.5 setups' worth: no whole number of 57.50
+    final.update(subtotal=717.25, tax_lines=[tl("GST", "", 0.05, 717.25, 35.86)], tax_total=35.86,
+                 grand_total=753.11)  # fmt: skip
+    (v,), held = jde_keying.vouchers([inv], settings(po_matched=True), promo_lookup, on=ON_DAY,
+                                     po_matches=jde_keying.po_matches(store, [inv]))  # fmt: skip
+    assert held == [] and v.balanced
+    assert [(m.line, m.quantity, m.amount) for m in v.matches] == [("12.000", 100, 599.0), ("13.000", 1, 86.25),
+                                                                   ("14.000", 1, 32.0)]  # fmt: skip
+    assert ("Order 40917 line 12.000: the invoice prints no quantity; Quantity Matched is 100, its amount (599.00) at "
+            "the PO line's unit cost 5.99.") in v.notes  # fmt: skip
+    assert ("Order 40917 line 13.000: the invoice prints no quantity and its amount (86.25) is no whole number of the "
+            "PO line's unit cost 57.50: Quantity Matched is 1. Check the quantity JD Edwards shows for "
+            "it.") in v.notes  # fmt: skip

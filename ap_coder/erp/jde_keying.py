@@ -292,6 +292,14 @@ def _match_said(matched: po_mod.VoucherMatch | None, warnings: list[str], notes:
     for row in rows:
         where = f"Order {row.order_number} line {row.line}"
         key = (row.order_number, row.order_type, row.order_company, row.line)
+        count, cost = po_mod._qty(row.quantity or 0), f"{row.unit_cost or 0:,.2f}"
+        if row.quantity_from == "amount":  # a line printed with no quantity (D-283)
+            notes.append(f"{where}: the invoice prints no quantity; Quantity Matched is {count}, its amount "
+                         f"({row.amount:,.2f}) at the PO line's unit cost {cost}.")  # fmt: skip
+        elif row.quantity_from == "one":
+            notes.append(f"{where}: the invoice prints no quantity and its amount ({row.amount:,.2f}) is no whole "
+                         f"number of the PO line's unit cost {cost}: Quantity Matched is {count}. Check the quantity "
+                         "JD Edwards shows for it.")  # fmt: skip
         if row.no_quantity:
             typed = (f"the invoice's {po_mod._qty(row.quantity)}" if row.quantity is not None
                      else "left empty")  # fmt: skip

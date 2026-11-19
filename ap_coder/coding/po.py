@@ -447,6 +447,9 @@ class LineMatch:
     # A line billed by amount whose ERP gave what it had open on it (D-280): that amount, checked against as its left
     # to expense is (``billed_before_amount`` then the invoices not exported yet); None: its amount, every invoice.
     po_open_amount: float | None = None
+    # A goods line printed with no quantity on a PO line with a unit cost (D-283): "amount", its quantity matched is its
+    # amount at that cost; "one", 1, as its amount is no whole number of it; "": the quantity printed (or a charge's 1).
+    quantity_from: str = ""
 
 
 @dataclass
@@ -603,6 +606,8 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
         m.po_subledger = (pl.get("subledger") or "", pl.get("subledger_type") or "")
         if m.amount_only:  # a PO line with no quantity (JD Edwards' order details give amounts only): matched by amount
             m.matched_quantity = billed_quantity(li) or None
+        elif not billed_quantity(li) and not is_charge(m.description) and pl["unit_price"]:  # (none printed, D-283)
+            m.matched_quantity, m.quantity_from = unprinted_quantity(m.amount, pl["unit_price"])
         if m.amount_only and pl["open_amount"] is not None:  # against what the ERP has open (D-280)
             m.po_open_amount, m.billed_before_amount = pl["open_amount"], not_exported.get(m.po_line, 0.0)
         this_invoice[m.po_line] = this_invoice.get(m.po_line, 0.0) + m.amount
@@ -799,11 +804,23 @@ def billed_quantity(li: dict[str, Any]) -> float:
 
 def matched_quantity(li: dict[str, Any]) -> float:
     """The quantity a line matches on its PO line (JD Edwards' Quantity Matched): the quantity billed; a charge
-    (freight) or a line with no quantity 1, -1 on a credit."""
+    (freight) or a line with no quantity 1, -1 on a credit (a goods line with none, on a PO line with a unit cost: its
+    amount at that cost, ``unprinted_quantity``, D-283)."""
     quantity = billed_quantity(li)
     if quantity and not is_charge(str(li.get("description") or "")):
         return quantity
     return -1.0 if float(li.get("amount") or 0) < 0 else 1.0
+
+
+def unprinted_quantity(amount: float, unit_cost: float) -> tuple[float, str]:
+    """(the quantity a goods line printed with none matches on a PO line of ``unit_cost``, how: ``LineMatch.
+    quantity_from``): its amount at that cost when it comes out a whole number, the cost within its tolerance to the
+    cent (``_same_price``); else 1 (-1 on a credit), as before (D-283)."""
+    sign = -1.0 if amount < 0 else 1.0
+    count = math.floor(abs(amount / unit_cost) + 0.5) if unit_cost else 0
+    if count >= 1 and _same_price(round(abs(amount) / count, 2), unit_cost):
+        return sign * count, "amount"
+    return sign, "one"
 
 
 @dataclass(frozen=True)
@@ -825,6 +842,8 @@ class MatchRow:
     tax: tuple[str, str, str] = ("", "", "")  # the PO line's own Tax Y/N, explanation code, rate/area ("": none)
     on_po: bool = True  # False: a charge the PO has no line for, keyed as a G/L line of its own on ``account`` (D-265)
     subledger: tuple[str, str] = ("", "")  # the PO line's subledger and its type ("": none, D-268)
+    quantity_from: str = ""  # a line printed with no quantity: how its quantity matched came (``LineMatch``, D-283)
+    unit_cost: float | None = None  # the PO line's
 
 
 @dataclass
@@ -879,7 +898,8 @@ def voucher_match(match: PoMatch | None, number: str, charge_account: str = "") 
             out.rows.append(MatchRow(
                 m.invoice_line, m.description, str(po.get("po_number") or number), po.get("order_type") or "",
                 po.get("order_company") or "", m.po_erp_line, m.matched_quantity, m.po_uom, m.amount, m.po_account,
-                m.po_open_quantity, m.amount_only, m.po_tax, subledger=m.po_subledger))  # fmt: skip
+                m.po_open_quantity, m.amount_only, m.po_tax, subledger=m.po_subledger, quantity_from=m.quantity_from,
+                unit_cost=m.po_unit_price))  # fmt: skip
     return out
 
 
