@@ -6595,8 +6595,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
 - **D-268** · **A line coded to an account whose posting edit code is L carries its subledger and type, one coded to a
   U account its units** (`coding/posting_edits.py`; L and U became postable in D-267, what they require is this).
   - **On the line** (`LineItem.subledger`, `subledger_type`, `units`; left out of the stored coding when empty, never
-    asked of the model). `posting_edits.fill` (in `finalise_coding`, after the remarks) gives an L line the subledger and
-    type of the PO line it bills (the purchase orders' "Subledger" and "Sub Type": PDSBL, PDSBLT, added to the build
+    asked of the model). `posting_edits.fill` (in `finalise_coding`, after the remarks) gives an L line the subledger
+    and type of the PO line it bills (the purchase orders' "Subledger" and "Sub Type": PDSBL, PDSBLT, added to the build
     sheet's report 6), else the commonest of the supplier's past lines to that account (the account ledger's
     "Subledger", "Sub Type", "Units": GLSBL, GLSBLT, GLU, added to report 5, kept on `journal_lines` and counted per
     supplier and account in the prior: `AccountUse.subledger`); a U line the invoice line's quantity, else the units
