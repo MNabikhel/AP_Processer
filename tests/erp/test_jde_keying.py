@@ -1348,3 +1348,43 @@ def test_a_us_companys_po_matched_voucher_keys_the_sales_tax_charged_on_lines_of
         (True, 2480.0, "3100.1450", "N", "E", "WA-KING"), (True, 45.0, "3100.1450", "N", "E", "WA-KING"),
         (False, 448.67, "3100.6420", "N", "E", ""), (False, 261.34, "3100.1450", "N", "E", "")]  # fmt: skip
     assert jde_keying._check(v) == "7,570.01 + 0.00 = 7,570.01: balanced"
+
+
+def test_what_a_keying_sheet_matches_on_one_po_line_is_held_against_what_is_open_all_together(tmp_path):
+    """B-2663: the quantity matched over what JD Edwards had open on a PO line was looked for row by row: an invoice
+    billing a line's bags on two lines (60 and 60 of the 100 open) said twice "60 of the 100 open matched; the line
+    stays open for 40" and warned of nothing, and so did two invoices of 60 each on one keying sheet; JD Edwards takes
+    the first 60 and has 40 left for the rest. What a sheet matches on a PO line is added up, in its order."""
+    store = po_store(tmp_path)
+    js = settings(po_matched=True)
+
+    def bags(inv_id, *quantities):
+        inv = po_invoice(inv_id)
+        final = inv["final_output"]
+        first = final["line_items"][0]
+        final["line_items"] = [{**first, "line_number": n, "quantity": q, "amount": round(q * 5.99, 2)}
+                               for n, q in enumerate(quantities, 1)]  # fmt: skip
+        subtotal = round(sum(li["amount"] for li in final["line_items"]), 2)
+        tax = round(subtotal * 0.05, 2)
+        final.update(invoice_number=f"1182{inv_id}", subtotal=subtotal, tax_lines=[tl("GST", "", 0.05, subtotal, tax)],
+                     tax_total=tax, grand_total=round(subtotal + tax, 2))  # fmt: skip
+        return inv
+
+    def said(invoices):
+        ready, held = jde_keying.vouchers(invoices, js, promo_lookup, on=ON_DAY,
+                                          po_matches=jde_keying.po_matches(store, invoices))  # fmt: skip
+        assert held == []
+        return [([w for w in v.warnings if "open" in w], [n for n in v.notes if "open" in n]) for v in ready]
+
+    assert said([bags(1, 60, 60)]) == [(["Order 40917 line 12.000: 120 matched, but JD Edwards had 100 open at "
+                                         "the purchase orders' last load: it matches no more than is open."],
+                                        [])]  # fmt: skip
+    assert said([bags(1, 60), bags(2, 60)]) == [
+        ([], ["Order 40917 line 12.000: 60 of the 100 open matched; the line stays open for 40 (do not close it in "
+              "Voucher Match)."]),
+        (["Order 40917 line 12.000: 60 matched, 120 with the 60 above on this sheet, but JD Edwards had 100 open at "
+          "the purchase orders' last load: it matches no more than is open."], []),
+    ]  # fmt: skip
+    assert said([bags(1, 30), bags(2, 30)])[1] == ([], [
+        "Order 40917 line 12.000: 30 of the 100 open matched, 60 with the 30 above on this sheet; the line stays open "
+        "for 40 (do not close it in Voucher Match)."])  # fmt: skip
