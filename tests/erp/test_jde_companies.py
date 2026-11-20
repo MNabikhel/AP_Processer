@@ -250,6 +250,41 @@ def test_ap_coders_own_invoice_of_another_company_approved_over_the_warning_goes
     assert on_batch == sheet == [first, second, after] and not_ready == []
 
 
+def test_a_batch_that_took_another_companys_invoice_approved_over_the_warning_never_holds_it_later(
+    tmp_path, cost_centers_demo_template
+):
+    """B-2925: a JD Edwards batch took two companies' invoices of the same number, the second approved over
+    DUPLICATE_INVOICE_OTHER_COMPANY (B-2696), but the batch's own later checks read no approvals: its API dry run and
+    post held the second for ever ("neither was approved over that": it can't be reopened, exported), and the ZIP's
+    README and DRY_RUN.txt said the same. They read what the approvals went over, as the batch did."""
+    import io
+    import zipfile
+
+    from ap_coder.erp import jde_post
+    from tests.webclient import follow, post
+
+    store, client, doc = _ready(tmp_path, cost_centers_demo_template)
+    first = _approved(store, tmp_path, doc, "NW-5111", "00210")
+    second = _approved(store, tmp_path, doc, "NW-5111", "00310", over=["DUPLICATE_INVOICE_OTHER_COMPANY"])
+    follow(client, post(client, "/exports/create", {"fmt": jde_settings.FORMAT, "ids": [first, second]}))
+    batch = store.export_batches()[0]["id"]
+    assert store.batch_invoice_ids(batch) == [first, second]
+    found, problems, _invoices = jde_post.payloads(store, batch)
+    assert sorted(found) == [first, second] and problems == {}
+    report = jde_post.dry_run(store, batch)["report"]
+    assert report["held"] == [] and len(report["vouchers"]) == 2
+    answer = client.post(f"/exports/batches/{batch}/download", headers={"X-AP-Coder": "1"})
+    files = zipfile.ZipFile(io.BytesIO(answer.content))
+    assert "would refuse them" not in files.read("README.txt").decode()
+    assert "HELD BACK" not in files.read("DRY_RUN.txt").decode()
+    # a pair neither was approved over (put on a batch by hand) is still held there, as the batch would have
+    third = _approved(store, tmp_path, doc, "NW-5112", "00210")
+    fourth = _approved(store, tmp_path, doc, "NW-5112", "00310")
+    by_hand = store.create_export_batch([third, fourth], jde_settings.FORMAT)
+    found, problems, _invoices = jde_post.payloads(store, by_hand)
+    assert sorted(found) == [third] and "neither was approved over that" in problems[fourth][0]
+
+
 def test_a_bill_in_jd_edwards_under_another_company_holds_an_invoice_only_until_approved_over_it(
     tmp_path, cost_centers_demo_template
 ):

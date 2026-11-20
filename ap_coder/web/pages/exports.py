@@ -209,6 +209,7 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
         no_undo=jde_post.undo_problem(store, batch),
         site=jde_zfiles.batch_site(known, invoices),  # the keys the API sends too (D-182)
         po_matches=jde_keying.po_matches(store, kept, settings.charge_account) if settings.po_matched else None,
+        prior=jde.batch_prior(store, kept),  # (what its invoices' approvals went over: B-2925)
     )
 
 
