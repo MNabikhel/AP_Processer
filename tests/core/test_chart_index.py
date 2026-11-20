@@ -144,6 +144,23 @@ def test_a_search_by_a_business_units_name_finds_one_companys_past_500_of_the_gr
         assert len(IndexedPairs(store, ChartSettings(pilot=("00200",))).search(typed)) == 30, typed
 
 
+def test_a_business_units_report_with_its_companies_unpadded_gives_each_companys_units(tmp_path):
+    """B-2743: report 2 saved through Excel reads its Co as 100, kept so; the business units of company 00100 were
+    asked by the stored company as it is, so none was found and the Account box searched every company's."""
+    from ap_coder.core.chart import BuRow, ChartRow
+
+    units = [BuRow("1001", "Tower A", "100", "JB", ""), BuRow("2001", "Bridge B", "200", "JB", "")]
+    store = Store(tmp_path / "ap.db")
+    store.import_business_units(units)
+    store.import_chart([ChartRow("1001", "5410", "", "Tools", 7, "", "", "00100"),
+                        ChartRow("2001", "5410", "", "Tools", 7, "", "", "00200")])  # fmt: skip
+    pairs = store.account_pairs()
+    assert isinstance(pairs, IndexedPairs) and pairs.company_of("1001") == "00100"
+    assert pairs.units_of("00100") == pairs.units_of("100") == frozenset({"1001"})
+    assert pairs.units_of("00100") == AccountPairs([], units).units_of("00100")
+    assert [row[0] for row in pairs.search("5410", pairs.units_of("00100"))] == ["1001.5410"]
+
+
 def _opened(monkeypatch) -> list[sqlite3.Connection]:
     """Every connection a Store opens from now on."""
     made: list[sqlite3.Connection] = []

@@ -90,6 +90,7 @@ class IndexedPairs:
         self._kept: OrderedDict[tuple[str, str], tuple[str, str, str] | None] = OrderedDict()
         self._units: tuple[dict[str, str], set[str], dict[str, str], dict[str, str], set[str]] | None = None
         self._offered: tuple[frozenset[str], tuple[str, ...]] | None = None
+        self._of_company: dict[str, frozenset[str]] | None = None
         self._searched: tuple[frozenset[str], frozenset[str]] | None = None
         self._tally: Counter[str] | None = None
 
@@ -328,14 +329,14 @@ class IndexedPairs:
         return self._unit_facts()[2].get(str(business_unit or "").strip(), "")
 
     def units_of(self, company: str) -> frozenset[str]:
-        with self._reader() as conn:
-            return frozenset(
-                r[0]
-                for r in conn.execute(
-                    "SELECT code FROM business_units WHERE company IN (?, ?)",
-                    (company_code(company), str(company or "").strip()),
-                )
-            )
+        """``AccountPairs.units_of``: the companies as they compare (``company_code``: report 2 read through Excel
+        gives 100 for 00100, B-2743), read once."""
+        if self._of_company is None:
+            found: dict[str, set[str]] = {}
+            for bu, co in self._unit_facts()[2].items():
+                found.setdefault(co, set()).add(bu)
+            self._of_company = {co: frozenset(units) for co, units in found.items()}
+        return self._of_company.get(company_code(company), frozenset())
 
     def closed_units(self) -> list[str]:
         return sorted(self._unit_facts()[1])
