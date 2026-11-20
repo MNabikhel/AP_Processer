@@ -1,6 +1,7 @@
 """The CI workflow is one GitHub accepts: a file it rejects runs no job at all, so nothing is tested."""
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -244,6 +245,64 @@ def test_every_cells_parts_are_all_there_and_the_test_windows_leaves_out_runs_on
     assert job["if"] == "github.event_name != 'pull_request'" and job["runs-on"] == "windows-latest"
     assert job["strategy"]["matrix"]["python"] == ["3.12", "3.14"]
     assert 'pytest -q -m "" -o faulthandler_timeout=2400 ${{ env.SYNC_VOLUME }}' in job["steps"][-1]["run"]  # B-2727
+
+
+FLAKY = """
+from pathlib import Path
+
+
+def test_always_fails():
+    assert False
+
+
+def test_fails_the_first_time_only():
+    ran = Path(__file__).with_name("ran-once")
+    if not ran.exists():
+        ran.write_text("")
+        assert False
+
+
+def test_passes():
+    pass
+"""
+
+
+@needs_ci
+def test_after_failed_tests_each_runs_again_and_the_summary_says_if_it_passed_then(tmp_path):
+    """A red run did not say whether a failure was a flake, and each needed a whole job run again (20 minutes or
+    more). In the jobs of tests, a step after a failed Tests step runs the failed tests once more and says of each, in
+    the run's summary and as an annotation, "passed when run again (likely flaky)" or "failed again"; the job stays red
+    either way (no step may hide a failure). Here its script runs on a failing test, a flaky one and one that passes."""
+    jobs = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
+    scripts = set()
+    for name in ("tests", "browser-tests"):
+        steps = jobs[name]["steps"]
+        tests = next(n for n, step in enumerate(steps) if step.get("id") == "tests")
+        again = steps[tests + 1]
+        assert again["if"] == "failure() && steps.tests.outcome == 'failure'" and "continue-on-error" not in again
+        assert steps[tests].get("env") == again.get("env") and "continue-on-error" not in steps[tests], name
+        scripts.add(again["run"])
+    assert len(scripts) == 1  # (the same in both jobs)
+    script = scripts.pop().split("<<'EOF'\n", 1)[1].rsplit("EOF", 1)[0]
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (tmp_path / "test_flaky.py").write_text(FLAKY, encoding="utf-8")
+    summary = tmp_path / "summary.md"
+    env = {**os.environ, "GITHUB_STEP_SUMMARY": str(summary)}
+    first = subprocess.run([sys.executable, "-m", "pytest", "-q"], cwd=tmp_path, env=env,
+                           capture_output=True, text=True, timeout=120)  # fmt: skip
+    assert first.returncode == 1 and "2 failed, 1 passed" in first.stdout, first.stdout
+    done = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True,
+                          timeout=120)  # fmt: skip
+    assert done.returncode == 0, done.stderr
+    assert summary.read_text(encoding="utf-8").splitlines() == [
+        "### The failed tests, run again",
+        "",
+        "- failed again: `test_flaky.py::test_always_fails`",
+        "- passed when run again (likely flaky): `test_flaky.py::test_fails_the_first_time_only`",
+    ]
+    assert "::error title=failed again::test_flaky.py::test_always_fails" in done.stdout
+    assert "::warning title=passed when run again (likely flaky)::test_flaky.py::test_fails_the_" in done.stdout
+    assert "1 failed, 1 passed" in done.stdout  # (the two failed ones alone ran again)
 
 
 def test_every_test_runs_in_exactly_one_shard():
