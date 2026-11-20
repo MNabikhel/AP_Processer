@@ -162,8 +162,9 @@ def choose(accounts: list[dict[str, Any]], currency: str, preferred: str = "") -
 
 
 def opening_choice(doc: dict[str, Any], approved: bool, accounts: list[dict[str, Any]], last: str = "") -> str:
-    """The Pay from account the review screen opens with for a stored coding ``doc``: the one approved before (a
-    reopened or sent-back invoice, ``approved``), else the default (``choose``; ``last``: this vendor's last one)."""
+    """The Pay from account the review screen opens with for a stored coding ``doc``, and bulk approval approves: the
+    one approved before (a reopened or sent-back invoice, ``approved``), else the default (``choose``; ``last``: this
+    vendor's last one), never the default the day it was read."""
     code = str(doc.get("pay_from_account") or "")
     if approved and code:
         return code

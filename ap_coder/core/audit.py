@@ -61,6 +61,7 @@ ACTIONS = {
     "verified": ("fact_check", "info", "AI reviewer checked it"),
     "verifier_corrected": ("auto_fix_high", "info", "AI reviewer corrected it"),
     "azure_checked": ("fact_check", "info", "Azure check done"),
+    "azure_read_again": ("visibility", "info", "Read again with Azure's reading: proposal updated"),
     "azure_check_disagrees": ("gpp_maybe", "warn", "Azure check disagrees"),
     "lesson_explained": ("lightbulb", "info", "Lesson explained"),
     "lesson_one_off": ("event_busy", "info", "One-off: not learned from"),

@@ -801,6 +801,12 @@ class StoreCore:
             finally:
                 dialect.set_busy_timeout(conn, waits)
 
+    def others_wrote(self) -> int | None:
+        """A number that moves once another connection commits a change (``PRAGMA data_version`` of this thread's
+        session connection); None outside a session, where nothing tells it."""
+        held = _held_connections().get(str(self.path))
+        return None if held is None else dialect.data_version(held.conn)
+
     def _session_memo(
         self, key: tuple[Any, ...], compute: Callable[[], list[dict[str, Any]]], shared: bool = False
     ) -> list[dict[str, Any]]:

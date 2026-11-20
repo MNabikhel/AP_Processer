@@ -39,7 +39,7 @@ from ..core.store import REVIEW, Store
 from ..core.store._base import CHECKS_STAMP_KEY
 from ..core.store.bulk_jobs import CHANGED, GONE
 from ..core.store.summary import QUEUE_READ, computed
-from . import companies
+from . import banks, companies
 from .review import codes_to_pick
 from .vendors import moved_off_hold
 
@@ -392,17 +392,22 @@ def clean_candidates(store: Store) -> list[dict[str, Any]]:
 
 
 def sort_for_bulk(
-    store: Store, queue: list[dict[str, Any]] | None = None, checks: dict[int, dict[str, Any]] | None = None
-) -> tuple[list[dict[str, Any]], dict[int, str]]:
+    store: Store, queue: list[dict[str, Any]] | None = None, checks: dict[int, dict[str, Any]] | None = None,
+    held: dict[int, str] | None = None,
+) -> tuple[list[dict[str, Any]], dict[int, str]]:  # fmt: skip
     """(``clean_candidates``, why each other invoice of the queue not flagged when processed is left for a person:
     "credit note", "audit" for one picked for the touchless audit sample, "others" for a line coded from other
-    vendors' approvals (D-241), or "warning" for an error, a warning or a finding that always goes to a person).
+    vendors' approvals (D-241), "warning" for an error, a warning or a finding that always goes to a person, or "pay
+    from" for one its review screen's Approve refuses for the Pay from account it opens with, ``pay_from_stops``).
     ``queue``: the invoices in review as ``store.list_invoices`` gives them, when the caller has them already.
-    ``checks``: ``queue_checks`` of the queue, when the caller has it already. The checks are today's: an invoice
-    whose stored checks were made against other settings is checked again (B-815)."""
+    ``checks``: ``queue_checks`` of the queue, and ``held``: its ``pay_from_stops``, when the caller has them already.
+    The checks are today's: an invoice whose stored checks were made against other settings is checked again
+    (B-815)."""
     queue = store.list_invoices(REVIEW) if queue is None else queue
+    unflagged = [i for i in queue if not i["requires_review"]]
     if checks is None:
-        checks = queue_checks(store, [i["id"] for i in queue if not i["requires_review"]])[0]
+        checks = queue_checks(store, [i["id"] for i in unflagged])[0]
+    held = pay_from_stops(store, unflagged, checks) if held is None else held
     titled = store.credit_note_ids(REVIEW)
     candidates, left = [], {}
     for inv in queue:
@@ -417,9 +422,56 @@ def sort_for_bulk(
             left[inv["id"]] = "others"
         elif any(needs_a_person(i["severity"], i["code"]) for i in facts["found"]):
             left[inv["id"]] = "warning"
+        elif held.get(inv["id"]):
+            left[inv["id"]] = "pay from"
         else:
             candidates.append(inv)
     return candidates, left
+
+
+def pay_from_stops(store: Store, queue: list[dict[str, Any]], checks: dict[int, dict[str, Any]]) -> dict[int, str]:
+    """What stops the approval of each invoice of ``queue`` (in review, as ``store.list_invoices`` gives them) about
+    its Pay from account, by id (one not listed: nothing): ``banks.blocking`` of the account its review screen opens
+    with (``banks.opening_choice`` of what ``queue_facts`` keeps, in ``checks``: ``queue_checks``), worked out once a
+    call for each account, currency and vendor's last one asked. The queue's Ready and what it offers for bulk
+    approval ask it (B-685, B-2966)."""
+    accounts = store.bank_accounts()
+    if not any(a["active"] for a in accounts):
+        return {}
+    pay = {i["id"]: _pay(checks.get(i["id"]) or {}, i) for i in queue}
+    last = store.last_pay_froms(sorted({p[3] for p in pay.values()}))  # each vendor's last one
+    blocks: dict[tuple[str, bool, str, str], str] = {}
+    held = {}
+    for invoice_id, (code, approved, currency, key) in pay.items():
+        asked = (code, approved, currency, last.get(key, ""))
+        if asked not in blocks:
+            choice = banks.opening_choice({"pay_from_account": code, "currency": currency}, approved, accounts,
+                                          asked[3])  # fmt: skip
+            blocks[asked] = banks.blocking(choice, accounts, currency)
+        if blocks[asked]:
+            held[invoice_id] = blocks[asked]
+    return held
+
+
+def _pay(facts: dict[str, Any], inv: dict[str, Any]) -> tuple[str, bool, str, str]:
+    """(its Pay from account, approved before or not, its currency, its vendor's key) of a queue invoice, as its
+    review screen opens with them (``queue_facts``): each text decoded once (``_PAYS``)."""
+    text = facts.get("q_pay")
+    if text:
+        pay = _PAYS.get(text)
+        if pay is None:
+            if len(_PAYS) >= PAYS_KEPT:
+                _PAYS.clear()
+            code, approved, currency, key = json.loads(text)
+            pay = _PAYS[text] = (code, approved, currency, key)
+        return pay
+    return "", False, "CAD", vendor_key(inv.get("vendor_name") or "")
+
+
+# Each Pay from text of the queue's facts (``q_pay``), decoded: the queue reads 2,700 at each visit, most of them read
+# at the last. Past PAYS_KEPT texts they are all let go.
+_PAYS: dict[str, tuple[str, bool, str, str]] = {}
+PAYS_KEPT = 16_384
 
 
 def queue_facts(row: Any) -> dict[str, Any]:
@@ -439,7 +491,8 @@ def queue_facts(row: Any) -> dict[str, Any]:
     doc = row["final_output"] or row["ai_output"] or {}
     lines = doc.get("line_items")
     pay = [str(doc.get("pay_from_account") or ""), bool(row["final_output"]), str(doc.get("currency") or "CAD"),
-           vendor_key(doc.get("vendor_name") or row["vendor_name"] or "")]  # fmt: skip
+           # the vendor it is filed under (``Store.vendor_key_for``), whose last account it opens with (B-2970)
+           row.get("vendor_key") or vendor_key(doc.get("vendor_name") or row["vendor_name"] or "")]  # fmt: skip
     stamp = str(validation.get(CHECKS_STAMP_KEY) or "") if isinstance(row["validation"], dict) else None
     return {**facts, "q_stamp": stamp,
             "q_found": _pairs(issues), "r_stamp": str(recheck.get("stamp") or ""),
@@ -457,8 +510,9 @@ def bulk_approve(
     """Approve each invoice exactly as it is coded, if it is still clean. Returns approved / skipped.
 
     "As coded" is what the review screen shows: an earlier approver's corrections (a reopened or sent-back
-    invoice) when there are some, otherwise the AI's coding. ``server``: the company server, where a held vendor's
-    invoice coded to another vendor is the review screen's error (``VENDOR_CHANGED_FROM_HELD``, D-142)."""
+    invoice) when there are some, otherwise the AI's coding, paid from the account the screen opens with
+    (``banks.opening_choice``). ``server``: the company server, where a held vendor's invoice coded to another vendor
+    is the review screen's error (``VENDOR_CHANGED_FROM_HELD``, D-142)."""
     with store.session():  # one connection for every invoice (a no-op inside the caller's own session)
         return _bulk_approve(store, reference, settings, invoice_ids, reviewer, login, server)
 
@@ -511,6 +565,11 @@ def _still_clean(store: Store, reference: ReferenceData, settings: Settings, inv
         coding = InvoiceCoding.model_validate(coded)
     except ValueError:
         return None, "the coding needs fixing by hand"
+    # paid from the account its review screen opens with, never the default the day it was read (B-2965)
+    accounts = store.bank_accounts()
+    key = store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number) if accounts else ""
+    coding.pay_from_account = banks.opening_choice(coded, bool(inv.get("final_output")), accounts,
+                                                   store.last_pay_from(key))  # fmt: skip
     if _credit_note(bool((store.get_capture(invoice_id) or {}).get("credit_note")), coding.grand_total):
         return None, "it is a credit note: a credit is always applied by a person"
     others = others_reason(others_coded(coded.get("line_items")))
@@ -565,11 +624,12 @@ def approve_in_job(
     parked, read again; ``bulk_step`` looks again in the approval's own transaction), when it is no longer clean, or
     when someone else has it open on their review screen (``Store.open_by``) or edits of it kept there (``bulk_step``
     looks there too). Raises ``Stopping`` once ``stopping()`` is true, or the job is no longer ``runner``'s. Returns ""
-    once every invoice is done, else why it stopped: what ``refused()`` says (the person may no longer approve)."""
+    once every invoice is done, else why it stopped: what ``refused()`` says (the person may no longer approve).
+    Each invoice is checked against the lists and settings as they are when the job comes to it (B-2967): read again
+    once another connection has written since (B-2971), as the job's own approvals never change them."""
     person = job["person"]
     taken = set(job["approved"]) | {s[0] for s in job["skipped"]}
-    reference = store.reference_data()
-    stamp = store.checks_stamp()
+    lists: tuple[int | None, ReferenceData, str] | None = None  # (when they were read, the reference data, its stamp)
     for invoice_id, identity, listed in job["ids"]:
         if invoice_id in taken:
             continue
@@ -587,7 +647,10 @@ def approve_in_job(
         elif list(now) != identity:
             why = CHANGED
         else:
-            output, why = _still_clean(store, reference, settings, invoice_id, stamp, bool(person.get("server")))
+            moment = store.others_wrote()
+            if lists is None or moment is None or moment != lists[0]:
+                lists = (moment, store.reference_data(), store.checks_stamp())
+            output, why = _still_clean(store, lists[1], settings, invoice_id, lists[2], bool(person.get("server")))
         if output is not None and (why := _open_elsewhere(store, invoice_id, job["owner"])):
             output = None  # (theirs to approve as they see it, though nothing of theirs is checked yet)
 

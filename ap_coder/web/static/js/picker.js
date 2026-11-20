@@ -568,7 +568,8 @@ class Picker {
       return;
     }
     if (!open) {
-      if ((k === "Enter" && (!this.free || this.maker())) || k === "F4" || (k === " " && !e.altKey && !e.shiftKey && this.empty())) {
+      // (Alt+Enter is the line's own key, "insert a line below": left to it, B-2989)
+      if ((k === "Enter" && !e.altKey && (!this.free || this.maker())) || k === "F4" || (k === " " && !e.altKey && !e.shiftKey && this.empty())) {
         e.preventDefault(); // Enter never sends the form the box is in; Space types no space in an empty box
         this.open();
       }

@@ -909,6 +909,7 @@ def process_page(request: Request) -> HTMLResponse:
         folder_note=folder_note,
         folder_listed=files is not None,
         set_aside=inbox.needs_person(store, invoice_dir(store)),
+        emailed_statements=len(inbox.statements(store, invoice_dir(store))),  # (kept out of the queue, B-2975)
         folder=short_path(invoice_dir(store)) if is_admin(request) else "",
         accept=",".join(ACCEPT),
         voucher_kinds=joined.KINDS,

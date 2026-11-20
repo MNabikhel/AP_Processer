@@ -189,6 +189,28 @@ def test_parts_that_may_hold_an_invoice_still_make_the_email_wait(tmp_path):
         assert result.triage.needs_person and any(part[0] in s for s in result.triage.left_out), part[0]
 
 
+def test_an_html_or_text_invoice_named_by_its_number_makes_the_email_wait(tmp_path):
+    """B-2977: a billing system's invoice sent as "INV-4471.html" (or text) beside a PDF invoice was taken for the
+    email's own text, as only a name saying "invoice" counted: dropped, the email filed as sorted. An HTML or text
+    attachment named by an invoice number, or whose words name an invoice, is left out for a person; Exchange's
+    ATT00001.htm stays a footer whatever it says."""
+    page = b"<html><body><h1>INVOICE</h1><p>Invoice No. INV-4471</p><p>Total 105.00</p></body></html>"
+    for n, part in enumerate([
+        ("INV-4471.html", "text", "html", page),
+        ("INV4471.txt", "text", "plain", b"Northwind Supplies\nTotal 105.00"),
+        ("4471.htm", "text", "html", page),
+        ("Your document.txt", "text", "plain", b"FACTURE No F-4471\nTotal 105,00 $"),
+    ]):  # fmt: skip
+        path = tmp_path / f"h{n}.eml"
+        path.write_bytes(_invoice_with(part).as_bytes())
+        result = unpack(path)
+        assert [p.name for p in result.saved] == [f"h{n} - INV-12.pdf"], part[0]
+        assert result.triage.needs_person and any(part[0] in s for s in result.triage.left_out), part[0]
+    path = tmp_path / "footer.eml"
+    path.write_bytes(_invoice_with(("ATT00001.htm", "text", "html", b"<p>Invoice attached. Thanks</p>")).as_bytes())
+    assert not unpack(path).triage.needs_person
+
+
 def test_an_outlook_winmail_dat_alone_is_left_out_since_it_may_hold_the_attachments():
     m = EmailMessage()
     m["Subject"] = "Invoice INV-16"

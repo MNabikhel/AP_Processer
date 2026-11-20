@@ -57,6 +57,12 @@
       {% endfor %}
     </section>
     {% endif %}
+    {% if emailed_statements and can("/statements", "GET") %}
+    <div class="flash info" id="emailed-statements"><span class="ms" aria-hidden="true">receipt_long</span>
+      <div>{{ emailed_statements | plural("statement") }} received by email {{ "is" if emailed_statements == 1 else "are" }} on the
+        Statements page, kept out of the review queue. If one is an invoice after all, choose Read as invoice there.
+        <a href="/statements#emailed">See the statements</a></div></div>
+    {% endif %}
 
     {% include "_next_step.html" %}
     <section class="card">

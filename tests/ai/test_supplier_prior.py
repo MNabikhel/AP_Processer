@@ -1,6 +1,9 @@
 """The supplier prior (D-212): how a supplier's lines were coded last year and here, by account string."""
 
 import datetime as dt
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -210,6 +213,49 @@ def test_a_prior_is_small_and_kept_within_the_caches_bytes(store):
     sizes = [size_of(prior_for(store, f"Supplier {n:02d} Services")) for n in range(40)]
     assert max(sizes) < 8_000  # (the made-up year's 950 suppliers: 4.6 KB each at the median, 5 MB in all)
     assert sp._KEPT.held <= sp._KEPT.most and len(sp._KEPT) >= 40
+
+
+# The company server's other process: the backup restored and the right journal loaded there.
+_RESTORE_AND_LOAD = """import sys
+from pathlib import Path
+from ap_coder.core.store import Store
+from tests.books import IT, load_journal, monthly
+store = Store(Path(sys.argv[1]))
+store.restore_state(Path(sys.argv[2]))
+load_journal(store, monthly("215", "CLEAN CO", f"{IT}.7510.5107", "{month} phones", 6, year=2026), name="d.csv")
+"""
+
+
+@pytest.mark.parametrize("where", ["here", "another process"])
+def test_a_journal_loaded_after_a_restore_is_never_taken_for_the_one_the_restore_took_out(store, where):
+    """B-2995: journal A loaded and backed up, the wrong journal C loaded and a supplier coded from it, the backup
+    restored and the right journal D loaded: the count of the journal's changes was C's again, so C's account was
+    still offered for the supplier (the journal's names and the journal as a whole too), by this process and by every
+    one on the company server that had coded it, until a restart. D prints the supplier under another number: only
+    the journal's names read again find it."""
+    from ap_coder.core.store import Store
+
+    load_chart(store)
+    load_journal(store, monthly("100", "CLEAN CO", JANITOR, "{month} janitorial", 3), name="a.csv")
+    backup = store.backup_now("manual")
+    load_journal(store, monthly("100", "CLEAN CO", f"{FACILITIES}.7340.3313", "{month} carpets", 6, year=2026),
+                 name="c.csv")  # fmt: skip
+    assert prior_for(store, "CLEAN CO").accounts[0].account == f"{FACILITIES}.7340.3313"
+    assert set(prior_for(store, "SPARKLE SUPPLY").book.units_of) == {"7340.3307", "7340.3313"}
+    if where == "here":
+        store.restore_state(backup)
+        load_journal(Store(store.path), monthly("215", "CLEAN CO", f"{books.IT}.7510.5107", "{month} phones", 6,
+                                                year=2026), name="d.csv")  # fmt: skip
+    else:
+        done = subprocess.run([sys.executable, "-c", _RESTORE_AND_LOAD, str(store.path), str(backup)],
+                              capture_output=True, text=True, cwd=Path(__file__).resolve().parents[2])  # fmt: skip
+        assert done.returncode == 0, done.stderr
+    assert store.journal_stamp() == 2  # (the count it was with C)
+    for each in (store, Store(store.path)):
+        prior = prior_for(each, "CLEAN CO")
+        assert [(a.account, round(a.share, 2)) for a in prior.accounts] == [(f"{books.IT}.7510.5107", 0.8),
+                                                                            (JANITOR, 0.2)]  # fmt: skip
+        assert set(prior_for(each, "SPARKLE SUPPLY").book.units_of) == {"7340.3307", "7510.5107"}
 
 
 def _line_of(store, reference, vendor, text):

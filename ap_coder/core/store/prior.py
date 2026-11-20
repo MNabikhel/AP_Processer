@@ -50,13 +50,16 @@ _REMARK_KEY = ("supplier_key", "business_unit", "object", "subsidiary", "remark"
 class PriorMixin:
     def prior_stamp(self, key: str) -> tuple[Any, ...]:
         """What tells whether a supplier's prior worked out before is still right: the journal's stamp
-        (``journal_stamp``), the vendor's lessons (their count, the highest id, the newest one: ``_lessons_stamp``)
-        and the count of the vendor list's changes (a supplier number given or changed). ``key``: the vendor's."""
+        (``journal_stamp``) and the database's ``summary_id`` (another after a restore, which puts the counts back to
+        the backup's: a journal loaded after it is never taken for the one it took out, B-2995), its first two, which
+        say what the journal is; the count of the vendor list's changes (a supplier number given or changed) and the
+        vendor's lessons (their count, the highest id, the newest one: ``_lessons_stamp``). ``key``: the vendor's."""
         with self._conn() as conn:
             row = conn.execute("SELECT (SELECT value FROM settings WHERE key = ?), (SELECT value FROM settings WHERE "
-                               "key = 'changes/vendors')", (VERSION_KEY,)).fetchone()  # fmt: skip
+                               "key = 'summary_id'), (SELECT value FROM settings WHERE key = 'changes/vendors')",
+                               (VERSION_KEY,)).fetchone()  # fmt: skip
             lessons = self._lessons_stamp(conn, key, conn.in_transaction)
-        return (int(row[0] or 0), str(row[1] or ""), *lessons)
+        return (int(row[0] or 0), str(row[1] or ""), str(row[2] or ""), *lessons)
 
     def journal_supplier_names(self) -> list[dict[str, Any]]:
         """The suppliers of the journal by the names it prints them under (26 characters at most, as printed):

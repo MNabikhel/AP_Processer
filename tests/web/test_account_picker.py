@@ -436,3 +436,55 @@ def test_another_company_picked_draws_the_screen_again_for_that_companys_account
     assert page.input_value("select[data-company]") == "00310" and "company=00310" in seed()
     assert "Not checked for Canadian tax (currency USD)" in page.inner_text(".inv-company")
     assert not errors
+
+
+def test_an_edit_whose_check_a_refused_approval_called_off_is_checked_and_kept(browser, chart_company):
+    """B-2986: an account typed in a box, then Approve clicked at once: the approval called off the edit's check, was
+    refused (the chart has no such account), and nothing checked the edit after: the screen still said Ready with
+    Approve open, and leaving lost the edit (no draft kept). Refused, the edit is checked and kept."""
+    page, errors = _review(browser, chart_company, "one_line")
+    store, invoice_id = chart_company.store, chart_company.invoices["one_line"][1]
+    typed = f"{chart_company.truth.company.main_business_unit}.9999.9999"
+    page.fill(FIRST, typed)
+    with page.expect_response(lambda r: r.url.endswith("/approve")) as approval:
+        page.click("[data-approve]")  # at once, its check still to come
+    assert approval.value.status == 400 and "is not in the chart of accounts" in approval.value.json()["error"]
+    settle(page)
+    assert page.input_value(FIRST) == typed and page.is_disabled("[data-approve]")
+    assert page.query_selector('[data-grid="lines"] [data-row]:nth-child(1).is-fix')
+    assert (store.invoice_draft(invoice_id, "") or {"lines": [{}]})["lines"][0].get("predicted_gl_code") == "9999.9999"
+    assert store.get_invoice(invoice_id)["status"] == REVIEW and not errors
+
+
+def test_alt_enter_in_a_lines_account_box_inserts_a_line_below(browser, chart_company):
+    """B-2989: Alt+Enter ("Insert a line below", the line menu's key) in a line's Account box, where the screen opens,
+    opened the account list instead: the box's list took it for Enter, and the line's keys never saw it."""
+    page, errors = _review(browser, chart_company, "four_lines")
+    page.focus(FIRST)
+    page.keyboard.press("Alt+Enter")
+    numbers = page.eval_on_selector_all(
+        '[data-grid="lines"] [data-row] [data-line-no]', "els => els.map((e) => e.textContent)"
+    )
+    assert numbers == ["1", "5", "2", "3", "4"] and not page.query_selector(LIST)
+    settle(page)
+    assert not errors
+
+
+def test_a_line_added_with_the_button_takes_the_number_after_the_last_and_can_be_split(browser, chart_company):
+    """B-2990: on the chart screen (its line numbers hidden, never typed) a line added with "Add a line" had no number:
+    none shown, none in the draft, never offered to split, while its findings called it "Line 2". It takes the number
+    after the last, as a line inserted or duplicated does (B-2499)."""
+    page, errors = _review(browser, chart_company, "one_line")
+    store, invoice_id = chart_company.store, chart_company.invoices["one_line"][1]
+    page.click('[data-add-row="lines"]')
+    added = page.locator('[data-grid="lines"] [data-row]').last
+    added.locator('[name="line_description"]').fill("Added by hand")
+    added.locator('[name="line_amount"]').fill("12.34")
+    settle(page)
+    assert (
+        added.locator("[data-line-no]").inner_text() == "2"
+        and added.locator('[name="line_number"]').input_value() == "2"
+    )
+    assert page.eval_on_selector_all("[data-split-line] option", "os => os.map((o) => o.value)") == ["1", "2"]
+    lines = (store.invoice_draft(invoice_id, "") or {"lines": []})["lines"]
+    assert [(line["line_number"], line["description"]) for line in lines][-1] == (2, "Added by hand") and not errors

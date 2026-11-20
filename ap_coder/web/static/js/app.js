@@ -18,7 +18,8 @@
      form[data-long]                  an action the server runs whole in the request (a restore, an import):
                                       waited for up to LONG_MS (any other gives up after ACTION_MS)
      form[data-refusal]               its refusal is said in the form as an alert, kept until it is sent again, not
-                                      in a message that goes ("apc:refused" on the form: a file box, imports.js)
+                                      in a message that goes ("apc:refused" on the form: a file box, imports.js;
+                                      any other form's refusal is said in a message, "apc:refused" on it too)
      select[data-autosubmit]          submit its (GET) form on change
      input[type=checkbox][data-enables]  enables the submit button of its form while ticked
      input[type=checkbox][data-implied-by="a b"]  ticked and locked while a box of its name with value a or b is
@@ -371,6 +372,7 @@ async function submitForm(form, submitter) {
     delete form.dataset.sending;
     setBusy(form, false);
     if (answer.ok && form.hasAttribute("data-once")) form.closest(".flash")?.remove();
+    if (answer.error) form.dispatchEvent(new CustomEvent("apc:refused", { detail: { text: answer.error } }));
   }
 }
 

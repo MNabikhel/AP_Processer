@@ -8,7 +8,8 @@ aside for a person. No mailbox password, token or network access is given to AP 
 
 **What to deliver:** the whole email, as **.eml** or **.msg** (not only its attachments): the subject and text are what
 reveal a bank-detail change or a payment reminder. One file per email, any unique name. A file still being written is
-fine: AP Coder waits until a file has not changed for 5 seconds.
+fine: AP Coder waits until a file has not changed for 5 seconds, and up to a minute more for an email whose end is
+missing (a copy that stalled); one still cut off after that is read as far as it goes and waits for a person.
 
 ## Option 1: Power Automate on the shared mailbox (recommended)
 
@@ -135,13 +136,13 @@ not taken yet. A tool that saves `.msg` files (Option 2): `*.msg` in place of `*
 | The email is | Its attachments go to | A person sees it on |
 |---|---|---|
 | An invoice or credit note | the review queue (next to the email in the invoices folder) | Review queue |
-| A statement of account | `statements\` | Statements → *Statements received by email* |
+| A statement of account | `statements\` | Statements → *Statements received by email* (counted on Import invoices; *Read as invoice* sends one to the review queue) |
 | A payment reminder (no invoice attached) | `emails\needs a person\` | Import invoices → *Emails that need a person* |
 | A bank-detail change request | `emails\needs a person\`, flagged as **possible fraud** | Import invoices (in red) and the Activity log |
 | Not for AP (quote, PO, packing slip, remittance advice, out-of-office, newsletter, a portal link) | `emails\needs a person\` | Import invoices |
 
 An invoice attached to a reminder or to a bank-change email is still read into the review queue (the duplicate check
-says if AP already has it); a document that does not say what it is goes to the review queue too, and so does a quote, PO, packing
+says if AP already has it); a document that does not say what it is goes to the review queue too, and so does one that calls itself an invoice before it says *statement* (a statement of work in its lines), or a quote, PO, packing
 slip or remittance advice whose top also says *invoice* (a remittance listing the invoices it pays, a PO printed
 with an invoice number): **no invoice is held back by the sorting**, and AP rejects such a document on the review
 screen. An attachment AP Coder does not read (a .zip, a Word file, a damaged one) is never

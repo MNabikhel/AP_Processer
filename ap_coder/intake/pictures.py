@@ -32,6 +32,8 @@ import json
 import logging
 import os
 import re
+import struct
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -59,6 +61,9 @@ MAX_PAGE_INCHES = 17  # nor one that makes a page longer than this (a phone's "7
 HEIF_QUALITY = 95  # an iPhone photo has to be re-encoded: as a JPEG this good
 FLAT_QUALITY = 95  # a photo's page, flattened: a JPEG this good (a PNG when the picture was lossless)
 _ROTATION = {3: 180, 6: 90, 8: 270}  # EXIF orientation -> clockwise turn of the page
+# Told of a PDF written in the invoices folder just before it takes its name: (its path, the file as written, whose size
+# and time the rename keeps), so the pick-up counts it as read from the moment it is there (B-2978).
+Noted = Callable[[Path, os.stat_result], None]
 
 
 @dataclass(frozen=True)
@@ -111,13 +116,16 @@ def content_kind(path: str | Path) -> str:
 
 
 def looks_incomplete(path: str | Path) -> bool:
-    """A file whose end is missing: empty, a PDF without its closing "%%EOF", a JPEG without its end marker or a PNG
-    without its end chunk (still being written by a scanner or a download, or cut off). Other kinds: False."""
+    """A file whose end is missing: empty, a PDF without its closing "%%EOF", a JPEG without its end marker, a PNG
+    without its end chunk or an iPhone photo (HEIC) whose boxes don't all end in it (still being written by a scanner,
+    a download or a phone's sync, or cut off). Other kinds: False."""
     path = Path(path)
     size = path.stat().st_size
     if not size:
         return True
     kind = content_kind(path)
+    if kind == ".heic":
+        return not _boxes_whole(path, size)
     with open(path, "rb") as fh:
         fh.seek(max(0, size - 1024))
         tail = fh.read()
@@ -130,6 +138,34 @@ def looks_incomplete(path: str | Path) -> bool:
 # Pictures with no end marker: whether one is whole is told by decoding it (a scanner's multi-page TIFF written page by
 # page, B-1528).
 _DECODED_TO_TELL = (".tif", ".bmp", ".gif", ".webp")
+
+
+MAX_BOXES = 10_000  # top-level boxes of an iPhone photo looked at (it has three or four)
+
+
+def _boxes_whole(path: Path, size: int) -> bool:
+    """An iPhone photo (HEIC/HEIF: ftyp, meta, mdat ... boxes, each its length first) is whole when each box ends
+    within the file and its meta and mdat are there: one copied part way stops inside a box, or before them
+    (B-2979)."""
+    found, at = set(), 0
+    with open(path, "rb") as fh:
+        for _ in range(MAX_BOXES):
+            if at >= size:
+                return {b"meta", b"mdat"} <= found
+            fh.seek(at)
+            head = fh.read(16)
+            if len(head) < 8:
+                return False
+            length, kind = struct.unpack(">I4s", head[:8])
+            if length == 1:  # a 64-bit length follows
+                length = struct.unpack(">Q", head[8:16])[0] if len(head) == 16 else 0
+            elif length == 0:  # the last box: to the end of the file
+                length = size - at
+            if length < 8 or at + length > size:
+                return False
+            found.add(kind)
+            at += length
+    return True  # (more boxes than any photo has: its reading says what it is)
 
 
 def _decodes(path: Path) -> bool:
@@ -278,10 +314,12 @@ def _within_pixel_limit(raw: bytes) -> bytes:
     return buf.getvalue()
 
 
-def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any] | None = None) -> int:
+def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any] | None = None,
+                 noted: Noted | None = None) -> int:  # fmt: skip
     """Write ``source`` (a picture) as a PDF at ``target``: one page a picture (every frame of a multi-page TIFF),
-    upright, at its resolution. ``note`` is recorded in the PDF (:func:`original_of`). Returns the page count.
-    Raises ``CannotRead`` for an iPhone photo without the photo add-on, and Pillow's error for a damaged file."""
+    upright, at its resolution. ``note`` is recorded in the PDF (:func:`original_of`); ``noted`` is told of it just
+    before it takes its name. Returns the page count. Raises ``CannotRead`` for an iPhone photo without the photo
+    add-on, and Pillow's error for a damaged file."""
     import pymupdf
     from PIL import ImageSequence
 
@@ -319,14 +357,17 @@ def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any]
     finally:
         with PDF_LOCK:
             doc.close()
+    if noted is not None:
+        noted(target, os.stat(part))
     os.replace(part, target)
     return pages
 
 
-def to_pdf(path: str | Path) -> Converted:
-    """Turn the picture at ``path`` into ``<name>.pdf`` beside it (``_1``, ``_2``... when the name is taken) and move
-    the picture into ``originals/`` there (a copy already kept there is not kept twice). Raises ``CannotRead`` /
-    Pillow's error when the picture can't be opened; the picture is then left where it was."""
+def to_pdf(path: str | Path, noted: Noted | None = None) -> Converted:
+    """Turn the picture at ``path`` into ``<name>.pdf`` beside it (``_1``, ``_2``... when the name is taken; ``noted``
+    told of it just before it takes its name) and move the picture into ``originals/`` there (a copy already kept there
+    is not kept twice). Raises ``CannotRead`` / Pillow's error when the picture can't be opened; the picture is then
+    left where it was."""
     path = Path(path)
     raw = path.read_bytes()
     sha = hashlib.sha256(raw).hexdigest()
@@ -334,7 +375,7 @@ def to_pdf(path: str | Path) -> Converted:
     kept = _free_name(keep_dir, path.name, raw)
     pdf = _free_name(path.parent, f"{path.stem}.pdf")
     note = {"original": path.name, "sha256": sha, "kept": f"{ORIGINALS_FOLDER}/{kept.name}"}
-    pages = image_to_pdf(path, pdf, note=note)
+    pages = image_to_pdf(path, pdf, note=note, noted=noted)
     keep_dir.mkdir(parents=True, exist_ok=True)
     try:
         if kept.exists():  # the same picture came in before: kept once
@@ -347,13 +388,14 @@ def to_pdf(path: str | Path) -> Converted:
     return Converted(pdf, kept, sha, pages)
 
 
-def turn_upright(pdf: str | Path, turns: dict[int, int]) -> Converted | None:
+def turn_upright(pdf: str | Path, turns: dict[int, int], noted: Noted | None = None) -> Converted | None:
     """Show upright the pages OCR found scanned turned (``turns``: page number -> the clockwise quarter turn that
     sets it upright), so the review screen highlights each value where the page shows it. Only the pages' rotation
     changes, never what is printed on them. A PDF AP Coder made (from a picture, or turned before) is its own and is
     turned where it is (None); any other is kept in ``originals/`` as it came and the turned copy takes its place, its
     note naming the original as for a picture (returned, as :func:`to_pdf` returns a picture's). Nothing is left
-    behind when the file can't be written: the PDF stays as it was."""
+    behind when the file can't be written: the PDF stays as it was. ``noted`` is told of the PDF turned just before it
+    takes the PDF's place."""
     import pymupdf
 
     pdf = Path(pdf)
@@ -383,6 +425,8 @@ def turn_upright(pdf: str | Path, turns: dict[int, int]) -> Converted | None:
             kept.parent.mkdir(parents=True, exist_ok=True)
             kept.write_bytes(raw)
             made_copy = True
+        if noted is not None:
+            noted(pdf, os.stat(part))
         os.replace(part, pdf)
     except BaseException:
         part.unlink(missing_ok=True)

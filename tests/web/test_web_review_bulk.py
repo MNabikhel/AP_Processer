@@ -540,3 +540,149 @@ def test_an_invoice_with_a_line_coded_from_other_vendors_approvals_is_neither_re
     out = bulk.bulk_approve(store, store.reference_data(), web_settings(), ids, "Pat")
     assert out["approved"] == ids[1:] and out["skipped"] == [(ids[0], why)]
     assert store.get_invoice(ids[0])["status"] == REVIEW
+
+
+def _bank(code: str, default: bool = False) -> dict:
+    """One of our CAD bank accounts, in use."""
+    return {"code": code, "name": code, "currency": "CAD", "institution": "", "transit": "", "account_number": "",
+            "gl_account": "", "is_default": default, "active": True}  # fmt: skip
+
+
+def _paid_from(store: Store, n: int, code: str) -> list[int]:
+    """``n`` clean invoices, each of its own vendor, stored paid from ``code``: the default the day they were read."""
+    store.import_vendor_master([{"vendor_name": f"Bulk Supplier {i}", "erp_id": f"B{i}"} for i in range(n)])
+    return [add_clean(store, vendor_name=f"Bulk Supplier {i}", invoice_number=f"B-{i}", pay_from_account=code)
+            for i in range(n)]  # fmt: skip
+
+
+def _opens_with(client: TestClient, invoice_id: int) -> list[str]:
+    """The Pay from account the invoice's review screen opens with."""
+    return re.findall(r'<option value="(CAD-[A-Z]+)"[^>]*selected', client.get(f"/review/{invoice_id}").text)
+
+
+def test_bulk_approval_pays_from_the_account_the_review_screen_opens_with(store):
+    """B-2965: invoices read while CAD-OLD was the default were stored paid from it. Since CAD-NEW is the default,
+    their review screen opens with CAD-NEW (the vendor's last account where it has one), yet bulk approval approved
+    them paid from CAD-OLD, an account nobody saw on any screen; once every account was removed, from CAD-OLD still,
+    where the screen opens with none."""
+    store.save_bank_accounts([_bank("CAD-OLD", True), _bank("CAD-NEW"), _bank("CAD-PAY")])
+    ids = _paid_from(store, 3, "CAD-OLD")
+    store.save_bank_accounts([_bank("CAD-OLD"), _bank("CAD-NEW", True)])
+    earlier = add_clean(store, vendor_name="Bulk Supplier 1", invoice_number="B-0001", invoice_date="2025-03-02")
+    store.approve_invoice(earlier, {**store.get_invoice(earlier)["ai_output"], "pay_from_account": "CAD-PAY"}, "Bob")
+    client = client_for(store)
+    assert [_opens_with(client, i) for i in ids[:2]] == [["CAD-NEW"], ["CAD-PAY"]]
+    out = bulk.bulk_approve(store, store.reference_data(), web_settings(), ids[:2], "Pat")
+    assert out == {"approved": ids[:2], "skipped": []}
+    assert [store.get_invoice(i)["final_output"]["pay_from_account"] for i in ids[:2]] == ["CAD-NEW", "CAD-PAY"]
+    for code in ("CAD-OLD", "CAD-NEW", "CAD-PAY"):
+        store.remove_bank_account(code)
+    assert bulk.bulk_approve(store, store.reference_data(), web_settings(), ids[2:], "Pat")["approved"] == ids[2:]
+    assert not store.get_invoice(ids[2])["final_output"].get("pay_from_account")
+
+
+def test_an_invoice_whose_review_screen_asks_for_the_bank_account_is_neither_offered_nor_approved_in_bulk(store):
+    """B-2966: invoices read while CAD-OLD was our only CAD account were stored paid from it. A second CAD account
+    added, neither the default, their review screen opens with no Pay from and keeps Approve closed, and the queue
+    said each needs attention ("Pick the bank account"), yet its bulk form offered them all."""
+    store.save_bank_accounts([_bank("CAD-OLD")])
+    ids = _paid_from(store, 3, "CAD-OLD")
+    store.save_bank_accounts([_bank("CAD-NEW")])
+    pick = "Pick the bank account to pay this invoice from"
+    assert set(review.attention(store, store.reference_data(), store.list_invoices(REVIEW)).values()) == {pick}
+    assert bulk.sort_for_bulk(store) == ([], {i: "pay from" for i in ids})
+    assert 'action="/review/bulk-approve"' not in client_for(store).get("/review").text
+    out = bulk.bulk_approve(store, store.reference_data(), web_settings(), ids, "Pat")
+    assert out == {"approved": [], "skipped": [(i, pick) for i in ids]}
+    store.save_bank_accounts([_bank("CAD-NEW", True)])  # a default: offered, and paid from it
+    assert [c["id"] for c in bulk.sort_for_bulk(store)[0]] == ids and _bulk_form(client_for(store))["ids"]
+
+
+def test_a_gl_account_taken_out_while_the_job_runs_leaves_the_invoices_coded_to_it(store, monkeypatch):
+    """B-2967: the job read the GL accounts (and cost centers, tax setup) once, at its start, and checked every
+    invoice against them: an Admin took GL account 6800 out of the list after the job's first invoice, and the next
+    ones, coded to it, were approved, a hard error on their review screen."""
+    ids = _clean(store, 3)
+    assert "6800" in {li["predicted_gl_code"] for li in store.get_invoice(ids[1])["ai_output"]["line_items"]}
+    real = bulk._still_clean
+
+    def meanwhile(store_, reference, settings, invoice_id, stamp, server):
+        out = real(store_, reference, settings, invoice_id, stamp, server)
+        if invoice_id == ids[0]:  # the Admin's change, from another worker (its own connection)
+
+            def remove() -> None:
+                admin = Store(store.path)
+                admin.save_accounts(
+                    "gl_accounts", [r for r in admin.list_accounts("gl_accounts") if r["code"] != "6800"]
+                )
+
+            worker = threading.Thread(target=remove)
+            worker.start()
+            worker.join(30)
+        return out
+
+    monkeypatch.setattr(bulk, "_still_clean", meanwhile)
+    job, _ = store.start_bulk_job("", {"name": "Sam", "login": "sam", "server": False, "as": {}},
+                                  _asked(store, ids), bulk.JOB_FORMAT)  # fmt: skip
+    jobs.run_bulk(store, web_settings(), store.claim_bulk_job("r", jobs.BULK_STALE, bulk.JOB_FORMAT), "r")
+    ended = store.bulk_job(job)
+    assert ended["approved"] == ids[:1]  # (checked before the change)
+    gone = "GL account 6800 is not in your GL accounts: pick one from the list"
+    assert ended["skipped"] == [[i, gone] for i in ids[1:]]
+    assert [store.get_invoice(i)["status"] for i in ids[1:]] == [REVIEW, REVIEW]
+
+
+def test_bulk_approval_and_the_screen_take_the_last_account_of_the_vendor_a_corrected_name_is(store):
+    """B-2969: AP corrected "Nortwind Traders" to "Northwind Traders" (a vendor not on the list, D-119) and paid it
+    from CAD-B. Another invoice read "Nortwind Traders": bulk approval looked its last account up under the corrected
+    name, as the approval files it, and paid it from CAD-B, while its review screen looked under the name as read and
+    opened with the default, CAD-A."""
+    store.save_bank_accounts([_bank("CAD-A", True), _bank("CAD-B")])
+    first = add_clean(store, vendor_name="Nortwind Traders", invoice_number="N-1", invoice_date="2025-03-02")
+    rest = add_clean(store, vendor_name="Nortwind Traders", invoice_number="N-2", pay_from_account="CAD-A")
+    store.approve_invoice(first, {**store.get_invoice(first)["ai_output"], "vendor_name": "Northwind Traders",
+                                  "pay_from_account": "CAD-B"}, "Bob")  # fmt: skip
+    assert store.remember_vendor_alias("Nortwind Traders", "Northwind Traders", invoice_id=first)
+    shown = _opens_with(client_for(store), rest)
+    assert bulk.bulk_approve(store, store.reference_data(), web_settings(), [rest], "Pat")["approved"] == [rest]
+    assert shown == [store.get_invoice(rest)["final_output"]["pay_from_account"]] == ["CAD-B"]
+
+
+def test_the_queue_asks_the_pay_from_rule_of_the_vendor_the_invoice_is_filed_under(store):
+    """B-2970: of two vendors by one name (B-1021), the queue's Ready and its bulk offer looked the vendor's last
+    account up under the name, not under the vendor the screen and the approval find by its GST/HST number: with two
+    CAD accounts and no default, the Limited's invoice, its own last one paid from CAD-B, was left as "Pick the bank
+    account" though its screen opens with CAD-B; the Inc.'s last account counted for it instead."""
+    from ap_coder.coding.vendors import master_columns, master_rows
+
+    inc, ltd = "994310787RT0001", "561646050RT0003"
+    records = [{"Name": "Great Lakes Mechanical Inc.", "AN8": "40110", "GST/HST Number": inc},
+               {"Name": "Great Lakes Mechanical Limited", "AN8": "40120", "GST/HST Number": ltd}]  # fmt: skip
+    store.import_vendor_master(master_rows(records, master_columns(list(records[0]))))
+    store.save_bank_accounts([_bank("CAD-A"), _bank("CAD-B")])
+    earlier = add_clean(store, vendor_name="Great Lakes Mechanical Limited", gst_hst_registration_number=ltd,
+                        invoice_number="E-1", invoice_date="2025-03-02")  # fmt: skip
+    store.approve_invoice(earlier, {**store.get_invoice(earlier)["ai_output"], "pay_from_account": "CAD-B"}, "Bob")
+    inv = add_clean(store, vendor_name="Great Lakes Mechanical Limited", gst_hst_registration_number=ltd,
+                    invoice_number="L-9")  # fmt: skip
+    assert inv not in review.attention(store, store.reference_data(), store.list_invoices(REVIEW))
+    assert inv not in bulk.sort_for_bulk(store)[1]
+
+
+def test_a_bulk_approval_job_reads_the_lists_again_only_once_another_connection_wrote(store, monkeypatch):
+    """B-2971: B-2967's job read the reference data and the checks stamp at every invoice, each concatenating the
+    whole GL accounts and cost centers lists (19 ms an invoice with a chart of 20,000 accounts and 8,000 cost
+    centers). They are read again only once another connection has written since."""
+    ids = _clean(store, 4)
+    calls = []
+
+    def counted(name: str):
+        real = getattr(store, name)
+        return lambda: calls.append(name) or real()
+
+    for name in ("reference_data", "checks_stamp"):
+        monkeypatch.setattr(store, name, counted(name))
+    job, _ = store.start_bulk_job("", {"name": "Sam", "login": "sam", "server": False, "as": {}},
+                                  _asked(store, ids), bulk.JOB_FORMAT)  # fmt: skip
+    jobs.run_bulk(store, web_settings(), store.claim_bulk_job("r", jobs.BULK_STALE, bulk.JOB_FORMAT), "r")
+    assert store.bulk_job(job)["approved"] == ids and sorted(calls) == ["checks_stamp", "reference_data"]

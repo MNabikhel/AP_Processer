@@ -419,6 +419,31 @@ def test_opening_an_invoice_keeps_no_draft_when_nothing_was_changed(client, stor
     assert invoice_id in client.app.state.invoice_drafts  # a real edit is kept
 
 
+def test_opening_an_invoice_stored_with_another_pay_from_than_todays_keeps_no_draft(client, store):
+    """B-2968: an invoice read while CAD-OLD was the default was stored paid from it. Since CAD-NEW is the default
+    its review screen opens with CAD-NEW, which counted as an edit: only viewing it kept a draft, the queue said
+    "Edits not approved yet" and bulk approval left it "with edits open on its review screen"."""
+    import sqlite3
+
+    accounts = [{"code": "CAD-OLD", "name": "Old", "currency": "CAD", "is_default": True},
+                {"code": "CAD-NEW", "name": "New", "currency": "CAD"}]  # fmt: skip
+    store.save_bank_accounts(banks.clean_rows(accounts)[0])
+    invoice_id = _id(store, "Pacific")
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET ai_output = json_set(ai_output, '$.pay_from_account', 'CAD-OLD') "
+                     "WHERE id = ?", (invoice_id,))  # fmt: skip
+    accounts = [{**accounts[0], "is_default": False}, {**accounts[1], "is_default": True}]  # CAD-NEW the default
+    store.save_bank_accounts(banks.clean_rows(accounts)[0])
+    assert 'value="CAD-NEW" data-currency="CAD" selected' in client.get(f"/review/{invoice_id}").text
+    assert invoice_id not in client.app.state.invoice_drafts and not store.invoice_drafts()
+    data = form_of(store, invoice_id)
+    data["line_cc"] = ["UNASSIGNED" if not v else v for v in data["line_cc"]]  # as the browser posts it
+    check(client, invoice_id, {**data, "pay_from_account": "CAD-NEW"})
+    assert invoice_id not in client.app.state.invoice_drafts and not store.invoice_drafts()
+    check(client, invoice_id, {**data, "pay_from_account": "CAD-NEW", "pay_from_for": "CAD"})
+    assert invoice_id in client.app.state.invoice_drafts  # one picked is an edit
+
+
 def test_a_draft_outlives_a_restart_and_goes_with_the_approval(client, store):
     """B-802: drafts were kept in memory only, while the screen said "leave and come back, they are still here"."""
     invoice_id = _id(store, "Pacific")

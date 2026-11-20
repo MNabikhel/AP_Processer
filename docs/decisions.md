@@ -3722,7 +3722,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **With D-193 (merged beside it):** the review queue's two caches are listed too: its lists and facts kept by
     invoice (`review_queue._KEPT`, 16 MB: two databases', about 1.1 KB an invoice in the queue, 5.4 MB for the
     100,000-invoice seed's 3,036 listed and 2,122 in review; `KEPT_MOST` 16 -> 4, a company server has one) and the
-    Pay from texts decoded (`review._PAYS`, 6 MB full). A web worker's caches come to 1,039 MB; `WORKER_CACHES_MOST`
+    Pay from texts decoded (`bulk._PAYS`, 6 MB full). A web worker's caches come to 1,039 MB; `WORKER_CACHES_MOST`
     is 1,050 MB, 0.7 of `WORKER_MB` (the test's limit).
 - **D-196** · **server-update's safety copy is made while the old version serves and brought up to date once it is
   stopped, with only what was written since: the downtime no longer grows with the database** (scale goal, phase 8,
@@ -7317,3 +7317,35 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - *Not chosen:* settling a code conflict (never guessed); a number's mentions changed across the whole tree (the
     other branch's mentions of it would move too); each bug and decision numbered as its branch is merged (the to-do
     "No more number clashes in the logs", a bigger change still to do).
+- **D-326** · **An invoice never approved is paid from the account its review screen opens with, however it is
+  approved: the Pay from stored when it was read is only that day's choice** (B-2965, B-2966, B-2968; D-66, D-185).
+  - **Why:** processing stores the account it chose (the vendor's last one, else the currency's default) with the
+    AI's coding. The review screen and the queue's Ready ignored it for an invoice never approved and opened with
+    today's choice (`banks.opening_choice`), but bulk approval approved the stored one and the queue's bulk form never
+    asked the Pay from rule. Once the default changed, a second account came in with no default, or the vendor's last
+    invoice was paid from another account, invoices were paid from an account no screen showed, or offered in bulk
+    while their screen kept Approve closed; only viewing one kept a draft.
+  - **How:** bulk approval (`bulk._still_clean`) pays from `banks.opening_choice` (the account approved before, for a
+    reopened or sent-back invoice; else today's choice) and its checks refuse that one as the screen does
+    (`PAY_FROM_MISSING`, `PAY_FROM_UNKNOWN`). The queue's Ready and its bulk offer ask one rule (`bulk.pay_from_stops`:
+    `banks.blocking` of that choice). The screen's own fill of Pay from is never an edit (`differs_from_stored`).
+  - *Not chosen:* storing no account at processing (an invoice approved touchless is approved as processing coded
+    it, on the same day); the queue's stored checks asking it (the vendor's last account moves at each approval,
+    which no checks stamp follows).
+- **D-327** · **A file AP Coder writes in the invoices folder while it reads one in line counts as read, under the
+  content of the one in line, until its invoice is stored** (B-2978).
+  - **Why:** the PDF made from a photo (and a scan turned upright) sat in the folder for the seconds of the reading
+    with no invoice and no file in line of its own content: the import page listed it as new, a pick-up put it in
+    line, and a second reader (or the same one, once the page was set upright) read it again. What the pick-up read of
+    each file (`seen_files`, D-155) already says which files AP Coder has; while a photo is read, the content AP Coder
+    has its PDF as is the photo's: the file in line, then the invoice's `original_sha256`.
+  - **How:** `InvoicePipeline._note_reading` notes the file under the SHA-256 the import queue read of the file in
+    line, just before it takes its name: `intake.to_pdf` and `turn_upright` tell it (`noted`) of the `.part` file,
+    whose size and time the rename keeps; a file renamed to its kind is noted after the rename. `_KNOWN` then holds
+    through the queue's reading row, then through the invoice's `original_sha256`, and `_note_own_file` notes the
+    stored file as it is (B-2098). For that while, a `seen_files` row's `sha256` is the content the file was made
+    from, not its own.
+  - *Not chosen:* the PDF written under a hidden name and renamed once stored (the invoice points at its path, and
+    two pictures of one name read at once would take the same name); the claim refusing a second invoice of one
+    SHA-256 (a PDF set upright has another, and the import page would still list the file); the pick-up opening each
+    new PDF to see whose picture it was made from (a read of every new file).
