@@ -13,7 +13,7 @@ from ..core.headers import match_columns
 from ..core.memory import vendor_key
 from ..core.reference_data import UNASSIGNED
 from .jde_formats import _norm
-from .jde_settings import GlMap, JdeSettings
+from .jde_settings import SHARED, GlMap, JdeSettings
 
 VendorLookup = Mapping[str, str] | Callable[[dict[str, Any]], str] | None
 
@@ -33,13 +33,15 @@ def resolve_an8(final: dict[str, Any], vendor_lookup: VendorLookup, settings: Jd
 
 def _gl_index(settings: JdeSettings) -> dict[tuple[str, str], GlMap]:
     """The account mapping by (GL code, cost center), the first row of each (as read from the top): made once for
-    these settings, again once their mapping is another list or has grown (B-1863), not read row by row per line."""
-    kept = settings.__dict__.get("_gl_index")
+    these settings, again once their mapping is another list or has grown (B-1863), not read row by row per line; a
+    company's own settings share it with those they are made from (``jde_settings.of_company``, D-301)."""
+    cache = settings.__dict__.get(SHARED, settings.__dict__)
+    kept = cache.get("_gl_index")
     if kept is None or kept[0] is not settings.gl_map or kept[1] != len(settings.gl_map):
         index: dict[tuple[str, str], GlMap] = {}
         for m in settings.gl_map:
             index.setdefault((_norm(m.gl_code), _norm(m.cost_center)), m)
-        kept = settings.__dict__["_gl_index"] = (settings.gl_map, len(settings.gl_map), index)
+        kept = cache["_gl_index"] = (settings.gl_map, len(settings.gl_map), index)
     return kept[2]
 
 

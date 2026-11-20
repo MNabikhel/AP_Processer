@@ -286,7 +286,8 @@ def late_after(store: Store, period_end: str) -> str:
     from . import jde_settings
 
     settings = jde_settings.load(store)
-    moved = settings.closed_period == jde_settings.CLOSED_MOVE and settings.open_from > period_end
+    starts = [settings.open_from, *(own.get("open_from", "") for own in settings.company_values.values())]  # (D-301)
+    moved = settings.closed_period == jde_settings.CLOSED_MOVE and any(start > period_end for start in starts)
     return period_end if settings.gl_date == jde_settings.GL_DATE_EXPORT or moved else "9999-12-31"
 
 

@@ -35,7 +35,7 @@ from ..core.schema import COMPANY_TAX
 from .jde_accounts import account_for, ani
 from .jde_formats import _date, _units
 from .jde_remarks import line_remark
-from .jde_settings import JdeSettings, company_of
+from .jde_settings import JdeSettings, company_of, for_voucher
 from .jde_voucher import (
     RECOVERABLE_BY_CODE,
     _area_types,
@@ -245,6 +245,7 @@ def _apart_lines(v: _Voucher, matched: VoucherMatch, out: KeyedMatch, apart: set
     if not apart:
         return
     exempt = settings.exempt_code.strip().upper()
+    keyed = for_voucher(v.final, settings)  # (its company's default business unit, D-301)
     by_account: dict[tuple[str, str, str], int] = {}
     for t in (t for t in (*ORDER, "OTHER") if t in apart):
         mine: list[tuple[tuple[str, str, str], int]] = []
@@ -252,7 +253,7 @@ def _apart_lines(v: _Voucher, matched: VoucherMatch, out: KeyedMatch, apart: set
             cents = (shares.get(row.invoice_line) or {}).get(t, 0)
             if cents:
                 li = items.get(row.invoice_line) or {}
-                own = account_for(li.get("predicted_gl_code") or "", li.get("predicted_cost_center") or "", settings)
+                own = account_for(li.get("predicted_gl_code") or "", li.get("predicted_cost_center") or "", keyed)
                 ledger = (row.subledger[0] or str(li.get("subledger") or ""),
                           row.subledger[1] or str(li.get("subledger_type") or ""))  # fmt: skip
                 mine.append(((row.account or (ani(own) if own is not None else ""), *ledger), cents))

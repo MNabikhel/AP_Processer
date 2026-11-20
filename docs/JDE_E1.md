@@ -386,6 +386,12 @@ loading (B-684). The bank account's own cash GL is *not* used as a default: it m
 distribution lines are written), which is not the short account ID GLBA holds, and a wrong bank is worse than E1's
 default. Confirm with the JDE team whether R04110ZA keeps a VLGLBA it is given.
 
+**A group of companies (D-301).** With report 9's companies loaded (two or more), Settings → JD Edwards E1 has a card
+*Each company's own*: a row per company for its open G/L period, its Default BU, its header business unit (VLMCU)
+and its VLGLBA for each bank account. An invoice is keyed with its company's own values; a box left blank takes the
+single value above, so a company with none of its own, and a one-company setup, is keyed as before. A company's open
+period is both days together (either day given, the other blank means no start or no end).
+
 **VLPTC (payment terms).** Settings → JD Edwards E1 → *Payment terms → JD Edwards code* maps the terms printed on an
 invoice to the company's payment terms code (P0014 / F0014, up to 3 characters), by what the terms mean, as AP Coder
 reads them (`coding/terms.py`): "Net 30", "30 days", "N30" and "Payable dans les 30 jours" are all *Net 30*;

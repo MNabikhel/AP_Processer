@@ -27,6 +27,7 @@ from .jde_settings import (
     TaxArea,
     company_of,
     domestic_of,
+    for_voucher,
     gl_date_of,
     period_problem,
 )
@@ -419,6 +420,7 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str, on: dt.date |
     """The voucher of ``inv`` for ``an8``, checked; ``on``: the batch's day (else today), its G/L date's when that
     is the export day, in the open period or not (B-2490)."""
     final = inv.get("final_output") or {}
+    settings = for_voucher(final, settings)  # its company's own open period and default business unit (D-301)
     v = _Voucher(int(inv.get("id") or 0), final, [])
     add = v.add
     po = _check_header(v, final, settings, an8, on)

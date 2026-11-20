@@ -6790,3 +6790,24 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     is kept as it was ticked.
   - **Recorded:** the load's event (`accounts_imported`) keeps `anyway`, why it looked cut short; Activity says
     "loaded anyway: ...". The command line's `--anyway` records it the same way.
+- **D-301** · **The open G/L period, the default and header business units and the G/L bank account are each
+  company's own in a group, else Settings' single value** (B-2833; D-182 the open period, D-66 VLGLBA, D-267 the
+  companies).
+  - **Kept:** `JdeSettings.company_values`, `{company: {open_from, open_to, default_bu, header_bu, bank_glba}}`, only
+    what is set (`clean_company_values`). A voucher is keyed with `of_company(settings, its company)`
+    (`for_voucher`): Settings with that company's values put in; Settings themselves for a company with none, so one
+    company (and a group that sets none) is keyed exactly as before. The PO company (VLPKCO) is not one of them.
+  - **A company's open period is both days together:** either day set gives the company its own period (the other
+    blank: no start, or no end), never one day of its own and the other of Settings'. Its bank accounts are added to
+    Settings' (a Pay from account it maps none for takes Settings'); VLGLBA is sent once any is mapped, in Settings or
+    for a company (`uses_glba`).
+  - **Where it counts:** the voucher's checks and G/L date (`_prepare`, `gl_date_of`, `period_problem`), VLMCU and
+    VLGLBA (`voucher_rows`, `glba`, `bank_notes`), a PO-matched voucher's tax lines (`jde_match`), the API's checks
+    before a send (`jde_post`: and JD Edwards refusing a voucher as in a closed period holds that company's month
+    only), the pilot's score (`ops/pilot_score.py`). The accruals' late batches (`late_after`) are a batch's, not a
+    company's: a batch is late after the period end when any company's open period starts after it.
+  - **The page:** Settings → JD Edwards E1, a card with a row per company once report 9 names two or more: the open
+    period, Default BU, Header BU and a box per bank account in use (and any mapped since put out of use); a blank
+    box takes the value above. A form without the table keeps what is saved.
+  - **Speed:** a company's settings share the account mapping's index with Settings' (`SHARED`,
+    `jde_accounts._gl_index`), so a group's vouchers are prepared as fast as one company's.
