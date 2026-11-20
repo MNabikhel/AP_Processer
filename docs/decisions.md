@@ -7184,3 +7184,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     held does); whether R04110ZA works out a use tax from the area with the tax amount blank, or wants it sent; how a
     PO-matched voucher's sales tax is to be matched; and whether the US companies want use tax accrued on every
     invoice charging none (an out-of-state supplier) or only on some.
+- **D-322** · **A company's own JD Edwards values (D-301) stay on Settings → JD Edwards E1 while they are kept,
+  whatever report 9 lists** (B-2937).
+  - **Why:** the companies' table was shown only while report 9 named two or more companies, but a company's own open
+    period, business units and bank accounts saved in a group kept keying its vouchers once report 9 was loaded again
+    with one company (or without that one): a voucher held in a period the page no longer showed, with no way to
+    change it. Kept on the page rather than no longer applied with fewer than two companies: what keys a voucher is
+    always where it is changed, and loading report 9 again never drops or revives values unseen.
+  - **How:** `settings_jde.company_values` lists the table while report 9 names two or more companies or any company
+    has values of its own; a company report 9 no longer lists has its row too, "(not in report 9 now)". Emptying its
+    boxes and saving removes them, and with one company the table goes.

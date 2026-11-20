@@ -501,6 +501,35 @@ def test_jde_settings_keep_each_companys_own_period_business_units_and_bank_acco
     assert 'name="cv_glba_code" value="CAD-OP"' in table and 'value="22222"' in table
 
 
+def test_a_companys_own_values_stay_on_the_page_while_kept_once_report_9_lists_one_company(client, store):
+    """B-2937 (D-322): a company's own open period saved while report 9 listed several still keyed its vouchers once
+    report 9 listed only one (or no longer that company), but the page no longer showed it: nothing there changed it.
+    The companies' table stays while any company has values of its own, and emptied they are gone."""
+    from ap_coder.bench import jde_group
+
+    def listed(rows) -> str:
+        return json.dumps({c[0]: {"name": c[1], "currency": c[2], "country": c[3]} for c in rows})
+
+    store.set_setting("jde_companies", listed(jde_group.GROUP[:2]))
+    own = {"cv_company": ["00210", "00220"], "cv_open_from": ["", "2026-10-01"], "cv_open_to": ["", "2026-10-31"],
+           "cv_default_bu": ["", ""], "cv_header_bu": ["", ""]}  # fmt: skip
+    follow(client, post(client, "/settings/jde", general_form(**own)))
+    store.set_setting("jde_companies", listed(jde_group.GROUP[1:2]))  # report 9 again: 00220 alone
+    table = client.get("/settings/jde").text.split('id="company-values"', 1)[1].split("</table>", 1)[0]
+    assert 'name="cv_company" value="00220"' in table and 'value="2026-10-31"' in table
+    final = {"vendor_name": "Prairie Supply Co.", "invoice_number": "A-1", "invoice_date": "2026-11-04",
+             "company": "00220"}  # fmt: skip
+    assert jde_settings.for_voucher(final, jde_settings.load(store)).open_to == "2026-10-31"  # (so it still keys)
+    store.set_setting("jde_companies", listed(jde_group.GROUP[:1]))  # 00210 alone: 00220 is not listed any more
+    table = client.get("/settings/jde").text.split('id="company-values"', 1)[1].split("</table>", 1)[0]
+    assert 'name="cv_company" value="00220"' in table and 'value="2026-10-31"' in table
+    cleared = {"cv_company": ["00210", "00220"], "cv_open_from": ["", ""], "cv_open_to": ["", ""],
+               "cv_default_bu": ["", ""], "cv_header_bu": ["", ""]}  # fmt: skip
+    follow(client, post(client, "/settings/jde", general_form(**cleared)))
+    assert jde_settings.load(store).company_values == {}
+    assert 'id="company-values"' not in client.get("/settings/jde").text
+
+
 def test_jde_gl_mapping_tax_areas_and_address_numbers(client, store):
     rows = {"gl_code": ["6100", "", "6200"], "cost_center": ["", "", "OPS"], "bu": ["100", "", "200"],
             "obj": ["6100", "", ""], "sub": ["", "", ""], "sbl": ["", "", ""], "sblt": ["", "", ""]}  # fmt: skip
