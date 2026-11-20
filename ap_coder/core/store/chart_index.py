@@ -90,7 +90,7 @@ class IndexedPairs:
         self._kept: OrderedDict[tuple[str, str], tuple[str, str, str] | None] = OrderedDict()
         self._units: tuple[dict[str, str], set[str], dict[str, str], dict[str, str], set[str]] | None = None
         self._offered: tuple[frozenset[str], tuple[str, ...]] | None = None
-        self._pilot: frozenset[str] | None = None
+        self._searched: tuple[frozenset[str], frozenset[str]] | None = None
         self._tally: Counter[str] | None = None
 
     @contextmanager
@@ -399,11 +399,27 @@ class IndexedPairs:
         self._tally = +out
         return Counter(self._tally)
 
-    def _pilot_units(self) -> frozenset[str]:
-        """The business units of the companies in the pilot, as the business units report gives them (read once)."""
-        if self._pilot is None:
-            self._pilot = frozenset(bu for bu, co in self._unit_facts()[2].items() if co in self.settings.pilot)
-        return self._pilot
+    def _search_units(self) -> tuple[frozenset[str], frozenset[str]]:
+        """The business units of the business units report an account may be offered on, for the search (read once):
+        (those whose company it gives, held back or not by it, those it gives none: their account's own company
+        decides). Both empty without the report."""
+        if self._searched is None:
+            _names, closed, companies, skipped, listed = self._unit_facts()
+            open_units = [bu for bu in listed if bu not in closed and bu not in skipped]
+            self._searched = (
+                frozenset(bu for bu in open_units if bu in companies and not self.settings.company_held(companies[bu])),
+                frozenset(bu for bu in open_units if bu not in companies),
+            )
+        return self._searched
+
+    def _company_clause(self) -> tuple[str, list[str]] | None:
+        """``ChartSettings.company_held`` as SQL of an account's own company (its business unit's not known), and its
+        values; None when no company is held back."""
+        if self.settings.pilot:
+            return _in_list("company"), [json.dumps(list(self.settings.pilot))]
+        if self.settings.companies:
+            return f"(company = '' OR {_in_list('company')})", [json.dumps(list(self.settings.companies))]
+        return None
 
     # --- The Account box's search ---------------------------------------------------------------------------------
 
@@ -416,41 +432,57 @@ class IndexedPairs:
         if not words:
             return []
         names = self._unit_facts()[0]
+        skipped, listed = self._unit_facts()[3], self._unit_facts()[4]
+        # Every rule of what is offered asked of SQLite with the words (D-272, B-2741): the accounts held back are
+        # half a group's chart and more, so none is read to be dropped. With the business units report, the business
+        # units offered on (``_search_units``); without it, those named to be skipped left out. Then the account's
+        # own company, its posting edit code and the accounts never offered.
+        company = self._company_clause()
         clauses, params = [], []
+        searched: frozenset[str] | None = None
+        if listed:
+            known, unknown = self._search_units()
+            searched = known | unknown if units is None else (known | unknown) & units
+            clauses.append(_in_list("bu"))
+            params.append(json.dumps(sorted(searched)))
+            if company is not None and unknown:
+                clauses.append(f"(NOT {_in_list('bu')} OR {company[0]})")
+                params += [json.dumps(sorted(unknown & searched)), *company[1]]
+        else:
+            if units is not None:  # (one company's: its business units', by the chart's key)
+                searched = units - skipped.keys()
+                clauses.append(_in_list("bu"))
+                params.append(json.dumps(sorted(searched)))
+            elif skipped:
+                clauses.append(f"NOT {_in_list('bu')}")
+                params.append(json.dumps(sorted(skipped)))
+            if company is not None:
+                clauses.append(company[0])
+                params += company[1]
         for word in words:
             if any(c.isdigit() for c in word):
                 # (the last two: typed without its dots, "14509309")
                 starts = ("bu", "object", "subsidiary", "object || subsidiary", "bu || object || subsidiary")
                 clauses.append(f"({' OR '.join(dialect.like(s) for s in starts)})")
                 params += [f"{word}%"] * len(starts)
-            else:
-                named = sorted(bu for bu, name in names.items() if word in name.upper())[:500]
+            else:  # (of the business units searched alone, every one so named: B-2742)
+                named = sorted(bu for bu, name in names.items() if word in name.upper()
+                               and (searched is None or bu in searched))  # fmt: skip
                 clauses.append(f"({dialect.like('description')} OR {_in_list('bu')})")
                 params += [f"%{word}%", json.dumps(named)]
-        # What may be posted to, of the companies in the pilot and the business units of the report, asked of SQLite
-        # (D-272): the accounts held back are half a group's chart, never the most * 20 rows read.
-        listed = self._unit_facts()[4]
-        if self.settings.pilot and listed:
-            units = self._pilot_units() if units is None else units & self._pilot_units()
-        elif self.settings.pilot:
-            clauses.append(_in_list("company"))
-            params.append(json.dumps(list(self.settings.pilot)))
-        if units is not None:  # (one company's: its business units', by the chart's key)
-            clauses.append(_in_list("bu"))
-            params.append(json.dumps(sorted(units)))
-        elif listed:
-            clauses.append("bu IN (SELECT code FROM business_units)")
         clauses.append(_in_list("posting_edit"))
         params.append(json.dumps(list(self.settings.postable_codes)))
+        matched = _globbed(self.settings.held_back)
+        if matched:
+            clauses.append(f"NOT ({matched[0]})")
+            params += matched[1]
         out: list[list[str]] = []
         sql = (f"SELECT bu, object, subsidiary, description, posting_edit, company FROM chart_accounts WHERE object != "
                f"'' AND {' AND '.join(clauses)} ORDER BY bu, object, subsidiary LIMIT ?")  # fmt: skip
         with self._reader() as conn:
-            rows = conn.execute(sql, (*params, most * 20)).fetchall()
-        for bu, obj, sub, description, edit, company in rows:
+            rows = conn.execute(sql, (*params, most)).fetchall()
+        for bu, obj, sub, description, edit, company_of in rows:
             code = code_of(obj, sub)
-            if self._status(bu, code, (description, edit, company)) == OK:
+            if self._status(bu, code, (description, edit, company_of)) == OK:
                 out.append([f"{bu}.{code}", description, names.get(bu, "")])
-                if len(out) >= most:
-                    break
         return out
