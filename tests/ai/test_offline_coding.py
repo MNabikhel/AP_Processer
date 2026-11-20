@@ -198,10 +198,10 @@ def _heads(*names):
             ("Amount", 0.85, 0.90, 0.20)]  # fmt: skip
 
 
-def _coded_table(reference, heads, rows):
+def _coded_table(reference, heads, rows, code="LINE_MATH"):
     """A table's words (``heads``, then each row: description, quantity, price, a discount, amount, "" where none
     is printed) read by the rule reader, coded with no chat model: ([(quantity, unit price, amount)], the lines
-    with a LINE_MATH warning)."""
+    with a finding of ``code``, a LINE_MATH warning by default)."""
     from ap_coder.ai.offline_coder import code_from_capture
     from ap_coder.capture.reader import read_line_items
     from ap_coder.capture.types import VERIFIED, CaptureResult, FieldResult
@@ -221,7 +221,7 @@ def _coded_table(reference, heads, rows):
                             line_items=read_line_items(_layout(_words(*cells))))  # fmt: skip
     text = "Prairie Sky Supply\nCalgary, AB T2A 2N6\nBill to:\nEdmonton, AB T5J 0N3\n"
     coding = code_from_capture(capture, reference, [], text=text).coding
-    warned = [i.line_number for i in validate_coding(coding, reference).issues if i.code == "LINE_MATH"]
+    warned = [i.line_number for i in validate_coding(coding, reference).issues if i.code == code]
     return [(li.quantity, li.unit_price, li.amount) for li in coding.line_items], warned
 
 
@@ -235,6 +235,37 @@ def test_a_line_whose_quantity_ocr_lost_bills_its_amount_at_its_unit_price(refer
     assert _coded_table(reference, heads, credit) == ([(-4, 52.4, -209.6), (1, 35.0, -52.4)], [2])
     goods = [("Copy paper, case of 10", "", "52.40", "", "209.60"), ("Toner cartridge", "1", "89.00", "", "89.00")]
     assert _coded_table(reference, heads, goods) == ([(4, 52.4, 209.6), (1, 89.0, 89.0)], [])
+
+
+def test_a_quantity_worked_out_is_said_on_its_line_and_by_a_finding_that_never_holds_it(reference):
+    """B-2896: a quantity worked out of its amount and unit price (B-2892) was coded as if printed: nothing said it was
+    not read. The line's reasoning says how it was worked out, and an info finding (QUANTITY_WORKED_OUT, never a
+    warning to clear) points a person at it; a quantity read, or one changed so it no longer makes the amount, has
+    none. Its reading keeps how (``quantity_from``), and a line read whole is stored as before."""
+    from ap_coder.capture.types import LineReading
+    from ap_coder.coding.validation import validate_coding
+
+    heads = _heads("Qty", "Unit Price")
+    goods = [("Copy paper, case of 10", "", "52.40", "", "209.60"), ("Toner cartridge", "1", "89.00", "", "89.00")]
+    assert _coded_table(reference, heads, goods, "QUANTITY_WORKED_OUT") == ([(4, 52.4, 209.6), (1, 89.0, 89.0)], [1])
+    read = LineReading("Copy paper", 4.0, 52.4, 209.6, quantity_from="209.60 ÷ 52.40")
+    assert LineReading.from_dict(read.to_dict()) == read
+    assert "quantity_from" not in LineReading("Toner", 1.0, 89.0, 89.0).to_dict()
+    from ap_coder.ai.offline_coder import code_from_capture
+    from ap_coder.capture.types import VERIFIED, CaptureResult, FieldResult
+
+    head = {"vendor_name": "Prairie Sky Supply", "invoice_number": "PS-1", "invoice_date": "2026-10-20",
+            "currency": "CAD", "subtotal": 209.6, "gst_amount": 10.48, "tax_total": 10.48,
+            "grand_total": 220.08}  # fmt: skip
+    capture = CaptureResult(fields={k: FieldResult(k, v, 0.95, VERIFIED) for k, v in head.items()}, line_items=[read])
+    coding = code_from_capture(capture, reference, [], text="Prairie Sky Supply\nCalgary, AB T2A 2N6\n").coding
+    assert "quantity 4 worked out from 209.60 ÷ 52.40: the quantity was not read" in (
+        coding.line_items[0].reasoning_justification)  # fmt: skip
+    found = [i for i in validate_coding(coding, reference).issues if i.code == "QUANTITY_WORKED_OUT"]
+    assert [(i.severity, i.line_number) for i in found] == [("info", 1)]
+    coding.line_items[0].quantity = 5.0  # a person typed another: LINE_MATH says so, not this
+    codes = {i.code for i in validate_coding(coding, reference).issues}
+    assert "QUANTITY_WORKED_OUT" not in codes and "LINE_MATH" in codes
 
 
 def test_no_quantity_is_worked_out_in_a_table_with_a_discount_column(reference):

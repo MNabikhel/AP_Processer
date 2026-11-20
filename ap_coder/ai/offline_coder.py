@@ -26,7 +26,7 @@ from ..capture.confidence import apply_supplier_record, reading_confidence
 from ..capture.reader import us_address
 from ..capture.reader.patterns import OUR_NAMES
 from ..capture.reader.progress import PROGRESS_LINE, layout_rows, read_progress
-from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout, Line
+from ..capture.types import LIKELY, QUANTITY_NOTE, VERIFIED, CaptureResult, DocLayout, Line
 from ..capture.workflow import (
     apply_header_lessons,
     apply_line_memory,
@@ -660,11 +660,12 @@ def kept_offered(found: list[Candidate], reference: ReferenceData) -> list[Candi
 
 
 def _coded_line(number: int, reading: tuple[str, float, float, float], ev: _Evidence, printed: str,
-                hints: dict[int, str], offered: dict[int, list[Candidate]]) -> LineItem:  # fmt: skip
+                hints: dict[int, str], offered: dict[int, list[Candidate]], worked: str = "") -> LineItem:  # fmt: skip
     """One line of the invoice: coded when the evidence is strong enough (``Candidate.auto``), else left for a
     person with why, and the accounts offered kept with it (D-212). ``printed``: the text printed, when the line is
     described as AP approved it before. The weak match of a line left goes in ``hints``; with whole account strings
-    (``suggest.by_pairs``) every account offered goes in ``offered``, for the chat model to choose among."""
+    (``suggest.by_pairs``) every account offered goes in ``offered``, for the chat model to choose among.
+    ``worked``: how its quantity was worked out when it was not read (``LineReading.quantity_from``)."""
     description, quantity, unit_price, amount = reading
     reference = ev.reference
     found = candidates(description, ev.vendor, ev.feedback, reference, OFFERED, ev.default_gl, ev.key, ev.prior,
@@ -683,6 +684,8 @@ def _coded_line(number: int, reading: tuple[str, float, float, float], ev: _Evid
         why = not_sure(top) if top is not None else NO_HISTORY
     if printed:
         why = f"{why}; {RENAMED} (read “{printed}”)"
+    if worked:
+        why = f"{why}; quantity {quantity:g} worked out from {worked}: {QUANTITY_NOTE}"
     kept = [] if best is not None else [
         {**c.kept(), "name": c.name or account_name(reference, c.business_unit, c.code)}
         for c in kept_offered(found, reference)
@@ -828,8 +831,9 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     evidence = _Evidence(vendor, feedback, reference, default_gl, key, prior, units, addressed_to(text))
     hints: dict[int, str] = {}
     offered: dict[int, list[Candidate]] = {}
+    worked = [li.quantity_from for li in readings]
     lines = [_coded_line(number, reading, evidence, printed_as[number - 1] if number <= len(printed_as) else "",
-                         hints, offered)
+                         hints, offered, worked[number - 1] if number <= len(worked) else "")
              for number, reading in enumerate(readings_data, 1)]  # fmt: skip
     # Which taxes each line carries: the codes printed beside the lines, else the lines that make each tax charged
     # add up (not every tax on every line: a delivery or a service is often exempt from the provincial tax).

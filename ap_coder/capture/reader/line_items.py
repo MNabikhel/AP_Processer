@@ -926,7 +926,7 @@ def _lines_under(head_row: list[Line], cols: dict[str, Box], ordered: list[list[
         li = items[n]
         count = round(li.amount / li.unit_price) if li.amount and li.unit_price else 0
         if abs(count) >= 2 and (li.amount > 0) == (total > 0) and abs(count * li.unit_price - li.amount) <= 0.011:
-            li.quantity = float(count)
+            li.quantity, li.quantity_from = float(count), f"{li.amount:,.2f} ÷ {li.unit_price:,.2f}"
     return items, money
 
 
