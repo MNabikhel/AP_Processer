@@ -7050,8 +7050,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     goes with the use tax code (U), its whole amount taxable, the tax amount blank for JD Edwards to work out and
     accrue (`US_USE_TAX`, a warning: a person). A rate given a tax area (`use_tax_rates`) only says the amount.
   - **The tax area** is the PO line's (one area on the order's lines), else the supplier master's (`voucher_tax`);
-    neither: held, said (`JDE_TAX_AREA`). A PO-matched voucher, and the tax coded to G/L accounts (D-93), are keyed
-    as before whatever the setting (`jde_voucher.us_keyed`).
+    neither, or keyed on a Canadian province's (a Canadian supplier's default): held, said (`JDE_TAX_AREA`). A
+    PO-matched voucher, and the tax coded to G/L accounts (D-93), are keyed as before whatever the setting
+    (`jde_voucher.us_keyed`).
   - **To confirm with the JD Edwards team before choosing Keyed:** the explanation codes (S for a sales tax, U for a
     use tax, or their own); the US tax areas (F4008) and which one a voucher takes (the supplier's, the PO line's, the
     ship-to's); whether AP keys the sales tax on the voucher (code S, the tax amount) or leaves it in the expense (as
