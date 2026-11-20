@@ -973,8 +973,8 @@ def tip_lines(lines: list[Any], vendor: str = "", meals_gl_codes: Any = (), tax:
     """The positions of the tips among an invoice's ``lines`` (D-310): a line whose words say tip or gratuity
     (``_TIP``), not a count of something at a price, on an invoice that takes tips (a line coded to a meals account,
     or the supplier's name ``vendor`` or a line saying a meal, a stay, a ride or a personal service: ``_TAKES_TIPS``);
-    on another, only after the other lines and a whole 10 to 25% of them, before the tax printed (``tax``) or with
-    it."""
+    on another, only after the other lines of its bill and a whole 10 to 25% of them, before the tax printed on them
+    or with it (``_bill``: the invoice's lines and ``tax``, or on an expense claim its receipt's)."""
     texts = [str(getattr(li, "description", "") or "") for li in lines]
     worded = {i for i, text in enumerate(texts) if _TIP.search(text) and not _counted(lines[i])}
     if not worded:
@@ -983,11 +983,35 @@ def tip_lines(lines: list[Any], vendor: str = "", meals_gl_codes: Any = (), tax:
         _TAKES_TIPS.search(text) for text in (vendor, *texts)
     ):
         return frozenset(worded)
-    others = [i for i in range(len(lines)) if i not in worded]
-    before = add_up(lines[i].amount for i in others)
-    bases = (in_cents(before), in_cents(add_up((before, tax))))
-    after = max(others, default=len(lines))
-    return frozenset(i for i in worded if i > after and _a_share(lines[i].amount, bases))
+    tips = set()
+    for i in worded:
+        bill, taxed = _bill(lines, texts, i, tax)
+        others = [k for k in bill if k not in worded]
+        before = add_up(lines[k].amount for k in others)
+        if others and i > others[-1] and _a_share(lines[i].amount, (in_cents(before), in_cents(before + taxed))):
+            tips.add(i)
+    return frozenset(tips)
+
+
+# A line of an expense claim: its receipt's merchant, then the line ("Cedarline Kitchen & Bar: Tip", D-216).
+_OF_RECEIPT = re.compile(r"[^:]+: ")
+
+
+def _bill(lines: list[Any], texts: list[str], i: int, tax: float) -> tuple[range, float]:
+    """The positions of the lines a tip at ``i`` would be on and the tax printed on them: on an expense claim, its
+    receipt's (the lines in a row named with its merchant, ``claim.claim_coding``) and the tax read on them
+    (``LineItem.taxes_read``); else every line of the invoice and ``tax``."""
+    named = _OF_RECEIPT.match(texts[i])
+    if named:
+        start, end = i, i + 1
+        while start and texts[start - 1].startswith(named.group()):
+            start -= 1
+        while end < len(texts) and texts[end].startswith(named.group()):
+            end += 1
+        if 1 < end - start < len(texts):
+            read = [v for k in range(start, end) for v in (getattr(lines[k], "taxes_read", None) or {}).values()]
+            return range(start, end), add_up(read)
+    return range(len(lines)), tax
 
 
 def invoice_tips(coding: Any, meals_gl_codes: Any = ()) -> frozenset[int]:
