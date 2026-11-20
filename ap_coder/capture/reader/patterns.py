@@ -195,17 +195,43 @@ def _bill_to_regions(layout: DocLayout) -> list[Box]:
         if m:
             b = line.box
             regions.append(Box(b.page, b.x0 - 0.01, b.y0 - 0.002, min(1.0, b.x0 + 0.42), b.y1 + 0.12))
-            if plain(line.text)[m.end() :].strip(" :#-"):
-                continue
-            # "Customer:" at the left margin, the name in a column far to its right (B-2642): the label's value is the
-            # line beside it, unless that line is a label of its own ("Ship To:", "Invoice #: 118204").
-            beside = [o for o in lines if o.box.page == b.page and o.box.x0 > b.x1
-                      and abs(o.box.cy - b.cy) < 0.5 * max(b.height, o.box.height)]  # fmt: skip
-            value = min(beside, key=lambda o: o.box.x0) if beside else None
-            if value is not None and ":" not in value.text and not _label_hits(value):
-                v = value.box
-                regions.append(Box(v.page, v.x0 - 0.01, v.y0 - 0.002, min(1.0, v.x0 + 0.42), v.y1 + 0.12))
+            if not plain(line.text)[m.end() :].strip(" :#-") and (region := _block_beside(lines, line)):
+                regions.append(region)
     return regions
+
+
+def _block_beside(lines: list[Line], label: Line) -> Box | None:
+    """The customer's block beside a bare bill-to label: "Customer:" at the left margin, the name in a column far to
+    its right (B-2642). Only when nothing but labels is under the label (else its block is there, and what is level
+    with it is another: the supplier's letterhead or remit-to), from a line beside it that is no heading of its own,
+    down to a heading, a GST/HST number or a gap, and not into the next column (B-2781)."""
+    b = label.box
+    beside = [o for o in lines if o.box.page == b.page and o.box.x0 > b.x1
+              and abs(o.box.cy - b.cy) < 0.5 * max(b.height, o.box.height)]  # fmt: skip
+    if not beside:
+        return None
+    value = min(beside, key=lambda o: o.box.x0)
+    v = value.box
+    left = Box(b.page, b.x0, b.y0, max(b.x1, v.x0 - 0.03), b.y1)  # under the label, short of the value's column
+    if not all(_a_heading(o) for o in _below(lines, label, left)):
+        return None
+    block, at = [], [value]
+    while at and at[0].box.y0 < v.y1 + 0.12 and not _a_heading(at[0]) and not find_gst_numbers(at[0].text):
+        block.append(at[0])
+        # Always down the page: two overlapping lines under a point tall are each "below" the other.
+        at = [o for o in _below(lines, at[0], v) if o.box.y0 > at[0].box.y0][:1]
+    if not block:
+        return None
+    x1 = min([1.0, v.x0 + 0.42] + [o.box.x0 for o in _right_of(lines, value)])
+    return Box(v.page, v.x0 - 0.01, v.y0 - 0.002, x1, block[-1].box.y1 + 0.002)
+
+
+def _a_heading(line: Line) -> bool:
+    """``line`` is a label or heading of its own, never the customer's: a field's ("Invoice #: 118204", "Due Date"),
+    a bill-to label ("Ship To"), or the supplier's ("Remit To", "Vendor", "From", "Pay To")."""
+    p = plain(line.text)
+    return (":" in line.text or bool(_label_hits(line)) or bool(_BILL_TO.match(p)) or bool(_SELLER_LABEL.match(p))
+            or bool(_REMIT.match(p)) or bool(re.match(r"pay\s*to\b", p)))  # fmt: skip
 
 
 _REGIONS: ContextVar[tuple[DocLayout, list[Box]] | None] = ContextVar("bill_to_regions", default=None)

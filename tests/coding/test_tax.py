@@ -139,6 +139,23 @@ def test_hst_at_the_gst_rate_where_only_gst_is_levied_is_one_warning_not_an_erro
     assert {"TAX_TYPE_NOT_LEVIED", "ITC_AT_RISK"} <= _codes(ab, reference)
 
 
+def test_gst_and_hst_both_at_the_gst_rate_where_only_gst_is_levied_is_the_gst_charged_twice(reference):
+    """B-2780: GST 5% and HST 5% both charged on goods delivered in Alberta (10% of tax, the GST twice) got B-2640's
+    one warning, the HST "claimable as GST": the error and the risk to the claim were lost. Only a lone 5% "HST" is
+    the GST under the HST's name."""
+    ab = _gt("chinook_AB_GST_CCO-26-10418")
+    ab["tax_lines"] = [{"tax_type": t, "province": "", "rate": 0.05, "taxable_amount": 1746.0, "tax_amount": 87.3}
+                       for t in ("GST", "HST")]  # fmt: skip
+    ab["tax_total"], ab["grand_total"] = 174.6, 1920.6
+    for li in ab["line_items"]:
+        li["taxes_applied"] = ["GST", "HST"]
+    found = check_taxes(InvoiceCoding.model_validate(ab), reference.tax, None)
+    assert {("error", "TAX_TYPE_NOT_LEVIED"), ("warning", "ITC_AT_RISK")} <= {(f.severity, f.code) for f in found}
+    assert not any("claimable as GST" in f.message for f in found)
+    report = validate_coding(InvoiceCoding.model_validate(ab), reference)
+    assert {"TAX_TYPE_NOT_LEVIED", "ITC_AT_RISK"} <= {i.code for i in report.issues}
+
+
 def test_qst_on_gst_inclusive_amount_is_an_error(reference):
     gt = _gt(QC)
     qst = gt["tax_lines"][1]
