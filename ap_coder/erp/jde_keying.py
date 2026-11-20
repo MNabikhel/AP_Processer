@@ -359,8 +359,19 @@ def _said(v: jde_voucher._Voucher, settings: jde_settings.JdeSettings, taxed: bo
         notes.append(f"The {names(kept)} ({of(kept)}) is not recovered: it is inside the G/L lines, not in the tax "
                      "or taxable amount.")  # fmt: skip
     inside = {t["tax_type"] for t in v.charged} - v.recoverable_types - v.expensed
+    us = jde_voucher.us_keyed(v.final, settings)  # a US company's tax keyed (D-312)
+    if us and v.charged:
+        notes.append(f"Code {v.tax_code}: the sales tax charged ({v.stam / 100:,.2f}) is the tax amount, and it stays "
+                     "inside the G/L lines, as JD Edwards distributes a sales tax (not recovered).")  # fmt: skip
+    elif us:
+        rate, units = jde_voucher.use_tax(v.final, settings, v.decimals)
+        notes.append(f"Code {v.tax_code}: no sales tax charged, so use tax may be due. JD Edwards works it out on the "
+                     f"taxable amount at tax area {v.tax_area or '(none)'}'s rate and accrues it, not in the gross: "
+                     "leave the tax amount blank"
+                     + (f" (at {rate:g}%, Settings → JD Edwards E1, it is {units / 10 ** v.decimals:,.2f})."
+                        if rate is not None else "."))  # fmt: skip
     # code C or B: the tax amount holds a tax JD Edwards does not post as recoverable
-    if taxed and inside and not matched:
+    if taxed and inside and not matched and not us:
         notes.append(f"The tax amount {v.stam / 100:,.2f} is {v.recoverable / 100:,.2f} that JD Edwards recovers and "
                      f"{of(inside)} of {names(inside)} that stays inside the G/L lines (code {v.tax_code}: the tax "
                      "area's sales tax).")  # fmt: skip

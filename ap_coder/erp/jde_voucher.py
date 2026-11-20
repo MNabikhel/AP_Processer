@@ -23,6 +23,7 @@ from .jde_formats import E1_YEARS, NO_DECIMAL_CURRENCIES, _date, _negative, _nor
 from .jde_settings import (
     AMOUNT_GROSS,
     PST_PROVINCES,
+    US_TAX_KEYED,
     JdeSettings,
     TaxArea,
     company_of,
@@ -178,13 +179,46 @@ def an8_problem(reason: str) -> bool:
     return reason.startswith(NO_AN8) or BAD_AN8 in reason
 
 
+def us_keyed(final: dict[str, Any], settings: JdeSettings) -> bool:
+    """Whether a US company's voucher (its company not checked for Canadian tax, ``schema.COMPANY_TAX``) has its tax
+    keyed as Settings → JD Edwards E1's US sales and use tax has it for its company (D-312): the sales tax charged as
+    the voucher's tax, or none charged and use tax due. Never with the tax coded to G/L accounts (JD Edwards works out
+    none), nor on a PO-matched voucher (its tax stays as charged on a G/L line of its own): keyed as before."""
+    return (isinstance(final.get(COMPANY_TAX), dict) and for_voucher(final, settings).us_tax == US_TAX_KEYED
+            and not settings.tax_on_gl
+            and not (settings.po_matched and str(final.get("po_number") or "").strip()))  # fmt: skip
+
+
+def _taxes_charged(final: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every tax line the invoice charges, with an amount (a US company's: its sales tax, of type OTHER)."""
+    return [t for t in final.get("tax_lines") or [] if isinstance(t, dict) and t.get("tax_type")
+            and abs(float(t.get("tax_amount") or 0)) > 0.004]  # fmt: skip
+
+
+def use_tax(final: dict[str, Any], settings: JdeSettings, decimals: int = 2) -> tuple[float | None, int]:
+    """(the rate Settings → JD Edwards E1 gives the voucher's tax area for the use tax, a percent: None when it gives
+    none; the use tax at that rate on the whole amount, in the currency's units) of a US company's voucher (D-312)."""
+    area = str((final.get(COMPANY_TAX) or {}).get("tax_area") or "").strip().upper()
+    rate = for_voucher(final, settings).use_tax_rates.get(area) if area else None
+    if rate is None:
+        return None, 0
+    gross = Decimal(_units(final.get("grand_total"), decimals))
+    return rate, int((gross * Decimal(str(rate)) / 100).quantize(Decimal(1), ROUND_HALF_UP))
+
+
 def _tax_area_code(final: dict[str, Any], settings: JdeSettings) -> tuple[list[dict[str, Any]], str, str, str]:
     """The Canadian tax lines charged, the province of supply, and the JDE tax area and explanation code for it. A
-    company not checked for Canadian tax (a US one, D-267): none charged, the tax area its PO line or its supplier
-    gives (``schema.COMPANY_TAX``), the exempt code (E1 works out no tax: the tax stays as charged)."""
+    company not checked for Canadian tax (a US one, D-267): the tax area its PO line or its supplier gives
+    (``schema.COMPANY_TAX``) and the exempt code, none charged (E1 works out no tax: the tax stays as charged); its tax
+    keyed (``us_keyed``, D-312): the tax charged with the sales tax code, or none and the use tax code."""
     other = final.get(COMPANY_TAX)
     if isinstance(other, dict):
-        return [], "", str(other.get("tax_area") or "").strip(), settings.exempt_code.strip().upper()
+        area = str(other.get("tax_area") or "").strip()
+        if us_keyed(final, settings):
+            charged = _taxes_charged(final)
+            code = settings.sales_tax_code if charged else settings.use_tax_code
+            return charged, "", area, code.strip().upper()
+        return [], "", area, settings.exempt_code.strip().upper()
     charged = [
         t for t in final.get("tax_lines") or []
         if t.get("tax_type") in CANADIAN_TAX_TYPES and abs(float(t.get("tax_amount") or 0)) > 0.004
@@ -567,6 +601,8 @@ def _tax_amounts(v: _Voucher, final: dict[str, Any], inv: dict[str, Any], settin
     v.charged, v.recoverable_types = charged, recovers - v.expensed
     recoverable = [t for t in charged if t["tax_type"] in v.recoverable_types]
     v.recoverable = sum(_units(t.get("tax_amount"), v.decimals) for t in recoverable)
+    if not charged and v.tax_code == settings.use_tax_code.strip().upper() and us_keyed(final, settings):
+        v.atxa = v.gross  # use tax due on the whole amount (D-312): JD Edwards accrues it, not in the gross
     return recoverable
 
 

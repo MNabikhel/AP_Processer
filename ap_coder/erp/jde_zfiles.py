@@ -42,6 +42,7 @@ from .jde_voucher import (
     _vouchers,
     sent_due,
     terms_code,
+    us_keyed,
 )
 
 if TYPE_CHECKING:
@@ -176,6 +177,10 @@ def voucher_rows(
         prefix = ("VLACR", "VLCTXA", "VLCTXN", "VLCTAM") if v.foreign else ("VLAG", "VLATXA", "VLATXN", "VLSTAM")
         if settings.amount_mode in (AMOUNT_GROSS, AMOUNT_GL):  # with the tax on G/L lines, E1 takes no tax amount
             out[prefix[0]] = _amount(gross, settings, v.decimals)
+        elif (v.tax_code if code is None else code) == use and atxa:  # use tax (D-312): taxable, JD Edwards' tax
+            out.update({prefix[1]: _amount(atxa, settings, v.decimals),
+                        prefix[2]: _amount(gross - atxa, settings, v.decimals),
+                        prefix[3]: _amount(0, settings, v.decimals)})  # fmt: skip
         elif (v.tax_code if code is None else code) in ("E", "", exempt) or not stam:
             out.update({prefix[1]: _amount(0, settings, v.decimals), prefix[2]: _amount(gross, settings, v.decimals),
                         prefix[3]: _amount(0, settings, v.decimals)})  # fmt: skip
@@ -187,6 +192,7 @@ def voucher_rows(
 
     extras = dict(settings.po_extra_columns) if settings.po_matched else {}
     exempt = settings.exempt_code.strip().upper()
+    use = settings.use_tax_code.strip().upper() if us_keyed(final, settings) else None  # (a US company's, D-312)
     # Each distribution line's own explanation code (D-64): a line marked exempt or zero-rated, on an invoice whose
     # code handles tax, is the exempt code when nothing of the tax is put on it; the others keep the invoice's.
     items = final.get("line_items") or []

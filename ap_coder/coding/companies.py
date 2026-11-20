@@ -39,12 +39,13 @@ from typing import TYPE_CHECKING, Any
 from ..core.headers import jde_names
 from ..core.keys import company_code, master_vendor_id, po_key
 from ..core.memory import vendor_key
+from ..core.schema import COMPANY_TAX
 
 if TYPE_CHECKING:
     from ..core.schema import InvoiceCoding
     from ..core.store import Store
 
-ERROR, WARNING = "error", "warning"
+ERROR, WARNING, INFO = "error", "warning", "info"
 COMPANIES_SETTING = "jde_companies"  # report 9 as loaded: {company: {"name", "currency", "country"}}
 # F0010 as ReportsNow titles it by default ("Co", "Name", "Cur Cod") and as the build sheet does ("Company", "Company
 # Name", "Currency Code", "Country"), and JD Edwards' fields (CCCO, CCNAME, CCCRCD; the country: the address book's
@@ -424,3 +425,28 @@ def us_tax_finding(company: str, why: str) -> tuple[str, str, str]:
     """``US_TAX_NOT_CHECKED``: a company without the Canadian tax checks (``canadian``)."""
     return (WARNING, "US_TAX_NOT_CHECKED", f"Company {company} is not checked for Canadian tax ({why}): its tax "
             "is not checked here, confirm it is right")  # fmt: skip
+
+
+def us_keyed_findings(output: dict[str, Any], settings: Any) -> list[tuple[str, str, str]]:
+    """What is said of a US company's invoice whose tax Settings → JD Edwards E1 keys (``jde_voucher.us_keyed``,
+    D-312), in place of ``US_TAX_NOT_CHECKED``: the sales tax charged, keyed as the voucher's tax
+    (``US_SALES_TAX_KEYED``); none charged, the use tax that may be due (``US_USE_TAX``). ``output``: the coding with
+    its voucher's tax area (``schema.COMPANY_TAX``); one neither its PO line nor its supplier gives is the voucher's own
+    finding (``JDE_TAX_AREA``)."""
+    from ..erp import jde_settings, jde_voucher
+
+    own = jde_settings.for_voucher(output, settings)
+    given = output.get(COMPANY_TAX) or {}
+    area = str(given.get("tax_area") or "").strip()
+    where = f"tax area {area} ({given['from']})" if area and given.get("from") else f"tax area {area or '(none)'}"
+    charged = sum(float(t.get("tax_amount") or 0) for t in output.get("tax_lines") or [] if isinstance(t, dict))
+    if abs(charged) > 0.004:
+        return [(INFO, "US_SALES_TAX_KEYED", f"The sales tax charged ({charged:,.2f}) is keyed as the voucher's tax: "
+                 f"code {own.sales_tax_code}, {where}; its rate is not checked here")]  # fmt: skip
+    rate, units = jde_voucher.use_tax(output, own)
+    worked = (f": {units / 100:,.2f} at {rate:g}%, its rate in Settings → JD Edwards E1" if rate is not None
+              else f" (no rate for tax area {area or '(none)'} in Settings → JD Edwards E1: no amount is worked out "
+              "here)")  # fmt: skip
+    return [(WARNING, "US_USE_TAX", "No sales tax charged: use tax may be due, at the rate of where it is delivered "
+             f"(the ship-to's). The voucher is keyed with code {own.use_tax_code} on {where}, for JD Edwards to work "
+             f"it out and accrue it{worked}")]  # fmt: skip

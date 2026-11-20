@@ -44,6 +44,97 @@ def test_a_us_companys_voucher_takes_its_tax_area_from_the_po_line_or_the_suppli
                              "(JD Edwards' supplier master, Tax Rate/Area) gives one"]  # fmt: skip
 
 
+# --- A US company's tax as keyed (D-312) ------------------------------------------------------------------------
+
+WA = {COMPANY_TAX: {"tax_area": "WA-SPOKANE", "from": "the supplier's default"}}
+
+
+def _us_pair():
+    """The US supplier's invoice to company 00310: its sales tax charged (710.01 on 6,860.00), and one of the same
+    lines charging none."""
+    import dataclasses
+
+    from tests.webclient import gt
+
+    settings = dataclasses.replace(_settings(**{"00310": "USD", "00210": "CAD"}), amount_mode=jde_settings.AMOUNT_TAX)
+    lines = [{**li, "taxes_applied": []} for li in gt(USD)["line_items"]]
+    untaxed = _invoice(USD, 2, company="00310", invoice_number="INV-30982", tax_lines=[], tax_total=0.0,
+                       grand_total=6860.0, line_items=lines, **WA)  # fmt: skip
+    return settings, _invoice(USD, 1, company="00310", **WA), untaxed
+
+
+def test_a_us_companys_tax_is_held_until_settings_key_its_sales_tax_or_use_tax():
+    """D-312: a US company's voucher goes with the exempt code and its tax in the expense (D-267) until Settings → JD
+    Edwards E1 → US sales and use tax keys it, for every US company or one: then the sales tax charged is the pay
+    item's tax with the sales tax code (S), still inside the G/L lines; an invoice charging none goes with the use tax
+    code (U), its whole amount taxable and the tax left for JD Edwards to work out. A PO-matched voucher, and the tax
+    coded to G/L accounts, are keyed as before."""
+    import dataclasses
+
+    held, taxed, untaxed = _us_pair()
+    for inv in (taxed, untaxed):
+        v = jde_voucher._prepare(inv, held, "10023")
+        assert (v.tax_code, v.tax_area, v.stam, v.atxa, v.problems) == ("E", "WA-SPOKANE", 0, 0, [])
+    keyed = dataclasses.replace(held, us_tax=jde_settings.US_TAX_KEYED)
+    s, u = (jde_voucher._prepare(inv, keyed, "10023") for inv in (taxed, untaxed))
+    assert (s.tax_code, s.stam, s.atxa, s.recoverable, s.problems) == ("S", 71001, 686000, 0, [])
+    assert (u.tax_code, u.stam, u.atxa, u.problems) == ("U", 0, 686000, [])
+    files = _files([taxed, untaxed], keyed)
+    heads = {h["VLEXR1"]: (h["VLATXA"], h["VLATXN"], h["VLSTAM"], h["VLTXA1"]) for h in files[jde_zfiles.HEADER_FILE]}
+    assert heads == {"S": ("686000", "0", "71001", "WA-SPOKANE"), "U": ("686000", "0", "0", "WA-SPOKANE")}
+    lines = [int(row["VNAA"]) for row in files[jde_zfiles.DIST_FILE] if row["VNEDTN"].startswith("APC1")]
+    assert sum(lines) == 757001  # (the sales tax inside the expense lines: the gross)
+    own = dataclasses.replace(keyed, company_us_tax={"00310": jde_settings.US_TAX_HELD})
+    assert jde_voucher._prepare(taxed, own, "10023").tax_code == "E"  # (its own: held, whatever every one's is)
+    one = dataclasses.replace(held, company_us_tax={"00310": jde_settings.US_TAX_KEYED})
+    assert jde_voucher._prepare(taxed, one, "10023").tax_code == "S"
+    on_po = _invoice(USD, 3, company="00310", po_number="30981", **WA)
+    assert jde_voucher._prepare(on_po, dataclasses.replace(keyed, po_matched=True), "10023").tax_code == "E"
+    on_gl = dataclasses.replace(keyed, amount_mode=jde_settings.AMOUNT_GL)
+    assert jde_voucher._prepare(taxed, on_gl, "10023").tax_code == "E"
+
+
+def test_a_us_companys_tax_settings_are_saved_read_back_and_kept_per_company():
+    """D-312: the US sales and use tax settings saved and read back; anything not one of their choices falls back to
+    the default (held, S and U, no rates)."""
+    rates = {"wa-spokane": "9.1", "MT": 0, "XX": 120, "YY": "nine"}
+    settings = jde_settings.JdeSettings(us_tax="keyed", company_us_tax={"310": "held", "320": "maybe"},
+                                        sales_tax_code=" s ", use_tax_code="U1", use_tax_rates=rates)  # fmt: skip
+    back = jde_settings.JdeSettings.from_json(settings.to_json())
+    assert (back.us_tax, back.company_us_tax, back.sales_tax_code, back.use_tax_code) == ("keyed", {"00310": "held"},
+                                                                                          "S", "U1")  # fmt: skip
+    assert back.use_tax_rates == {"WA-SPOKANE": 9.1, "MT": 0.0}
+    odd = jde_settings.JdeSettings.from_json(json.dumps({"us_tax": "sometimes", "sales_tax_code": "SALES"}))
+    assert (odd.us_tax, odd.sales_tax_code, odd.use_tax_code, odd.use_tax_rates) == ("held", "S", "U", {})
+    assert [jde_settings.of_company(back, c).us_tax for c in ("00310", "00320")] == ["held", "keyed"]
+
+
+def test_the_keying_sheet_says_how_a_us_companys_tax_is_keyed():
+    """D-312: the keying sheet's voucher of a US company's tax keyed says its code, the tax amount and taxable amount
+    of a sales tax charged, and for use tax the taxable amount alone, the tax left blank for JD Edwards to work out
+    (and what it is at the rate Settings give its tax area)."""
+    import dataclasses
+    import io
+
+    import openpyxl
+
+    from ap_coder.erp import jde_keying
+    from tests.erp.test_jde_keying import blocks, field, said
+
+    held, taxed, untaxed = _us_pair()
+    keyed = dataclasses.replace(held, us_tax=jde_settings.US_TAX_KEYED, use_tax_rates={"WA-SPOKANE": 9.1})
+    data, _name, _mime = jde_keying.build([taxed, untaxed], keyed, AN8, batch=7)
+    sales, use = blocks(openpyxl.load_workbook(io.BytesIO(data)).active)[:2]
+    labels = ("Tax explanation code", "Tax rate/area", "Tax amount", "Taxable amount")
+    assert [field(sales, label).value for label in labels] == ["S", "WA-SPOKANE", 710.01, 6860]
+    assert [field(use, label).value for label in labels] == ["U", "WA-SPOKANE", None, 6860]
+    assert ("Code S: the sales tax charged (710.01) is the tax amount, and it stays inside the G/L lines, as JD "
+            "Edwards distributes a sales tax (not recovered).") in said(sales, "Note")  # fmt: skip
+    assert ("Code U: no sales tax charged, so use tax may be due. JD Edwards works it out on the taxable amount at tax "
+            "area WA-SPOKANE's rate and accrues it, not in the gross: leave the tax amount blank (at 9.1%, Settings → "
+            "JD Edwards E1, it is 624.26).") in said(use, "Note")  # fmt: skip
+
+
 def test_the_settings_read_the_companies_currencies_and_never_save_them(tmp_path):
     store = Store(tmp_path / "ap.db")
     store.set_setting("jde_companies", json.dumps({c[0]: {"name": c[1], "currency": c[2], "country": c[3]}

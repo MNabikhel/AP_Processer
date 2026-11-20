@@ -376,3 +376,43 @@ def test_a_us_companys_invoice_is_given_no_canadian_place_of_supply(group, refer
     us, _issues, _report = _check(group, reference, _coding(ground_truth, company="00310", **picked))
     canadian, _issues, _report = _check(group, reference, _coding(ground_truth, company="00210", **picked))
     assert PLACE_OF_SUPPLY not in us and canadian[PLACE_OF_SUPPLY] == "AB"
+
+
+def test_a_us_companys_tax_keyed_as_settings_say_is_said_in_place_of_not_checked(group, reference):
+    """D-312: with Settings → JD Edwards E1's US sales and use tax keying a US company's tax, its invoice no longer
+    says its tax is not checked (held for a person): the sales tax charged is said keyed (code S, its supplier's tax
+    area), and one charging none that use tax may be due (code U), its amount worked out only at a rate Settings give
+    the tax area. No tax area from the PO line or the supplier holds the voucher, said."""
+    from ap_coder.core.schema import COMPANY_TAX
+    from tests.webclient import gt
+
+    jde_settings.show(group)
+    jde_settings.save(group, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX, us_tax="keyed"))
+    us = {"company": "00310", "company_how": "picked"}
+    taxed = InvoiceCoding.model_validate(gt("cascade_US_SalesTax_INV-30981", **us))
+    lines = [{**li, "taxes_applied": []} for li in gt("cascade_US_SalesTax_INV-30981")["line_items"]]
+    untaxed = InvoiceCoding.model_validate(gt("cascade_US_SalesTax_INV-30981", tax_lines=[], tax_total=0.0,
+                                              grand_total=6860.0, line_items=lines, **us))  # fmt: skip
+    _output, issues, _report = _check(group, reference, taxed)
+    assert "US_TAX_NOT_CHECKED" not in issues and issues["JDE_TAX_AREA"].severity == "error"  # (no area: held)
+    group.import_vendor_info([{"vendor_name": "Cascade Cloudworks, Inc.", "erp_id": "4420299"}],
+                             [{"erp_id": "4420299", "tax_area": "WA-SPOKANE"}])  # fmt: skip
+    output, issues, _report = _check(group, reference, taxed)
+    assert output[COMPANY_TAX] == {"tax_area": "WA-SPOKANE", "from": "the supplier's default"}
+    assert "US_TAX_NOT_CHECKED" not in issues and "JDE_TAX_AREA" not in issues
+    assert (issues["US_SALES_TAX_KEYED"].severity, issues["US_SALES_TAX_KEYED"].message) == ("info", (
+        "The sales tax charged (710.01) is keyed as the voucher's tax: code S, tax area WA-SPOKANE (the supplier's "
+        "default); its rate is not checked here"))  # fmt: skip
+    _output, issues, _report = _check(group, reference, untaxed)
+    said = ("No sales tax charged: use tax may be due, at the rate of where it is delivered (the ship-to's). The "
+            "voucher is keyed with code U on tax area WA-SPOKANE (the supplier's default), for JD Edwards to work it "
+            "out and accrue it (no rate for tax area WA-SPOKANE in Settings → JD Edwards E1: no amount is worked out "
+            "here)")  # fmt: skip
+    assert (issues["US_USE_TAX"].severity, issues["US_USE_TAX"].message) == ("warning", said)
+    jde_settings.save(group, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX, us_tax="keyed",
+                                                      use_tax_rates={"WA-SPOKANE": 9.1}))  # fmt: skip
+    _output, issues, _report = _check(group, reference, untaxed)
+    assert issues["US_USE_TAX"].message.endswith(": 624.26 at 9.1%, its rate in Settings → JD Edwards E1")
+    jde_settings.save(group, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX))  # (held: as before)
+    _output, issues, _report = _check(group, reference, untaxed)
+    assert "US_TAX_NOT_CHECKED" in issues and not {"US_USE_TAX", "US_SALES_TAX_KEYED"} & set(issues)

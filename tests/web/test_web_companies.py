@@ -292,3 +292,37 @@ def test_a_us_companys_invoice_shows_no_canadian_place_of_supply(client, store):
     head = html.unescape(client.post(f"/review/{canadian}/check", data=data, headers=PAGE).json()["sections"][
         "summary"])  # fmt: skip
     assert 'title="Place of supply">Alberta<' in head  # (a Canadian company's: Settings' province, as before)
+
+
+def test_the_us_sales_and_use_tax_card_keeps_how_each_us_companys_tax_is_keyed(client, store):
+    """D-312: Settings → JD Edwards E1's US sales and use tax card, with several companies: each company not checked
+    for Canadian tax, its tax held for a person until the card keys it (for every one, or a company its own way); the
+    sales and use tax codes and the use tax rates, a tax area a line, kept and shown again; a code of the Canadian
+    taxes, the same code twice or a line that is no rate refused, said why."""
+    from ap_coder.erp import jde_settings
+    from ap_coder.web.core import SHOW_JDE
+
+    store.set_setting(SHOW_JDE, "1")
+    assert 'id="us-tax"' not in client.get("/settings/jde").text  # one company: no such card
+    _card(client, jde_group.companies_xlsx())
+    card = html.unescape(client.get("/settings/jde").text).split('id="us-tax"', 1)[1].split("</section>", 1)[0]
+    assert re.findall(r'name="us_company" value="(\d+)"', card) == ["00310", "00320", "00410"]  # (not the Canadian)
+    assert '<option value="held" selected>Held for a person to confirm it (as before)</option>' in card
+    form = {"us_tax": "keyed", "us_company": ["00310", "00320", "00410"], "us_company_tax": ["held", "", ""],
+            "sales_tax_code": "s", "use_tax_code": "U", "use_tax_rates": "WA-SPOKANE = 9.1\n\nmt-blgs 0%"}  # fmt: skip
+    assert "US sales and use tax saved." in follow(client, client.post("/settings/jde/us-tax", data=form,
+                                                                         headers=PAGE))  # fmt: skip
+    js = jde_settings.load(store)
+    assert (js.us_tax, js.company_us_tax, js.sales_tax_code, js.use_tax_code) == ("keyed", {"00310": "held"}, "S", "U")
+    assert js.use_tax_rates == {"WA-SPOKANE": 9.1, "MT-BLGS": 0.0}
+    card = html.unescape(client.get("/settings/jde").text).split('id="us-tax"', 1)[1].split("</section>", 1)[0]
+    assert "MT-BLGS = 0\nWA-SPOKANE = 9.1</textarea>" in card and '<option value="keyed" selected>' in card
+    for change, said in (
+        ({"sales_tax_code": "V"}, "not V, C, B or E (the Canadian taxes' codes)"),
+        ({"use_tax_code": "S"}, "The sales tax and the use tax codes must differ."),
+        ({"use_tax_rates": "WA-SPOKANE nine"}, "“WA-SPOKANE nine” is no tax area and rate"),
+        ({"use_tax_rates": "MT-BILLINGS 0"}, "Tax area MT-BILLINGS is longer than JD Edwards' 10"),
+    ):
+        answer = client.post("/settings/jde/us-tax", data={**form, **change}, headers=PAGE)
+        assert answer.status_code == 400 and said in answer.json()["error"], answer.text
+    assert jde_settings.load(store).use_tax_rates == {"WA-SPOKANE": 9.1, "MT-BLGS": 0.0}  # (nothing refused kept)

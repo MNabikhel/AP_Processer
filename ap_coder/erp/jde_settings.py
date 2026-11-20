@@ -83,6 +83,12 @@ PO_CHARGES = {
 # received on through it; or the receipts (3-way), the quantity billed held against what was received.
 MATCH_PO_LINES, MATCH_RECEIPTS = "po_lines", "receipts"
 PO_MATCH_TO = {MATCH_PO_LINES: "PO lines (2-way)", MATCH_RECEIPTS: "Receipts (3-way)"}
+# A US company's invoice (one not checked for Canadian tax, D-267), its tax as keyed on the voucher (D-312): held for a
+# person to confirm, the tax kept as charged in the expense with the exempt code (as before); or keyed, the sales tax
+# charged as the voucher's tax (code S) and an invoice charging none flagged for use tax (code U).
+US_TAX_HELD, US_TAX_KEYED = "held", "keyed"
+US_TAX = {US_TAX_HELD: "Held for a person to confirm it (as before)",
+          US_TAX_KEYED: "Keyed on the voucher: its sales tax, or use tax due"}  # fmt: skip
 # Seconds more than a voucher's wait before a lost answer's "not there" is believed (``JdeSettings.resend_seconds``).
 RESEND_MARGIN = 60.0
 
@@ -267,6 +273,14 @@ class JdeSettings:
     # "bank_glba": {Pay from code: its VLGLBA}}}, only what is set; its vouchers take them, else the values above
     # (``of_company``).
     company_values: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # A US company's tax (D-312): how it is keyed (``US_TAX``), for every company not checked for Canadian tax and
+    # {company: its own}; the explanation codes of a sales tax charged and of a use tax due; and {tax area: its rate,
+    # a percent} for the use tax worked out (none given: no amount, JD Edwards' to work out).
+    us_tax: str = US_TAX_HELD
+    company_us_tax: dict[str, str] = field(default_factory=dict)
+    sales_tax_code: str = "S"
+    use_tax_code: str = "U"
+    use_tax_rates: dict[str, float] = field(default_factory=dict)
 
     def to_json(self) -> str:
         saved = asdict(self)
@@ -311,6 +325,14 @@ class JdeSettings:
         if not isinstance(out.company_tax, dict):
             out.company_tax = {}
         out.company_tax = {str(k).strip(): str(v) for k, v in out.company_tax.items() if str(v) in ("on", "off")}
+        if out.us_tax not in US_TAX:
+            out.us_tax = US_TAX_HELD
+        own = out.company_us_tax if isinstance(out.company_us_tax, dict) else {}
+        out.company_us_tax = {company_code(k): str(v) for k, v in own.items() if company_code(k) and str(v) in US_TAX}
+        for name in ("sales_tax_code", "use_tax_code"):
+            code = str(getattr(out, name) or "").strip().upper()
+            setattr(out, name, code if re.fullmatch(r"[A-Z0-9]{1,2}", code) else getattr(base, name))
+        out.use_tax_rates = clean_rates(out.use_tax_rates)
         if not isinstance(out.an8_overrides, dict):
             out.an8_overrides = {}
         # Vendor keys saved under older vendor-matching rules, as today's rules give them ("energir sec" -> "energir").
@@ -409,16 +431,33 @@ def clean_company_values(given: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
+def clean_rates(given: Any) -> dict[str, float]:
+    """``JdeSettings.use_tax_rates`` as saved, read: {tax area in capitals: its rate, a percent from 0 to under 100}."""
+    out: dict[str, float] = {}
+    for area, rate in (given if isinstance(given, dict) else {}).items():
+        try:
+            value = float(rate)
+        except (TypeError, ValueError):
+            continue
+        if str(area).strip() and 0 <= value < 100:
+            out[str(area).strip().upper()[:10]] = round(value, 4)
+    return out
+
+
 def of_company(settings: JdeSettings, company: Any) -> JdeSettings:
     """The settings ``company``'s vouchers are keyed with (D-301): its own open period (both days, when either is
     set), default and header business units and G/L bank accounts (a Pay from account it has none for: Settings'),
-    else Settings' single values. Settings themselves for a company with none of its own, so one company is keyed as
-    before."""
+    else Settings' single values; and how its US tax is keyed (D-312). Settings themselves for a company with none of
+    its own, so one company is keyed as before."""
     own = settings.company_values.get(company_code(company)) if settings.company_values else None
-    if not own:
+    us_tax = settings.company_us_tax.get(company_code(company)) if settings.company_us_tax else None
+    if not own and not us_tax:
         return settings
+    own = own or {}
     changes: dict[str, Any] = {name: own.get(name, "") for name in ("open_from", "open_to")
                                if own.get("open_from") or own.get("open_to")}  # fmt: skip
+    if us_tax:
+        changes["us_tax"] = us_tax
     changes.update({name: own[name] for name in ("default_bu", "header_bu") if own.get(name)})
     if own.get("bank_glba"):
         changes["bank_glba"] = {**settings.bank_glba, **own["bank_glba"]}

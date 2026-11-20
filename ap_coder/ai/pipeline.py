@@ -326,6 +326,11 @@ def finalise_coding(
             output[PLACE_OF_SUPPLY] = place
     if not canadian_tax:  # a US company's voucher: its tax area from the PO line or the supplier (D-267)
         output[COMPANY_TAX] = companies.voucher_tax(store, coding)
+        from ..erp import jde_voucher
+
+        if js is not None and jde_voucher.us_keyed(output, js):  # its tax keyed as Settings say, not held (D-312)
+            company_said = [said for said in company_said if said[1] != "US_TAX_NOT_CHECKED"]
+            company_said += companies.us_keyed_findings(output, js)
     output.update(_progress_billing(extraction))
     output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
     # JD Edwards in use: what its batch would hold back, asked before approval (D-75).
