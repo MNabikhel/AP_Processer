@@ -7022,3 +7022,39 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Not changed:** VLDDJ is still sent only from what the invoice prints (B-924): a voucher of the supplier's own
     terms leaves its due date to JD Edwards. JD Edwards' blank code (its most used terms) is still not read: a row
     with no code is left out, and a supplier with no code has no terms.
+- **D-311** · **A US invoice is read and checked for what it is: its sales tax one tax (OTHER), the math checked, no
+  Canadian tax said of a company not checked for it** (D-267, D-285 to D-287; B-2870 to B-2872).
+  - **Read:** a US supplier's sales tax rows (a state's, a county's, a city's, a transit or special district's: "WA
+    State Sales Tax", "Spokane County Sales Tax", "City of Spokane Sales Tax", "State Tax 6.5%") are the tax total,
+    never a line, freight or a GST/HST/PST/QST; three or four rows with no total printed are added up as two always
+    were (`totals._rows_summed`), so subtotal + tax = total. The coding keeps them as one tax line of type OTHER (the
+    rate their sum's); freight is a line, taxed with the rest when the tax is on it.
+  - **Checked** (a company not checked for Canadian tax): every check but the Canadian tax ones, the totals and the tax
+    lines' sum included; no place of supply worked out for it (B-2871: shown, kept, mailed); nothing on the input tax
+    credits or the Self-assessment report (B-2872); `US_TAX_NOT_CHECKED` holds it for a person (`ALWAYS_A_PERSON`).
+  - **Its voucher:** a US company's USD invoice is domestic, a CAD one a foreign entry; the tax area of its PO line or
+    supplier, else held (`JDE_TAX_AREA`); the exempt code, the sales tax inside the G/L lines; PO-matched, the tax on a
+    G/L line of its own (Sales tax, Tax N). A US supplier billing a Canadian company is checked as any supplier outside
+    Canada (no GST/HST charged: `NO_TAX_CHARGED`, the PST to self-assess), its USD voucher a foreign entry.
+  - **The pilot day** (`bench/pilot_day.py`, D-275): the US suppliers in Washington charge the state's, county's and
+    city's sales tax (three rows, or one), the one in Montana none; scored as read and as keyed.
+  - *Not done:* the rates of US sales tax are not checked (no table of them); the AI reviewer's instructions name
+    Canadian sales tax only; NO_TAX_CHARGED for a US supplier still names a small supplier as why none is charged.
+- **D-312** · **How a US company's tax is keyed on its voucher is a setting, held for a person until the JD Edwards
+  team confirms** (Settings → JD Edwards E1 → US sales and use tax; D-267, D-301, D-311).
+  - **Held for a person** (the default, as before): the tax charged stays in the expense lines with the exempt code;
+    `US_TAX_NOT_CHECKED`. **Keyed** (for every company not checked for Canadian tax, or a company its own way:
+    `JdeSettings.us_tax`, `company_us_tax`, applied by `of_company` as D-301's values): a sales tax charged is the pay
+    item's tax amount with the sales tax code (S), its taxable amount the tax line's, still inside the G/L lines
+    (`US_SALES_TAX_KEYED`, information); an invoice charging none says use tax may be due at the ship-to's rate and
+    goes with the use tax code (U), its whole amount taxable, the tax amount blank for JD Edwards to work out and
+    accrue (`US_USE_TAX`, a warning: a person). A rate given a tax area (`use_tax_rates`) only says the amount.
+  - **The tax area** is the PO line's (one area on the order's lines), else the supplier master's (`voucher_tax`);
+    neither: held, said (`JDE_TAX_AREA`). A PO-matched voucher, and the tax coded to G/L accounts (D-93), are keyed
+    as before whatever the setting (`jde_voucher.us_keyed`).
+  - **To confirm with the JD Edwards team before choosing Keyed:** the explanation codes (S for a sales tax, U for a
+    use tax, or their own); the US tax areas (F4008) and which one a voucher takes (the supplier's, the PO line's, the
+    ship-to's); whether AP keys the sales tax on the voucher (code S, the tax amount) or leaves it in the expense (as
+    held does); whether R04110ZA works out a use tax from the area with the tax amount blank, or wants it sent; how a
+    PO-matched voucher's sales tax is to be matched; and whether the US companies want use tax accrued on every
+    invoice charging none (an out-of-state supplier) or only on some.
