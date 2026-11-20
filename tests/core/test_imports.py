@@ -31,8 +31,17 @@ def _files(folder: Path, n: int, tag: str = "") -> list[tuple]:
 
 
 def _python(code: str, *args: str) -> subprocess.Popen:
+    """A child Python running ``code``; its stderr is kept, so a child that failed says why (``_error``), not empty
+    output to parse."""
     env = {**os.environ, "PYTHONPATH": str(ROOT)}
-    return subprocess.Popen([sys.executable, "-c", code, *args], env=env, stdout=subprocess.PIPE, text=True)
+    return subprocess.Popen(
+        [sys.executable, "-c", code, *args], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+
+
+def _error(stderr: str) -> str:
+    """A failed child's stderr, its last line (the error) first: the line pytest's summary of the failure shows."""
+    return (stderr.strip().splitlines() or [""])[-1] + "\n" + stderr
 
 
 CLAIM_ALL = """
@@ -55,7 +64,10 @@ def test_two_processes_never_take_the_same_queued_file(tmp_path):
     store = Store(tmp_path / "ap.db")
     store.queue_imports(_files(tmp_path / "in", 60), source="upload", person=True)
     readers = [_python(CLAIM_ALL, str(store.path), f"reader-{n}") for n in range(4)]
-    taken = [json.loads(p.communicate(timeout=120)[0]) for p in readers]
+    ran = [p.communicate(timeout=120) for p in readers]  # (each to its end: none left running when one failed)
+    for p, (_, err) in zip(readers, ran, strict=True):
+        assert p.returncode == 0, _error(err)
+    taken = [json.loads(out) for out, _ in ran]
     ids = [i for t in taken for i in t]
     assert sorted(ids) == sorted(set(ids)) and len(ids) == 60
     assert store.imports_open() == {"waiting": 0, "reading": 0}
@@ -79,7 +91,9 @@ def test_a_reader_killed_mid_file_has_it_read_again_once_then_failed_with_a_reas
     store.queue_imports(files, source="folder", person=True)
     for attempt in range(1, IMPORT_TRIES + 1):
         reader = _python(HOLD, str(store.path), f"capture-{attempt}", "1")
-        file_id = int(reader.stdout.readline())
+        line = reader.stdout.readline()
+        assert line, _error(reader.communicate(timeout=30)[1])  # (it ended before it took a file: why)
+        file_id = int(line)
         reader.kill()
         reader.wait(30)
         row = store.claim_import("other", 60)  # the other file, while the killed one's lease runs
