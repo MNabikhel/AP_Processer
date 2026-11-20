@@ -32,7 +32,7 @@ import math
 import re
 import threading
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from difflib import SequenceMatcher
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -43,6 +43,7 @@ from ..core.headers import jde_names, match_columns
 from ..core.keys import company_code, master_vendor_id, order_key_of, po_key
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
+from ..core.schema import VOUCHER_MATCH
 
 if TYPE_CHECKING:
     from ..core.schema import InvoiceCoding
@@ -1053,6 +1054,30 @@ def voucher_match(match: PoMatch | None, number: str, charge_account: str = "") 
                 m.po_open_quantity, m.amount_only, m.po_tax, subledger=m.po_subledger, quantity_from=m.quantity_from,
                 unit_cost=m.po_unit_price))  # fmt: skip
     return out
+
+
+def kept_match(matched: VoucherMatch) -> dict[str, Any] | None:
+    """What is kept with an invoice of its voucher match when it is approved (``schema.VOUCHER_MATCH``, D-284): its
+    rows, when it has rows and nothing holds it; None otherwise (made again from the purchase orders loaded)."""
+    if not matched.rows or matched.held:
+        return None
+    return {"rows": [asdict(row) for row in matched.rows]}
+
+
+def kept_voucher_match(final: dict[str, Any]) -> VoucherMatch | None:
+    """The voucher match kept with an approved invoice (``kept_match``; ``final``: its approved output), None when none
+    is (approved before they were kept, or when it could not be made)."""
+    kept = final.get(VOUCHER_MATCH)
+    if not isinstance(kept, dict) or not isinstance(kept.get("rows"), list) or not kept["rows"]:
+        return None
+    names = {f.name for f in fields(MatchRow)}
+    try:
+        rows = [MatchRow(**{**{k: v for k, v in row.items() if k in names},
+                            "tax": tuple(row.get("tax") or ("", "", "")),
+                            "subledger": tuple(row.get("subledger") or ("", ""))}) for row in kept["rows"]]  # fmt: skip
+    except (AttributeError, TypeError):  # (not rows as kept: made again)
+        return None
+    return VoucherMatch(rows=rows)
 
 
 def billed_by_line(

@@ -1455,3 +1455,36 @@ def test_jd_edwards_tax_areas_are_compared_with_the_ones_settings_names():
     assert "AB: the tax area AB-GST adds up to 6% in JD Edwards, and AB's taxes to 5%." in said
     assert "QC: the tax area QC-GSTQST in Settings is not one of JD Edwards' tax areas." in said
     assert not [line for line in said if line.startswith(("ON:", "BC:"))]
+
+
+def test_the_z_files_of_a_po_matched_voucher_name_its_pos_order_type_company_and_line_numbers(tmp_path):
+    """B-2672 (D-284): the keying sheet keys a PO-matched voucher's order type and company as the PO file gives them
+    and each row on the PO line's own number (D-264), but the Z-files sent Settings' order type and company in
+    VLPDCT / VLPKCO (00001, the company, for an order of company 00210) and in F0411Z1T the invoice's line numbers (1,
+    2, 3) as LNID. They now say what the sheet says: the matched order's type and company (Settings' only for an
+    invoice whose PO match is not known), and LNID the PO line's number."""
+    from dataclasses import replace
+
+    from ap_coder.web.pages.exports import jde_file
+    from tests.coding.test_po import _jde_pos
+    from tests.erp.test_jde_keying import PROMO, po_invoice
+    from tests.pdfs import one_row_po_lines
+
+    store = Store(tmp_path / "ap.db")
+    _jde_pos(store, [replace(line, order_type="OS") for line in one_row_po_lines()])
+    jde_settings.save(store, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS, po_matched=True,
+                                                      an8_overrides={vendor_key(PROMO): "4471001"}))  # fmt: skip
+    final = po_invoice()["final_output"]
+    invoice_id = store.add_invoice(tmp_path / "118204.pdf", final, {})
+    store.approve_invoice(invoice_id, final, "Pat Tester")
+    batch = store.create_export_batch([invoice_id], jde_settings.FORMAT, actor="Pat Tester")
+    with zipfile.ZipFile(io.BytesIO(jde_file(store, batch)[0])) as zf:
+        files = {name: _csv(zf.read(name)) for name in (jde_zfiles.HEADER_FILE, jde_zfiles.MATCH_FILE)}
+    (head,) = files[jde_zfiles.HEADER_FILE]
+    assert (head["VLPO"], head["VLPDCT"], head["VLPKCO"]) == ("40917", "OS", "00210")
+    assert [(m["DOCO"], m["DCTO"], m["KCOO"], m["LNID"]) for m in files[jde_zfiles.MATCH_FILE]] == [
+        ("40917", "OS", "00210", "12.000"), ("40917", "OS", "00210", "13.000"), ("40917", "OS", "00210", "14.000")]
+    # Without the purchase orders loaded: Settings' order type and company, and the invoice's line numbers, as before
+    rows = jde_zfiles.voucher_rows({"id": 9, "final_output": final}, "4471001", jde_settings.JdeSettings(
+        amount_mode=jde_settings.AMOUNT_GROSS, po_matched=True))  # fmt: skip
+    assert (rows[0][0]["VLPDCT"], rows[0][0]["VLPKCO"], [m["LNID"] for m in rows[2]]) == ("OP", "00001", [1, 2, 3])

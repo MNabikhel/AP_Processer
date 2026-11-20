@@ -258,16 +258,19 @@ def _ledger(entry: dict[str, Any], line: dict[str, Any] | None) -> tuple[str, st
 
 
 def po_matches(store: Any, invoices: list[dict[str, Any]], charge_account: str = "") -> dict[int, po_mod.VoucherMatch]:
-    """{invoice: its voucher match} of the ``invoices`` that quote a PO: each line paired with its PO line as the
-    purchase orders loaded have it (``po.match_invoice``, the invoice's own lines left out of what was billed
-    before); ``charge_account``: where a charge the PO has no line for goes (``JdeSettings.charge_account``, D-265)."""
+    """{invoice: its voucher match} of the ``invoices`` that quote a PO: the one kept with it at its approval
+    (``po.kept_voucher_match``, D-284), else each line paired with its PO line as the purchase orders loaded have it
+    (``po.match_invoice``, the invoice's own lines left out of what was billed before); ``charge_account``: where a
+    charge the PO has no line for goes (``JdeSettings.charge_account``, D-265)."""
     from ..core.schema import InvoiceCoding
 
     out: dict[int, po_mod.VoucherMatch] = {}
     for inv in invoices:
         final = inv.get("final_output") or {}
         number = str(final.get("po_number") or "").strip()
-        if number:
+        if number and (kept := po_mod.kept_voucher_match(final)) is not None:
+            out[int(inv.get("id") or 0)] = kept
+        elif number:
             coding = InvoiceCoding.model_validate({k: x for k, x in final.items() if k != "gl_distribution"})
             invoice_id = int(inv.get("id") or 0)
             out[invoice_id] = po_mod.voucher_match(po_mod.match_invoice(coding, store, invoice_id), number,

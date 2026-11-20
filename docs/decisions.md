@@ -6779,3 +6779,22 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     neither is kept (a schema change, for when the pilot's grid shows they tell jobs apart); the business unit's name
     from the chart. Month-end's received-not-billed accruals pair a line with the first alike (`billed_on`, by
     description, D-194). A kept PO with lines alike reads its invoices' lines at each ask (0.2 to 0.3 s at 3,000).
+- **D-284** · **A PO-matched voucher's Voucher Match rows are kept with the invoice when it is approved; its keying
+  sheet and its Z-files key those, and the Z-files name the order and its lines as the sheet does** (`schema.
+  VOUCHER_MATCH`, `coding/po.py` `kept_match`, `kept_voucher_match`, `pipeline._erp_findings`, `jde_keying.
+  po_matches`, `jde_zfiles._order_of`, `_match_rows`; B-2671, B-2672).
+  - **Why:** a batch's sheet is made again from the approved data at each download (D-75): after the purchase orders
+    were loaded again (the vouchers keyed, a line JD Edwards closed left out, what is open changed) its invoices'
+    matches were made afresh, so a sheet downloaded again said "Not ready", or matched another line. And the Z-files
+    named Settings' order type and company and the invoice's line numbers, the sheet the PO's own.
+  - **What:** the match made with the approval's checks (`finalise_coding`, D-75) goes beside the approved coding as
+    WORKED_OUT (dropped from the coding, as the place of supply is), its rows only when it has rows and nothing held
+    it (held, it is made again from the purchase orders loaded, as before). `po_matches` gives it for an invoice that
+    has one; a reopened invoice approved again keeps the new one. The Z-files are given the same matches (the batch's
+    ZIP, the dry run, the AIS posting): VLPDCT / VLPKCO the order's type and company (Settings' when the file gave
+    none, or with no match: the PO not loaded), F0411Z1T's DCTO / KCOO likewise and its LNID the PO line's number
+    as JD Edwards shows it ("12.000", with its decimal point as UORG and PRRC; blank for a charge keyed on an account
+    of its own). F0411Z1T's other columns are the invoice line's, as before; the file is still to be confirmed with
+    the JD Edwards team (docs/JDE_E1.md).
+  - *Not chosen:* keeping the match at the batch for an invoice approved before (what was matched at its approval is
+    not known; it is made from the purchase orders loaded, as before): the approval is the moment the person saw it.

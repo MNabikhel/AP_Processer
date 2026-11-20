@@ -1456,3 +1456,47 @@ def test_a_goods_line_printed_with_no_quantity_matches_its_amount_at_the_po_line
     assert ("Order 40917 line 13.000: the invoice prints no quantity and its amount (86.25) is no whole number of the "
             "PO line's unit cost 57.50: Quantity Matched is 1. Check the quantity JD Edwards shows for "
             "it.") in v.notes  # fmt: skip
+
+
+def _approved_po_invoice(store, tmp_path, js):
+    """``po_invoice`` approved as the review screen approves it (its output from ``finalise_coding``, JD Edwards in
+    use with ``js``), on a keying sheet batch: (its id, the batch)."""
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.core.config import Settings
+
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
+    jde_settings.save(store, js)
+    store.import_accounts("gl_accounts", [{"code": "6420.2210"}], "code", None)
+    inv = po_invoice()
+    invoice_id = store.add_invoice(tmp_path / "118204.pdf", inv["final_output"], {})
+    output, _ = finalise_coding(_coding_of(inv), store.reference_data(), Settings(), store=store,
+                                exclude_invoice_id=invoice_id)  # fmt: skip
+    store.approve_invoice(invoice_id, output, "Pat Tester")
+    return invoice_id, store.create_export_batch([invoice_id], jde_keying.FORMAT, actor="Pat Tester")
+
+
+def test_a_keying_sheet_made_again_after_the_pos_are_loaded_again_keeps_the_rows_matched_at_approval(tmp_path):
+    """B-2671 (D-284): a keying sheet downloaded again after the purchase orders were loaded again (the vouchers keyed,
+    JD Edwards closed the bags' line and left it out of its open lines) made the approved invoice's voucher match
+    afresh: its bags matched another line or none, the voucher "Not ready". What was matched at approval is kept with
+    the invoice, and the sheet keys that each time."""
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from ap_coder.web.pages.exports import keying_file
+    from tests.coding.test_po import _jde_pos
+    from tests.pdfs import one_row_po_lines
+
+    store = po_store(tmp_path)
+    js = settings(po_matched=True, an8_overrides={vendor_key(PROMO): "4471001"})
+    _, batch = _approved_po_invoice(store, tmp_path, js)
+
+    def sheet():
+        book = openpyxl.load_workbook(io.BytesIO(keying_file(store, batch)[0]))
+        return [[list(r) for r in book[name].iter_rows(values_only=True)] for name in book.sheetnames]
+
+    first = sheet()
+    assert [r[3] for r in first[0] if r[0] == "40917"] == ["12.000", "13.000", "14.000"] and len(first[1]) == 1
+    bags, setup, freight = one_row_po_lines()
+    _jde_pos(store, [replace(bags, vouchered=Decimal(100), closed=True), setup, freight])
+    assert sheet() == first

@@ -73,7 +73,7 @@ import json
 import zipfile
 from collections.abc import Iterable, Mapping
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..coding.vendors import held_index, hold_reason, norm_invoice_number
 from ..core.memory import vendor_key
@@ -99,6 +99,9 @@ from .jde_zfiles import (
     export_batch,
     voucher_rows,
 )
+
+if TYPE_CHECKING:
+    from ..coding.po import VoucherMatch
 
 UNCONFIRMED = (
     "the PO-matched extra columns (e.g. VLATFLG, VLPSTE) and the whole F0411Z1T match file",
@@ -320,23 +323,25 @@ def build_zip(
     batch: int | str = "", fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None,
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
     left_invoices: list[dict[str, Any]] = (), no_undo: str = "", check_now: bool = False, site: str = "",
+    po_matches: Mapping[int, VoucherMatch] | None = None,
 ) -> tuple[bytes, str, str]:  # fmt: skip
     """(ZIP bytes, file name, mime type): the CSVs and a README.txt. ``left_invoices``: the invoices of ``left_out``,
     for their vendor, number and date in DRY_RUN.txt (B-1197); ``no_undo``: why it can't be undone (``readme``);
     ``check_now``: ``to_check`` is what ``validate`` now finds in ``invoices`` (each voucher prepared once for all);
-    ``site``: the batch's code in VLEDBT (``batch_site``)."""
+    ``site``: the batch's code in VLEDBT (``batch_site``); ``po_matches``: the PO-matched vouchers' voucher matches
+    (``jde_keying.po_matches``, D-284)."""
     vouchers = _vouchers(invoices, settings, vendor_lookup, on)
     if check_now:
         to_check = validate(invoices, settings, vendor_lookup, prepared=vouchers)
     files = export_batch(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers,
-                         site=site)  # fmt: skip
+                         site=site, po_matches=po_matches)  # fmt: skip
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, data in files.items():
             zf.writestr(name, data)
         zf.writestr("README.txt", readme(files, settings, batch, invoices, left_out, to_check, no_undo, site))
         report = dry_run(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers,
-                         site=site)  # fmt: skip
+                         site=site, po_matches=po_matches)  # fmt: skip
         for h in report["held"]:
             if h["id"] in (to_check or {}):  # the files hold it: it passed the checks when the batch was made
                 h["reasons"] = ["it IS in this batch's files (checked when the batch was made): check it before "
@@ -392,11 +397,13 @@ def dry_run(
     prepared: list[tuple[str, _Voucher]] | None = None,
     rows: Mapping[int, tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]] | None = None,
     site: str = "",
+    po_matches: Mapping[int, VoucherMatch] | None = None,
 ) -> dict[str, Any]:
     """Exactly what a batch of these invoices would load, row by row, and why any invoice is held back, without
     making a batch. {"blocking": [...], "vouchers": [...], "held": [...], "files": {file: rows}, "totals": {...}}.
     ``prepared``: the invoices' vouchers already prepared (``_vouchers``); ``rows``: {invoice: ``voucher_rows``}
-    already made with the same batch, rates, date and ``site`` (the batch's code, ``batch_site``)."""
+    already made with the same batch, rates, date and ``site`` (the batch's code, ``batch_site``); ``po_matches``: the
+    PO-matched vouchers' voucher matches (``jde_keying.po_matches``, D-284)."""
     blocking = settings_problems(settings)
     if prepared is None:
         prepared = _vouchers(invoices, settings, vendor_lookup, on)
@@ -430,7 +437,8 @@ def dry_run(
             continue
         made = (rows or {}).get(inv_id)
         headers, dists, matches = made or voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on,
-                                                       prepared=v, site=site)  # fmt: skip
+                                                       prepared=v, site=site,
+                                                       matched=(po_matches or {}).get(inv_id))  # fmt: skip
         aa_col = "VNACR" if v.foreign else "VNAA"
         dist_total = sum(Decimal(str(d.get(aa_col) or 0)) for d in dists)
         posted = Decimal(v.gross - sum(e["cents"] for e in v.entries)) / 100
