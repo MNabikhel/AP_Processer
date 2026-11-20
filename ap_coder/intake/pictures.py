@@ -32,6 +32,7 @@ import json
 import logging
 import os
 import re
+import struct
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -115,13 +116,16 @@ def content_kind(path: str | Path) -> str:
 
 
 def looks_incomplete(path: str | Path) -> bool:
-    """A file whose end is missing: empty, a PDF without its closing "%%EOF", a JPEG without its end marker or a PNG
-    without its end chunk (still being written by a scanner or a download, or cut off). Other kinds: False."""
+    """A file whose end is missing: empty, a PDF without its closing "%%EOF", a JPEG without its end marker, a PNG
+    without its end chunk or an iPhone photo (HEIC) whose boxes don't all end in it (still being written by a scanner,
+    a download or a phone's sync, or cut off). Other kinds: False."""
     path = Path(path)
     size = path.stat().st_size
     if not size:
         return True
     kind = content_kind(path)
+    if kind == ".heic":
+        return not _boxes_whole(path, size)
     with open(path, "rb") as fh:
         fh.seek(max(0, size - 1024))
         tail = fh.read()
@@ -134,6 +138,34 @@ def looks_incomplete(path: str | Path) -> bool:
 # Pictures with no end marker: whether one is whole is told by decoding it (a scanner's multi-page TIFF written page by
 # page, B-1528).
 _DECODED_TO_TELL = (".tif", ".bmp", ".gif", ".webp")
+
+
+MAX_BOXES = 10_000  # top-level boxes of an iPhone photo looked at (it has three or four)
+
+
+def _boxes_whole(path: Path, size: int) -> bool:
+    """An iPhone photo (HEIC/HEIF: ftyp, meta, mdat ... boxes, each its length first) is whole when each box ends
+    within the file and its meta and mdat are there: one copied part way stops inside a box, or before them
+    (B-2979)."""
+    found, at = set(), 0
+    with open(path, "rb") as fh:
+        for _ in range(MAX_BOXES):
+            if at >= size:
+                return {b"meta", b"mdat"} <= found
+            fh.seek(at)
+            head = fh.read(16)
+            if len(head) < 8:
+                return False
+            length, kind = struct.unpack(">I4s", head[:8])
+            if length == 1:  # a 64-bit length follows
+                length = struct.unpack(">Q", head[8:16])[0] if len(head) == 16 else 0
+            elif length == 0:  # the last box: to the end of the file
+                length = size - at
+            if length < 8 or at + length > size:
+                return False
+            found.add(kind)
+            at += length
+    return True  # (more boxes than any photo has: its reading says what it is)
 
 
 def _decodes(path: Path) -> bool:

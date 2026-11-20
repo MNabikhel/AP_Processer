@@ -453,13 +453,14 @@ def plain_error(exc: Exception, path: Path) -> str:
     return file_error(exc, path) or f"{type(exc).__name__}: {exc}"
 
 
-def _raised_by_pillow(exc: Exception) -> bool:
-    """The error was raised inside Pillow (or its HEIC add-on): the last frame of its traceback is their code."""
+def _raised_by_pillow(exc: Exception, of: tuple[str, ...] = ("PIL", "pillow_heif")) -> bool:
+    """The error was raised inside Pillow (or its HEIC add-on; ``of``: those packages): the last frame of its
+    traceback is their code."""
     tb = exc.__traceback__
     while tb is not None and tb.tb_next is not None:
         tb = tb.tb_next
     module = str(tb.tb_frame.f_globals.get("__name__") or "") if tb is not None else ""
-    return module.split(".")[0] in ("PIL", "pillow_heif")
+    return module.split(".")[0] in of
 
 
 def file_error(exc: Exception, path: Path) -> str | None:
@@ -476,9 +477,11 @@ def file_error(exc: Exception, path: Path) -> str | None:
                 "resolution (12 megapixels is plenty), or scan the page.")  # fmt: skip
     # Pillow's own errors on a picture it can't decode (an OSError without a system error number, a TypeError such as
     # "Missing dimensions", a SyntaxError): the file, not the computer (B-1528). Only when Pillow raised it: the
-    # same kind of error from AP Coder's own code is a bug, and keeps its traceback (B-2204).
-    pillow = (name in ("OSError", "TypeError", "SyntaxError") and getattr(exc, "errno", None) is None
-              and _raised_by_pillow(exc))  # fmt: skip
+    # same kind of error from AP Coder's own code is a bug, and keeps its traceback (B-2204). The HEIC add-on raises a
+    # ValueError for an iPhone photo cut off or damaged ("Invalid input: Unexpected end of file", B-2979).
+    pillow = ((name in ("OSError", "TypeError", "SyntaxError") and getattr(exc, "errno", None) is None
+               and _raised_by_pillow(exc))
+              or (name == "ValueError" and _raised_by_pillow(exc, ("pillow_heif",))))  # fmt: skip
     if name in DAMAGED_PICTURE or (name == "OSError" and "image file" in str(exc)) or (pillow and _picture(path)):
         return (f"{path.name} can't be opened as a picture: the file is damaged or not really a {kind}. Ask the "
                 "vendor for a new copy, or scan it again.")  # fmt: skip
