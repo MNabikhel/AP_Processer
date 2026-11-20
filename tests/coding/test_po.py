@@ -1630,3 +1630,41 @@ def test_an_exported_invoice_on_po_lines_alike_stays_on_its_line_once_the_pos_ar
         _rebar_po(store, open_first=20.0, second=100.0)  # (the second line raised to 100 in JD Edwards)
         (matched,) = jde_keying.po_matches(store, store.get_invoices([a])).values()
         assert [row.line for row in matched.rows] == (["1.000"] if kept else []), kept  # (never moved to 2.000)
+
+
+def test_a_later_kept_match_never_takes_the_line_of_an_invoice_approved_before_it_with_none_kept(tmp_path):
+    """B-2915 (D-320): of two PO lines alike (job 1100's 100, job 1200's 50), an invoice of 80 with no job was
+    approved on the first line with no voucher match kept (held by a line on no PO line, or approved before matches
+    were kept). Job 1100's 30 after it was PO_QTY_OVER and approved over it, its match kept on the first line: counted
+    before every other invoice, it left the 80 no room, which then billed neither line (the PO page 30 on the first),
+    the next 20 of job 1100 passed with PO_MATCHED, and the 80's keying sheet made again was Not ready. An approved
+    invoice is shared out after the invoices before it alone; only one in review comes after every kept match."""
+    from ap_coder.erp import jde_keying
+
+    for exported in (False, True):
+        store = Store(tmp_path / f"{exported}.db")
+        _rebar_po(store, second=50.0)
+        _jde_rebar(store)
+        x = store.add_invoice(tmp_path / "x.pdf", _rebar(80, number="NR-X").model_dump(), {})
+        store.approve_invoice(x, _rebar(80, number="NR-X").model_dump(), "Pat Tester")  # (no match kept with it)
+        if exported:
+            store.create_export_batch([x], jde_keying.FORMAT, actor="Pat Tester")
+        y = store.add_invoice(tmp_path / "y.pdf", _rebar(30, "1100", number="NR-Y").model_dump(), {})
+        assert _approve(store, y, _rebar(30, "1100", number="NR-Y")) == [("1.000", 30.0)]  # (over PO_QTY_OVER)
+        match = match_invoice(_rebar(80, number="NR-X"), store, x)
+        assert [m.po_line for m in match.lines] == [1] and _billed(store) == ["110", "0"], exported
+        assert [f[1:3] for f in match_invoice(_rebar(20, "1100", number="NR-Z"), store).findings] == [
+            ("PO_QTY_OVER", "130 billed on PO 4512 line 1 but 100 ordered, 110 on earlier invoices")]  # fmt: skip
+        (matched,) = jde_keying.po_matches(store, store.get_invoices([x])).values()
+        assert matched.held == [] and [(row.line, row.quantity) for row in matched.rows] == [("1.000", 80.0)]
+    # An invoice before it, approved after the kept match (reopened, approved over PO_LINE_AMBIGUOUS): still after it
+    store = Store(tmp_path / "later.db")
+    _rebar_po(store, second=50.0)
+    _jde_rebar(store)
+    a = store.add_invoice(tmp_path / "a.pdf", _rebar(60, number="NR-A").model_dump(), {})
+    b = store.add_invoice(tmp_path / "b.pdf", _rebar(80, number="NR-B").model_dump(), {})
+    store.reject_invoice(a, "Pat Tester", "not ours")
+    assert _approve(store, b, _rebar(80, number="NR-B")) == [("1.000", 80.0)]
+    store.reopen(a, "Pat Tester", "ours after all", only_rejected=True)
+    store.approve_invoice(a, _rebar(60, number="NR-A").model_dump(), "Pat Tester")  # (its match held: none kept)
+    assert match_invoice(_rebar(60, number="NR-A"), store, a).lines[0].po_line is None and _billed(store) == ["80", "0"]

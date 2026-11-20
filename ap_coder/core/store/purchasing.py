@@ -63,10 +63,13 @@ _PO_MOMENT = (
     "(SELECT MAX(seq) FROM vendor_changes), (SELECT json_group_array(id) FROM invoices WHERE po_key = ?)"
 )
 _VENDOR_COUNTS = f"SELECT key, COALESCE(CAST(value AS INTEGER), 0) FROM settings WHERE {_in_list('key')}"
-# Of each of these invoices (a JSON list of ids) approved (or approved once, waiting for a second approver), the rows of
+# Of each of these invoices (a JSON list of ids) approved (or approved once, waiting for a second approver), its
+# approval's place among all approvals (its last "approved" event: approvals in one second told apart) and the rows of
 # the voucher match kept with it (``schema.VOUCHER_MATCH``, D-284), as SQLite writes them.
-_KEPT_ROWS = (f"SELECT id, {dialect.json_get('final_output', f'$.{VOUCHER_MATCH}.rows')} FROM invoices WHERE status IN "
-              f"(?, ?) AND {_in_list('id')} AND {dialect.json_valid('final_output')}")  # fmt: skip
+_KEPT_ROWS = ("SELECT id, (SELECT MAX(e.id) FROM events e WHERE e.action = 'approved' AND e.invoice_id = invoices.id), "
+              f"CASE WHEN {dialect.json_valid('final_output')} THEN "
+              f"{dialect.json_get('final_output', f'$.{VOUCHER_MATCH}.rows')} END FROM invoices WHERE status IN (?, ?) "
+              f"AND {_in_list('id')}")  # fmt: skip
 # Of each of these invoices (a JSON list of ids), what billing a PO reads of its coding (the approved one, else AP
 # Coder's: ``po_invoices``): [id, [invoice date, lines], null], SQLite writing the coding's own text of each value; [id,
 # null, the coding] when it is not an object of valid JSON, for Python to read as before. All in one JSON text.
@@ -638,25 +641,28 @@ class PurchasingMixin:
             out.append(_po_row(n, status, number, date, batch, json.loads(facts) if doc is None else None, doc))
         return out
 
-    def kept_voucher_lines(self, ids: list[int]) -> dict[int, tuple[tuple[Any, str], ...]]:
-        """{id: (its invoice line, the PO line as JD Edwards names it, "2.000"; "" for a charge keyed on an account of
-        its own) of each row of its kept voucher match, in order} of each of ``ids`` approved (or approved once,
-        waiting for a second approver) with one (D-284): what the PO's billing counts its lines on first when lines
-        alike are shared out (``po.PoBilling``, D-320). Read only then, of those invoices: most POs have no lines
-        alike, and read with every invoice a kept match doubled the time a PO's invoices take to read."""
+    def approved_matches(self, ids: list[int]) -> dict[int, tuple[Any, tuple[tuple[Any, str], ...] | None]]:
+        """{id: (its approval's place in order, None when not known; (its invoice line, the PO line as JD Edwards names
+        it, "2.000"; "" for a charge keyed on an account of its own) of each row of its kept voucher match in order,
+        None without one)} of each of ``ids`` approved (or approved once, waiting for a second approver): what the PO's
+        billing counts an approved invoice's lines on, and in what order, when lines alike are shared out
+        (``po.PoBilling``, D-320, B-2915). Read only then, of those invoices: most POs have no lines alike, and read
+        with every invoice a kept match doubled the time a PO's invoices take to read."""
         if not ids:
             return {}
         with self._conn() as conn:
             found = conn.execute(_KEPT_ROWS, (APPROVED, PENDING, json.dumps(ids))).fetchall()
-        out = {}
-        for n, kept in found:
+        out: dict[int, tuple[Any, tuple[tuple[Any, str], ...] | None]] = {}
+        for n, at, kept in found:
+            keyed = None
             try:
                 rows = json.loads(kept) if kept is not None else None
                 if isinstance(rows, list) and rows:
-                    out[n] = tuple((row.get("invoice_line"), str(row.get("line") or "") if row.get("on_po", True)
-                                    else "") for row in rows)  # fmt: skip
+                    keyed = tuple((row.get("invoice_line"), str(row.get("line") or "") if row.get("on_po", True)
+                                   else "") for row in rows)  # fmt: skip
             except (AttributeError, ValueError):  # (not rows as kept: shared out as any other)
-                continue
+                keyed = None
+            out[n] = (at, keyed)
         return out
 
     def po_invoices_since(self, key: str, since: tuple[Any, int, dict[str, int]] | None = None,
