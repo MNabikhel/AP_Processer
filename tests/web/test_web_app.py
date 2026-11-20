@@ -639,6 +639,17 @@ HIDDEN = """(hidden) => {
   if (!hidden) window.shownAt = performance.now();
   document.dispatchEvent(new Event("visibilitychange"));
 }"""
+# Hidden only between two looks, in the same task as seeing every look answered: a look under way as the tab is hidden
+# can be answered after it is shown again, and the page then rightly waits its pace before the next (B-2858).
+HIDDEN_BETWEEN_LOOKS = """() => new Promise((done) => {
+  const now = () => {
+    if (window.asked.length !== window.taken.length) return setTimeout(now, 5);
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    done();
+  };
+  now();
+})"""
 
 
 def _looks(page, answer: dict) -> list[float]:
@@ -683,13 +694,15 @@ def test_in_a_browser_a_poll_asks_less_while_nothing_changes_and_nothing_while_t
         changed = page.evaluate("(n) => (window.asked[n + 1] - window.taken[n]) / 1000", seen)
         assert changed < 0.45, changed  # (0.2 s, not the 0.6 it had grown to)
 
-        page.evaluate(HIDDEN, True)
+        page.evaluate(HIDDEN_BETWEEN_LOOKS)
         hidden_at = time.monotonic()
         page.wait_for_timeout(2000)
         assert [t for t in looks if t > hidden_at + 0.1] == []  # (one already under way may end)
         page.evaluate(HIDDEN, False)
-        wait_until(page, lambda: page.evaluate("window.asked.at(-1) > window.shownAt"), timeout=2)
-        assert page.evaluate("window.asked.at(-1) - window.shownAt") < 100  # ms: at once, not after the wait
+        # The first look from the moment it is shown: the page's clock reads in steps, so a look asked at once can bear
+        # the very time it was shown (B-2858: "after", not "at or after", waited for the next look, 0.45 s on)
+        wait_until(page, lambda: page.evaluate("window.asked.at(-1) >= window.shownAt"), timeout=2)
+        assert page.evaluate("window.asked.find((t) => t >= window.shownAt) - window.shownAt") < 100  # ms: at once
 
 
 def test_in_a_browser_a_poll_stops_once_the_laptop_asks_who_they_are_again(chromium, store):
