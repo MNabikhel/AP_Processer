@@ -27,12 +27,13 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..core.headers import jde_names
-from ..core.keys import company_code, master_vendor_id, plain, po_key
+from ..core.keys import company_code, master_vendor_id, po_key
 from ..core.memory import vendor_key
 
 if TYPE_CHECKING:
@@ -220,23 +221,60 @@ def _one(found: Iterable[str]) -> str:
     return codes.pop() if len(codes) == 1 else ""
 
 
-def _at(words: str, key: str) -> list[tuple[int, int]]:
-    """Where ``key``'s words are in ``words`` (its words between spaces): (start, end) of each."""
-    found, start = [], words.find(f" {key} ")
+SHORT_NAME = 3  # a name of this many letters and digits or fewer ("MRB") is named only as a word in capitals (B-2690)
+
+
+@dataclass(frozen=True)
+class _Page:
+    """The page's letters and digits run together in small letters (``run``: a scan runs words together, B-2691),
+    where its words start and end in it (``edges``: a space or punctuation between, a capital after a small letter
+    as in "MapleRidge", a digit beside a letter), and where each word printed in capitals is ({word: [(start, end)]},
+    for the short names)."""
+
+    run: str
+    edges: frozenset[int]
+    capitals: dict[str, list[tuple[int, int]]]
+
+
+def _page(text: str) -> _Page:
+    folded = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+    run: list[str] = []
+    edges, capitals, at = {0}, {}, 0  # type: ignore[var-annotated]
+    for word in re.findall(r"[A-Za-z0-9]+", folded.replace("&", " and ")):
+        edges.update(at + i for i in range(1, len(word))
+                     if (word[i].isupper() and word[i - 1].islower()) or word[i].isdigit() != word[i - 1].isdigit())  # fmt: skip
+        if word.isupper():
+            capitals.setdefault(word.lower(), []).append((at, at + len(word)))
+        run.append(word.lower())
+        at += len(word)
+        edges.add(at)
+    return _Page("".join(run), frozenset(edges), capitals)
+
+
+def _at(page: _Page, key: str, ends: bool = True) -> list[tuple[int, int]]:
+    """Where a name (``key``, its vendor key) is printed on ``page``, its spaces and punctuation left out: (start, end)
+    of each, starting a word and (``ends``) ending one; a short name (``SHORT_NAME``) only as a word of its own in
+    capitals, never inside another or run into one."""
+    name = key.replace(" ", "")
+    if len(name) <= SHORT_NAME:
+        return list(page.capitals.get(name, []))
+    found, start = [], page.run.find(name)
     while start >= 0:
-        found.append((start, start + len(key) + 2))
-        start = words.find(f" {key} ", start + 1)
+        if start in page.edges and (not ends or start + len(name) in page.edges):
+            found.append((start, start + len(name)))
+        start = page.run.find(name, start + 1)
     return found
 
 
 def _named(text: str, names: dict[str, str], supplier: str) -> set[str]:
     """The companies whose names (``names``: {vendor key: company}) are printed in ``text``, the supplier's own left
-    out, and a name printed only inside the supplier's ("fraser bend" in "Fraser Bend Aggregates Ltd.", B-2680); of
-    two names one inside the other ("maple ridge" in "maple ridge us"), the longer."""
-    words = f" {' '.join(re.findall(r'[a-z0-9]+', plain(text).replace('&', ' and ')))} "
-    theirs = _at(words, supplier) if supplier else []
+    out, and a name printed only inside the supplier's ("fraser bend" in "Fraser Bend Aggregates Ltd.", B-2680, run
+    together or not: the supplier's name found wherever it starts a word); of two names one inside the other ("maple
+    ridge" in "maple ridge us"), the longer."""
+    page = _page(text)
+    theirs = _at(page, supplier, ends=False) if supplier else []
     hits = [key for key in names if key and key != supplier
-            and any(not any(s <= a and b <= e for s, e in theirs) for a, b in _at(words, key))]  # fmt: skip
+            and any(not any(s <= a and b <= e for s, e in theirs) for a, b in _at(page, key))]  # fmt: skip
     longest = [key for key in hits if not any(key != other and f" {key} " in f" {other} " for other in hits)]
     return {names[key] for key in longest}
 

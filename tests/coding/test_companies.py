@@ -156,6 +156,46 @@ def test_a_companys_name_inside_the_suppliers_own_never_decides(group, reference
     assert output["company"] == "00230"
 
 
+def test_a_short_name_decides_only_printed_as_a_word_of_its_own_in_capitals(group, reference, ground_truth):
+    """B-2690: a name of three letters or fewer in Settings → Review ("Art = 230", "MRB = 310") was read in any word
+    of the page, whatever its case: "Art supplies" or "art" in a description decided the invoice was 00230's. Such a
+    name now decides only printed as a word of its own in capitals ("MRB"), never inside another or run into one."""
+    group.set_setting("our_names", "Art = 230\nMRB = 310")
+    for page in ("Northwind IT Solutions Inc.\nArt supplies for the lobby\n", "Ship to: the art room, 2nd floor\n",
+                 "Ship to: Mrb yard\n", "Bill to: MRBInc, Spokane WA\n", "Cartage 4 hrs\n"):  # fmt: skip
+        output, codes, _report = _check(group, reference, _coding(ground_truth), page)
+        assert "company" not in output and "COMPANY_UNKNOWN" in codes, page
+    output, _codes, report = _check(group, reference, _coding(ground_truth), "Bill to: MRB Inc., Spokane WA\n")
+    assert output["company"] == "00310" and report.checks["company"]["how"] == "name"
+    output, _codes, _report = _check(group, reference, _coding(ground_truth), "ATTN: ART DEPT.\n")
+    assert output["company"] == "00230"
+
+
+def test_a_companys_name_run_together_on_a_scan_decides_as_printed_with_its_spaces(group, reference, ground_truth):
+    """B-2691: a scan's text runs words together ("MapleRidge ConstructorsLtd."), and the names on the page were
+    compared word by word: none decided, so an invoice of a supplier billing two companies was held to pick one, and
+    a bill already in JD Edwards under the other company was said as the duplicate error, not as another company's.
+    The names are now compared without their spaces and punctuation too, a word's start and end kept (a capital after
+    a small letter starts one); a name only inside the supplier's own still never decides."""
+    voucher = {"key": "00210-PV-700101-001", "vendor_name": "Northwind IT Solutions Inc.",
+               "invoice_number": ground_truth["invoice_number"], "total": ground_truth["grand_total"],
+               "invoice_date": "2026-01-02", "an8": "", "document": "700101"}  # fmt: skip
+    group.import_erp_vouchers([voucher, {**voucher, "key": "00220-PV-700102-001", "invoice_number": "N-2"}])
+    page = "NORTHWINDIT SOLUTIONSINC.\nBillTo: MapleRidge ConstructorsLtd.\n400PineSt, Calgary AB\n"
+    output, codes, report = _check(group, reference, _coding(ground_truth), page)
+    assert output["company"] == "00220" and report.checks["company"]["how"] == "name"
+    assert "DUPLICATE_OTHER_COMPANY" in codes and "DUPLICATE_IN_ERP" not in codes
+    for page in ("Bill to: MAPLERIDGE CONSTRUCTORS LTD.\n", "Billto:MAPLERIDGECONSTRUCTORS\n"):
+        assert _check(group, reference, _coding(ground_truth), page)[0]["company"] == "00220", page
+    # a word that only begins with a name is not the name; nor is a name inside the supplier's own, run together
+    group.set_setting("our_names", "Cascade = 320\nFraser Bend = 230")
+    output, codes, _report = _check(group, reference, _coding(ground_truth), "Yard: 1 Cascadeview Ave\n")
+    assert output.get("company") != "00320"
+    coding = _coding(ground_truth, vendor_name="Fraser Bend Aggregates Ltd.")
+    output, codes, _report = _check(group, reference, coding, "FraserBend AggregatesLtd.\nBill to: Mrb Inc.\n")
+    assert output.get("company") != "00230"
+
+
 def test_report_9_loaded_after_an_invoice_was_read_its_checks_again_read_the_names_on_its_page(tmp_path):
     """B-2681: every check made again (the review screen, the queue's, bulk approval, touchless processing's, the
     second approval's) decided the company without the page: its names were read only as it was first read. JD
