@@ -509,7 +509,8 @@ function applyTaxRows(taxes, posted) {
 async function check() {
   clearTimeout(timer);
   timer = 0;
-  if (!form || readOnly || stale || form.dataset.sending) return void showChecking(); // being approved, read-only or out of date
+  showChecking();
+  if (!form || readOnly || stale || form.dataset.sending) return; // being approved, read-only or out of date
   if (running) {
     queued = true;
     return running;

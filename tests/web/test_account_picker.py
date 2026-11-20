@@ -343,8 +343,7 @@ def test_an_account_half_typed_is_not_flagged_until_the_box_is_left(browser, cha
     page.keyboard.type("00")
     page.wait_for_timeout(1200)  # longer than the wait before a check
     page.keyboard.type("21")
-    page.wait_for_timeout(1200)
-    settle(page)
+    page.wait_for_timeout(1200)  # (no settle: the page holds the check while the box is typed in, by design)
     assert "is not an account" not in page.inner_text("body")
     assert page.query_selector(LIST)  # still typing, the list open
     page.keyboard.press("Tab")  # left: "0021" names no single account, so it stays and is checked
@@ -406,7 +405,7 @@ def test_a_chart_searched_as_typed_asks_once_typing_stops_and_an_empty_box_lists
     page.fill(FIRST, "")
     page.keyboard.type(code.replace(".", ""), delay=15)
     wait_until(page, lambda: any("q=" in u for u in asked))
-    settle(page)
+    wait_until(page, lambda: account in _options(page))  # its answer drawn (the box still typed in: its check held)
     assert account in _options(page)
     typed = [u for u in asked if "q=" in u]
     assert len(typed) == 1 and typed[0].endswith(f"q={code.replace('.', '')}") and not errors
