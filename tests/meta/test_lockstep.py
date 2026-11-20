@@ -19,12 +19,14 @@ NOT_REVISIONS = {
     "failed": "a new invoice, one that could not be read: no screen of it was drawn before",
     "file_found": "only where its file is changed (source_path), not its coding or where it stands",
     "processed": "a new invoice: no screen of it was drawn before",
-    "proposal_updated": "the page worker's replaces, without unless_in_use: only while nobody worked on it, and a "
-    "screen drawn while it waits to be read is drawn again once it is, the edits kept as a draft (D-86, the poll in "
-    "static/js/invoice.js)",
+    "proposal_updated": "the page reader's reading (page_worker, without unless_in_use): only while nobody worked on "
+    "it, and a screen drawn while it waits to be read is drawn again once it is, the edits kept as a draft (D-86, the "
+    "poll in static/js/invoice.js). page_worker.chat_again logs it too, where no screen waits: an open question of "
+    "B-2805's kind, for after Monday's test",
 }
-# erp/jde*.py, lowest first: each imports only the ones before it, at the top or inside a function (D-222; the list
-# at the top of erp/jde.py). After jde.py, the keying sheet and the AIS API's modules.
+# erp/jde*.py, lowest first: each imports only the ones before it, at the top or inside a function (D-222). The list
+# at the top of erp/jde.py has jde_match before jde_zfiles, which it imports, and no jde_retainage: this is the order
+# the imports keep. After jde.py, the keying sheet and the AIS API's modules.
 ORDER = ("jde_formats", "jde_settings", "jde_prototype", "jde_accounts", "jde_voucher", "jde_retainage", "jde_remarks",
          "jde_zfiles", "jde_match", "jde_review", "jde", "jde_keying", "jde_worksheet", "jde_ais", "jde_post",
          "jde_sync")  # fmt: skip
