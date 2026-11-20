@@ -284,6 +284,27 @@ def test_the_objects_given_are_the_ones_used(tmp_path, capsys, truth):
     assert store.journal_files()[0]["tax_lines"] == 0 and store.journal_files()[0]["coding_lines"] == 195 + 81
 
 
+def test_gl_lines_without_payable_lines_holding_a_voided_voucher_are_loaded(tmp_path, truth):
+    """B-2740: a voucher voided, its lines and the void's under one document, adds up to nothing in the build
+    sheet's G/L lines (no payable lines). The file is loaded all the same, and the void's lines cancel out."""
+    from ap_coder.erp import journal as jr
+
+    head = jde_exports._titles("gl_lines")
+    rows = [[cell[0] if isinstance(cell, tuple) else cell for cell in row]
+            for row in jde_exports._master_gl_lines(replace(truth, vouchers=truth.vouchers[:30]), 1)]  # fmt: skip
+    supplier = truth.supplier(truth.vouchers[0].supplier)
+    account = f"{truth.company.main_business_unit}.7410"
+    voided = (("2024-03-02", 975.25), ("2024-04-02", -975.25))  # the voucher, then its void
+    rows += [[9001, "PV", truth.company.number, date, n, account, "", amount, supplier.name, "VOIDED",
+              supplier.number, supplier.name, "", None, "CAD", None, None, None]
+             for n, (date, amount) in enumerate(voided, start=1)]  # fmt: skip
+    data = jr.sheet_csv([head, *rows])
+    store = _store(tmp_path)
+    state, said = journal_cmd.load(store, data, "2024.csv")
+    assert state == journal_cmd.DONE, said
+    assert not [line for line in store.journal_lines_for(str(supplier.number)) if line["remark"] == "VOIDED"]
+
+
 def test_saved_objects_of_another_company_are_passed_over_for_the_files_own(tmp_path, capsys, truth):
     assert _run(tmp_path, capsys, "import", _file(tmp_path, truth))[0] == 0
     other = jde_exports.journal_csv(truth).replace(b".2110,", b".2188,").replace(b"00210", b"00530")
