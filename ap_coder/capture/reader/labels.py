@@ -92,9 +92,6 @@ LABELS: dict[str, list[tuple[str, float]]] = {
     "tax_total": [
         (r"total\s*(?:sales\s*)?tax(?:es)?\b", 1.0), (r"tax(?:es)?\s*total", 0.95), (r"total\s*des\s*taxes", 1.0),
         (r"taxes\b(?!\s*incl)", 0.6), (r"(?:[a-z]{2,3}\s+)?(?:state\s*|county\s*|city\s*|local\s*)?sales\s*tax\b", 0.85), (r"(?:[a-z]{2,3}\s+)?general\s*excise\s*tax\b", 0.85), (r"tax\s*(?:amount)?\s*$", 0.55), (r"tax\s*:", 0.6), (r"tax\s*[(@]?\s*\d{1,2}(?:[.,]\d{1,3})?\s*%", 0.85),
-        # A US state's, county's or city's sales tax on a row of its own ("Spokane County Sales Tax", "City of Spokane
-        # Sales Tax", "State Tax", "Transit District Tax"): the solver adds them up (B-2870).
-        (r"(?:(?:city|county|town|village)\s+of\s+(?:[a-z.]+\s+){1,3}|(?:[a-z.]+\s+){0,2}(?:state|county|city|parish|borough|local)\s+|(?:transit|special)\s+(?:district\s+)?)(?:sales\s*(?:and\s*use\s*|&\s*use\s*)?)?tax\b", 0.85),
     ],
     "grand_total": [
         (r"(?:invoice\s*)?total\s*(?:amount\s*)?(?:due|payable)", 1.0), (r"amount\s*due", 0.95), (r"balance\s*due", 0.85),

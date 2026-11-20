@@ -221,6 +221,64 @@ def test_a_us_state_county_and_city_sales_tax_with_no_total_of_them_is_their_sum
                                                     "grand_total": total}  # fmt: skip
 
 
+_CANADIAN_HEAD = [(60, 60, "Northern Supply Ltd."), (60, 74, "200 Ridge Road SW, Calgary AB T2P 1J9"),
+                  (400, 60, "INVOICE"), (400, 74, "Invoice No: NS-1001"), (400, 88, "Invoice Date: 2026-05-04"),
+                  (60, 120, "GST/HST No. 123456782RT0001")]  # fmt: skip
+
+
+def _lines(rows: list[tuple[str, ...]]) -> list[tuple]:
+    """A line table from y 180: a description and an amount, or a description, quantity, rate and amount."""
+    wide = len(rows[0]) == 4
+    head = [(60, 164, "Description"), (490, 164, "Amount")] + ([(330, 164, "Qty"), (400, 164, "Rate")] if wide else [])
+    cells = []
+    for n, row in enumerate(rows):
+        xs = (60, 330, 400, 490) if wide else (60, 490)
+        cells += [(x, 180 + 14 * n, text) for x, text in zip(xs, row, strict=True)]
+    return head + cells
+
+
+def _totals(rows: list[tuple[str, str]]) -> list[tuple]:
+    return [cell for n, (label, value) in enumerate(rows) for cell in ((330, 320 + 15 * n, label),
+                                                                       (490, 320 + 15 * n, value))]  # fmt: skip
+
+
+@pytest.mark.parametrize(("lines", "totals", "tax"), [
+    ([("US state tax return preparation, 2025", "1,500.00")], [("Subtotal", "1,500.00"), ("GST 5%", "75.00"),
+                                                               ("Total", "1,575.00")], 75.0),
+    ([("Professional fees", "1,000.00"), ("City of Vancouver tax certificate", "57.00")],
+     [("Subtotal", "1,057.00"), ("GST 5%", "50.00"), ("PST 7%", "70.00"), ("Total", "1,177.00")], 120.0),
+    ([("Legal services re purchase of 12 Elm St", "1,200.00"), ("Town of Oakville tax certificate", "75.00")],
+     [("Subtotal", "1,275.00"), ("HST 13%", "156.00"), ("Total", "1,431.00")], 156.0),
+    ([("County tax search", "45.00"), ("Title search", "30.00")], [("Subtotal", "75.00"), ("GST 5%", "3.75"),
+                                                                    ("Total", "78.75")], 3.75),
+    ([("Local tax services", "300.00"), ("State tax filing review", "200.00"), ("City tax consulting", "100.00")],
+     [("Subtotal", "600.00"), ("GST 5%", "30.00"), ("Total", "630.00")], 30.0),
+    ([("County tax services", "300.00"), ("City tax services", "200.00"), ("Local tax services", "100.00")],
+     [("Subtotal", "600.00"), ("HST 13%", "78.00"), ("Total", "678.00")], 78.0),
+    ([("T1 personal return 2025", "1", "650.00", "650.00"), ("US state tax return (Arizona)", "1", "450.00", "450.00"),
+      ("Bookkeeping", "4", "100.00", "400.00")], [("Subtotal", "1,500.00"), ("GST 5%", "75.00"),
+                                                  ("Total", "1,575.00")], 75.0),
+    ([("Legal fees: purchase of 1234 Main St", "1", "1,200.00", "1,200.00"),
+      ("City of Surrey tax certificate", "1", "57.00", "57.00"), ("Land title search", "2", "11.00", "22.00")],
+     [("Subtotal", "1,279.00"), ("GST 5%", "63.95"), ("PST 7%", "84.00"), ("Total", "1,426.95")], 147.95),
+    ([("Legal fees re sale of 55 King St", "1", "1,500.00", "1,500.00"),
+      ("Town of Milton tax certificate", "1", "75.00", "75.00"), ("Courier", "1", "25.00", "25.00")],
+     [("Subtotal", "1,600.00"), ("HST 13%", "208.00"), ("Total", "1,808.00")], 208.0),
+])  # fmt: skip
+def test_a_line_items_words_about_a_tax_are_never_its_tax_total(tmp_path, lines, totals, tax):
+    """B-2874: the US state, county and city sales tax labels of B-2870 were labels wherever a line started with
+    them, so a Canadian invoice's line items ("US state tax return preparation, 2025", "City of Vancouver tax
+    certificate", "County tax search", "Local tax services") were its tax total (the year, the line's amount or its
+    quantity), and the line table ended at them: TOTAL_MISMATCH on clean GST/HST invoices. Such a row is read as a tax
+    only in the totals block, under the subtotal, its amount alone on its row."""
+    read = analyze(_pdf(tmp_path / "ca.pdf", _CANADIAN_HEAD + _lines(lines) + _totals(totals)))
+    f = read.fields
+    subtotal, total = (float(dict(totals)[k].replace(",", "")) for k in ("Subtotal", "Total"))
+    assert (f["subtotal"].value, f["tax_total"].value, f["grand_total"].value) == (subtotal, tax, total)
+    assert f["tax_total"].status != "check" and f["subtotal"].status != "check"
+    assert [li.description for li in read.line_items] == [line[0] for line in lines]  # (no line cut off at it)
+
+
 def test_a_discount_and_freight_between_two_subtotals_are_read_and_the_subtotal_is_not_verified(tmp_path):
     # Factur-X "Rabatte" sample: "Zwischensumme 202,76", "abzgl. Sondernachlass 10% von 147,30 -14,73", "zzgl.
     # Versandkosten 5,80 7", "Rechnungssumme Netto 193,83". The totals add up with either subtotal; 193,83 was verified.
