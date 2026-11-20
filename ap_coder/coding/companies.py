@@ -138,7 +138,8 @@ def company_table(records: list[dict[str, Any]], columns: dict[str, str]) -> tup
     return table, left
 
 
-def _table(text: str) -> tuple[Company, ...]:
+def loaded(text: str) -> tuple[Company, ...]:
+    """JD Edwards' companies of report 9 as loaded: ``text``, the setting it is kept in (``COMPANIES_SETTING``)."""
     try:
         data = json.loads(text or "{}")
     except ValueError:
@@ -152,7 +153,7 @@ def _table(text: str) -> tuple[Company, ...]:
 
 def companies(store: Any) -> dict[str, Company]:
     """JD Edwards' companies as loaded (report 9), by code ({} when none are)."""
-    return {c.code: c for c in _table(store.get_setting(COMPANIES_SETTING) or "")}
+    return {c.code: c for c in loaded(store.get_setting(COMPANIES_SETTING) or "")}
 
 
 def several(store: Any) -> bool:

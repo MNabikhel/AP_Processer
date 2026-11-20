@@ -360,10 +360,19 @@ def domestic_of(final: Mapping[str, Any], settings: JdeSettings) -> str:
 
 
 def load(store: Any) -> JdeSettings:
-    settings = JdeSettings.from_json(store.get_setting(SETTING_KEY))
-    from ..coding.companies import companies
+    from ..coding.companies import COMPANIES_SETTING
 
-    settings.company_currencies = {code: c.currency for code, c in companies(store).items() if c.currency}
+    return from_texts(store.get_setting(SETTING_KEY), store.get_setting(COMPANIES_SETTING))
+
+
+def from_texts(text: str | None, companies: str | None) -> JdeSettings:
+    """The settings saved as ``text``, with JD Edwards' companies of report 9 as loaded (``companies``, the text of
+    its setting): each one's currency. What a check kept for the very texts it read is worked out with (B-2075,
+    B-2697)."""
+    from ..coding.companies import loaded
+
+    settings = JdeSettings.from_json(text)
+    settings.company_currencies = {c.code: c.currency for c in loaded(companies or "") if c.currency}
     return settings
 
 

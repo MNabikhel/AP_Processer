@@ -103,20 +103,28 @@ def _page_holds(client, ids):
 def _keyed(store, client, ids):
     """A keying batch of ``ids`` made on the Exports page: (the invoices on it, those of its keying sheet's vouchers,
     those of its Not ready sheet)."""
+    from ap_coder.erp import jde_keying
+    from tests.webclient import follow, post
+
+    follow(client, post(client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": ids}))
+    batch = store.export_batches()[0]["id"]
+    sheet, held = _sheet(client, batch)
+    return store.batch_invoice_ids(batch), sheet, [n for n, _why in held]
+
+
+def _sheet(client, batch):
+    """Batch ``batch``'s keying sheet as the Exports page downloads it: (the invoices of its vouchers, [(invoice, why)]
+    of its Not ready sheet)."""
     import io
 
     import openpyxl
 
     from ap_coder.erp import jde_keying
     from tests.erp.test_jde_keying import blocks
-    from tests.webclient import follow, post
 
-    follow(client, post(client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": ids}))
-    batch = store.export_batches()[0]["id"]
     wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/exports/batches/{batch}/download").content))
     sheet = [int(b[0][1].value.rsplit(" ", 1)[1]) for b in blocks(wb[jde_keying.SHEET])]
-    held = [row[0] for row in wb[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True)]
-    return store.batch_invoice_ids(batch), sheet, held
+    return sheet, [(row[0], row[-1]) for row in wb[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True)]
 
 
 def test_ap_coders_own_invoice_of_another_company_approved_over_the_warning_goes_on_the_batch(
@@ -164,3 +172,18 @@ def test_a_bill_in_jd_edwards_under_another_company_holds_an_invoice_only_until_
             "found since it was approved: reopen it to check its company") in page  # fmt: skip
     on_batch, sheet, not_ready = _keyed(store, client, [over, own, since])
     assert on_batch == sheet == [over] and not_ready == []
+
+
+def test_the_exports_page_reads_jd_edwards_companies_as_a_batch_made_does(tmp_path, cost_centers_demo_template):
+    """B-2697: the Exports page's list of what cannot go to JD Edwards read Settings → JD Edwards E1 without report 9,
+    which a batch made reads: a US company's USD invoice, in its own currency, was greyed out there as "currency USD
+    is not set up for JD Edwards" where only CAD is set up for the export, though it is no foreign voucher."""
+    store, client, doc = _ready(tmp_path, cost_centers_demo_template)
+    js = jde_settings.load(store)
+    js.currencies = ["CAD"]
+    jde_settings.save(store, js)
+    usd = _approved(store, tmp_path, {**doc, "currency": "USD"}, "NW-5401", "00310")
+    held, page = _page_holds(client, [usd])
+    assert held == {usd: False}
+    on_batch, sheet, not_ready = _keyed(store, client, [usd])
+    assert on_batch == sheet == [usd] and not_ready == []
