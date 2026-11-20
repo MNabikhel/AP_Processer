@@ -401,7 +401,8 @@ def apply_items(output: dict[str, Any], items: list[dict[str, Any]], text: str, 
                 refused.append(f"{what}: the invoice has {tax} at more than one rate")
                 continue
             marked = [li for li in lines if tax in (li.get("taxes_applied") or [])]
-            if not marked:  # a tax no line carries: on every line that is not exempt from it
+            newly = not marked
+            if newly:  # a tax no line carries: on every line that is not exempt from it
                 marked = [li for li in lines if not li.get("tax_status") and tax not in (li.get("tax_exempt") or [])]
             base = add_up(li["amount"] for li in marked)
             rate = _rate(item.get("rate"), amount, base, len(marked), out, setup)
@@ -410,6 +411,11 @@ def apply_items(output: dict[str, Any], items: list[dict[str, Any]], text: str, 
                 continue
             for li in marked:
                 li["taxes_applied"] = sorted({*(li.get("taxes_applied") or []), tax})
+            if newly and same:  # (a new tax line says the lines' amount it is on)
+                numbers = [str(li.get("line_number")) for li in marked]
+                where = ("every line" if len(marked) == len(lines) else f"line {numbers[0]}" if len(numbers) == 1
+                         else f"lines {', '.join(numbers[:-1])} and {numbers[-1]}")  # fmt: skip
+                said.append(f"{tax} on {where} (no line had it)")
             if same:
                 if abs(float(same[0].get("tax_amount") or 0) - amount) < 0.005 and not item.get("rate"):
                     continue

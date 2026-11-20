@@ -485,3 +485,22 @@ def test_on_a_laptop_corrections_made_while_an_invoice_is_open_put_its_screen_ou
         assert answer.status_code == 409 and answer.json()["stale"]["text"] == stale["text"], (action, answer.text)
     inv = store.get_invoice(iid)
     assert inv["status"] == REVIEW and inv["ai_output"]["grand_total"] == 722.93 and not store.invoice_drafts()
+
+
+def test_a_tax_correction_that_puts_the_tax_on_the_lines_says_so(store):  # noqa: F811
+    """B-2806: a tax correction of the amount the tax line had already put that tax on every line, none having it,
+    and VERIFIER_CORRECTED said only the freight added: each line's tax code (JD Edwards' tax code and area) changed
+    unsaid. (The reading on this computer puts a tax charged on lines; a chat model's lines may have none.)"""
+    output = {"line_items": [{"line_number": 1, "description": "Rebar", "quantity": 1.0, "unit_price": 1000.0,
+                              "amount": 1000.0, "predicted_gl_code": "5000", "taxes_applied": []}],
+              "tax_lines": [{"tax_type": "GST", "rate": 0.05, "taxable_amount": 1050.0, "tax_amount": 52.5}],
+              "subtotal": 1000.0, "tax_total": 52.5, "grand_total": 1102.5, "invoice_date": "2026-11-02",
+              "vendor_name": "Birch Electric Ltd", "invoice_number": "4410", "currency": "CAD",
+              "confidence_score": 0.9}  # fmt: skip
+    page = "Rebar 1,000.00\nFreight 50.00\nSubtotal 1,050.00\nGST 52.50\nTotal 1,102.50"
+    fixes = [_fix("charge", "50.00", "Freight"), _fix("tax", "52.50", "GST")]
+    out, said, refused = corrections.apply_items(output, fixes, page, store=store, setup=store.reference_data().tax,
+                                                 supplier_wanted=False)  # fmt: skip
+    assert [li["taxes_applied"] for li in out["line_items"]] == [["GST"], ["GST"]] and not refused
+    assert "GST on every line (no line had it)" in said, said
+    assert _adds_up(out)
