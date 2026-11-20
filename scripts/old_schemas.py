@@ -1,8 +1,11 @@
 """The new database each older AP Coder release made, kept as SQL in ``tests/fixtures/old_schemas/``, for the test that
 an older database brought up to date is the same as a new one (``tests/core/test_migrations.py``, D-190).
 
-    python scripts/old_schemas.py                        every release in RELEASES (and UNRELEASED) this clone has
+    python scripts/old_schemas.py                        every release in RELEASES (and UNRELEASED)
     python scripts/old_schemas.py --code e1cf61a=FOLDER  a release's code unpacked already (GitHub's ZIP of it)
+
+It needs every release's code: in a shallow clone (a cloud session's), or one without a release, it writes nothing
+and says so (``git fetch --unshallow`` gets them all). A file kept for a release it could not read would be wrong.
 
 Each release's own code (its commit's ``ap_coder/``, as ``git archive`` gives it) makes a new database, run by this
 Python; what it made (its tables, indexes, triggers and the rows it wrote, such as ``schema_version``) is written as
@@ -73,14 +76,30 @@ Store(db)
 NEW_EACH_TIME = {"summary_id": "0" * 32, "rule_use_since": "2000-01-01T00:00:00"}
 
 
-def code_of(sha: str, folder: Path) -> bool:
-    """``sha``'s ``ap_coder/`` in ``folder``; False when this clone does not have the commit."""
-    archive = subprocess.run(["git", "archive", "--format=tar", sha, "ap_coder"], cwd=ROOT, capture_output=True)
-    if archive.returncode:
-        return False
+def git(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True)
+
+
+def unreadable(given: dict[str, str]) -> str:
+    """What stops this clone from reading every release's code (one given with ``--code`` is read from its folder),
+    and what to do: '' when nothing does."""
+    if git("rev-parse", "--is-shallow-repository").stdout.strip() == b"true":
+        return ("this clone is shallow: it has only the newest commits, not the older releases' code. Run git fetch "
+                "--unshallow, then run this again.")  # fmt: skip
+    missing = [f"{sha} ({label})" for sha, label in [*RELEASES, *UNRELEASED]
+               if sha not in given and git("cat-file", "-e", f"{sha}^{{commit}}").returncode]  # fmt: skip
+    if not missing:
+        return ""
+    return (f"this clone does not have {', '.join(missing)}. Run git fetch --unshallow (or give a release's code "
+            "with --code SHA=FOLDER), then run this again.")  # fmt: skip
+
+
+def code_of(sha: str, folder: Path) -> None:
+    """``sha``'s ``ap_coder/`` in ``folder``."""
+    archive = git("archive", "--format=tar", sha, "ap_coder")
+    archive.check_returncode()
     with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
         tar.extractall(folder, filter="data") if sys.version_info >= (3, 12) else tar.extractall(folder)  # noqa: S202
-    return True
 
 
 def made_by(folder: Path, work: Path) -> Path:
@@ -124,16 +143,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=OUT)
     args = parser.parse_args(argv)
     given = dict(item.split("=", 1) for item in args.code)
+    why = unreadable(given)
+    if why:
+        print(f"Nothing was written: {why}")
+        return 2
     args.out.mkdir(parents=True, exist_ok=True)
     kept: dict[str, tuple[Path, list[str]]] = {}  # a dump -> (its file, the releases that made it)
-    missing = []
     for sha, label in [*RELEASES, *UNRELEASED]:
         with tempfile.TemporaryDirectory(prefix="ap-old-schema-") as scratch:
             work = Path(scratch)
             folder = Path(given[sha]) if sha in given else work / "code"
-            if sha not in given and not code_of(sha, folder):
-                missing.append(f"{sha} ({label})")
-                continue
+            if sha not in given:
+                code_of(sha, folder)
             sql = dump(made_by(folder, work))
         same = kept.get(sql)
         if same is not None:
@@ -149,8 +170,6 @@ def main(argv: list[str] | None = None) -> int:
         header = f"-- A new database as AP Coder made it at {releases[0]}{also} (scripts/old_schemas.py)\n"
         path.write_text(header + body, encoding="utf-8")
         print(f"{path.relative_to(ROOT) if path.is_relative_to(ROOT) else path}: {', '.join(releases)}")
-    if missing:
-        print(f"Not in this clone (a full clone has them, or --code SHA=FOLDER): {', '.join(missing)}")
     return 0
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import subprocess
 from contextlib import closing
 from pathlib import Path
 
@@ -158,6 +159,33 @@ def test_a_database_kept_as_sql_is_made_again_the_same(tmp_path):
         return [(key, value) for key, value in rows if key not in old_schemas.NEW_EACH_TIME]
 
     assert settings(again) == settings(made)
+
+
+@pytest.mark.parametrize("clone", ["shallow", "without a release"])
+def test_the_old_databases_are_not_made_again_by_a_clone_without_every_release(clone, tmp_path, monkeypatch, capsys):
+    """Made in a shallow clone (a cloud session's), which has none of the older releases' code, the files came out
+    wrong: one named after another release, one naming fewer releases. A clone that cannot read every release writes
+    nothing and says how to get them all."""
+    old_schemas = load_script("old_schemas", "ap_old_schemas")
+    gone = old_schemas.RELEASES[3][0]
+
+    def git(*args):
+        if args[:2] == ("rev-parse", "--is-shallow-repository"):
+            said = b"true\n" if clone == "shallow" else b"false\n"
+            return subprocess.CompletedProcess(args, 0, said, b"")
+        assert args[0] == "cat-file", args  # nothing is read before every release is found
+        return subprocess.CompletedProcess(args, 128 if args[2].startswith(gone) else 0, b"", b"")
+
+    monkeypatch.setattr(old_schemas, "git", git)
+    kept = tmp_path / "schema-14-4366f35.sql"
+    kept.write_text("-- as it was\n", encoding="utf-8")
+    assert old_schemas.main(["--out", str(tmp_path)]) == 2
+    said = capsys.readouterr().out
+    assert said.startswith("Nothing was written: ") and "git fetch --unshallow" in said
+    assert (gone in said) == (clone != "shallow")
+    assert [p.name for p in tmp_path.iterdir()] == [kept.name] and kept.read_text(encoding="utf-8") == "-- as it was\n"
+    if clone != "shallow":  # its code given unpacked, every release is read
+        assert old_schemas.unreadable({gone: str(tmp_path)}) == ""
 
 
 def test_the_numbered_steps_run_in_the_order_of_their_versions():
