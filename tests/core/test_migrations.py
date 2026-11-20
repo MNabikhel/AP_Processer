@@ -19,8 +19,9 @@ from tests.scripts import load_script
 OLD = Path(__file__).parents[1] / "fixtures" / "old_schemas"
 SNAPSHOTS = sorted(OLD.glob("schema-*.sql"))
 # The schema of every release a user may have (scripts/ci/old_versions.py and docs/UPGRADING.md for PR #1 to #8, the
-# pilot's and the hand-over's tags since): PR #1's 2 is the oldest an update starts from.
-RELEASED = {2, 13, 14, 15, 16, 17, 18, 19, 27}
+# pilot's and the hand-over's tags since, then GitHub's tested builds from PR #133, D-247): PR #1's 2 is the oldest an
+# update starts from.
+RELEASED = {2, 13, 14, 15, 16, 17, 18, 19, 27, 28, 29, 30, 31, 32}
 # What a database brought up to date keeps that a new one does not have, and why it is harmless.
 KNOWN = {
     "verifications: columns in another order": "the AI reviewer's queue had its reader before the time it was renewed "
@@ -131,6 +132,18 @@ def test_the_old_databases_are_those_of_every_release(tmp_path):
     assert RELEASED <= versions and max(versions) <= SCHEMA_VERSION
 
 
+def test_every_schema_since_pr_99s_has_an_old_database():
+    """Every green main commit is a release (D-247), so each schema from PR #99's 27 to the one before this build's
+    was some user's: each has an old database to bring up to date, and a step that breaks only from it is caught."""
+    missing = sorted(set(range(27, SCHEMA_VERSION)) - {int(p.name.split("-")[1]) for p in SNAPSHOTS})
+    assert not missing, (
+        f"No old database at schema {', '.join(map(str, missing))}: add the releases at it (the v0.3.0-build.<sha> "
+        "tags: git ls-remote --tags origin; if no release had it, the commit that first made it, to UNRELEASED) to "
+        "RELEASES in scripts/old_schemas.py, then run: python scripts/old_schemas.py (in a full clone: git fetch "
+        "--unshallow, or it rewrites the older files)"
+    )
+
+
 def test_a_database_kept_as_sql_is_made_again_the_same(tmp_path):
     """The way the old databases are kept (``scripts/old_schemas.py``'s dump) loses nothing: a new database dumped and
     made again from the SQL has the same tables, columns, indexes, triggers and settings."""
@@ -139,9 +152,10 @@ def test_a_database_kept_as_sql_is_made_again_the_same(tmp_path):
     again = _old_database_from(old_schemas.dump(made), tmp_path / "b")
     assert shape(again) == shape(made)
 
-    def settings(db: Path) -> list[tuple[str, str]]:
+    def settings(db: Path) -> list[tuple[str, str]]:  # but what is new in every database, which the dump writes as one
         with closing(sqlite3.connect(db)) as conn:
-            return conn.execute("SELECT key, value FROM settings WHERE key != 'summary_id' ORDER BY key").fetchall()
+            rows = conn.execute("SELECT key, value FROM settings ORDER BY key").fetchall()
+        return [(key, value) for key, value in rows if key not in old_schemas.NEW_EACH_TIME]
 
     assert settings(again) == settings(made)
 

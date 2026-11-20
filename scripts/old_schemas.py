@@ -26,7 +26,8 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "tests" / "fixtures" / "old_schemas"
 
 # What a user may have: main after each merged pull request (scripts/ci/old_versions.py's for PR #1 to #8, then the
-# ones since, the pilot's and the hand-over's release tags among them), oldest first.
+# ones since, the pilot's and the hand-over's release tags among them), then each tested build GitHub released (D-247:
+# a v0.3.0-build.<sha> tag, from PR #133), oldest first.
 RELEASES = [
     ("db95511", "PR #1"), ("b968b74", "PR #2"), ("4366f35", "PR #3"), ("e2a20cf", "PR #4"), ("a798f79", "PR #5"),
     ("abbc331", "PR #6"), ("0de8afe", "PR #7"), ("e1cf61a", "PR #8"), ("968cf9d", "PR #44"), ("5dd9d0d", "PR #45"),
@@ -42,7 +43,12 @@ RELEASES = [
     ("f57d472", "PR #81, v0.3.0-pilot5, v0.3.0-handoff5"), ("34d1eb5", "PR #82"),
     ("a1bbbf1", "v0.3.0-pilot6, v0.3.0-handoff6"), ("c362eb4", "v0.3.0-pilot7, v0.3.0-handoff7"),
     ("37cbef2", "v0.3.0-pilot8, v0.3.0-handoff8"), ("265419a", "v0.3.0-pilot9, v0.3.0-handoff9"),
-    ("1696f20", "PR #99"),
+    ("1696f20", "PR #99"), ("12e5dfe", "PR #133"), ("3b834d2", "PR #134"), ("51c29f3", "PR #135"),
+    ("a7fd031", "PR #136"), ("cf4fde6", "PR #138"), ("9520c2f", "PR #139"), ("d34e47b", "PR #140"),
+    ("19fb88b", "PR #141"), ("f5a2dab", "PR #142"), ("8437593", "PR #143"), ("8269793", "PR #144"),
+    ("9e2cb35", "PR #145"), ("eb1f4f9", "PR #146"), ("a6af108", "PR #148"), ("ec1b52a", "PR #149"),
+    ("77edd38", "PR #150"), ("1a9e943", "PR #151"), ("610577c", "PR #152"), ("8ebd4f9", "PR #154"),
+    ("95b4a22", "PR #155"), ("d025cd4", "PR #156"), ("34d7df2", "PR #158"),
 ]  # fmt: skip
 # The schema versions no release had (made on the way to PR #99), each as the commit that first made it.
 UNRELEASED = [
@@ -62,6 +68,9 @@ else:
     from ap_coder.core.store import Store
 Store(db)
 """
+# The settings a new database writes anew each time, as one value: the summary's id (``summary_memo``) and the day it
+# began to keep the rules' use (``rule_use_since``, the clock's time; the releases from PR #133 have it).
+NEW_EACH_TIME = {"summary_id": "0" * 32, "rule_use_since": "2000-01-01T00:00:00"}
 
 
 def code_of(sha: str, folder: Path) -> bool:
@@ -86,11 +95,11 @@ def made_by(folder: Path, work: Path) -> Path:
 def dump(db: Path) -> str:
     """The database as SQL: its tables, the rows in them, then its indexes and triggers (made after the rows, so the
     triggers add nothing), each table's rows in their order. SQLite's own tables and a full-text index's are left to
-    SQLite, which makes them with the tables. The summary's id, new in every database (``summary_memo``), is written
-    as zeros: two releases that made the same database give the same SQL."""
+    SQLite, which makes them with the tables. What is new in every database (``NEW_EACH_TIME``) is written as one
+    value: two releases that made the same database give the same SQL."""
     conn = sqlite3.connect(db)
     try:
-        conn.execute("UPDATE settings SET value = ? WHERE key = 'summary_id'", ("0" * 32,))
+        conn.executemany("UPDATE settings SET value = ? WHERE key = ?", [(v, k) for k, v in NEW_EACH_TIME.items()])
         made = conn.execute("SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid").fetchall()
         virtual = [name for _, name, sql in made if sql.upper().startswith("CREATE VIRTUAL TABLE")]
         made = [m for m in made if not m[1].startswith(("sqlite_", *(f"{v}_" for v in virtual)))]
