@@ -461,3 +461,116 @@ def test_an_invoice_approved_before_report_9_is_sent_back_at_its_second_approval
     assert store.get_invoice(page.id)["final_output"]["company"] == "00210"
     shown = html.unescape(_second_approval(store, client, monkeypatch, page))
     assert store.get_invoice(page.id)["status"] == APPROVED, shown[shown.find("Not done") :][:300]
+
+
+def test_a_us_companys_invoice_shows_no_canadian_place_of_supply(client, store):
+    """B-2871: the review screen's header said "Place of supply: Alberta" (Settings → Review's province) on a US
+    company's invoice shipped to Spokane, WA, or with no ship-to printed, though no Canadian tax is checked for it. A
+    company not checked for Canadian tax shows the ship-to printed (outside Canada), never a province worked out."""
+    load_sample_setup(store)
+    store.set_setting("our_province", "AB")
+    _card(client, jde_group.companies_xlsx())
+    us = {"company": "00310", "company_how": "picked", "currency": "USD"}
+    shown = {}
+    for ship_to in ("OUTSIDE_CANADA", ""):
+        invoice_id = add_clean(store, ship_to_province=ship_to, **us)
+        data = Draft.stored(store.get_invoice(invoice_id)["ai_output"]).header
+        answer = client.post(f"/review/{invoice_id}/check", data=data, headers=PAGE).json()
+        head = html.unescape(answer["sections"]["summary"]).split('class="rvw-head-meta"', 1)[1].split("</div>")[0]
+        shown[ship_to] = re.findall(r'title="Place of supply">([^<]*)<', head)
+    assert shown == {"OUTSIDE_CANADA": ["Outside Canada"], "": []}
+    canadian = add_clean(store, ship_to_province="", company="00210", company_how="picked")
+    data = Draft.stored(store.get_invoice(canadian)["ai_output"]).header
+    head = html.unescape(client.post(f"/review/{canadian}/check", data=data, headers=PAGE).json()["sections"][
+        "summary"])  # fmt: skip
+    assert 'title="Place of supply">Alberta<' in head  # (a Canadian company's: Settings' province, as before)
+
+
+def test_the_us_sales_and_use_tax_card_keeps_how_each_us_companys_tax_is_keyed(client, store):
+    """D-312: Settings → JD Edwards E1's US sales and use tax card, with several companies: each company not checked
+    for Canadian tax, its tax held for a person until the card keys it (for every one, or a company its own way); the
+    sales and use tax codes and the use tax rates, a tax area a line, kept and shown again; a code of the Canadian
+    taxes, the same code twice or a line that is no rate refused, said why."""
+    from ap_coder.erp import jde_settings
+    from ap_coder.web.core import SHOW_JDE
+
+    store.set_setting(SHOW_JDE, "1")
+    assert 'id="us-tax"' not in client.get("/settings/jde").text  # one company: no such card
+    _card(client, jde_group.companies_xlsx())
+    card = html.unescape(client.get("/settings/jde").text).split('id="us-tax"', 1)[1].split("</section>", 1)[0]
+    assert re.findall(r'name="us_company" value="(\d+)"', card) == ["00310", "00320", "00410"]  # (not the Canadian)
+    assert '<option value="held" selected>Held for a person to confirm it (as before)</option>' in card
+    form = {"us_tax": "keyed", "us_company": ["00310", "00320", "00410"], "us_company_tax": ["held", "", ""],
+            "sales_tax_code": "s", "use_tax_code": "U", "use_tax_rates": "WA-SPOKANE = 9.1\n\nmt-blgs 0%"}  # fmt: skip
+    assert "US sales and use tax saved." in follow(client, client.post("/settings/jde/us-tax", data=form,
+                                                                         headers=PAGE))  # fmt: skip
+    js = jde_settings.load(store)
+    assert (js.us_tax, js.company_us_tax, js.sales_tax_code, js.use_tax_code) == ("keyed", {"00310": "held"}, "S", "U")
+    assert js.use_tax_rates == {"WA-SPOKANE": 9.1, "MT-BLGS": 0.0}
+    card = html.unescape(client.get("/settings/jde").text).split('id="us-tax"', 1)[1].split("</section>", 1)[0]
+    assert "MT-BLGS = 0\nWA-SPOKANE = 9.1</textarea>" in card and '<option value="keyed" selected>' in card
+    for change, said in (
+        ({"sales_tax_code": "V"}, "not V, C, B or E (the Canadian taxes' codes)"),
+        ({"use_tax_code": "S"}, "The sales tax and the use tax codes must differ."),
+        ({"use_tax_rates": "WA-SPOKANE nine"}, "“WA-SPOKANE nine” is no tax area and rate"),
+        ({"use_tax_rates": "MT-BILLINGS 0"}, "Tax area MT-BILLINGS is longer than JD Edwards' 10"),
+    ):
+        answer = client.post("/settings/jde/us-tax", data={**form, **change}, headers=PAGE)
+        assert answer.status_code == 400 and said in answer.json()["error"], answer.text
+    assert jde_settings.load(store).use_tax_rates == {"WA-SPOKANE": 9.1, "MT-BLGS": 0.0}  # (nothing refused kept)
+
+
+@pytest.mark.parametrize("width", [1366, 390])
+def test_in_a_browser_the_us_sales_and_use_tax_card_is_filled_in_and_saved(chromium, store, width):
+    """D-312 in a browser, on a laptop and a phone: the US sales and use tax card is on Settings → JD Edwards E1 with
+    every box on screen (nothing past the page's right edge), its choices made and rates typed as a person does, and
+    saved with its own button, the page saying so."""
+    import json
+
+    from ap_coder.erp import jde_settings
+    from ap_coder.web.app import create_app
+    from ap_coder.web.core import SHOW_JDE
+    from tests.browser import browser_on, wait_until
+    from tests.webclient import web_settings
+
+    store.set_setting(SHOW_JDE, "1")
+    store.set_setting(companies.COMPANIES_SETTING, json.dumps({c[0]: {"name": c[1], "currency": c[2], "country": c[3]}
+                                                               for c in jde_group.GROUP}))  # fmt: skip
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
+        page = browser.new_page(viewport={"width": width, "height": 800})
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/settings/jde")
+        card = page.locator("#us-tax")
+        card.scroll_into_view_if_needed()
+        assert card.is_visible() and "Held for a person to confirm it (as before)" in card.inner_text()
+        card.locator('select[name="us_tax"]').select_option("keyed")
+        card.locator('select[aria-label="How the tax of Maple Ridge Caribbean Ltd. is keyed"]').select_option("held")
+        card.locator('textarea[name="use_tax_rates"]').fill("WA-SPOKANE = 9.1")
+        for box in card.locator("select, input:not([type=hidden]), textarea, button").all():
+            box.scroll_into_view_if_needed()
+            right = page.evaluate("b => b.getBoundingClientRect().right", box.element_handle())
+            assert right <= width + 1, box.evaluate("b => b.outerHTML")[:120]
+        card.locator("button[type=submit]").click()
+        wait_until(page, lambda: jde_settings.load(store).us_tax == "keyed")
+        page.wait_for_selector("text=US sales and use tax saved.")
+        js = jde_settings.load(store)
+        assert (js.company_us_tax, js.use_tax_rates) == ({"00410": "held"}, {"WA-SPOKANE": 9.1})
+        assert page.evaluate("document.documentElement.scrollWidth") <= width + 1 and errors == []
+
+
+def test_a_us_companys_sales_tax_rate_is_never_marked_wrong_by_canadas_rates(client, store):
+    """B-2873: the review screen's Rates and GL accounts marked a US company's sales tax rate wrong (✕), its official
+    rate "not levied": Canada's rate table, though the company is not checked for Canadian tax. Its rate is said not
+    checked, unmarked; a Canadian company's foreign tax is still marked as before."""
+    load_sample_setup(store)
+    _card(client, jde_group.companies_xlsx())
+    shown = {}
+    for company in ("00310", "00210"):
+        invoice_id = add_clean(store, "cascade_US_SalesTax_INV-30981", company=company, company_how="picked")
+        data = Draft.stored(store.get_invoice(invoice_id)["ai_output"]).header
+        answer = client.post(f"/review/{invoice_id}/check", data=data, headers=PAGE).json()
+        rates = html.unescape(answer["sections"]["taxcheck"]).split("Rates and GL accounts", 1)[1]
+        official = re.findall(r'<td class="r">(not [a-z]+)</td>', rates)
+        shown[company] = (re.findall(r'aria-label="(Right|Wrong)"', rates), official)
+    assert shown == {"00310": ([], ["not checked"]), "00210": (["Wrong"], ["not levied"])}

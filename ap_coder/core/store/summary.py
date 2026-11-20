@@ -56,8 +56,8 @@ from .rules import RULES_SCHEMA, rule_rows
 
 # What the summary works out, by version: a change to it (a new column, a report's facts read differently, the
 # vendor-matching or invoice-number rules) changes this, and every database builds its summary again once.
-SUMMARY_RULES = "5"  # 2: the review queue's facts (D-155); 3: the tax claimed as posted (D-238); 4: q_others (D-241);
-# 5: demo read as JSON (B-2556)
+SUMMARY_RULES = "6"  # 2: the review queue's facts (D-155); 3: the tax claimed as posted (D-238); 4: q_others (D-241);
+# 5: demo read as JSON (B-2556); 6: a US company's invoices on no Canadian tax report (B-2872)
 
 # The columns of ``invoices`` the summary keeps as they are, with their declared types (so they compare and sort as
 # the columns of ``invoices`` do).

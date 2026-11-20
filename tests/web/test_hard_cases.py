@@ -190,10 +190,12 @@ def test_e_a_usd_invoice(chart_company, drop, hard):
     reason = SEVERAL.format(lines=4, accounts=2, shares="50% / 50%")
     assert (got.accounts, got.reasons) == (["", ""], [reason, reason])
     assert all(set(offered[:2]) == set(invoice.supplier.accounts) for offered in got.offered)
-    # (A US supplier's invoice is checked for Canadian tax like a domestic one: the audit's finding 16, for the user.)
+    # (A US supplier's invoice is checked for Canadian tax like a domestic one: the audit's finding 16, for the user;
+    # its supplier is outside Canada, said so, B-2875.)
     assert got.found["NO_TAX_CHARGED"] == (
         "no sales tax charged on a supply in Alberta; confirm it is exempt or zero-rated, or that the vendor is not "
-        "registered for GST/HST (a small supplier, no GST/HST number printed: no GST/HST is due)"
+        "registered for GST/HST (a supplier outside Canada not registered for GST/HST charges none: the GST/HST is "
+        "paid at the border on goods (the customs entry), and self-assessed on services when it is due)"
     )
     assert got.queue == _left_line(got.accounts) + " (and 1 more)"
 

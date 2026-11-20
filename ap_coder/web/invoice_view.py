@@ -47,7 +47,7 @@ from ap_coder.coding.vendors import MOVED_OFF_HOLD, moved_off_hold
 from ap_coder.core.config import Settings
 from ap_coder.core.memory import pair_lines, vendor_key
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData
-from ap_coder.core.schema import FROM_VENDOR_LIST, InvoiceCoding
+from ap_coder.core.schema import COMPANY_TAX, FROM_VENDOR_LIST, InvoiceCoding
 from ap_coder.core.store import Store
 from ap_coder.core.store.accounts import CURRENCY_CHANGED
 from ap_coder.core.store.invoices import TAX_ID_DIFFERS
@@ -368,7 +368,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "tax_said": account_lines.tax_said(taxes, report.issues) if taxes is not None else None,
         "problems": [],
         "amount_line": _amount_line(header),
-        "summary": summary(coding, report, errors, warnings, default_days, terms, reference.tax),
+        "summary": summary(coding, report, errors, warnings, default_days, terms, reference.tax,
+                           canadian=COMPANY_TAX not in output),
         "checks": checks_summary(report, errors, warnings, taxes is not None),
         "details": checks_details(report),
         "rules_applied": [rules.describe(c) for c in meta.get("rules_applied") or []],
@@ -380,7 +381,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "reasons": reasons(coding, ai, report, reference),
         "suggestions": suggestions(store, reference, coding),
         "po": po_section(store, coding, inv["id"], po_match),
-        "tax_check": tax_check(coding, reference),
+        "tax_check": tax_check(coding, reference, canadian=COMPANY_TAX not in output),
         "math": (math := math_check(coding, reference.tax)),
         "tax_marks": tax_marks(math, report.issues),
         "split": spend_split(output, reference),

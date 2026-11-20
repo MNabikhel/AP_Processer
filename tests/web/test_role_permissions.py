@@ -32,8 +32,9 @@ TWINS = {"/month-end/accruals.xlsx", "/statements/reconciliation.xlsx", "/jde-fi
 # JD Edwards files' new cards and the workbook of all its reports (D-266): each allowed to whoever loads the chart.
 LOADS = {"/jde-files/workbook/upload", "/jde-files/workbook/load", "/jde-files/{card}/upload-table",
          "/jde-files/{card}/load-table"}  # fmt: skip
-# Settings → JD Edwards E1's card of the accounts AP posts to (D-268, D-269): an Admin's, as the rest of the tab.
-SETTINGS = {"/settings/jde/posting"}
+# Settings → JD Edwards E1's cards of the accounts AP posts to (D-268, D-269) and of the US sales and use tax (D-312):
+# an Admin's, as the rest of the tab.
+SETTINGS = {"/settings/jde/posting", "/settings/jde/us-tax"}
 
 
 @pytest.fixture(scope="module")

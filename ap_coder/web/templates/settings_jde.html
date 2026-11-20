@@ -409,6 +409,48 @@
   </form>
 </section>
 
+{% if us_tax.rows %}
+{# A US company's tax on its voucher (D-312): held for a person, as before, until the JD Edwards team confirms. #}
+<section class="card" id="us-tax">
+  <h4>US sales and use tax</h4>
+  <p class="muted">How the tax of an invoice for a company not checked for Canadian tax goes on its JD Edwards voucher.
+    <strong>Held for a person</strong> (as before): the tax charged stays in the expense lines, with the exempt code, and
+    a person confirms it. <strong>Keyed</strong>: the sales tax charged is the voucher's tax amount, with the sales tax
+    code, on the tax area of its PO line or else its supplier (neither gives one: the voucher is held, and says so); an
+    invoice charging none says use tax may be due and is keyed with the use tax code, for JD Edwards to work it out and
+    accrue it. A PO-matched voucher, and the tax coded to G/L accounts, are keyed as before. Confirm the codes, the tax
+    areas and that AP keys the sales tax on the voucher with your JD Edwards team before you choose Keyed.</p>
+  <form method="post" action="/settings/jde/us-tax" class="stack" data-busy="Saving…">
+    <label class="field">Every US company
+      <select name="us_tax">{% for value, label in us_tax.modes.items() %}<option value="{{ value }}"{% if us_tax.choice == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <div class="table-wrap">
+      <table class="apc-table st-edit" id="us-tax-companies">
+        <thead><tr><th>Company</th><th>Name</th><th>Its tax</th><th>Not checked for Canadian tax</th></tr></thead>
+        <tbody>
+          {% for c in us_tax.rows %}
+          <tr><td><input type="hidden" name="us_company" value="{{ c.code }}">{{ c.code }}</td><td>{{ c.name }}</td>
+            <td><select name="us_company_tax" aria-label="How the tax of {{ c.name }} is keyed">
+              <option value=""{% if not c.choice %} selected{% endif %}>As for every US company</option>
+              {% for value, label in us_tax.modes.items() %}<option value="{{ value }}"{% if c.choice == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select></td><td>{{ c.why }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="row">
+      <label class="field">Sales tax code (VLEXR1)
+        <input type="text" name="sales_tax_code" value="{{ us_tax.sales_code }}" maxlength="2" autocomplete="off" spellcheck="false"></label>
+      <label class="field">Use tax code (VLEXR1)
+        <input type="text" name="use_tax_code" value="{{ us_tax.use_code }}" maxlength="2" autocomplete="off" spellcheck="false"></label>
+    </div>
+    <label class="field">Use tax rates, a tax area and its rate in percent a line (WA-SPOKANE = 9.1): the use tax due is
+      worked out at it and said on the review screen; a tax area with none, no amount is worked out
+      <textarea name="use_tax_rates" rows="3" autocomplete="off" spellcheck="false">{{ us_tax.rates }}</textarea></label>
+    <div><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save US sales and use tax</button></div>
+  </form>
+</section>
+{% endif %}
+
 {% set team_rest %}
 <section class="card" id="terms">
   <h4>Payment terms → JD Edwards code</h4>

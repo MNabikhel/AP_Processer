@@ -615,3 +615,20 @@ def test_no_tax_charged_says_what_is_still_due_and_why_none_may_be_charged(refer
     message = next(f.message for f in check_taxes(InvoiceCoding.model_validate(alberta), reference.tax, None)
                    if f.code == "NO_TAX_CHARGED")  # fmt: skip
     assert "not registered for GST" in message and "self-assess" not in message  # no provincial tax in Alberta
+
+
+def test_no_tax_charged_by_a_supplier_outside_canada_says_its_gst_is_self_assessed_or_paid_at_the_border(reference):
+    """B-2875: a US supplier billing a Canadian company charges no GST/HST when it is not registered for it, but the
+    finding gave only a small supplier as why none is charged, with "no GST/HST is due". A supplier outside Canada is
+    said so: the GST/HST is paid at the border on goods, self-assessed on services when due."""
+    alberta = {**_gt(ON), "tax_lines": [], "tax_total": 0.0, "ship_to_province": "AB",
+               "supplier_province": "OUTSIDE_CANADA", "gst_hst_registration_number": ""}  # fmt: skip
+    alberta["grand_total"] = alberta["subtotal"]
+    for li in alberta["line_items"]:
+        li["taxes_applied"] = []
+    message = next(f.message for f in check_taxes(InvoiceCoding.model_validate(alberta), reference.tax, None)
+                   if f.code == "NO_TAX_CHARGED")  # fmt: skip
+    assert message == (
+        "no sales tax charged on a supply in Alberta; confirm it is exempt or zero-rated, or that the vendor is not "
+        "registered for GST/HST (a supplier outside Canada not registered for GST/HST charges none: the GST/HST is "
+        "paid at the border on goods (the customs entry), and self-assessed on services when it is due)")  # fmt: skip

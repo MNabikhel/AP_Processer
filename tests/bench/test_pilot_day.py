@@ -30,6 +30,8 @@ def test_a_small_day_is_read_approved_keyed_and_scored(tmp_path):
     for category in ("undecided", "outside_pilot", "dup_erp", "us"):
         assert card[category]["findings"] == [1, 1], [m for m in misses if m["category"] == category]
     assert card["office"]["keying"] == [2, 2] and card["us"]["keying"] == [1, 1], misses
+    # (the US supplier's state, county and city sales tax, a row each: read as one tax, kept in the expense, B-2870)
+    assert card["us"]["tax"] == [1, 1] and set(report["invoices"]["us_01"]["taxes"]) == {"OTHER"}, misses
     assert card["buyer_trap"]["keying"] == [1, 1], misses  # (B-2720: the bill-to under the company's own name)
     shown = (tmp_path / "pilot_day.md").read_text(encoding="utf-8")
     assert "| all | 8 |" in shown and f"## Every miss ({len(misses)})" in shown
