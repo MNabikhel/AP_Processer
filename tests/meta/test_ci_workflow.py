@@ -346,10 +346,32 @@ def test_the_release_zip_covers_every_python_the_guides_promise():
 
 
 @needs_ci
+def test_the_nightly_a_run_by_hand_and_a_merge_never_cancel_each_other():
+    """D-330: a merge, the nightly and a run by hand all run on main's ref, and the runs of one group cancel each other:
+    grouped by the ref alone, a merge's run (run again) cancelled the nightly. The group names the kind of run too, so
+    a newer run of one kind still cancels the older on its ref (a pull request's next push, the next merge)."""
+    workflow = yaml.safe_load(CI.read_text(encoding="utf-8"))
+    on = workflow.get("on") or workflow.get(True)
+    concurrency = workflow["concurrency"]
+    assert concurrency["cancel-in-progress"] is True
+    group = concurrency["group"]
+    assert re.findall(r"\$\{\{ *([^}]*?) *\}\}", group) == ["github.event_name", "github.ref"]
+    main = "refs/heads/main"
+    runs = {"push": main, "schedule": main, "workflow_dispatch": main, "pull_request": "refs/pull/1/merge"}
+    assert set(runs) == set(on)  # (each kind of run the workflow has, on the ref it runs on)
+    named = {
+        group.replace("${{ github.event_name }}", kind).replace("${{ github.ref }}", ref) for kind, ref in runs.items()
+    }
+    assert len(named) == len(runs)
+    assert all("concurrency" not in job for job in workflow["jobs"].values())
+
+
+@needs_ci
 def test_a_pull_request_runs_the_suite_on_ubuntu_and_the_pilot_laptops_windows_and_main_runs_everything():
-    """D-260: a pull request runs the whole suite twice (Ubuntu 3.12, and Windows 3.14 with OCR: the pilot laptop's),
-    every part of each, and the Windows launcher jobs on 3.14 alone; Mac jobs and the other Pythons run on main
-    (each merge, nightly), where a build is released only once all of them passed (.github/workflows/builds.yml)."""
+    """D-260: a pull request runs the whole suite three times (Ubuntu 3.12, and Windows 3.14 with OCR: the pilot
+    laptop's; D-330: Windows 3.12 with OCR too, as Windows before Python 3.13 behaves otherwise), every part of each,
+    and the Windows launcher jobs on 3.14 alone; Mac jobs and the other Pythons run on main (each merge, nightly),
+    where a build is released only once all of them passed (.github/workflows/builds.yml)."""
     workflow = yaml.safe_load(CI.read_text(encoding="utf-8"))
     jobs, on = workflow["jobs"], workflow.get("on") or workflow.get(True)
     assert on["push"] == {"branches": ["main"]} and on["schedule"] and "pull_request" in on
@@ -361,7 +383,11 @@ def test_a_pull_request_runs_the_suite_on_ubuntu_and_the_pilot_laptops_windows_a
     shards: dict[tuple, list[str]] = {}
     for cell in picked:
         shards.setdefault((cell["os"], cell["python"], cell.get("extras")), []).append(cell["shard"])
-    assert set(shards) == {("ubuntu-latest", "3.12", None), ("windows-latest", "3.14", "ocr,dev")}
+    assert set(shards) == {
+        ("ubuntu-latest", "3.12", None),
+        ("windows-latest", "3.12", "ocr,dev"),
+        ("windows-latest", "3.14", "ocr,dev"),
+    }
     for key, parts in shards.items():  # every part of the cell, or tests would run nowhere on a pull request
         n = int(parts[0].split("/")[1])
         assert sorted(parts) == [f"{k}/{n}" for k in range(1, n + 1)], key
