@@ -39,7 +39,7 @@ from ..core.store import REVIEW, Store
 from ..core.store._base import CHECKS_STAMP_KEY
 from ..core.store.bulk_jobs import CHANGED, GONE
 from ..core.store.summary import QUEUE_READ, computed
-from . import companies
+from . import banks, companies
 from .review import codes_to_pick
 from .vendors import moved_off_hold
 
@@ -457,8 +457,9 @@ def bulk_approve(
     """Approve each invoice exactly as it is coded, if it is still clean. Returns approved / skipped.
 
     "As coded" is what the review screen shows: an earlier approver's corrections (a reopened or sent-back
-    invoice) when there are some, otherwise the AI's coding. ``server``: the company server, where a held vendor's
-    invoice coded to another vendor is the review screen's error (``VENDOR_CHANGED_FROM_HELD``, D-142)."""
+    invoice) when there are some, otherwise the AI's coding, paid from the account the screen opens with
+    (``banks.opening_choice``). ``server``: the company server, where a held vendor's invoice coded to another vendor
+    is the review screen's error (``VENDOR_CHANGED_FROM_HELD``, D-142)."""
     with store.session():  # one connection for every invoice (a no-op inside the caller's own session)
         return _bulk_approve(store, reference, settings, invoice_ids, reviewer, login, server)
 
@@ -511,6 +512,10 @@ def _still_clean(store: Store, reference: ReferenceData, settings: Settings, inv
         coding = InvoiceCoding.model_validate(coded)
     except ValueError:
         return None, "the coding needs fixing by hand"
+    accounts = store.bank_accounts()
+    if accounts:  # paid from the account its review screen opens with, never the default the day it was read (B-2965)
+        last = store.last_pay_from(store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number))
+        coding.pay_from_account = banks.opening_choice(coded, bool(inv.get("final_output")), accounts, last)
     if _credit_note(bool((store.get_capture(invoice_id) or {}).get("credit_note")), coding.grand_total):
         return None, "it is a credit note: a credit is always applied by a person"
     others = others_reason(others_coded(coded.get("line_items")))

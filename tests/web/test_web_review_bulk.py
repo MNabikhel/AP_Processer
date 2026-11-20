@@ -540,3 +540,37 @@ def test_an_invoice_with_a_line_coded_from_other_vendors_approvals_is_neither_re
     out = bulk.bulk_approve(store, store.reference_data(), web_settings(), ids, "Pat")
     assert out["approved"] == ids[1:] and out["skipped"] == [(ids[0], why)]
     assert store.get_invoice(ids[0])["status"] == REVIEW
+
+
+def _bank(code: str, default: bool = False) -> dict:
+    """One of our CAD bank accounts, in use."""
+    return {"code": code, "name": code, "currency": "CAD", "institution": "", "transit": "", "account_number": "",
+            "gl_account": "", "is_default": default, "active": True}  # fmt: skip
+
+
+def _paid_from(store: Store, n: int, code: str) -> list[int]:
+    """``n`` clean invoices, each of its own vendor, stored paid from ``code``: the default the day they were read."""
+    store.import_vendor_master([{"vendor_name": f"Bulk Supplier {i}", "erp_id": f"B{i}"} for i in range(n)])
+    return [add_clean(store, vendor_name=f"Bulk Supplier {i}", invoice_number=f"B-{i}", pay_from_account=code)
+            for i in range(n)]  # fmt: skip
+
+
+def _opens_with(client: TestClient, invoice_id: int) -> list[str]:
+    """The Pay from account the invoice's review screen opens with."""
+    return re.findall(r'<option value="(CAD-[A-Z]+)"[^>]*selected', client.get(f"/review/{invoice_id}").text)
+
+
+def test_bulk_approval_pays_from_the_account_the_review_screen_opens_with(store):
+    """B-2965: invoices read while CAD-OLD was the default were stored paid from it. Since CAD-NEW is the default,
+    their review screen opens with CAD-NEW (the vendor's last account where it has one), yet bulk approval approved
+    them paid from CAD-OLD, an account nobody saw on any screen."""
+    store.save_bank_accounts([_bank("CAD-OLD", True), _bank("CAD-NEW"), _bank("CAD-PAY")])
+    ids = _paid_from(store, 2, "CAD-OLD")
+    store.save_bank_accounts([_bank("CAD-OLD"), _bank("CAD-NEW", True)])
+    earlier = add_clean(store, vendor_name="Bulk Supplier 1", invoice_number="B-0001", invoice_date="2025-03-02")
+    store.approve_invoice(earlier, {**store.get_invoice(earlier)["ai_output"], "pay_from_account": "CAD-PAY"}, "Bob")
+    client = client_for(store)
+    assert [_opens_with(client, i) for i in ids] == [["CAD-NEW"], ["CAD-PAY"]]
+    out = bulk.bulk_approve(store, store.reference_data(), web_settings(), ids, "Pat")
+    assert out == {"approved": ids, "skipped": []}
+    assert [store.get_invoice(i)["final_output"]["pay_from_account"] for i in ids] == ["CAD-NEW", "CAD-PAY"]
