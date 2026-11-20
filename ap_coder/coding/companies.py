@@ -16,6 +16,10 @@ With several, an invoice's company is the first of these that gives one answer (
 (e) else none: the invoice is held for a person (``COMPANY_UNKNOWN``, "Pick the company"), who picks it in the
     company box on the review screen.
 
+The coding keeps how its company was decided (``InvoiceCoding.company_how``, D-286): a person's pick (``PICKED``) is
+kept whatever the rules say; a company AP Coder decided is decided again at every check, as the facts it rests on
+change (a PO loaded, the supplier's history, the lines recoded). A company kept before its source was is AP Coder's.
+
 A company gets the Canadian tax checks (GST/HST, PST, QST) only when its country is CA and its currency CAD
 (``canadian``): report 9's country is not reliable (blank, or a USD company of CA), so every other company is checked
 like a US one: every check but the Canadian taxes, a warning that its tax was not checked (``US_TAX_NOT_CHECKED``), and
@@ -27,12 +31,13 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..core.headers import jde_names
-from ..core.keys import company_code, master_vendor_id, plain, po_key
+from ..core.keys import company_code, master_vendor_id, po_key
 from ..core.memory import vendor_key
 
 if TYPE_CHECKING:
@@ -66,10 +71,20 @@ class Company:
     country: str = ""
 
 
+# How an invoice's company was decided (``Decision.how``, kept with the coding as ``company_how``): a person's pick, or
+# one of AP Coder's rules, said on the review screen's Company box (``SOURCES``).
+PICKED, BY_PO, BY_NAME, BY_HISTORY, BY_UNITS = "picked", "po", "name", "history", "business unit"
+SOURCES = {PICKED: "Picked by a person", BY_PO: "Decided by AP Coder from its PO and supplier",
+           BY_NAME: "Decided by AP Coder from a name on the page",
+           BY_HISTORY: "Decided by AP Coder from the supplier's history",
+           BY_UNITS: "Decided by AP Coder from the business units of its lines"}  # fmt: skip
+
+
 @dataclass
 class Decision:
-    """An invoice's company: ``company`` ("" none), how it was decided (``how``: "picked", "po", "name", "history",
-    "business unit"), and why in plain words (``said``); undecided, the companies it could be (``could_be``)."""
+    """An invoice's company: ``company`` ("" none), how it was decided (``how``: ``PICKED``, ``BY_PO``, ``BY_NAME``,
+    ``BY_HISTORY``, ``BY_UNITS``), and why in plain words (``said``); undecided, the companies it could be
+    (``could_be``)."""
 
     company: str = ""
     how: str = ""
@@ -87,6 +102,23 @@ def _text(value: Any) -> str:
     return text[:-2] if re.fullmatch(r"\d+\.0", text) else text
 
 
+# Report 9's country as it may be written (the address book's, typed by people): CA, CAN or Canada; US, USA or United
+# States; letters only, any case (B-2689).
+_CANADA, _UNITED_STATES = {"CA", "CAN", "CANADA"}, {"US", "USA", "UNITEDSTATES", "UNITEDSTATESOFAMERICA"}
+
+
+def _country(value: Any) -> str:
+    """A country of report 9 as compared: "CA" (CAN, Canada, " ca "), "US" (USA, United States, U.S.), any other its
+    first three letters in capitals."""
+    letters = re.sub(r"[^A-Z]", "", _text(value).upper())
+    return "CA" if letters in _CANADA else "US" if letters in _UNITED_STATES else letters[:3]
+
+
+def _currency(value: Any) -> str:
+    """A currency code of report 9 as compared: its letters in capitals (" cad ", "C AD": CAD)."""
+    return re.sub(r"[^A-Z]", "", _text(value).upper())[:3]
+
+
 def company_table(records: list[dict[str, Any]], columns: dict[str, str]) -> tuple[dict[str, dict[str, str]], int]:
     """({company: {"name", "currency", "country"}}, rows left out) of report 9's rows (``columns``: {field: the
     file's column}). A row with no company or name is left out, and JD Edwards' default company (00000), no
@@ -101,26 +133,27 @@ def company_table(records: list[dict[str, Any]], columns: dict[str, str]) -> tup
         if not code or not name or code == DEFAULT_COMPANY:
             left += 1
             continue
-        table[code] = {"name": name, "currency": _text(record.get(columns.get("currency", ""))).upper()[:3],
-                       "country": _text(record.get(columns.get("country", ""))).upper()[:3]}  # fmt: skip
+        table[code] = {"name": name, "currency": _currency(record.get(columns.get("currency", ""))),
+                       "country": _country(record.get(columns.get("country", "")))}  # fmt: skip
     return table, left
 
 
-def _table(text: str) -> tuple[Company, ...]:
+def loaded(text: str) -> tuple[Company, ...]:
+    """JD Edwards' companies of report 9 as loaded: ``text``, the setting it is kept in (``COMPANIES_SETTING``)."""
     try:
         data = json.loads(text or "{}")
     except ValueError:
         return ()
     if not isinstance(data, dict):
         return ()
-    return tuple(Company(company_code(code), str(row.get("name") or ""), str(row.get("currency") or "").upper(),
-                         str(row.get("country") or "").upper())
+    return tuple(Company(company_code(code), str(row.get("name") or ""), _currency(row.get("currency")),
+                         _country(row.get("country")))
                  for code, row in sorted(data.items()) if isinstance(row, dict))  # fmt: skip
 
 
 def companies(store: Any) -> dict[str, Company]:
     """JD Edwards' companies as loaded (report 9), by code ({} when none are)."""
-    return {c.code: c for c in _table(store.get_setting(COMPANIES_SETTING) or "")}
+    return {c.code: c for c in loaded(store.get_setting(COMPANIES_SETTING) or "")}
 
 
 def several(store: Any) -> bool:
@@ -140,6 +173,15 @@ def name_variations(store: Any) -> dict[str, str]:
         out.setdefault(vendor_key(company.name), company.code)
     out.pop("", None)
     return out
+
+
+def unknown_variations(store: Any, text: str) -> list[str]:
+    """The lines of "Your company's names" (``text``, as typed) written "name = company" whose company report 9 does
+    not list, nor the pilot (D-272), each as typed: none without report 9 loaded (B-2694)."""
+    table = companies(store)
+    pilot = store.chart_settings().pilot if table else ()
+    return [line.strip() for line in text.splitlines() if "=" in line and line.rpartition("=")[0].strip()
+            and company_code(line.rpartition("=")[2]) not in (*table, *pilot)]  # fmt: skip
 
 
 def own_names(store: Any) -> list[str]:
@@ -203,38 +245,74 @@ def _one(found: Iterable[str]) -> str:
     return codes.pop() if len(codes) == 1 else ""
 
 
-def _at(words: str, key: str) -> list[tuple[int, int]]:
-    """Where ``key``'s words are in ``words`` (its words between spaces): (start, end) of each."""
-    found, start = [], words.find(f" {key} ")
+SHORT_NAME = 3  # a name of this many letters and digits or fewer ("MRB") is named only as a word in capitals (B-2690)
+
+
+@dataclass(frozen=True)
+class _Page:
+    """The page's letters and digits run together in small letters (``run``: a scan runs words together, B-2691),
+    where its words start and end in it (``edges``: a space or punctuation between, a capital after a small letter
+    as in "MapleRidge", a digit beside a letter), and where each word printed in capitals is ({word: [(start, end)]},
+    for the short names)."""
+
+    run: str
+    edges: frozenset[int]
+    capitals: dict[str, list[tuple[int, int]]]
+
+
+def _page(text: str) -> _Page:
+    folded = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+    run: list[str] = []
+    edges, capitals, at = {0}, {}, 0  # type: ignore[var-annotated]
+    for word in re.findall(r"[A-Za-z0-9]+", folded.replace("&", " and ")):
+        edges.update(at + i for i in range(1, len(word)) if (word[i].isupper() and word[i - 1].islower())
+                     or word[i].isdigit() != word[i - 1].isdigit())  # fmt: skip
+        if word.isupper():
+            capitals.setdefault(word.lower(), []).append((at, at + len(word)))
+        run.append(word.lower())
+        at += len(word)
+        edges.add(at)
+    return _Page("".join(run), frozenset(edges), capitals)
+
+
+def _at(page: _Page, key: str, ends: bool = True) -> list[tuple[int, int]]:
+    """Where a name (``key``, its vendor key) is printed on ``page``, its spaces and punctuation left out: (start, end)
+    of each, starting a word and (``ends``) ending one; a short name (``SHORT_NAME``) only as a word of its own in
+    capitals, never inside another or run into one."""
+    name = key.replace(" ", "")
+    if len(name) <= SHORT_NAME:
+        return list(page.capitals.get(name, []))
+    found, start = [], page.run.find(name)
     while start >= 0:
-        found.append((start, start + len(key) + 2))
-        start = words.find(f" {key} ", start + 1)
+        if start in page.edges and (not ends or start + len(name) in page.edges):
+            found.append((start, start + len(name)))
+        start = page.run.find(name, start + 1)
     return found
 
 
 def _named(text: str, names: dict[str, str], supplier: str) -> set[str]:
     """The companies whose names (``names``: {vendor key: company}) are printed in ``text``, the supplier's own left
-    out, and a name printed only inside the supplier's ("fraser bend" in "Fraser Bend Aggregates Ltd.", B-2680); of
-    two names one inside the other ("maple ridge" in "maple ridge us"), the longer."""
-    words = f" {' '.join(re.findall(r'[a-z0-9]+', plain(text).replace('&', ' and ')))} "
-    theirs = _at(words, supplier) if supplier else []
+    out, and a name printed only inside the supplier's ("fraser bend" in "Fraser Bend Aggregates Ltd.", B-2680, run
+    together or not: the supplier's name found wherever it starts a word); of two names one inside the other ("maple
+    ridge" in "maple ridge us"), the longer."""
+    page = _page(text)
+    theirs = _at(page, supplier, ends=False) if supplier else []
     hits = [key for key in names if key and key != supplier
-            and any(not any(s <= a and b <= e for s, e in theirs) for a, b in _at(words, key))]  # fmt: skip
+            and any(not any(s <= a and b <= e for s, e in theirs) for a, b in _at(page, key))]  # fmt: skip
     longest = [key for key in hits if not any(key != other and f" {key} " in f" {other} " for other in hits)]
     return {names[key] for key in longest}
 
 
 def decide(store: Store, coding: InvoiceCoding, text: str = "") -> Decision:
     """The invoice's company (module docstring: (a) to (e)); ``text``: the page as read. With one company: none. A
-    company the coding has already is kept: said as decided when the rules give it too, else as picked."""
+    company a person picked (``coding.company_how``) is kept; any other is decided again (D-286)."""
     table = companies(store)
     if len(table) < 2:
         return Decision()
-    found = _decided(store, coding, text, table)
     has = company_code(coding.company)
-    if has and found.company != has:
-        return Decision(has, "picked", "picked on the review screen")
-    return found
+    if has and coding.company_how == PICKED:
+        return Decision(has, PICKED, "picked on the review screen")
+    return _decided(store, coding, text, table)
 
 
 def _decided(store: Store, coding: InvoiceCoding, text: str, table: dict[str, Company]) -> Decision:
@@ -248,24 +326,24 @@ def _decided(store: Store, coding: InvoiceCoding, text: str, table: dict[str, Co
         mine = [o for o in store.orders_numbered(number) if of_supplier(o, vendor, supplier)]
         found = {company_code(o["order_company"]) for o in mine if o.get("order_company")}
         if len(found) == 1:
-            return Decision(found.pop(), "po", f"the company of PO {coding.po_number.strip()}")
+            return Decision(found.pop(), BY_PO, f"the company of PO {coding.po_number.strip()}")
         could |= found
     named = _named(text, name_variations(store), vendor) if text else set()
     if len(named) == 1:
         code = named.pop()
         name = table[code].name if code in table else code
-        return Decision(code, "name", f"{name} is named on the invoice")
+        return Decision(code, BY_NAME, f"{name} is named on the invoice")
     could |= named
     billed = store.supplier_companies(vendor, supplier)
     if len(billed) == 1:
-        return Decision(next(iter(billed)), "history", "the only company this supplier has billed")
+        return Decision(next(iter(billed)), BY_HISTORY, "the only company this supplier has billed")
     could |= billed
     pairs = store.account_pairs()
     units = {li.predicted_cost_center.strip() for li in coding.line_items if li.predicted_cost_center.strip()}
     if pairs is not None and units:
         owners = {pairs.company_of(unit) for unit in units}
         if "" not in owners and len(owners) == 1:
-            return Decision(owners.pop(), "business unit", "the company of the business units its lines are coded to")
+            return Decision(owners.pop(), BY_UNITS, "the company of the business units its lines are coded to")
         could |= owners - {""}
     return Decision(could_be=sorted(could))
 
@@ -279,7 +357,8 @@ def early(store: Any, vendor_name: Any, gst_number: Any = "", po_number: Any = "
     from types import SimpleNamespace
 
     read = SimpleNamespace(vendor_name=str(vendor_name), gst_hst_registration_number=str(gst_number or ""),
-                           po_number=str(po_number or ""), company="", line_items=[])  # fmt: skip
+                           po_number=str(po_number or ""), company="", company_how="",
+                           line_items=[])  # fmt: skip
     return decide(store, read, text).company  # type: ignore[arg-type]
 
 
@@ -328,6 +407,17 @@ def pilot_finding(store: Any, company: str, settings_company: bool = False) -> t
     return (ERROR, "COMPANY_NOT_IN_PILOT", f"Company {named} is not in the pilot (Settings → JD Edwards E1 → "
             f"Accounts AP posts to: {', '.join(pilot)}), so this invoice can't be approved here: {fix}, or have "
             "someone who may change the settings add it to the pilot")  # fmt: skip
+
+
+def report_finding(store: Any, company: str) -> tuple[str, str, str] | None:
+    """``COMPANY_NOT_IN_REPORT``: with report 9 loaded (several companies), a company the coding names that it does not
+    list (a PO's, a business unit's, one kept from an earlier load): an error only Approve anyway with a reason passes;
+    None for one it lists, or one the pilot names (D-272: the pilot may name a company report 9 does not have)."""
+    code = company_code(company)
+    if not code or code in companies(store) or code in store.chart_settings().pilot:
+        return None
+    return (ERROR, "COMPANY_NOT_IN_REPORT", f"Company {code} isn't in the companies report (JD Edwards files, card 9): "
+            "pick the company this invoice is for, or approve anyway saying why")  # fmt: skip
 
 
 def us_tax_finding(company: str, why: str) -> tuple[str, str, str]:

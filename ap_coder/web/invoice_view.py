@@ -37,6 +37,7 @@ from ap_coder.capture.types import DATE_FIELDS, CaptureResult
 from ap_coder.coding import banks, rules, vendor_mail
 from ap_coder.coding import po as po_mod
 from ap_coder.coding.claim import totals_follow
+from ap_coder.coding.companies import PICKED
 from ap_coder.coding.po import match_invoice
 from ap_coder.coding.review import codes_to_pick, coding_from_inputs, to_number, uses_cost_centers
 from ap_coder.coding.tax import PLACE_OF_SUPPLY
@@ -268,6 +269,25 @@ def _settled(store: Store, inv: dict[str, Any], draft: Draft, ai: dict[str, Any]
     return filled
 
 
+def _screen_filled(draft: Draft, coding: InvoiceCoding) -> set[str]:
+    """What the screen fills itself on every check (not an edit, B-801): the default Pay from account (none picked for
+    this currency), the tax numbers the vendor list filled, while they are as filled, and the company AP Coder
+    decides (none picked: D-286), whose source ``coding`` takes from the screen."""
+    auto = {"pay_from_account"} if not draft.pay_from_for else set()
+    auto |= {n for n, v in (draft.from_vendor.get("fields") or {}).items() if draft.header.get(n) == v}
+    coding.company_how = draft.company_how if coding.company else ""
+    if draft.company_how != PICKED:
+        auto |= {"company", "company_how"}
+    return auto
+
+
+def _company_again(draft: Draft, filled: dict[str, Any], coding: InvoiceCoding) -> None:
+    """AP Coder's company decided again by the checks (the facts changed): the Company box shows it, the draft keeps
+    it (D-286)."""
+    draft.header["company"] = filled["company"] = coding.company
+    draft.company_how = coding.company_how
+
+
 def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dict[str, Any], draft: Draft,
             signature: str = "", capture: CaptureResult | None = _UNREAD) -> Analysis:  # fmt: skip
     """The screen's coding, checked as approval checks it. ``signature``: the reviewer's name, for the email to the
@@ -288,13 +308,12 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
                 "fallback": stored_summary(inv, start)}  # fmt: skip
         return Analysis(coding=None, problems=problems, live=live, filled=filled)
 
-    # What the screen fills itself on every check (not an edit, B-801): the default Pay from account (none picked for
-    # this currency) and the tax numbers the vendor list filled, while they are as filled.
-    auto = {"pay_from_account"} if not draft.pay_from_for else set()
-    auto |= {n for n, v in (draft.from_vendor.get("fields") or {}).items() if draft.header.get(n) == v}
+    auto = _screen_filled(draft, coding)
     meta = inv.get("meta") or {}
     output, report = finalise_coding(coding, reference, settings, kept_extraction(inv), store=store,
                                      exclude_invoice_id=inv["id"], received=received_on(inv))  # fmt: skip
+    if "company" in report.checks and coding.company != draft.header.get("company", "").strip():
+        _company_again(draft, filled, coding)
     if capture is _UNREAD:
         capture = capture_of(store, inv["id"])
     from_list = _findings(store, inv, draft, coding, output, report, dates, capture)

@@ -179,6 +179,7 @@ class Reading:
     boxes: list[Box]
     score: float
     method: str
+    label: str = ""  # the label printed over the value, apart from it (a totals table of one row's column, B-2831)
 
 
 @dataclass
@@ -191,11 +192,14 @@ class FieldResult:
     sources: dict[str, Any] = field(default_factory=dict)
     reasons: list[str] = field(default_factory=list)
     evidence: str = ""  # the pattern of readers and checks behind the value (calibration key)
+    label: str = ""  # the label a reader read it under, printed apart from it (``Reading.label``; B-2831)
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["boxes"] = [b.to_list() for b in self.boxes]
         d["confidence"] = round(self.confidence, 4)
+        if not self.label:  # (most fields: stored as before)
+            del d["label"]
         return d
 
     @classmethod
@@ -204,7 +208,7 @@ class FieldResult:
             field=d["field"], value=d.get("value"), confidence=float(d.get("confidence") or 0),
             status=d.get("status") or MISSING, boxes=[Box.from_list(b) for b in d.get("boxes") or []],
             sources=dict(d.get("sources") or {}), reasons=list(d.get("reasons") or []),
-            evidence=d.get("evidence") or "",
+            evidence=d.get("evidence") or "", label=str(d.get("label") or ""),
         )  # fmt: skip
 
 

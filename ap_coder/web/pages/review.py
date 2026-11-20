@@ -938,18 +938,22 @@ def review_unpark(request: Request, invoice_id: int) -> JSONResponse:
     return done(request, "/review?tab=parked", back)
 
 
-def _not_approvable_now(store: Store, settings: Any, inv: dict[str, Any]) -> list[str]:
-    """What keeps an invoice waiting for its second approval from being approved now, one short line each (none: it
-    may be): its approved coding checked again as the first approval and bulk approval check it (D-257), for what
-    changed since (the supplier put on hold, the invoice found in the ERP, a duplicate approved, the period closed).
-    An error the first approver approved anyway, with their reason, stays approved over unless "Approve anyway" never
-    covers it (``is_hard``); warnings never keep it."""
+def second_check(store: Store, settings: Any, inv: dict[str, Any]) -> tuple[list[str], list[Issue]]:
+    """(what keeps an invoice waiting for its second approval from being approved now, one short line each; the
+    warnings new since its first approval, which the second approver approves only anyway, with a reason: B-2695).
+    Its approved coding is checked again as the first approval and bulk approval check it (D-257), for the company
+    it was approved under (D-286), for what changed since (the supplier put on hold, the invoice found in the ERP, a
+    duplicate approved, the period closed). An error the first approver approved anyway, with their reason, stays
+    approved over unless "Approve anyway" never covers it (``is_hard``); a warning the first approver saw too (or
+    an approval with none, in bulk or touchless) is approved with it."""
     reference = reference_or_none(store)
-    found = bulk._recheck(store, reference, settings, inv) if reference is not None else None
+    found = bulk._recheck(store, reference, settings, inv, approved=True) if reference is not None else None
     first = next(iter(store.events(inv["id"], ["approved"], limit=1)), None)
-    over = {(i.get("code"), i.get("line")) for i in ((first or {}).get("detail") or {}).get("open_issues") or []
-            if i.get("severity") == "error"}  # fmt: skip
+    seen = [i for i in ((first or {}).get("detail") or {}).get("open_issues") or [] if isinstance(i, dict)]
+    over = {(i.get("code"), i.get("line")) for i in seen if i.get("severity") == "error"}
+    shown = {(i.get("code"), i.get("line")) for i in seen}
     errors = [Issue(**i) for i in found or [] if i["severity"] == "error"]
+    new = [Issue(**i) for i in found or [] if i["severity"] == "warning" and (i["code"], i["line_number"]) not in shown]
     reasons = hard_reasons([i for i in errors if is_hard(i) or (i.code, i.line_number) not in over])
     from ap_coder.coding import companies
 
@@ -957,29 +961,61 @@ def _not_approvable_now(store: Store, settings: Any, inv: dict[str, Any]) -> lis
         # Approved while one company was known: its voucher would be keyed under Settings', whatever company the
         # check above took it for (D-267, B-2685)
         reasons.append("its company was not decided when it was approved (JD Edwards' companies were loaded since)")
-    return reasons
+    return reasons, new
+
+
+def new_warnings(issues: list[Issue]) -> dict[str, Any] | None:
+    """The warnings new since an invoice's first approval as its screen says them (``second_check``): each in plain
+    words, and the key its "Approve anyway" is posted with (``override_key``); None for none."""
+    if not issues:
+        return None
+    from ap_coder.web.invoice_findings import override_key
+
+    return {"said": [bulk._plain(i.message, i.code) for i in issues], "key": override_key(issues),
+            "titles": [_title(i.code) for i in issues]}  # fmt: skip
+
+
+def _title(code: str) -> str:
+    from ap_coder.ops.help import help_for
+
+    found = help_for(code)
+    return found.title if found else code.replace("_", " ").capitalize()
 
 
 @router.post("/review/{invoice_id}/final-approve")
-def review_final_approve(request: Request, invoice_id: int, approval: str | None = Form(None)) -> JSONResponse:
+def review_final_approve(request: Request, invoice_id: int, approval: str | None = Form(None),
+                         override: str = Form(""), override_reason: str = Form("")) -> JSONResponse:  # fmt: skip
     """``approval``: the first approval the page showed (B-654); a page that posts none is refused as one shown an
     older approval (D-109). Refused, said in plain words, while the invoice checked again now has an error the first
-    approval did not approve over (``_not_approvable_now``): it is sent back to be fixed."""
+    approval did not approve over (``second_check``): it is sent back to be fixed; one with a warning new since the
+    first approval is approved only with "Approve anyway" (``override``, for those warnings) and why, kept with the
+    approval (B-2695)."""
     from ap_coder.core.store import ApprovedAgain
+    from ap_coder.web.invoice_findings import override_key
 
     store = get_store(request)
     inv = store.get_invoice(invoice_id) or {}
-    blocked = _not_approvable_now(store, get_settings(request), inv) if inv.get("status") == PENDING else []
+    blocked, new = second_check(store, get_settings(request), inv) if inv.get("status") == PENDING else ([], [])
+    why = " ".join(override_reason.split())[:300]
+    said = ""
     if blocked:
         said = (
             f"Not done: checked again now, this invoice has to be fixed first: {'; '.join(blocked)}. Send it back "
             "to the review queue to fix it there, or reject it."
         )
+    elif new and (override != override_key(new) or not why):
+        said = (f"Not done: since its first approval, checked again, it says what its first approver did not see: "
+                f"{'; '.join(_title(i.code) for i in new)}. Open the invoice to give the final approval anyway, "
+                "ticked and saying why, or send it back to the review queue.")  # fmt: skip
+        if override == override_key(new):
+            said = "Not done: say why you approve it anyway, despite what it says since its first approval."
+    if said:
         if server_mode(request):
             return refuse(said, 409)
         return done(request, "/review?tab=second", said, tone="warn")
+    over = [{"code": i.code, "severity": i.severity, "line": i.line_number, "override_reason": why} for i in new]
     try:
-        store.final_approve(invoice_id, reviewer(), login=login(), shown=approval)
+        store.final_approve(invoice_id, reviewer(), login=login(), shown=approval, over=over)
     except PermissionError as exc:  # the first approver (or their login): nobody changed anything meanwhile
         if server_mode(request):  # refused as the other refusals are: not done, said, and a 409 (D-102)
             return refuse(f"Not done: {exc}.", 409)

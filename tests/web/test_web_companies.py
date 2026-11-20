@@ -70,6 +70,118 @@ def test_the_company_box_holds_an_invoice_until_a_company_is_picked(client, stor
     assert "Company 00310 is not checked for Canadian tax (currency USD)" in html.unescape(picked["sections"]["checks"])
 
 
+def test_a_warning_new_since_the_first_approval_is_shown_to_the_second_approver_and_approved_only_anyway(
+    chart_company, chart_company_client, monkeypatch
+):
+    """B-2695: a warning the first approver never saw (here a bill of the same number loaded since under another
+    company, DUPLICATE_OTHER_COMPANY) passed the second approval with nothing said: only errors kept it. It is shown on
+    the invoice waiting for its second approval, and the second approval takes "Approve anyway" with a reason, kept
+    with it; without them it is refused, the warning said. The approved company stays the one approved (D-286)."""
+    from ap_coder.core import audit
+    from ap_coder.core.store import APPROVED, PENDING
+    from tests.web.test_chart_eligible import _first_approval, _one_line, _two_companies
+    from tests.webclient import post
+
+    store, client = chart_company.store, chart_company_client
+    _two_companies(store)
+    page, _courier = _one_line(chart_company, client)
+    _first_approval(store, monkeypatch, page)
+    final = store.get_invoice(page.id)["final_output"]
+    assert final["company"] == "00210"
+    store.import_erp_vouchers([{"key": "00310-PV-700901-001", "vendor_name": final["vendor_name"],
+                                "invoice_number": final["invoice_number"], "total": final["grand_total"],
+                                "invoice_date": final["invoice_date"], "an8": "", "document": "700901"}])  # fmt: skip
+    monkeypatch.setenv("AP_REVIEWER", "Kim")
+    for name in ("LOGNAME", "USER", "LNAME", "USERNAME"):
+        monkeypatch.setenv(name, "kim")
+    approval = store.latest_approval_id(page.id)
+    shown = html.unescape(follow(client, post(client, f"/review/{page.id}/final-approve", {"approval": approval})))
+    assert store.get_invoice(page.id)["status"] == PENDING
+    assert "Not done: since its first approval, checked again, it says what its first approver did not see: " \
+           "Already entered under another company" in shown  # fmt: skip
+    screen = html.unescape(client.get(f"/review/{page.id}").text)
+    card = screen.split('class="second-new', 1)[1].split("</div>", 1)[0]
+    assert "is already in the ERP under company 00310" in card and 'name="override_reason"' in card
+    key = re.search(r'name="override" value="([0-9a-f]+)"', card).group(1)
+    data = {"approval": approval, "override": key, "override_reason": ""}
+    assert "say why" in html.unescape(follow(client, post(client, f"/review/{page.id}/final-approve", data)))
+    assert store.get_invoice(page.id)["status"] == PENDING
+    data["override_reason"] = "Keyed to 00310 by mistake, reversed there"
+    follow(client, post(client, f"/review/{page.id}/final-approve", data))
+    assert store.get_invoice(page.id)["status"] == APPROVED
+    event = next(iter(store.events(page.id, ["final_approved"], limit=1)))
+    assert event["detail"]["open_issues"] == [{"code": "DUPLICATE_OTHER_COMPANY", "severity": "warning", "line": None,
+                                               "override_reason": data["override_reason"]}]  # fmt: skip
+    assert "approved anyway over a warning new since the first approval (Already entered under another company): " \
+           "“Keyed to 00310 by mistake, reversed there”" in audit.describe(event)  # fmt: skip
+
+
+def _box(client, invoice_id: int) -> str:
+    page = html.unescape(client.get(f"/review/{invoice_id}").text)
+    return page.split('data-field="company"', 1)[1].split("</label>", 1)[0]
+
+
+def test_the_company_box_says_how_its_company_was_decided_and_only_a_persons_pick_is_kept(client, store):
+    """B-2692 on the review screen: the Company box says how its company was decided (AP Coder's rule, or a person's
+    pick). AP Coder's company, the box left as it was drawn, is decided again as the facts change; one a person
+    picks (the box's hidden field set as it is changed, or a form that posts another company) is kept and approved
+    as picked."""
+    load_sample_setup(store)
+    invoice_id = add_clean(store)
+    _card(client, jde_group.companies_xlsx())
+    inv = store.get_invoice(invoice_id)
+    voucher = {"key": "00230-PV-700101-001", "vendor_name": inv["ai_output"]["vendor_name"], "invoice_number": "N-1",
+               "total": 10.0, "invoice_date": "2026-01-02", "an8": "", "document": "700101"}  # fmt: skip
+    store.import_erp_vouchers([voucher])
+    box = _box(client, invoice_id)
+    assert '<option value="00230" selected>' in box and 'name="company_how" form="inv" value=""' in box
+    assert ("Decided by AP Coder from the supplier's history: the only company this supplier has billed. Decided "
+            "again as the invoice changes; pick one to keep it.") in re.sub(r"<[^>]+>", "", box)  # fmt: skip
+    # the screen as drawn, then the supplier bills another company too: decided again, none now
+    data = {**Draft.stored(inv["ai_output"]).header, "company": "00230", "company_how": ""}
+    store.import_erp_vouchers([{**voucher, "key": "00210-PV-700102-001", "invoice_number": "N-2"}])
+    answer = client.post(f"/review/{invoice_id}/check", data=data, headers=PAGE).json()
+    assert answer["header"]["values"]["company"] == ""
+    assert "Pick the company this invoice is for" in html.unescape(answer["sections"]["checks"])
+    # picked by a person: kept, and said so
+    picked = {**data, "company": "00230", "company_how": "picked"}
+    answer = client.post(f"/review/{invoice_id}/check", data=picked, headers=PAGE).json()
+    assert "company" not in answer["header"]["values"] and "company" not in answer["header"]["flags"]
+    box = _box(client, invoice_id)
+    assert '<option value="00230" selected>' in box and 'value="picked" data-company-how' in box
+    assert "Picked by a person: kept whatever else the invoice says." in re.sub(r"<[^>]+>", "", box)
+    assert follow(client, client.post(f"/review/{invoice_id}/approve", data=picked, headers=PAGE))
+    final = store.get_invoice(invoice_id)["final_output"]
+    assert (final["company"], final["company_how"]) == ("00230", "picked")
+    # a form without the hidden field (an older screen): another company than the screen had is a pick
+    assert Draft.from_form({"company": "00310"}, Draft.stored(inv["ai_output"])).company_how == "picked"
+    assert Draft.from_form({"company": "00230"}, Draft.stored(final)).company_how == "picked"
+    assert Draft.from_form({"company": "00230", "company_how": ""}, Draft.stored(final)).company_how == ""
+
+
+def test_a_name_written_for_a_company_the_companies_report_does_not_list_is_not_saved(client, store):
+    """B-2694: a variation of Settings → Review's "Your company's names" written "name = company" with the company
+    mistyped ("Cascade Line = 330", meant 00320) was saved and decided invoices for a company JD Edwards may not have.
+    With report 9 loaded, the names are checked on save, and each line naming a company it does not list is said (one
+    the pilot names may stay, D-272)."""
+    import dataclasses
+
+    _card(client, jde_group.companies_xlsx())
+    typed = "Maple Ridge Holdings Ltd.\nCascade Line = 330\nFraser Bend = 230\nYard 9 ="
+    refused = client.post("/settings/review", data={"our_names": typed}, headers=PAGE)
+    assert refused.status_code == 400 and store.our_names() == []
+    assert html.unescape(refused.json()["error"]) == (
+        "Not saved: “Cascade Line = 330”, “Yard 9 =” name no company of the companies report (JD Edwards files, card "
+        "9). Write each name, = and the number of one of its companies, e.g. Maple Ridge Holdings Ltd. = 00210."
+    )
+    assert follow(client, client.post("/settings/review", data={"our_names": typed.replace("330", "320")
+                                                                .replace("\nYard 9 =", "")}, headers=PAGE))  # fmt: skip
+    assert companies.name_variations(store)["cascade line"] == "00320"
+    store.save_chart_settings(dataclasses.replace(store.chart_settings(), pilot=("00210", "00330")))
+    assert follow(client, client.post("/settings/review", data={"our_names": "Cascade Line = 330"}, headers=PAGE))
+    assert store.our_names() == ["Cascade Line = 330"]
+
+
 def test_settings_turn_a_companys_canadian_tax_checks_on_or_off_and_say_how_they_were_worked_out(client, store):
     from ap_coder.erp import jde_settings
     from ap_coder.web.core import SHOW_JDE

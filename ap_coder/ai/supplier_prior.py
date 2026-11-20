@@ -148,8 +148,9 @@ class AccountUse:
     # Each of those lines: (its words, what it counts for, the id of its latest lesson), for ``Prior.sure``.
     approved_lines: tuple[tuple[frozenset[str], float, int], ...] = ()
     newest: int = 0  # the id of the latest lesson of a line a person approved to it here (0: none)
-    # What the journal's lines to it were keyed with (D-268): the commonest subledger and its type, and the units
-    # when every line that had units had the same ("" and None: none)
+    # What the journal's lines to it and the lines approved here were keyed with (D-268, B-2830): the commonest
+    # subledger and its type, by what each counts for; the units when every line that had units had the same, or
+    # every line a person typed units for here ("" and None: none)
     subledger: str = ""
     subledger_type: str = ""
     units: float | None = None
@@ -407,8 +408,11 @@ class _Count:
         self.kept_weight: Counter[str] = Counter()  # ...and what they count for
         self.typed: set[str] = set()  # the shapes a person typed here
         self.line_texts: dict[str, list[float]] = {}  # a line a person approved: [what it counts for, its lesson]
-        self.ledgers: Counter[tuple[str, str]] = Counter()  # the journal's lines' (subledger, type), D-268
-        self.units: set[float] = set()  # the journal's lines' units
+        # The (subledger, type) of the journal's lines and the lines approved here, by what they count for (D-268,
+        # B-2830); their units, and the units a person typed here (those decide when there are: a correction)
+        self.ledgers: Counter[tuple[str, str]] = Counter()
+        self.units: set[float] = set()
+        self.typed_units: set[float] = set()
 
 
 class _Counted:
@@ -483,6 +487,7 @@ class _Counted:
                 use.shapes[shape] += int(row["lines"])
                 use.example.setdefault(shape, str(row["description"]).strip())
         self.remarked(counted.get("remarks") or [], pair_of)
+        self.ledgered(counted.get("ledgers") or [], pair_of)
 
     def remarked(self, rows: list[dict[str, Any]], pair_of: Any) -> None:
         """The remarks approved here with the vendor's lines (the newest first), counted with the journal's: one a
@@ -500,9 +505,26 @@ class _Counted:
             if typed:
                 use.typed.add(shape)
 
+    def ledgered(self, rows: list[dict[str, Any]], pair_of: Any) -> None:
+        """The subledgers and units approved here with the vendor's lines (B-2830), counted with the journal's as a
+        remark is: one a person typed counts as a correction, one a person approved as filled as an approval, one
+        nobody looked at as a line of the journal."""
+        for row in rows:
+            use = self.uses.get(pair_of(row))
+            if use is None:
+                continue
+            typed = row["ledger_from"] == "person" and row["outcome"] in WEIGHTS
+            weight = CORRECTION_WEIGHT if typed else APPROVAL_WEIGHT if row["outcome"] in WEIGHTS else JOURNAL_WEIGHT
+            if clean(row["final_subledger"]):
+                use.ledgers[(clean(row["final_subledger"]), clean(row["final_subledger_type"]))] += (
+                    int(row["lines"]) * weight)  # fmt: skip
+            if row["final_units"]:
+                (use.typed_units if typed else use.units).add(float(row["final_units"]))
+
 
 def _use(pair: tuple[str, str], u: _Count, weight: float) -> AccountUse:
     ledger = u.ledgers.most_common(1)[0][0] if u.ledgers else ("", "")
+    units = u.typed_units or u.units
     shapes = u.shapes.most_common(TEXTS_KEPT)
     said = u.shapes + u.kept  # the journal's remarks and the ones approved here, the heaviest shape first
     usual = sorted(said, key=lambda shape: u.shapes[shape] * JOURNAL_WEIGHT + u.kept_weight[shape], reverse=True)
@@ -520,7 +542,7 @@ def _use(pair: tuple[str, str], u: _Count, weight: float) -> AccountUse:
         remark_keys=tuple(dict.fromkeys(k for shape, _ in shapes if (k := keys(shape)))),
         line_keys=tuple(lines), approved_lines=tuple((k, counts, int(lesson)) for k, (counts, lesson) in lines.items()),
         newest=u.newest, subledger=ledger[0], subledger_type=ledger[1],
-        units=next(iter(u.units)) if len(u.units) == 1 else None,
+        units=next(iter(units)) if len(units) == 1 else None,
     )  # fmt: skip
 
 

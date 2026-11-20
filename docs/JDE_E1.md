@@ -385,8 +385,8 @@ document type that is not 2 characters, a domestic currency that is not a 3-lett
 | VLDDJ | Due date (Julian): printed or worked out; the invoice date for a credit | setting can leave it blank |
 | VLPST | Pay status (default `A`) | |
 | VLPO | PO number (≤8) | as a reference, or for PO-matched vouchers; blank when the PO is longer (D-87) |
-| VLPDCT | PO document type (default `OP`) | with VLPO |
-| VLPKCO | PO company (default: the company) | with VLPO |
+| VLPDCT | PO document type: a PO-matched voucher's, its order's as the purchase orders loaded give it (as the keying sheet keys it, D-284); else Settings' (default `OP`) | with VLPO |
+| VLPKCO | PO company: likewise its order's; else Settings' (default: the company) | with VLPO |
 | VLRMK | `AP Coder #<id>`, or with *Remarks* = as typed by hand the first line's remark (D-210); plus `PO <number>` for a PO too long for VLPO when it fits in 30 characters | remark |
 | VLGLBA | G/L bank account of the invoice's *Pay from* account | **unconfirmed**; only when mapped (below) |
 | *extra* | e.g. VLATFLG, VLPSTE | **unconfirmed**; only in PO-matched mode |
@@ -400,6 +400,12 @@ voucher whose account has none gets a blank VLGLBA, and the dry run and the batc
 loading (B-684). The bank account's own cash GL is *not* used as a default: it maps to BU.Object.Subsidiary (as the
 distribution lines are written), which is not the short account ID GLBA holds, and a wrong bank is worse than E1's
 default. Confirm with the JDE team whether R04110ZA keeps a VLGLBA it is given.
+
+**A group of companies (D-301).** With report 9's companies loaded (two or more), Settings → JD Edwards E1 has a card
+*Each company's own*: a row per company for its open G/L period, its Default BU, its header business unit (VLMCU)
+and its VLGLBA for each bank account. An invoice is keyed with its company's own values; a box left blank takes the
+single value above, so a company with none of its own, and a one-company setup, is keyed as before. A company's open
+period is both days together (either day given, the other blank means no start or no end).
 
 **VLPTC (payment terms).** Settings → JD Edwards E1 → *Payment terms → JD Edwards code* maps the terms printed on an
 invoice to the company's payment terms code (P0014 / F0014, up to 3 characters), by what the terms mean, as AP Coder
@@ -417,6 +423,18 @@ carry a terms code instead. The review screen's voucher
 block and the note under *Payment terms* show the code sent, and the dry run lists each voucher's
 `payment terms Net 30 -> N30`. Whether VLDDJ (the due date, sent by default) or VLPTC wins when both are given is
 up to R04110ZA's processing options: confirm it with the JDE team.
+
+**A supplier's own terms code (F0014, D-302).** With JD Edwards' payment terms loaded (JD Edwards files, card 7), a
+supplier's code counts as JD Edwards works it out, for an invoice that prints no terms AP Coder reads: its discount
+and net days; a fixed due date (*Due Date*, PNDDJ) alone; a proximate date (*Prox Date Month* and *Day*, PNPXDM and
+PNPXDD) alone of a day of the next month (month 1) or the end of the invoice's month (month 0, day 31); and split
+payments (*Number of Split Payments* and *Days To Pay Aging*, PNNSP and PNDTPA): the due date is the first's, the
+review screen lists each. Any other rule (a proximate date of a later month, a fixed or proximate date with net days
+or a discount, two rules together, a date that isn't one) and a code not in the table (an advanced payment term,
+F00141 and its due date rules F00142, which AP Coder does not read) is said, never guessed: the invoice is due by
+the days to pay in Settings → Review and says "JD Edwards terms code X: rule not supported (...), check the due
+date" (JDE_TERMS_UNSUPPORTED). The card and its load list each code as it is worked out. These due dates are AP
+Coder's own (the review queue, the discounts, overdue): VLDDJ is still sent only from what the invoice prints.
 
 ## F0911Z1: G/L distribution lines
 
@@ -443,11 +461,15 @@ up to R04110ZA's processing options: confirm it with the JDE team.
 
 ## F0411Z1T: PO match lines (unconfirmed)
 
-EDUS, EDBT, EDTN, EDLN (the pay item), DOCO (PO number), DCTO (PO type), KCOO (PO company), LNID (the
-invoice's line number, *not* necessarily the PO line; E1 stores line 1 as 1000), LITM (blank: AP Coder
-does not know the item number), DSC1 (description), UORG (quantity) and PRRC (unit price) written with a
+EDUS, EDBT, EDTN, EDLN (the pay item), DOCO (PO number), DCTO (PO type), KCOO (PO company), LNID, LITM (blank:
+AP Coder does not know the item number), DSC1 (description), UORG (quantity) and PRRC (unit price) written with a
 decimal point, AEXP (amount, in the amount format), CRCD (currency) and SBL, SBLT (the line's subledger and its
-type, D-268; blank for most lines).
+type, D-268; blank for most lines). A row for each invoice line: DOCO, DCTO and KCOO as VLPO, VLPDCT and VLPKCO (the
+order's type and company as the keying sheet keys them, D-284), and LNID the own number of the PO line the keying
+sheet matches it to (D-264), as JD Edwards shows it, with its decimal point like UORG and PRRC (`12.000`; E1 stores it
+as 12000), blank for a line on no PO line (a charge keyed on an account of its own, D-265). When the PO's lines are
+not loaded (no match to give), DCTO and KCOO are Settings' and LNID the invoice's line number (1, 2, 3: *not* a PO
+line), as before.
 
 ## Test import checklist (for the pilot tester's IT)
 
@@ -642,7 +664,9 @@ their own while the dashboard keeps working, then put in place of the chart in o
 loaded with both. A company loaded from several files is never refreshed from fewer of them (that would drop the
 other file's accounts): the import is refused, saying which files it came from, unless `--anyway`. So is a refresh
 with less than half the accounts a company has now (a filtered or cut-short export), and a file with no account at
-all; the chart is then left as it was. Every account is kept (its description, and why a line may not use it); only
+all; the chart is then left as it was. On the JD Edwards files page the chart card then says why and what the file
+holds, and someone who may change the settings can tick that it is what JD Edwards has now and click **Load anyway**
+(a file with no account, never); Activity keeps that it was (D-300). Every account is kept (its description, and why a line may not use it); only
 those whose posting edit code AP posts to are offered (Settings → JD Edwards E1 → Accounts AP posts to: blank, L and
 U by default). **The summary** says the rows read, accepted and rejected (each reason with its first rows: a row whose
 cells do not line up with the column names, a blank row, an account given twice...), the accounts by company, and
