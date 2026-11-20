@@ -158,6 +158,26 @@ def test_a_province_whose_postal_code_ocr_cut_short_is_read():
         assert addresses(text) == ("", "", ""), text
 
 
+def test_a_line_whose_quantity_ocr_lost_bills_its_amount_at_its_unit_price(reference):
+    """B-2892: a scan's OCR loses a short quantity ("-4" of a credit for 4 cases at 52.40): the line was coded as 1 at
+    52.40 for -209.60, so Voucher Match keyed 1 case of the 4 returned. With its unit price read, the quantity is its
+    amount at that price when that is a whole number of them; else 1, as before."""
+    from ap_coder.ai.offline_coder import code_from_capture
+    from ap_coder.capture.types import VERIFIED, CaptureResult, FieldResult, LineReading
+
+    head = {"vendor_name": "Prairie Sky Supply", "invoice_number": "CN-50277", "invoice_date": "2026-10-20",
+            "currency": "CAD", "subtotal": -262.0, "gst_amount": -13.1, "tax_total": -13.1, "grand_total": -275.1}  # fmt: skip
+    capture = CaptureResult(
+        fields={k: FieldResult(k, v, 0.95, VERIFIED) for k, v in head.items()},
+        line_items=[LineReading("Return - copy paper, case of 10", None, 52.4, -209.6),
+                    LineReading("Return - toner, part box", None, 35.0, -52.4)],
+    )  # fmt: skip
+    text = "Prairie Sky Supply\nCalgary, AB T2A 2N6\nCREDIT NOTE\nBill to:\nEdmonton, AB T5J 0N3\n"
+    coding = code_from_capture(capture, reference, [], text=text).coding
+    assert [(li.quantity, li.unit_price, li.amount) for li in coding.line_items] == [(-4, 52.4, -209.6),
+                                                                                    (1, 35.0, -52.4)]  # fmt: skip
+
+
 def test_the_rate_table_is_read_again_once_the_rate_file_changes(tmp_path, monkeypatch):
     """The local coder kept the first rate table it read for the life of the process: a rate edited in the data
     folder's copy was not seen until a restart (B-957)."""

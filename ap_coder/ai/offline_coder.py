@@ -179,6 +179,16 @@ def _values(capture: CaptureResult) -> dict[str, Any]:
     return {f: r.value for f, r in capture.fields.items() if r.value not in (None, "")}
 
 
+def _unread_quantity(li: Any) -> float:
+    """A line read with no quantity: its amount at its unit price when that is a whole number of them (a scan's OCR
+    lost a short "-4", B-2892), else 1."""
+    if li.unit_price and li.amount:
+        count = round(float(li.amount) / float(li.unit_price))
+        if count and abs(count * float(li.unit_price) - float(li.amount)) <= 0.011:
+            return float(count)
+    return 1.0
+
+
 def _amount(values: dict[str, Any], field: str) -> float:
     try:
         return round(float(values.get(field) or 0.0), 2)
@@ -783,7 +793,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         readings_data = [(said, 1.0, subtotal, subtotal)]
     else:
         readings_data = [
-            (li.description or f"Line {i}", li.quantity if li.quantity is not None else 1.0,
+            (li.description or f"Line {i}", li.quantity if li.quantity is not None else _unread_quantity(li),
              li.unit_price if li.unit_price is not None
              else float(li.amount) / li.quantity if li.quantity else float(li.amount), float(li.amount))
             for i, li in enumerate(readings, 1)
