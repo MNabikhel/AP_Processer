@@ -404,6 +404,19 @@ def test_jde_subcontract_progress_billings_are_off_until_ticked_and_their_tax_ba
     assert post(client, "/settings/jde", general_form(retainage_tax="both")).status_code == 400
 
 
+def test_jde_po_lines_or_receipts_is_chosen_under_po_matched_vouchers(client, store):
+    """B-2668 (D-281): what an invoice on a purchase order is matched to in JD Edwards: its PO lines (2-way, the
+    default: what was received not checked) or the receipts (3-way); a form without the choice keeps it."""
+    text = client.get("/settings/jde").text
+    assert "Match to" in text and f'name="po_match_to" value="{jde_settings.MATCH_PO_LINES}" checked' in text
+    follow(client, post(client, "/settings/jde", general_form(po_match_to=jde_settings.MATCH_RECEIPTS)))
+    assert jde_settings.load(store).po_match_to == jde_settings.MATCH_RECEIPTS
+    follow(client, post(client, "/settings/jde", general_form()))  # (no choice in the form: kept)
+    assert jde_settings.load(store).po_match_to == jde_settings.MATCH_RECEIPTS
+    assert f'name="po_match_to" value="{jde_settings.MATCH_RECEIPTS}" checked' in client.get("/settings/jde").text
+    assert post(client, "/settings/jde", general_form(po_match_to="both")).status_code == 400
+
+
 def test_jde_remarks_choice_is_saved_and_a_form_without_it_keeps_it(client, store):
     """D-210: what the vouchers' two remarks carry is chosen on the page; AP Coder's references until it is."""
     assert jde_settings.load(store).remarks == jde_settings.REMARKS_REFERENCE

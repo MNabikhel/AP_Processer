@@ -6834,6 +6834,78 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     load it is counted by neither; an invoice that over-bills the line in that window is not warned. *Not chosen:*
     counting an export made after the PO's load (`purchase_orders.updated_at` is also moved by a person closing or
     opening a PO by hand, so it is no load time); the quantity lines (their quantity ordered is the original).
+- **D-281** · **With JD Edwards in use, an invoice on a purchase order is matched to its PO lines (2-way) unless
+  Settings → JD Edwards E1 says receipts (3-way): only then is what a PO line received checked** (`JdeSettings.
+  po_match_to`, `jde_settings.receipts_checked`, `coding/po.py` `match_invoice`, the Purchase orders page's flags;
+  B-2668).
+  - **Why:** JD Edwards' exports (Open Order Inquiry, the order details grid, F4311) give Quantity Received 0 on every
+    line nothing was received on through JD Edwards, which is every line of a company that matches straight to the
+    PO lines: the pilot tester's Voucher Match has Receipt Line blank (D-264). Every line of every PO-matched invoice
+    was PO_NOT_RECEIVED.
+  - **What:** *Match to* under *PO-matched vouchers*: PO lines (2-way, the default, also for a setup saved before) or
+    receipts (3-way: PO_NOT_RECEIVED, "ordered and received" and the review screen's received column as before).
+    Without JD Edwards in use nothing changes: a PO file that gives what was received is checked against it.
+  - *Not chosen:* telling 2-way from the file (a 0 received is also a line not received yet); the receipts' own lines
+    on the keying sheet (Receipt Line): not typed by the pilot tester. Month-end's received-not-billed accruals read
+    what was received whatever the setting (they are about receipts).
+- **D-282** · **PO lines alike (the same description and price) are shared out among a PO's invoices in invoice
+  order: the line the invoice line points to, else the one with room left; never guessed between lines that could
+  each take it** (`coding/po.py` `share_out`, `PoBilling.shares` and `share_with`, PO_LINE_AMBIGUOUS; B-2670).
+  - **Why:** a PO for two jobs orders the same item twice, each line on its job's account (REBAR 15M, 100 at 12.50 on
+    business unit 1100 and on 1200). Each invoice line took the PO line it most resembles, the first of a tie: every
+    invoice billed the first job's line, over it from the second, its Voucher Match row on the first job's account.
+  - **What:** an invoice line resembling several PO lines as much takes (1) the one its own coding points to most:
+    its business unit, object or subledger the PO line's, or the PO line's business unit or subledger (a job number,
+    3 characters or more) among its words; else (2) of those, the only one with room left for it: what was ordered,
+    or what JD Edwards has open on the line (then the invoices exported are counted in it already, D-280), less what
+    the PO's invoices before it (by id) and its own lines before took; the quantity it matches (D-283) or, on a line
+    billed by amount, its amount (2% and a cent more); a credit, a line with as much billed to give back. Else none:
+    PO_LINE_AMBIGUOUS (a warning, never touchless) names the lines and their accounts and says whether each has room
+    or none has, the line bills none of them (left to expense, the PO page), its voucher match is held with why
+    (D-264), and the review screen's PO match says "Which PO line?". A line coded to the business unit of the one it
+    bills is told the next time it is checked.
+  - **Where it holds:** an invoice's match (`match_invoice`), what the PO's other invoices bill on each line, and the
+    Purchase orders page, all from one sharing out of the PO's invoices in order; a kept PO (D-202) shares them out
+    from its rows when a line of theirs is alike (its kept lines say so), else is added up as before, to the last
+    digit; without lines alike nothing changes.
+  - *Not chosen / left:* the PO line's second description (JD Edwards' Description 2) and the ship-to as evidence:
+    neither is kept (a schema change, for when the pilot's grid shows they tell jobs apart); the business unit's name
+    from the chart. Month-end's received-not-billed accruals pair a line with the first alike (`billed_on`, by
+    description, D-194). A kept PO with lines alike reads its invoices' lines at each ask (0.2 to 0.3 s at 3,000).
+- **D-283** · **A goods line printed with no quantity matches its amount at its PO line's unit cost when that comes out
+  a whole number; else 1, said** (`coding/po.py` `unprinted_quantity`, `LineMatch.quantity_from`, the keying sheet's
+  notes; B-2669). This changes D-264, where such a line matched 1 whatever its PO line.
+  - **Why:** an invoice that prints the amount of a PO line of 100 bags at 5.99 and no quantity bills the 100 bags:
+    keyed as 1, JD Edwards would leave 99 open on a line billed in full, and the next invoice on it would be over.
+  - **What:** on a PO line with a quantity and a unit cost (not one billed by amount, whose quantity is the
+    invoice's or empty, D-264), the amount ÷ the unit cost, rounded to the nearest whole number, when that number
+    at the amount is the unit cost within the price tolerance (2% or 50 cents, `_same_price`) to the cent; negative
+    on a credit. Said under the voucher ("Quantity Matched is 100, its amount (599.00) at the PO line's unit cost
+    5.99"). When it does not come out so (86.25 of a 57.50 setup), 1 as before, and the sheet says to check the
+    quantity JD Edwards shows. A charge (freight, a fee) still matches 1: it is billed by the shipment.
+  - *Not chosen:* a quantity with decimals (7.69 bags): a quantity printed nowhere is no measure, and a whole number
+    within the price tolerance is what a person would type; the quantity in the PO checks (PO_QTY_OVER is about the
+    quantity printed, none here).
+- **D-284** · **A PO-matched voucher's Voucher Match rows are kept with the invoice when it is approved; its keying
+  sheet and its Z-files key those, and the Z-files name the order and its lines as the sheet does** (`schema.
+  VOUCHER_MATCH`, `coding/po.py` `kept_match`, `kept_voucher_match`, `pipeline._erp_findings`, `jde_keying.
+  po_matches`, `jde_zfiles._order_of`, `_match_rows`; B-2671, B-2672). This settles D-264's F0411Z1T, left naming the
+  invoice's line numbers.
+  - **Why:** a batch's sheet is made again from the approved data at each download (D-75): after the purchase orders
+    were loaded again (the vouchers keyed, a line JD Edwards closed left out, what is open changed) its invoices'
+    matches were made afresh, so a sheet downloaded again said "Not ready", or matched another line. And the Z-files
+    named Settings' order type and company and the invoice's line numbers, the sheet the PO's own.
+  - **What:** the match made with the approval's checks (`finalise_coding`, D-75) goes beside the approved coding as
+    WORKED_OUT (dropped from the coding, as the place of supply is), its rows only when it has rows and nothing held
+    it (held, it is made again from the purchase orders loaded, as before). `po_matches` gives it for an invoice that
+    has one; a reopened invoice approved again keeps the new one. The Z-files are given the same matches (the batch's
+    ZIP, the dry run, the AIS posting): VLPDCT / VLPKCO the order's type and company (Settings' when the file gave
+    none, or with no match: the PO not loaded), F0411Z1T's DCTO / KCOO likewise and its LNID the PO line's number
+    as JD Edwards shows it ("12.000", with its decimal point as UORG and PRRC; blank for a charge keyed on an account
+    of its own). F0411Z1T's other columns are the invoice line's, as before; the file is still to be confirmed with
+    the JD Edwards team (docs/JDE_E1.md).
+  - *Not chosen:* keeping the match at the batch for an invoice approved before (what was matched at its approval is
+    not known; it is made from the purchase orders loaded, as before): the approval is the moment the person saw it.
 - **D-285** · **What decides an invoice's company and what may approve it, reviewed** (D-263, D-267, D-270, D-272;
   an adversarial review, 19 Nov 2026; B-2680 to B-2688).
   - **The names on the page** decide the company at every check made again (the review screen, the queue's Ready,

@@ -141,6 +141,7 @@ def jde_context(store: Store, query: Any = None) -> dict[str, Any]:
         "remarks": jde_settings.REMARKS,
         "po_charges": jde_settings.PO_CHARGES,
         "retainage_taxes": jde_settings.RETAINAGE_TAXES,
+        "po_match_to": jde_settings.PO_MATCH_TO,
         "currencies": ", ".join(js.currencies),
         "extras": ", ".join(f"{k}={v}" for k, v in js.po_extra_columns.items()),
         "bank_rows": bank_rows(store, js),
@@ -298,6 +299,10 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
         if text("retainage_tax") not in jde_settings.RETAINAGE_TAXES:
             return refuse("Choose what Voucher Match works a subcontract row's tax out on.")
         new.retainage_tax = text("retainage_tax")
+    if "po_match_to" in form:  # 2-way or 3-way (D-281)
+        if text("po_match_to") not in jde_settings.PO_MATCH_TO:
+            return refuse("Choose what an invoice on a purchase order is matched to.")
+        new.po_match_to = text("po_match_to")
     if "remarks" in form:  # (D-210)
         if text("remarks") not in jde_settings.REMARKS:
             return refuse("Choose what the remarks carry.")

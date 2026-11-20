@@ -34,7 +34,7 @@ from ..capture.layout import PDF_LOCK, CannotRead
 from ..capture.workflow import AUTONOMOUS_REVIEWER, WAITING_FOR_PAGE_READER, autonomy_decision, capture_invoice
 from ..coding import banks, companies, posting_edits
 from ..coding.claim import claim_findings
-from ..coding.po import match_invoice, po_findings, voucher_match
+from ..coding.po import kept_match, match_invoice, po_findings, voucher_match
 from ..coding.remark import fill_remarks
 from ..coding.rules import apply as apply_rules
 from ..coding.tax import PLACE_OF_SUPPLY, SUPPLY_OURS, SUPPLY_SITE, build_gl_distribution, supply_source
@@ -44,7 +44,7 @@ from ..coding.vendors import vendor_findings
 from ..core.config import Settings
 from ..core.memory import compare_patterns, compare_with_history, format_examples, select_examples, vendor_key
 from ..core.reference_data import ReferenceData, short_name
-from ..core.schema import COMPANY_TAX, PROGRESS_BILLING, InvoiceCoding, decided
+from ..core.schema import COMPANY_TAX, PROGRESS_BILLING, VOUCHER_MATCH, InvoiceCoding, decided
 from ..core.store.imports import ClaimLost
 from ..core.store.joined import CLAIM
 from ..core.store.reports import anywhere_in
@@ -361,7 +361,8 @@ def _erp_findings(coding: InvoiceCoding, output: dict[str, Any], js: Any, store:
     """(what JD Edwards' batch would hold back of the voucher ``output``, ``jde_review.voucher_findings``; with
     PO-matched vouchers, the invoice's PO match, None without one): what holds its voucher match rows back from the
     keying sheet too (``jde_review.match_findings``, B-2667), its PO match made once for the PO checks as well. None
-    and nothing to say without JD Edwards in use (``js`` None)."""
+    and nothing to say without JD Edwards in use (``js`` None). The voucher match's rows go in ``output``
+    (``schema.VOUCHER_MATCH``): approved, it is what its keying sheet and Z-files key (D-284)."""
     if js is None or store is None:
         return [], None
     from ..erp import jde_accounts, jde_review
@@ -372,7 +373,10 @@ def _erp_findings(coding: InvoiceCoding, output: dict[str, Any], js: Any, store:
     if not (js.po_matched and quoted):
         return found, None
     match = match_invoice(coding, store, exclude_invoice_id)  # (its voucher match rows, as the sheet keys them)
-    return found + jde_review.match_findings(output, js, an8, voucher_match(match, quoted, js.charge_account)), match
+    matched = voucher_match(match, quoted, js.charge_account)
+    if (kept := kept_match(matched)) is not None:
+        output[VOUCHER_MATCH] = kept
+    return found + jde_review.match_findings(output, js, an8, matched), match
 
 
 def _say_on(lines: dict[int, Any], said: str | dict[int, str]) -> None:

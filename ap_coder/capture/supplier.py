@@ -1550,6 +1550,7 @@ ALWAYS_A_PERSON: dict[str, str] = {
             "PO_VENDOR_MISMATCH",
             "PO_COMPANY_DIFFERS",
             "PO_LINE_NOT_ON_PO",
+            "PO_LINE_AMBIGUOUS",
             "PO_PRICE_OVER",
             "PO_QTY_OVER",
             "PO_NOT_RECEIVED",

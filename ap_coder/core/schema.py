@@ -527,7 +527,11 @@ COMPANY_TAX = "company_tax"
 # due; ``capture.reader.progress``), read off its page when it came in and kept beside the coding, for its voucher's
 # retained amounts.
 PROGRESS_BILLING = "progress_billing"
-WORKED_OUT = (PLACE_OF_SUPPLY, FROM_VENDOR_LIST, COMPANY_TAX, PROGRESS_BILLING)
+# A PO-matched voucher's Voucher Match rows as matched when it was approved (D-284: ``coding/po.py`` ``kept_match``),
+# kept beside the coding so that its keying sheet and Z-files key them each time, whatever the purchase orders loaded
+# since; absent when they could not be made then.
+VOUCHER_MATCH = "voucher_match"
+WORKED_OUT = (PLACE_OF_SUPPLY, FROM_VENDOR_LIST, COMPANY_TAX, PROGRESS_BILLING, VOUCHER_MATCH)
 
 
 def as_read(final: dict[str, Any], proposed: dict[str, Any]) -> dict[str, Any]:

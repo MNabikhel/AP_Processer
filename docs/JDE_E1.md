@@ -385,8 +385,8 @@ document type that is not 2 characters, a domestic currency that is not a 3-lett
 | VLDDJ | Due date (Julian): printed or worked out; the invoice date for a credit | setting can leave it blank |
 | VLPST | Pay status (default `A`) | |
 | VLPO | PO number (≤8) | as a reference, or for PO-matched vouchers; blank when the PO is longer (D-87) |
-| VLPDCT | PO document type (default `OP`) | with VLPO |
-| VLPKCO | PO company (default: the company) | with VLPO |
+| VLPDCT | PO document type: a PO-matched voucher's, its order's as the purchase orders loaded give it (as the keying sheet keys it, D-284); else Settings' (default `OP`) | with VLPO |
+| VLPKCO | PO company: likewise its order's; else Settings' (default: the company) | with VLPO |
 | VLRMK | `AP Coder #<id>`, or with *Remarks* = as typed by hand the first line's remark (D-210); plus `PO <number>` for a PO too long for VLPO when it fits in 30 characters | remark |
 | VLGLBA | G/L bank account of the invoice's *Pay from* account | **unconfirmed**; only when mapped (below) |
 | *extra* | e.g. VLATFLG, VLPSTE | **unconfirmed**; only in PO-matched mode |
@@ -443,11 +443,15 @@ up to R04110ZA's processing options: confirm it with the JDE team.
 
 ## F0411Z1T: PO match lines (unconfirmed)
 
-EDUS, EDBT, EDTN, EDLN (the pay item), DOCO (PO number), DCTO (PO type), KCOO (PO company), LNID (the
-invoice's line number, *not* necessarily the PO line; E1 stores line 1 as 1000), LITM (blank: AP Coder
-does not know the item number), DSC1 (description), UORG (quantity) and PRRC (unit price) written with a
+EDUS, EDBT, EDTN, EDLN (the pay item), DOCO (PO number), DCTO (PO type), KCOO (PO company), LNID, LITM (blank:
+AP Coder does not know the item number), DSC1 (description), UORG (quantity) and PRRC (unit price) written with a
 decimal point, AEXP (amount, in the amount format), CRCD (currency) and SBL, SBLT (the line's subledger and its
-type, D-268; blank for most lines).
+type, D-268; blank for most lines). A row for each invoice line: DOCO, DCTO and KCOO as VLPO, VLPDCT and VLPKCO (the
+order's type and company as the keying sheet keys them, D-284), and LNID the own number of the PO line the keying
+sheet matches it to (D-264), as JD Edwards shows it, with its decimal point like UORG and PRRC (`12.000`; E1 stores it
+as 12000), blank for a line on no PO line (a charge keyed on an account of its own, D-265). When the PO's lines are
+not loaded (no match to give), DCTO and KCOO are Settings' and LNID the invoice's line number (1, 2, 3: *not* a PO
+line), as before.
 
 ## Test import checklist (for the pilot tester's IT)
 

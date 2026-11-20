@@ -67,7 +67,7 @@ from ..core.store.postings import (  # the rows' statuses, kept with the table (
     SENDING,
     UNKNOWN,
 )
-from . import jde, jde_ais, jde_formats, jde_settings, jde_voucher, jde_zfiles
+from . import jde, jde_ais, jde_formats, jde_keying, jde_settings, jde_voucher, jde_zfiles
 
 LABELS = {CHECKED: "Dry run passed", REFUSED: "Refused in the dry run", QUEUED: "Waiting: JD Edwards not reached",
           SENDING: "Being sent", POSTED: "Posted", FAILED: "Refused by JD Edwards",
@@ -178,6 +178,8 @@ def _payloads(store: Any, batch: int) -> tuple[dict[int, dict[str, Any]], dict[i
     prepared = jde_voucher._vouchers(invoices, settings, lookup, on)
     problems = jde.validate(invoices, settings, lookup, prepared=prepared)
     installation, site = installation_id(store), jde_zfiles.batch_site(known, invoices)
+    # (a PO-matched voucher's match as its keying sheet keys it, D-284)
+    matches = jde_keying.po_matches(store, invoices, settings.charge_account) if settings.po_matched else {}
     out: dict[int, dict[str, Any]] = {}
     for inv, (an8, v) in zip(invoices, prepared, strict=True):
         if blocking:
@@ -188,10 +190,11 @@ def _payloads(store: Any, batch: int) -> tuple[dict[int, dict[str, Any]], dict[i
             problems[inv["id"]] = [closed]
         if inv["id"] in problems:
             continue
-        headers, dists, matches = jde_zfiles.voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on,
-                                                          prepared=v, site=site)  # fmt: skip
+        headers, dists, match_rows = jde_zfiles.voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates,
+                                                             on=on, prepared=v, site=site,
+                                                             matched=matches.get(inv["id"]))  # fmt: skip
         out[inv["id"]] = {"key": idem_key(inv["id"], batch, installation), "pay_items": headers, "gl_lines": dists,
-                          "matches": matches, "_expect": _expect(inv, headers, settings),
+                          "matches": match_rows, "_expect": _expect(inv, headers, settings),
                           "_timeout": settings.voucher_timeout, "_vendor": inv.get("vendor_key") or "",
                           "_moved": jde_settings.moved_note(day, moved) if moved else ""}  # fmt: skip
     made = {"settings": settings, "lookup": lookup, "on": on, "fx_rates": fx_rates, "site": site,

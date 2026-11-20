@@ -208,6 +208,7 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
         left_invoices=[i for i in invoices if i["id"] in left_out],
         no_undo=jde_post.undo_problem(store, batch),
         site=jde_zfiles.batch_site(known, invoices),  # the keys the API sends too (D-182)
+        po_matches=jde_keying.po_matches(store, kept, settings.charge_account) if settings.po_matched else None,
     )
 
 
@@ -568,8 +569,10 @@ def jde_dry_run(request: Request) -> Response:
     store = get_store(request)
     invoices = store.get_invoices([r["id"] for r in store.unexported_approved()])
     prior = jde.prior_records(store, invoices=invoices)  # only what has their numbers (D-156)
-    report = jde.dry_run(invoices, jde_settings.load(store), store.vendor_ids(), prior=prior,
-                         batch="(next)", fx_rates=store.fx_rates())  # fmt: skip
+    js = jde_settings.load(store)
+    report = jde.dry_run(invoices, js, store.vendor_ids(), prior=prior, batch="(next)", fx_rates=store.fx_rates(),
+                         po_matches=jde_keying.po_matches(store, invoices, js.charge_account) if js.po_matched
+                         else None)  # fmt: skip
     return download(jde.dry_run_text(report).encode("utf-8"), "ap_coder_jde_dry_run.txt", "text/plain; charset=utf-8")
 
 
