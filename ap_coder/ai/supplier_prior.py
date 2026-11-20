@@ -337,7 +337,7 @@ class _Names:
         return bool(self.whole or self.cut)
 
 
-def _journal_names(store: Any, journal_stamp: int) -> _Names:
+def _journal_names(store: Any, journal_stamp: tuple[Any, ...]) -> _Names:
     def read() -> _Names:
         whole: dict[str, dict[str, tuple[str, str]]] = {}
         cut = []
@@ -613,21 +613,22 @@ def prior_for(store: Any, vendor: Any, always: bool = False) -> Prior:
     stamp = store.prior_stamp(key)
     if not stamp[0] and not always:  # no journal was ever loaded
         return EMPTY
+    journal = stamp[:2]  # (what the journal is: its count of changes on this database, B-2995)
 
     def make() -> Prior:
-        names = _journal_names(store, stamp[0])
+        names = _journal_names(store, journal)
         if not names and not always:  # every journal was taken out again
             return EMPTY
         lines, found_by, note = _journal_lines(store, names, name, number) if names else ([], "", "")
-        offices = _offices(store, stamp[0]) if names else frozenset()
-        latest = _kept(("latest", str(store.path)), stamp[0], store.journal_last_date) if names else ""
+        offices = _offices(store, journal) if names else frozenset()
+        latest = _kept(("latest", str(store.path)), journal, store.journal_last_date) if names else ""
         return replace(_built(str(lines[-1]["supplier_number"]).strip() if lines else "",
                               str(lines[-1]["supplier_name"]) if lines else "", found_by, note, lines,
                               store.approved_coding(key), offices, latest), journal=bool(names))  # fmt: skip
 
     prior = _kept(("prior", str(store.path), key, number, "" if number else _plain(name), always), stamp, make)
     if prior.journal and not prior:  # a supplier the journal does not have: offered from the journal as a whole
-        return replace(prior, book=_book(store, stamp[0]))
+        return replace(prior, book=_book(store, journal))
     return prior
 
 
@@ -805,7 +806,7 @@ class Book:
     units_of: Mapping[str, tuple[str, ...]]  # a GL code -> the business units its lines went to, the most first
 
 
-def _book(store: Any, journal_stamp: int) -> Book:
+def _book(store: Any, journal_stamp: tuple[Any, ...]) -> Book:
     """The ``Book`` of ``store``'s journal, read when a supplier it does not have is coded and kept with the priors
     while ``journal_stamp`` holds (the made-up year's 7,500 lines: 0.1 s, 1.5 MB)."""
 
@@ -843,7 +844,7 @@ def _book(store: Any, journal_stamp: int) -> Book:
     return _kept(("book", str(store.path)), journal_stamp, read)
 
 
-def _offices(store: Any, journal_stamp: int) -> frozenset[str]:
+def _offices(store: Any, journal_stamp: tuple[Any, ...]) -> frozenset[str]:
     """The words of the journal's remarks that went to ``UNIT_WORD_SHARE`` of its GL codes and ``UNIT_WORD_CODES``
     at least: they say for whom a purchase was ("alder" of "4410 Alder"), not what it was ("filter" of "filter
     change" goes with one code), for ``Prior.unit_words``. Kept while ``journal_stamp`` holds."""
