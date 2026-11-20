@@ -7030,15 +7030,18 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     accounts marked meals, D-90), or the supplier's name or any line saying a meal, a stay, a ride or a personal
     service (`_TAKES_TIPS`: restaurant, bistro, dinner, catering, hotel, "1 night", taxi, fare, salon, massage, tour,
     instructor...); or, on an invoice that says neither, it is printed after the other lines and is a whole 10 to 25%
-    of them, to the cent, before the tax printed or with it (a terminal's 15% of 100.00 + 13.00 HST is 16.95).
+    of them, to the cent, before the tax printed or with it (a terminal's 15% of 100.00 + 13.00 HST is 16.95). On an
+    expense claim (D-216) the lines are a tip's own receipt's (`_bill`: the lines in a row named "<merchant>: ...")
+    and the tax read on them (B-2861): the claim, one invoice of every receipt, keeps the tips each receipt found.
   - **Why by the invoice:** a tip's own words are free ("Dinner tip for Mike", "Three-course dinner tip", "Cooking
     class instructor tip"), so every rule on the words around a tip word lost some; a purchase named with a tip word
     comes from a supplier that takes no tips ("Excel tips workshop" from a training centre, "Pipette tips for lab",
     "Tip fee at landfill", "Thank you cards"). The supplier's usual account reaches the rule through the lines' codes
     (the coding memory and the supplier's past coding code a restaurant's lines to the meals account), so the rule
     needs no database: the posting, the Tax check, the meals warning (MEALS_TAX_LINES), the JD Edwards pay items
-    (`jde_zfiles._claimed_shares`, its meals accounts those the distribution halved) and the PST owed on a voucher
-    (`jde_voucher.pst_owed`) all take the same tips. A share must be a whole percent and come after the lines, so a
+    (`jde_zfiles._claimed_shares`), the PST owed on a voucher (`jde_voucher.pst_owed`) and a PO-matched voucher's
+    rows (`jde_match._line_shares`, B-2862) all take the same tips; a voucher's meals accounts are those its G/L
+    distribution halved (`jde_voucher.meals_accounts`). A share must be a whole percent and come after the lines, so a
     purchase's amount rarely passes for one; a count at a price is never a tip, from any supplier ("Piping tips set",
     3 x 12.00, from a restaurant supply).
   - **Kept:** each of the 75 tips the word rules had to keep, and the owner's two (`tests/coding/test_meals.py`
