@@ -564,10 +564,11 @@ def _still_clean(store: Store, reference: ReferenceData, settings: Settings, inv
         coding = InvoiceCoding.model_validate(coded)
     except ValueError:
         return None, "the coding needs fixing by hand"
+    # paid from the account its review screen opens with, never the default the day it was read (B-2965)
     accounts = store.bank_accounts()
-    if accounts:  # paid from the account its review screen opens with, never the default the day it was read (B-2965)
-        last = store.last_pay_from(store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number))
-        coding.pay_from_account = banks.opening_choice(coded, bool(inv.get("final_output")), accounts, last)
+    key = store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number) if accounts else ""
+    coding.pay_from_account = banks.opening_choice(coded, bool(inv.get("final_output")), accounts,
+                                                   store.last_pay_from(key))  # fmt: skip
     if _credit_note(bool((store.get_capture(invoice_id) or {}).get("credit_note")), coding.grand_total):
         return None, "it is a credit note: a credit is always applied by a person"
     others = others_reason(others_coded(coded.get("line_items")))
