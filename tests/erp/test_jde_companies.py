@@ -88,6 +88,13 @@ def test_a_us_companys_tax_is_held_until_settings_key_its_sales_tax_or_use_tax()
     assert jde_voucher._prepare(taxed, own, "10023").tax_code == "E"  # (its own: held, whatever every one's is)
     one = dataclasses.replace(held, company_us_tax={"00310": jde_settings.US_TAX_KEYED})
     assert jde_voucher._prepare(taxed, one, "10023").tax_code == "S"
+    canadian = _invoice(USD, 4, company="00310", **{COMPANY_TAX: {"tax_area": "BC-GSTPST", "from": "the supplier's "
+                                                                  "default"}})  # fmt: skip
+    said = ("tax area BC-GSTPST is a Canadian province's (Settings → JD Edwards E1 → tax areas), but company 00310's "
+            "sales tax is keyed on its voucher: give its PO line or the supplier the US tax area of where it is "
+            "delivered")  # fmt: skip
+    assert jde_voucher._prepare(canadian, keyed, "10023").problems == [said]
+    assert jde_voucher._prepare(canadian, held, "10023").problems == []  # (held: the supplier's area, as before)
     on_po = _invoice(USD, 3, company="00310", po_number="30981", **WA)
     assert jde_voucher._prepare(on_po, dataclasses.replace(keyed, po_matched=True), "10023").tax_code == "E"
     on_gl = dataclasses.replace(keyed, amount_mode=jde_settings.AMOUNT_GL)

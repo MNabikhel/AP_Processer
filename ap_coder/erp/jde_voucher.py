@@ -549,12 +549,17 @@ def _check_tax_area(v: _Voucher, final: dict[str, Any], settings: JdeSettings) -
     charged, v.province, v.tax_area, v.tax_code = _tax_area_code(final, settings)
     on_gl = settings.tax_on_gl
     if isinstance(final.get(COMPANY_TAX), dict):  # a US company's (D-267): its area from the PO line or the supplier
+        canadian = {row.tax_area.strip().upper() for row in settings.tax_map.values() if row.tax_area.strip()}
         if not v.tax_area:
             add(
                 f"no tax area for company {company_of(final, settings)}'s voucher: neither its PO line nor the "
                 "supplier's default (JD Edwards' supplier master, Tax Rate/Area) gives one",
                 "JDE_TAX_AREA",
             )
+        elif v.tax_area.upper() in canadian and us_keyed(final, settings):  # (a Canadian supplier's default, D-312)
+            add(f"tax area {v.tax_area} is a Canadian province's (Settings → JD Edwards E1 → tax areas), but company "
+                f"{company_of(final, settings)}'s {'sales' if charged else 'use'} tax is keyed on its voucher: give "
+                "its PO line or the supplier the US tax area of where it is delivered", "JDE_TAX_AREA")  # fmt: skip
     elif on_gl:
         pass
     elif charged and v.province in ("", OUTSIDE_CANADA):
