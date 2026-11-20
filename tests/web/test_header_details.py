@@ -647,3 +647,23 @@ def test_in_a_browser_picking_a_vendor_fills_the_number_on_its_approved_invoices
     note = page.locator(f'[data-field="{GST}"] [data-from-vendor-note]')
     assert note.is_visible() and "approved invoices" in note.inner_text()
     assert errors == []
+
+
+def test_in_a_browser_a_date_being_typed_is_never_rewritten_by_its_check(browser, store):
+    """B-2988: a pause while typing 15/10/2026, after "15/10/20" (a whole date already, 2020-10-15), let the check put
+    that in the box being typed in as YYYY-MM-DD: the rest typed made it "2020-10-1526", not a date. The box being
+    typed in is left as typed; its check puts the date as YYYY-MM-DD once it is left."""
+    page, errors = _open_review(browser, store, "Pacific", viewport=LAPTOP)
+    settle(page)  # the check made on opening the page
+    date = page.locator("[form=inv][name=invoice_date]")
+    date.click()
+    page.keyboard.press("Control+a")
+    with page.expect_response(lambda r: r.url.endswith("/check")) as checked:
+        page.keyboard.type("15/10/20")  # then a pause: what is typed so far is checked
+    assert checked.value.json()["header"]["values"]["invoice_date"] == "2020-10-15"
+    settle(page)
+    assert date.input_value() == "15/10/20"
+    page.keyboard.type("26")
+    page.keyboard.press("Tab")
+    settle(page)
+    assert date.input_value() == "2026-10-15" and errors == []

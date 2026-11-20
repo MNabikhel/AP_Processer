@@ -54,6 +54,7 @@ let timer = 0;
 let stale = null; // what the screen said once it was out of date (showStale): nothing is checked or sent from it after
 let running = null; // the check under way (a promise), with any rounds asked for meanwhile
 let queued = false; // edits made while a check runs: check again after it
+let typingIn = null; // the box being typed in (since it took the focus): what a check fills is not put in it (B-2988)
 let owed = false; // an edit's check that Approve called off: checked once the approval does not go through (B-2986)
 const checking = document.querySelector("[data-checking]"); // "Checking…" beside the approve bar meanwhile
 
@@ -627,9 +628,13 @@ document.addEventListener("input", (e) => {
 if (form) {
   document.addEventListener("input", (e) => {
     if (e.target.form !== form) return;
+    typingIn = e.target;
     dropUndo(); // an edit since: Undo would put that back too
     headerEdited(e.target);
     if (e.target.type !== "checkbox" && e.target.type !== "radio") soon();
+  });
+  document.addEventListener("focusout", (e) => {
+    if (e.target === typingIn) typingIn = null;
   });
   document.addEventListener("change", (e) => {
     if (e.target.form !== form) return;
@@ -1277,13 +1282,14 @@ function vendorChanged(waited = false) {
 
 
 /** What the server filled in (the vendor list's numbers, the default Pay from account) and the details its checks are
-    about (amber, with a note), after a check. A value is put in only where the box still holds what was sent. */
+    about (amber, with a note), after a check. A value is put in only where the box still holds what was sent, and
+    never in the box being typed in: "15/10/20", a pause, then "26" (B-2988); its check puts it in once it is left. */
 function applyHeader(header, posted) {
   const sent = (name) => (posted ? posted.get(name) ?? "" : null);
   let company = false; // the company AP Coder decided again (D-286): the screen is drawn again for it (B-2684)
   for (const [name, value] of Object.entries(header.values || {})) {
     const el = input(name);
-    if (!el || (sent(name) !== null && el.value !== sent(name))) continue;
+    if (!el || el === typingIn || (sent(name) !== null && el.value !== sent(name))) continue;
     if (name === "company" && el.value !== value) company = true;
     el.value = value;
     if (name in TAX_FIELDS) viewer?.setEdited(name, value.trim(), false);
