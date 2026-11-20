@@ -409,12 +409,13 @@ def _tax_line_rate(check: _TaxCheck, tl: Any) -> None:
 
 
 def _gst_under_hst(check: _TaxCheck) -> float | None:
-    """The GST rate, when every HST charged is at it on a supply where HST is not levied: the GST printed under the
-    HST's name (an Alberta supplier's "HST Tax" at 5%), all of it claimable as GST (B-2640). None otherwise."""
+    """The GST rate, when every HST charged is at it on a supply where HST is not levied and no GST is charged beside
+    it: the GST printed under the HST's name (an Alberta supplier's "HST Tax" at 5%), all of it claimable as GST
+    (B-2640). None otherwise: GST and HST both charged is the GST charged twice (B-2780)."""
     rates, prov = check.setup.rates, check.prov
     gst = rates.rate_for("GST", prov, check.on) if prov else None
     hst = [tl for tl in check.tax_lines if tl.tax_type == "HST" and not nil(tl.tax_amount)]
-    if not gst or not hst or rates.rate_for("HST", prov, check.on) is not None:
+    if not gst or not hst or "GST" in check.charged or rates.rate_for("HST", prov, check.on) is not None:
         return None
     return gst if all(abs(tl.rate - gst) <= 0.0005 for tl in hst) else None
 

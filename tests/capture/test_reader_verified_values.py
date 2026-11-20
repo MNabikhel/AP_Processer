@@ -63,6 +63,20 @@ def test_a_label_with_an_id_is_not_a_us_address():
     assert provinces("Acme Inc.\n400 Pine St, Seattle, WA 98101")[0] == OUTSIDE_CANADA
 
 
+def test_an_id_label_ending_in_a_period_is_not_a_us_address():
+    """B-2785: "Cust. ID 10045" was Idaho and its ZIP code (an ID label's word is never the city, but only with a
+    space after it, not "Cust." with its period): printed in the customer's block over its address, the place of
+    supply was outside Canada."""
+    from ap_coder.ai.offline_coder import provinces
+    from ap_coder.capture.reader import us_address
+
+    for text in ("Cust. ID 10045", "Acct. ID 10045", "Order# ID 77812", "Cust.ID 10045"):
+        assert not us_address(text), text
+    assert us_address("Boise, ID 83702") and us_address("Boise ID 83702")
+    text = "Great Lakes Mechanical Inc.\n645 King St W, Toronto, ON M5V 2T6\nSold To:\nKestrel Foods Ltd.\n"
+    assert provinces(text + "Cust. ID 10045\n5609 Industrial Pkwy\nRegina, SK S4P 3Y2\n") == ("ON", "SK")
+
+
 def test_a_canadian_supplier_billing_in_us_dollars_is_not_read_month_first(tmp_path):
     """A US-looking line on a Canadian supplier's letterhead (its US warehouse) does not make its dates month first."""
     lines = _NO_DATE + [(60, 105, "Warehouse: 400 Pine St, Seattle, WA 98101"), (380, 135, "Invoice Date:"),

@@ -140,6 +140,46 @@ def one_row_totals(where: Path, name: str = "one_row.pdf", labels: str = "left",
     return text_pdf(where / name, items)
 
 
+def supplier_beside_bill_to(where: Path, name: str, label: str = "Bill To", heading: str = "Remit To",
+                            top: bool = True, named: bool = True, ship_to: bool = False) -> Path:  # fmt: skip
+    """A made-up invoice as ``where / name``: a bare ``label`` ("Bill To", "Sold To", "Customer") with the customer's
+    block under it, and the supplier's own block level with the label to its right, under ``heading`` ("Remit To",
+    "Vendor", "From"...; "" for its letterhead there, its name printed larger), its GST/HST number last. ``top``: the
+    supplier's letterhead also at the top left (else its name is only in a logo, a picture, or in that block).
+    ``named``: its name in the block. ``ship_to``: a "Ship To" block between the two."""
+    items: list[tuple] = [(400, 50, "INVOICE", 14), (400, 70, "Invoice #: 118204"),
+                          (400, 84, "Invoice Date: 2026-09-14"), (400, 98, "Terms: Net 30")]  # fmt: skip
+    if top:
+        items += [(50, 50, ONE_ROW_SUPPLIER, 14), (50, 68, "4410 Industrial Way NE, Calgary AB T2E 7H1")]
+    items += [(50, 130, label), (50, 144, ONE_ROW_CUSTOMER), (50, 158, "200 Ridge Road SW"),
+              (50, 172, "Calgary AB T2P 1J9")]  # fmt: skip
+    if ship_to:
+        items += [(210, 130, "Ship To"), (210, 144, "Site 14, Ridge Road"), (210, 158, "Calgary AB T2P 1J9")]
+    block = [heading] * bool(heading) + [ONE_ROW_SUPPLIER] * named
+    block += ["PO Box 2210 Stn M", "Calgary AB T2P 2M4", f"GST/HST No. {ONE_ROW_GST[:9]} {ONE_ROW_GST[9:]}"]
+    items += [(400 if ship_to else 330, 130 + 14 * n, text, 10 if heading or n else 12) for n, text in enumerate(block)]
+    items += [(50, 260, "Description"), (400, 260, "Qty"), (500, 260, "Amount"), (50, 276, "Widgets"), (400, 276, "1"),
+              (500, 276, "100.00"), (400, 340, "Subtotal"), (500, 340, "100.00"), (400, 354, "GST 5%"),
+              (500, 354, "5.00"), (400, 368, "Total"), (500, 368, "105.00")]  # fmt: skip
+    return text_pdf(where / name, items)
+
+
+def customer_beside_label(where: Path, name: str, rows: list[tuple[str, str]]) -> Path:
+    """B-2642's made-up invoice as ``where / name``: a form at the left margin, the customer's block in a column far
+    to its right, the supplier's name only in its logo (a picture). ``rows``: (the left margin's text, the column's)
+    a line each, the first a bare bill-to label ("Customer:", "Bill To") and the customer's name; a label under it
+    ("Facturer à", "Address", "Account No. 10045") or "" level with each line of the customer's address."""
+    items: list[tuple] = [(400, 50, "INVOICE", 14), (400, 70, "Invoice #: 118204"),
+                          (400, 84, "Invoice Date: 2026-09-14"), (400, 98, "Terms: Net 30")]  # fmt: skip
+    for n, row in enumerate(rows):
+        items += [(x, 130 + 14 * n, text) for x, text in zip((36, 300), row, strict=True) if text]
+    items += [(50, 260, "Description"), (400, 260, "Qty"), (500, 260, "Amount"), (50, 276, "Widgets"), (400, 276, "1"),
+              (500, 276, "100.00"), (400, 340, "Subtotal"), (500, 340, "100.00"), (400, 354, "GST 5%"),
+              (500, 354, "5.00"), (400, 368, "Total"), (500, 368, "105.00"),
+              (50, 400, f"GST/HST Registration No: {ONE_ROW_GST[:9]} {ONE_ROW_GST[9:]}", 8)]  # fmt: skip
+    return text_pdf(where / name, items)
+
+
 # Three made-up receipts of one expense claim (D-216): fuel with GST, a lunch with GST and a tip, a room with HST.
 # Each row is its text, with the amount at the right after a "|". Together: 273.00 before tax, 27.80 of tax, 300.80.
 RECEIPTS = {

@@ -327,3 +327,154 @@ def test_the_customers_name_beside_its_label_across_the_page_is_never_the_suppli
 
     cands = read_fields(build_layout(one_row_totals(tmp_path, supplier=False, customer="beside")))["vendor_name"]
     assert ONE_ROW_CUSTOMER not in [r.value for r in cands]
+
+
+@pytest.mark.parametrize(
+    ("label", "heading", "top", "named", "ship_to"),
+    [
+        ("BILL TO:", "", False, True, False),  # its letterhead level with the label
+        ("Bill To", "Remit Payment To", False, False, False),  # its name only in its logo
+        ("Bill To", "Remit To", True, True, False),
+        ("Sold To", "Vendor", True, True, False),
+        ("Customer", "Pay To", True, True, False),
+        ("Bill To", "From", True, False, False),
+        ("Customer", "Supplier", True, True, False),
+        ("Bill To", "Remit To", True, True, True),  # "Bill To | Ship To | Remit To"
+    ],
+)
+def test_the_suppliers_block_level_with_a_bare_bill_to_label_is_never_the_customers(
+    tmp_path, label, heading, top, named, ship_to
+):
+    """B-2781: B-2642 took the line level with a bare bill-to label, anywhere to its right, for the customer's block,
+    though the customer's block was under the label: the supplier's own block beside it (its letterhead, "Remit To",
+    "Vendor", "Pay To"...) was read as the customer's, its name dropped and its GST/HST number "may be the
+    customer's". Only the customer's block is the customer's: under the label, or beside it when nothing is under."""
+    from ap_coder.capture.types import BILL_TO_READING
+    from tests.pdfs import ONE_ROW_CUSTOMER, ONE_ROW_GST, ONE_ROW_SUPPLIER, supplier_beside_bill_to
+
+    path = supplier_beside_bill_to(tmp_path, "beside.pdf", label, heading, top=top, named=named, ship_to=ship_to)
+    got = read_fields(build_layout(path))
+    numbers = [(r.value, r.method) for r in got["gst_hst_registration_number"]]
+    assert numbers and all(v == ONE_ROW_GST and BILL_TO_READING not in m for v, m in numbers)
+    names = [str(r.value).rstrip(".") for r in got["vendor_name"]]  # "Inc" as read in a remit-to
+    assert ONE_ROW_CUSTOMER.rstrip(".") not in names
+    assert names[:1] == ([ONE_ROW_SUPPLIER.rstrip(".")] if top or named else [])
+
+
+def test_the_customers_block_beside_its_label_ends_at_the_next_column_and_its_last_line(tmp_path):
+    """B-2781: the customer's block beside "Customer:" (B-2642) was a fixed area 0.42 of the page wide and 0.12 tall
+    from the name: the supplier's remit-to in the next column, and its GST/HST number printed under the customer's
+    address, were read as the customer's. The block ends at the next column and before a number or label."""
+    from ap_coder.capture.reader.patterns import _bill_to_regions
+    from ap_coder.capture.types import BILL_TO_READING
+
+    path = _pdf(tmp_path / "beside.pdf", [
+        (400, 50, "INVOICE", 14), (400, 70, "Invoice #: 118204"), (400, 84, "Invoice Date: 2026-09-14"),
+        (36, 120, "Customer:"), (260, 120, "Maple Ridge Holdings Ltd."), (260, 134, "200 Ridge Road SW"),
+        (260, 158, "GST/HST No. 123456782 RT0001"), (440, 120, "Remit To"), (440, 134, "Northline Supply Ltd."),
+        (440, 148, "PO Box 2210 Stn M"), (440, 162, "Calgary AB T2P 2M4"),
+        (50, 260, "Description"), (500, 260, "Amount"), (50, 276, "Widgets"), (500, 276, "100.00"),
+        (400, 340, "Subtotal"), (500, 340, "100.00"), (400, 354, "GST 5%"), (500, 354, "5.00"), (400, 368, "Total"),
+        (500, 368, "105.00"),
+    ])  # fmt: skip
+    layout = build_layout(path)
+    got = read_fields(layout)
+    assert [r.method for r in got["gst_hst_registration_number"]] and not any(
+        BILL_TO_READING in r.method for r in got["gst_hst_registration_number"]
+    )
+    names = [r.value for r in got["vendor_name"]]
+    assert "Maple Ridge Holdings Ltd." not in names and names[:1] == ["Northline Supply Ltd."]
+    in_bill_to = {ln.text for ln in layout.lines() for r in _bill_to_regions(layout)
+                  if r.page == ln.box.page and r.x0 <= ln.box.cx <= r.x1 and r.y0 <= ln.box.cy <= r.y1}  # fmt: skip
+    assert {"Maple Ridge Holdings Ltd.", "200 Ridge Road SW"} <= in_bill_to
+
+
+def test_the_customers_block_beside_its_label_is_read_down_the_page_to_its_end():
+    """B-2781: the customer's block beside "Customer:" is read a line at a time down the page. Two lines under the
+    name, under a point tall and overlapping (a hidden text layer in tiny type), were each the line under the other:
+    the reading never ended and the invoice was never read."""
+    import threading
+
+    from ap_coder.capture.reader.patterns import _block_beside
+    from ap_coder.capture.types import Box, Line
+
+    def line(text, x0, y0, x1, y1):
+        return Line([], Box(0, x0, y0, x1, y1), text)
+
+    label = line("Customer:", 0.06, 0.15, 0.14, 0.165)
+    lines = [label, line("Maple Ridge Holdings Ltd.", 0.42, 0.15, 0.7, 0.165),
+             line("200 Ridge Road SW", 0.42, 0.18, 0.6, 0.1805),
+             line("Calgary AB", 0.45, 0.1803, 0.62, 0.1808)]  # fmt: skip
+    got = []
+    reading = threading.Thread(target=lambda: got.append(_block_beside(lines, label)), daemon=True)
+    reading.start()
+    reading.join(10)
+    assert got, "the customer's block beside its label was never done"
+    assert got[0] is not None and got[0].x0 < 0.42 and got[0].y1 > 0.18
+
+
+_STREET, _CITY = "200 Ridge Road SW", "Calgary AB T2P 1J9"
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        ("Customer:", "", ""),  # B-2642's own
+        ("Bill To", "Facturer à", ""),  # a bilingual label, stacked
+        ("BILL TO", "FACTURER À", ""),
+        ("Customer:", "Account No. 10045", ""),
+        ("Sold To", "Cust. ID 10045", ""),
+        ("Customer:", "Contact", "Phone"),
+        ("Customer", "Sales Rep", ""),
+        ("Sold To", "Address", "", "Customer No."),  # a form of bare labels, each level with its value
+        ("Bill To", "Facturer à", "", "Account No."),
+    ],
+)
+def test_labels_under_a_bare_bill_to_label_keep_the_customers_block_beside_it(tmp_path, labels):
+    """B-2782: B-2781 took the customer's block beside a bare bill-to label (B-2642) only when nothing but headings
+    was under the label: a label AP Coder reads no field of ("Facturer à" under "Bill To", "Address", "Account No.
+    10045", "Contact", "Sales Rep") was taken for the customer's own block under it, and the customer's name across
+    the page was read as the supplier again. Only a name or an address under the label is its block."""
+    from tests.pdfs import ONE_ROW_CUSTOMER, customer_beside_label
+
+    rows = list(zip(labels, (ONE_ROW_CUSTOMER, _STREET, _CITY, "10045"), strict=False))
+    cands = read_fields(build_layout(customer_beside_label(tmp_path, "form.pdf", rows)))["vendor_name"]
+    assert ONE_ROW_CUSTOMER not in [r.value for r in cands]
+
+
+@pytest.mark.parametrize("label", ["Facturer à :", "FACTURER À", "Livrer à :"])
+def test_a_french_bill_to_label_in_the_infinitive_is_the_customers_block(tmp_path, label):
+    """B-2783: "Facturé à" and "Livré à" were bill-to labels, "Facturer à" and "Livrer à" (as the benchmark's own
+    French invoices print them) were not: the customer's name under them, the supplier's only in its logo, was read
+    as the supplier."""
+    from tests.pdfs import ONE_ROW_CUSTOMER
+
+    path = _pdf(tmp_path / "fr.pdf", [
+        (400, 50, "FACTURE", 14), (400, 70, "No de facture : 118204"), (400, 84, "Date : 2026-09-14"),
+        (50, 130, label), (50, 144, ONE_ROW_CUSTOMER), (50, 158, _STREET), (50, 172, _CITY),
+        (50, 260, "Description"), (500, 260, "Montant"), (50, 276, "Articles"), (500, 276, "100,00"),
+        (400, 340, "Sous-total"), (500, 340, "100,00"), (400, 354, "TPS 5 %"), (500, 354, "5,00"), (400, 368, "Total"),
+        (500, 368, "105,00"), (50, 400, "TPS/TVH : 123456782 RT0001"),
+    ])  # fmt: skip
+    assert ONE_ROW_CUSTOMER not in [r.value for r in read_fields(build_layout(path))["vendor_name"]]
+
+
+_LABELS = ["Billing Address", "SHIPPING ADDRESS:", "Adresse de facturation", "Adresse de livraison :", "Bill-To:",
+           "BILL-TO", "Ship-To:", "Sold-To"]  # fmt: skip
+
+
+@pytest.mark.parametrize("label", _LABELS)
+def test_a_billing_or_shipping_address_label_or_a_hyphenated_bill_to_is_the_customers_block(tmp_path, label):
+    """B-2784: "Billing Address", "Shipping Address", "Adresse de facturation" and "Bill-To" (a hyphen for the space)
+    were no bill-to labels: the customer's name under them, the supplier's only in its logo, was read as the
+    supplier."""
+    from tests.pdfs import ONE_ROW_CUSTOMER
+
+    path = _pdf(tmp_path / "label.pdf", [
+        (400, 50, "INVOICE", 14), (400, 70, "Invoice #: 118204"), (400, 84, "Invoice Date: 2026-09-14"),
+        (50, 130, label), (50, 144, ONE_ROW_CUSTOMER), (50, 158, _STREET), (50, 172, _CITY),
+        (50, 260, "Description"), (500, 260, "Amount"), (50, 276, "Widgets"), (500, 276, "100.00"),
+        (400, 340, "Subtotal"), (500, 340, "100.00"), (400, 354, "GST 5%"), (500, 354, "5.00"), (400, 368, "Total"),
+        (500, 368, "105.00"), (50, 400, "GST/HST No. 123456782 RT0001"),
+    ])  # fmt: skip
+    assert ONE_ROW_CUSTOMER not in [r.value for r in read_fields(build_layout(path))["vendor_name"]]
