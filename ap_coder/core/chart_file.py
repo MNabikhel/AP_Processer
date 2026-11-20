@@ -201,6 +201,7 @@ _ATTRIBUTE = re.compile(rb'(?<![\w:])([\w:]+)="([^"]*)"')
 _ROWS_END = re.compile(rb"</(?:\w+:)?sheetData>|<(?:\w+:)?sheetData\b[^<>]*/>")  # (after it, no row)
 BLOCK = 8 * MB  # of a sheet's XML read at a time
 ROW_MOST = 8 * MB  # a row of a sheet's XML (the chart's export: 7 KB)
+EXCEL_COLUMNS = 16_384  # A to XFD: a cell's reference past Excel's last column is no cell of a workbook
 SURVEYED_MOST = 1_000_000_000  # the sheets a survey reads, unzipped (the made-up reports unzip to 9 times their size)
 
 
@@ -227,11 +228,12 @@ def _elements(xml: bytes, tags: re.Pattern[bytes]) -> Iterator[tuple[bytes, byte
 
 
 def _column(letters: bytes) -> int:
-    """A cell reference's column as a position from 0 ("A" is 0, "AA" 26)."""
+    """A cell reference's column as a position from 0 ("A" is 0, "AA" 26); ``EXCEL_COLUMNS`` for one past Excel's
+    last (XFD), however many letters it has (four letters are past it)."""
     n = 0
-    for letter in letters:
+    for letter in letters[:4]:
         n = n * 26 + letter - 64
-    return n - 1
+    return min(n - 1, EXCEL_COLUMNS)
 
 
 def _parts(z: zipfile.ZipFile) -> tuple[dict[str, str], str]:
@@ -343,19 +345,23 @@ def _blocks(z: zipfile.ZipFile, part: str) -> Iterator[bytes]:
 
 
 def _first_rows(z: zipfile.ZipFile, part: str, shared: list[str], most: int) -> list[list[str]]:
-    """A sheet's rows 1 to ``most``, each its cells' texts (``_text_of``) in their columns, "" where there is none."""
+    """A sheet's rows 1 to ``most``, each its cells' texts (``_text_of``) in their columns, "" where there is none, up
+    to ``COLUMNS_MOST``."""
     rows: list[list[str]] = []
     for block in _blocks(z, part):
         for attributes, inner in _elements(block, _ROW):
             number = _ROW_NUMBER.search(attributes)
             number = int(number.group(1)) if number else len(rows) + 1
-            if number > most:
+            if number > most or len(rows) >= most:  # (rows numbered 1 again and again: no more kept, B-2761)
                 return rows
             rows += [[] for _ in range(number - 1 - len(rows))]  # (rows with no cell, which the XML leaves out)
             cells: list[str] = []
             for cell, value in _elements(inner, _CELL):
                 reference = _REFERENCE.search(cell)
                 at = _column(reference.group(1)) if reference else len(cells)
+                if at >= COLUMNS_MOST:  # (past the columns kept: never padded out to, B-2761)
+                    cells += [""] * (COLUMNS_MOST - len(cells))
+                    break
                 cells += [""] * (at - len(cells)) + [_text_of(cell, value, shared)]
             rows.append(cells[:COLUMNS_MOST])
     return rows

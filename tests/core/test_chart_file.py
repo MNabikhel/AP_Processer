@@ -373,6 +373,29 @@ def test_a_tiny_crafted_workbook_is_surveyed_at_once_never_holding_the_server():
     assert refused == list(shapes)[:4], said
 
 
+def test_a_cell_past_excels_last_column_or_rows_numbered_1_again_and_again_are_never_held():
+    """B-2761: the survey's first rows were padded out to a cell's column before being cut to ``COLUMNS_MOST``: one cell
+    "ZZZZZ1" made a list of 12 million cells (190 MB), "ZZZZZZ1" 2.6 GB, and a reference of 20 letters ended in an
+    error the page could not say (OverflowError); rows numbered 1 again and again were each kept. A column past those
+    kept is never padded to, a reference of any length is past Excel's last column (XFD), and ``most`` rows are
+    kept."""
+    import tracemalloc
+
+    first = (b'<row r="1"><c r="A1" t="inlineStr"><is><t>Company</t></is></c><c r="ZZZZZ1"><v>1</v></c>'
+             b'<c r="' + b"Z" * 20 + b'1"><v>2</v></c></row>')  # fmt: skip
+    data = _crafted(first + b'<row r="1"><c r="A1"><v>3</v></c></row>' * 20_000)
+    heads = []
+    tracemalloc.start()
+    try:
+        chart_file.sheet_survey(data, lambda title, head: heads.append(head), "crafted.xlsx")
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert heads == [[["Company", *[""] * (chart_file.COLUMNS_MOST - 1)], *[["3"]] * (chart_file.HEADER_ROWS - 1)]]
+    assert peak < 5_000_000, f"{peak / 1e6:.0f} MB"
+    assert chart_file.EXCEL_COLUMNS == 16_384 == chart_file._column(b"XFD") + 1 == chart_file._column(b"Z" * 20)
+
+
 def test_a_sheet_read_in_blocks_smaller_than_a_row_counts_the_same_and_a_row_longer_than_any_exports_is_refused(
     tmp_path, monkeypatch
 ):
