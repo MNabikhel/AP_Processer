@@ -254,13 +254,18 @@ def _supplier_tax_area(store: Any, conn: sqlite3.Connection) -> None:
 
 def _subledgers(store: Any, conn: sqlite3.Connection) -> None:
     """What a line coded to an account whose posting edit code is L or U is keyed with (D-268): the past coding's
-    subledger, subledger type and units (``journal_lines``) and a PO line's subledger and type (``po_lines``); '' and
-    NULL for one loaded before. No version of its own: an older AP Coder leaves them be."""
+    subledger, subledger type and units (``journal_lines``), a PO line's subledger and type (``po_lines``) and an
+    approved line's, whether a person typed them (``feedback``, B-2830); '' and NULL for one loaded or approved
+    before. No version of its own: an older AP Coder leaves them be."""
     for table, column, kind in (("journal_lines", "subledger", "TEXT NOT NULL DEFAULT ''"),
                                 ("journal_lines", "subledger_type", "TEXT NOT NULL DEFAULT ''"),
                                 ("journal_lines", "units", "REAL"),
                                 ("po_lines", "subledger", "TEXT NOT NULL DEFAULT ''"),
-                                ("po_lines", "subledger_type", "TEXT NOT NULL DEFAULT ''")):  # fmt: skip
+                                ("po_lines", "subledger_type", "TEXT NOT NULL DEFAULT ''"),
+                                ("feedback", "final_subledger", "TEXT NOT NULL DEFAULT ''"),
+                                ("feedback", "final_subledger_type", "TEXT NOT NULL DEFAULT ''"),
+                                ("feedback", "final_units", "REAL"),
+                                ("feedback", "ledger_from", "TEXT NOT NULL DEFAULT ''")):  # fmt: skip
         if column not in dialect.columns(conn, table):
             dialect.add_column(conn, table, column, kind)
 

@@ -684,8 +684,9 @@ class InvoicesMixin:
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
                    suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at, final_tax_code,
-                   tax_source, tax_province, tax_uncollected, final_remark, remark_from)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   tax_source, tax_province, tax_uncollected, final_remark, remark_from, final_subledger,
+                   final_subledger_type, final_units, ledger_from)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 feedback_rows,
             )
         return counts
@@ -792,6 +793,7 @@ class InvoicesMixin:
                     missing,
                     " ".join(str(li.get("remark") or "").split()),  # the remark it is keyed with (D-213)
                     str(li.get("remark_from") or ""),
+                    *_ledger(suggestion, li),
                 )  # fmt: skip
             )
         return out
@@ -969,6 +971,15 @@ class _LineFeedback:
     coded: int = 0
     reopen_changes: list[dict[str, str]] = field(default_factory=list)
     cost_centers: bool = False  # whether the company keeps a cost center list (none to keep otherwise, B-562)
+
+
+def _ledger(suggestion: dict[str, Any] | None, li: dict[str, Any]) -> tuple[str, str, float | None, str]:
+    """An approved line's subledger, its type and its units (an account with posting edit code L or U keeps them,
+    D-268), and "person" when they are not what was proposed: a person typed them (B-2830)."""
+    final = (str(li.get("subledger") or ""), str(li.get("subledger_type") or ""), li.get("units") or None)
+    proposed = (str((suggestion or {}).get("subledger") or ""), str((suggestion or {}).get("subledger_type") or ""),
+                (suggestion or {}).get("units") or None)  # fmt: skip
+    return *final, "person" if final != proposed and any(final) else ""
 
 
 def _approval_edits(ai: dict[str, Any], final_output: dict[str, Any], lines: _LineFeedback) -> list[str]:
