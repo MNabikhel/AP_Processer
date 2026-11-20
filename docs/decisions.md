@@ -7197,6 +7197,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     never approved anyway): nothing on the screen fixes it (the holdback as read is not edited, D-274), and the
     approval keeps who said it is keyed by hand. Its total is held for a person to check, as a total printed above a
     holdback is (B-2946, D-47).
+  - **The batch files** (and their dry run, and the API) can't carry a Retained Amount: F0411Z1T has no column for
+    one until the JD Edwards team confirms how (D-273's list), so loaded, a PO-matched billing would pay its holdback
+    too. Such a voucher (PO-matched, its billing holding something back) is held from them, said ("retains 4,500.00:
+    the batch files can't carry the Retained Amount yet …: key it from the keying sheet"; `jde_voucher.files_held`,
+    `jde.validate(files=True)`), and keyed from the keying sheet with its Retained Amount; the Exports page lists it
+    as not ready for the batch files only (B-2950).
   - *Not chosen:* the amount due as the gross (the G/L lines and tax would not add up to it, and the holdback would
     be lost from the payable); the holdback as a second pay item on hold (how the company keys one outside Voucher
     Match is the JD Edwards team's to say); a warning only (the batch files would still pay it).

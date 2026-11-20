@@ -520,15 +520,31 @@ def _held_back(v: _Voucher, final: dict[str, Any]) -> str:
     """Why a voucher of a billing that holds part of its total back (its progress billing as read, D-274) is keyed by
     hand ("" for any other): its gross is the total before the holdback, which a standard voucher would pay in full.
     Voucher Match retains it on a subcontract's rows (D-273: ``jde_retainage``), a PO-matched voucher's own check."""
-    progress = final.get(PROGRESS_BILLING) or {}
-    held = _units(progress.get("holdback") or 0, v.decimals)
+    held = _holdback(v)
     if held <= 0:
         return ""
-    due = progress.get("amount_due")
+    due = (final.get(PROGRESS_BILLING) or {}).get("amount_due")
     owed = f", not the {float(due):,.2f} due" if due is not None else ""
     return (f"a billing that holds back {held / 100:,.2f}: keyed at its gross {v.gross / 100:,.2f}, the supplier would "
             f"be paid the holdback too{owed}. Key it by hand, as JD Edwards keys a holdback (Voucher Match's Retained "
             "Amount on its subcontract)")  # fmt: skip
+
+
+def _holdback(v: _Voucher) -> int:
+    """The holdback of the voucher's billing as read (``PROGRESS_BILLING``, D-274), in cents: 0 for any other."""
+    return _units((v.final.get(PROGRESS_BILLING) or {}).get("holdback") or 0, v.decimals)
+
+
+def files_held(v: _Voucher) -> str:
+    """Why a PO-matched voucher is held from the batch files and the API ("" for any other): its billing holds part
+    of its total back, which its Voucher Match rows retain on the keying sheet (D-273), but F0411Z1T carries no
+    Retained Amount until the JD Edwards team confirms how: loaded, the voucher would pay the holdback too (B-2950,
+    D-323). A voucher keyed by hand for it is held already (``_held_back``)."""
+    held = _holdback(v)
+    if not v.po_matched or held <= 0:
+        return ""
+    return (f"retains {held / 100:,.2f}: the batch files can't carry the Retained Amount yet (until the JD Edwards "
+            "team confirms how F0411Z1T does): key it from the keying sheet")  # fmt: skip
 
 
 def _check_header(v: _Voucher, final: dict[str, Any], settings: JdeSettings, an8: str,

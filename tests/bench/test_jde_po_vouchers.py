@@ -580,3 +580,45 @@ def test_the_next_billing_of_a_subcontractor_is_read_with_only_the_taxes_it_prin
     page.set_account(1, later.po_lines[0].account)
     page.check()
     assert not {"TAX_LINES_TOTAL_MISMATCH", "POSTING_UNBALANCED", "TAX_RATE_NONSTANDARD"} & set(page.findings)
+
+
+def test_a_po_matched_billing_that_retains_a_holdback_is_held_from_the_batch_files_and_keyed_from_the_sheet(
+    chart_company, chart_company_client, tmp_path
+):
+    """B-2950: with PO-matched vouchers on, a progress billing whose Voucher Match rows retain its holdback (4,500.00,
+    subcontract progress billings on) was sent in the batch files with no Retained Amount: F0411Z1T carries none, so
+    loaded, the voucher would pay the holdback too. Until the JD Edwards team confirms how it carries one (D-273), it
+    can't go in the batch files, their dry run or the API, said; the keying sheet keys it with its Retained Amount."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.erp import jde
+    from ap_coder.web.pages.exports import jde_check
+    from tests.webclient import follow, post, web_settings
+
+    store = chart_company.store
+    folder = tmp_path / "set"
+    jde_po_vouchers.write_progress(folder, chart_company.truth)
+    load_pos(store, {jde_po_vouchers.SUBCONTRACT_FILE: (folder / jde_po_vouchers.SUBCONTRACT_FILE).read_bytes()})
+    jde_settings.save(store, jde_po_vouchers.subcontract_settings(jde_settings.load(store)))
+    invoice_id = InvoicePipeline(web_settings(), store.reference_data(), store=store).process(
+        folder / "first_billing.pdf").invoice_id  # fmt: skip
+    store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], "Pat Tester")
+    js, inv = jde_settings.load(store), store.get_invoice(invoice_id)
+    (why,) = jde.validate([inv], js, store.vendor_ids())[invoice_id]
+    assert why.startswith("retains 4,500.00: the batch files can't carry the Retained Amount yet") and why.endswith(
+        "key it from the keying sheet")  # fmt: skip
+    assert [h["reasons"] for h in jde.dry_run([inv], js, store.vendor_ids())["held"]] == [[why]]
+    assert jde_check(store, [invoice_id])[0] == [] and jde_check(store, [invoice_id], files=False)[0] == [invoice_id]
+    refused = post(chart_company_client, "/exports/create", {"fmt": jde_settings.FORMAT, "ids": [invoice_id]}).json()
+    assert "None of the ticked invoices can go to JD Edwards yet" in refused["error"] and store.export_batches() == []
+    assert "retains 4,500.00" in chart_company_client.get(f"/exports?fmt={jde_settings.FORMAT}").text
+    assert "retains 4,500.00" not in chart_company_client.get(f"/exports?fmt={jde_keying.FORMAT}").text
+    follow(chart_company_client, post(chart_company_client, "/exports/create",
+                                      {"fmt": jde_keying.FORMAT, "ids": [invoice_id]}))  # fmt: skip
+    batch = store.export_batches()[0]["id"]
+    answer = chart_company_client.get(f"/exports/batches/{batch}/download?fmt={jde_keying.FORMAT}")
+    book = openpyxl.load_workbook(io.BytesIO(answer.content))
+    assert [r[0].value for r in book["Not ready"].iter_rows(min_row=2)] == []
+    rows, check = _retained_blocks([list(r) for r in book["Keying sheet"].iter_rows(values_only=True)])["WBS-P-0101"]
+    assert [(r[6], r[7]) for r in rows] == [(45000, 4500)] and check[3].endswith("= 42,750.00: balanced")
+    jde_settings.save(store, jde_po_vouchers.pilot_settings(jde_settings.load(store)))  # (subcontract billings off)
+    assert jde.validate([inv], jde_settings.load(store), store.vendor_ids())[invoice_id] == [why]

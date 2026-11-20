@@ -317,6 +317,10 @@ what JD Edwards had vouchered on the lines (and AP Coder's invoices not in it ye
 holding something back on a standard voucher (PO-matched vouchers off, or no PO) is never keyed at its total before
 the holdback, which would pay the supplier the holdback too: the review screen says it is keyed by hand
 (`HOLDBACK_BY_HAND`, approved only anyway, with a reason) and the keying sheet and batch files hold it (B-2945, D-323).
+The batch files can't carry a Retained Amount yet (F0411Z1T has none until the JD Edwards team confirms how): a
+PO-matched billing that holds something back is held from them, their dry run and the API ("retains 4,500.00: the
+batch files can't carry the Retained Amount yet …: key it from the keying sheet"), and keyed from the keying sheet
+with its Retained Amount (B-2950).
 
 ### PO numbers longer than 8 characters
 

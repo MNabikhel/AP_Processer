@@ -88,6 +88,7 @@ from .jde_voucher import (
     _Voucher,
     _vouchers,
     accrues_use_tax,
+    files_held,
     terms_code,
     terms_unmapped,
 )
@@ -244,12 +245,13 @@ def duplicate_problems(
 def validate(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None,
     prior: Mapping[str, list[dict[str, Any]]] | None = None, *, prepared: list[tuple[str, _Voucher]] | None = None,
-    on: dt.date | None = None,
+    on: dt.date | None = None, files: bool = True,
 ) -> dict[int, list[str]]:  # fmt: skip
     """{invoice id: blocking problems} for the invoices that cannot go out (the others are fine). ``prepared``: the
     invoices' vouchers already prepared (``_vouchers``); ``on``: the batch's day (else today). A voucher whose vendor
     is on hold now (``prior``'s "held", here or in JD Edwards) is held too: approved before the hold, it is not typed
-    or loaded (B-2340)."""
+    or loaded (B-2340). ``files``: for the batch files (and the API), which can't carry what only the keying sheet
+    keys (a Retained Amount, ``files_held``); False: for the keying sheet."""
     out: dict[int, list[str]] = {}
     if prepared is None:
         prepared = _vouchers(invoices, settings, vendor_lookup, on)
@@ -257,6 +259,8 @@ def validate(
     for inv, (an8, v) in zip(invoices, prepared, strict=True):
         if v.problems:
             out[int(inv.get("id") or 0)] = _accounts_once(v)
+        if files and (why := files_held(v)):
+            out.setdefault(int(inv.get("id") or 0), []).append(why)
         if why := hold_reason(held, inv.get("vendor_key"), an8):
             out.setdefault(int(inv.get("id") or 0), []).append(why)
     for inv_id, msgs in duplicate_problems(invoices, settings, vendor_lookup, prior).items():
