@@ -13,11 +13,13 @@ from typing import Any
 from ...coding.po import CLOSED, OPEN, pick_order, positive_lines
 from ..keys import company_code, order_key_of, po_key
 from ..memory import vendor_key
+from ..schema import VOUCHER_MATCH
 from . import dialect
 from ._base import (
     _ACTIVE_IN,
     ACTIVE_STATUSES,
     APPROVED,
+    PENDING,
     REVIEW,
     _clean_code,
     _in_list,
@@ -61,6 +63,10 @@ _PO_MOMENT = (
     "(SELECT MAX(seq) FROM vendor_changes), (SELECT json_group_array(id) FROM invoices WHERE po_key = ?)"
 )
 _VENDOR_COUNTS = f"SELECT key, COALESCE(CAST(value AS INTEGER), 0) FROM settings WHERE {_in_list('key')}"
+# Of each of these invoices (a JSON list of ids) approved (or approved once, waiting for a second approver), the rows of
+# the voucher match kept with it (``schema.VOUCHER_MATCH``, D-284), as SQLite writes them.
+_KEPT_ROWS = (f"SELECT id, {dialect.json_get('final_output', f'$.{VOUCHER_MATCH}.rows')} FROM invoices WHERE status IN "
+              f"(?, ?) AND {_in_list('id')} AND {dialect.json_valid('final_output')}")  # fmt: skip
 # Of each of these invoices (a JSON list of ids), what billing a PO reads of its coding (the approved one, else AP
 # Coder's: ``po_invoices``): [id, [invoice date, lines], null], SQLite writing the coding's own text of each value; [id,
 # null, the coding] when it is not an object of valid JSON, for Python to read as before. All in one JSON text.
@@ -630,6 +636,27 @@ class PurchasingMixin:
             if n == exclude_id or (owned is not None and n not in owned):
                 continue
             out.append(_po_row(n, status, number, date, batch, json.loads(facts) if doc is None else None, doc))
+        return out
+
+    def kept_voucher_lines(self, ids: list[int]) -> dict[int, tuple[tuple[Any, str], ...]]:
+        """{id: (its invoice line, the PO line as JD Edwards names it, "2.000"; "" for a charge keyed on an account of
+        its own) of each row of its kept voucher match, in order} of each of ``ids`` approved (or approved once,
+        waiting for a second approver) with one (D-284): what the PO's billing counts its lines on first when lines
+        alike are shared out (``po.PoBilling``, D-320). Read only then, of those invoices: most POs have no lines
+        alike, and a kept match is ten times the size of what a PO's billing reads of an invoice."""
+        if not ids:
+            return {}
+        with self._conn() as conn:
+            found = conn.execute(_KEPT_ROWS, (APPROVED, PENDING, json.dumps(ids))).fetchall()
+        out = {}
+        for n, kept in found:
+            try:
+                rows = json.loads(kept) if kept is not None else None
+                if isinstance(rows, list) and rows:
+                    out[n] = tuple((row.get("invoice_line"), str(row.get("line") or "") if row.get("on_po", True)
+                                    else "") for row in rows)  # fmt: skip
+            except (AttributeError, ValueError):  # (not rows as kept: shared out as any other)
+                continue
         return out
 
     def po_invoices_since(self, key: str, since: tuple[Any, int, dict[str, int]] | None = None,

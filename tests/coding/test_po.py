@@ -1419,15 +1419,16 @@ def test_a_two_way_match_never_says_a_po_line_was_not_received(tmp_path):
 STEEL = "Northern Rebar Supply Ltd."
 
 
-def _rebar_po(store, open_first=100.0, line_one="1100"):
+def _rebar_po(store, open_first=100.0, line_one="1100", second=100.0):
     """PO 4512 of the made-up JD Edwards company: REBAR 15M twice, the same price, for two jobs (business units 1100
-    and 1200, ``line_one`` the first's), ``open_first`` of the first line's 100 open."""
+    and 1200, ``line_one`` the first's), ``open_first`` of the first line's 100 open, the second's ``second`` ordered
+    and open."""
     store.import_purchase_orders([
         {"po_number": "4512", "vendor_name": STEEL, "supplier_number": "71120", "order_type": "OP",
          "order_company": "00210", "line_number": n, "erp_line": f"{n}.000", "description": "REBAR 15M",
-         "quantity": 100.0, "unit_price": 12.5, "amount": 1250.0, "open_quantity": opened, "uom": "EA",
+         "quantity": ordered, "unit_price": 12.5, "amount": ordered * 12.5, "open_quantity": opened, "uom": "EA",
          "gl_code": "5010", "cost_center": bu, "status": "open", "currency": "CAD"}
-        for n, bu, opened in ((1, line_one, open_first), (2, "1200", 100.0))])  # fmt: skip
+        for n, bu, ordered, opened in ((1, line_one, 100.0, open_first), (2, "1200", second, second))])  # fmt: skip
 
 
 def _rebar(quantity=100, cost_center="", description="REBAR 15M", number="NR-1"):
@@ -1512,3 +1513,89 @@ def test_lines_alike_are_shared_out_alike_whether_a_pos_invoices_are_kept_or_rea
         assert match_invoice(_rebar(30, number="NR-3"), store, 3).findings[0][1] == "PO_LINE_AMBIGUOUS"  # (30: both)
         assert po_detail(store, listed) == po_detail(_Afresh(store), listed)
         assert [line["billed"] for line in po_detail(store, listed)["lines"]] == ["100", "110"]
+
+
+def _jde_rebar(store):
+    """JD Edwards in use with PO-matched vouchers (D-264), the rebar supplier's number 71120."""
+    from ap_coder.core.memory import vendor_key
+    from ap_coder.erp import jde_settings
+
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
+    jde_settings.save(store, jde_settings.JdeSettings(po_matched=True, an8_overrides={vendor_key(STEEL): "71120"}))
+    store.import_accounts("gl_accounts", [{"code": "5010"}], "code", None)
+
+
+def _approve(store, invoice_id, coding):
+    """``coding`` approved as the review screen approves it (its output from ``finalise_coding``): the (PO line,
+    quantity) of each row of the voucher match kept with it (D-284)."""
+    from ap_coder.core.schema import VOUCHER_MATCH
+
+    output, _ = finalise_coding(coding, store.reference_data(), Settings(), store=store, exclude_invoice_id=invoice_id)
+    store.approve_invoice(invoice_id, output, "Pat Tester")
+    return [(row["line"], row["quantity"]) for row in output[VOUCHER_MATCH]["rows"]]
+
+
+def _billed(store):
+    (listed,) = store.purchase_orders()
+    return [line["billed"] for line in po_detail(store, listed)["lines"]]
+
+
+def test_an_approved_invoice_on_po_lines_alike_keeps_billing_the_line_its_kept_voucher_match_keys(tmp_path):
+    """B-2912 (D-320): of two PO lines alike (job 1100's 100, job 1200's 50), an invoice of 50 with no job took the
+    second as the first had no room left after an invoice of 80 before it, and was approved with its Voucher Match
+    rows kept on 2.000. The 80 rejected, the lines were shared out again in invoice order: the approved 50 billed
+    neither (ambiguous), the PO page showed 0 on both lines, and job 1200's next 50 passed with PO_MATCHED, keyed on
+    the same line of 50. Likewise a rejected invoice of 60 reopened after an 80 was approved on the first line took
+    the first line again, nothing said: 140 keyed on a line of 100. An approved invoice's lines are the ones its kept
+    rows key: counted first, never shared out again; the invoices in review are shared out over the room left."""
+    store = Store(tmp_path / "ap.db")
+    _rebar_po(store, second=50.0)
+    _jde_rebar(store)
+    a = store.add_invoice(tmp_path / "a.pdf", _rebar(80, number="NR-A").model_dump(), {})
+    b = store.add_invoice(tmp_path / "b.pdf", _rebar(50, number="NR-B").model_dump(), {})
+    assert _approve(store, b, _rebar(50, number="NR-B")) == [("2.000", 50.0)]
+    store.reject_invoice(a, "Pat Tester", "a duplicate")
+    match = match_invoice(_rebar(50, number="NR-B"), store, b)
+    assert [m.po_line for m in match.lines] == [2] and [f[1] for f in match.findings] == ["PO_MATCHED"]
+    assert _billed(store) == ["0", "50"]
+    assert [f[1:3] for f in match_invoice(_rebar(50, "1200", number="NR-C"), store).findings] == [
+        ("PO_QTY_OVER", "100 billed on PO 4512 line 2 but 50 ordered, 50 on earlier invoices")]  # fmt: skip
+
+    store = Store(tmp_path / "again.db")
+    _rebar_po(store, second=50.0)
+    _jde_rebar(store)
+    a = store.add_invoice(tmp_path / "a.pdf", _rebar(60, number="NR-A").model_dump(), {})
+    b = store.add_invoice(tmp_path / "b.pdf", _rebar(80, number="NR-B").model_dump(), {})
+    store.reject_invoice(a, "Pat Tester", "not ours")
+    assert _approve(store, b, _rebar(80, number="NR-B")) == [("1.000", 80.0)]
+    store.reopen(a, "Pat Tester", "ours after all", only_rejected=True)
+    match = match_invoice(_rebar(60, number="NR-A"), store, a)  # (20 left on the first line, 50 on the second)
+    assert match.lines[0].po_line is None and [f[1] for f in match.findings] == ["PO_LINE_AMBIGUOUS"]
+    assert "and none has room left for it, so none is guessed" in match.findings[0][2]
+    assert _billed(store) == ["80", "0"]
+
+
+def test_an_invoice_on_po_lines_alike_counts_what_an_approved_invoices_kept_match_keys_on_them(tmp_path):
+    """B-2913 (D-320): of two PO lines alike of 100 each, an invoice of 100 with no job was approved with its Voucher
+    Match rows kept on the second line (job 1100's 100 in review before it took the first). That one rejected, the
+    approved invoice counted on no line: job 1200's 100 was approved with PO_MATCHED alone and keyed on the same
+    line, 200 on a line of 100, the first line never billed. The kept rows are counted on the line they key: the next
+    invoice on it is over (PO_QTY_OVER), and a keying sheet's match made afresh (an invoice approved before matches
+    were kept) is told by the room the kept rows leave."""
+    from ap_coder.erp import jde_keying
+
+    store = Store(tmp_path / "ap.db")
+    _rebar_po(store)
+    _jde_rebar(store)
+    a = store.add_invoice(tmp_path / "a.pdf", _rebar(100, "1100", number="NR-A").model_dump(), {})
+    b = store.add_invoice(tmp_path / "b.pdf", _rebar(100, number="NR-B").model_dump(), {})
+    assert _approve(store, b, _rebar(100, number="NR-B")) == [("2.000", 100.0)]
+    store.reject_invoice(a, "Pat Tester", "a duplicate")
+    assert _billed(store) == ["0", "100"]
+    assert [f[1:3] for f in match_invoice(_rebar(100, "1200", number="NR-D"), store).findings] == [
+        ("PO_QTY_OVER", "200 billed on PO 4512 line 2 but 100 ordered, 100 on earlier invoices")]  # fmt: skip
+    e = store.add_invoice(tmp_path / "e.pdf", _rebar(100, number="NR-E").model_dump(), {})
+    store.approve_invoice(e, _rebar(100, number="NR-E").model_dump(), "Pat Tester")  # (no match kept with it)
+    store.create_export_batch([e], jde_keying.FORMAT, actor="Pat Tester")
+    (matched,) = jde_keying.po_matches(store, store.get_invoices([e])).values()
+    assert matched.held == [] and [(row.line, row.quantity) for row in matched.rows] == [("1.000", 100.0)]
