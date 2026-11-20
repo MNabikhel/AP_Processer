@@ -128,7 +128,7 @@ Split into several files, name each: `--chart "part 1.txt" --chart "part 2.txt"`
 files is loaded with both, and is never refreshed from only one of them later). It says the rows read, accepted and
 rejected (with why and the first rows of each reason), and each posting edit code with its accounts and whether AP
 posts to it; the chart card shows the same. A refresh with far fewer accounts than now is refused, the chart left as
-it was, unless you add `--anyway`. Every account is kept; only those AP posts to are offered (Settings → JD Edwards
+it was, unless you add `--anyway` (on the chart card: tick that it is what JD Edwards has now, then Load anyway). Every account is kept; only those AP posts to are offered (Settings → JD Edwards
 E1 → Accounts AP posts to, where a code JD Edwards' own list does not have waits for you to decide, and where the
 **companies in the pilot** are set: an invoice of another company is held).
 

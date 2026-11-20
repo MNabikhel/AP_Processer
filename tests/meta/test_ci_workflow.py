@@ -243,7 +243,7 @@ def test_every_cells_parts_are_all_there_and_the_test_windows_leaves_out_runs_on
     job = jobs["windows-sync-volume"]
     assert job["if"] == "github.event_name != 'pull_request'" and job["runs-on"] == "windows-latest"
     assert job["strategy"]["matrix"]["python"] == ["3.12", "3.14"]
-    assert 'pytest -q -m "" ${{ env.SYNC_VOLUME }}' in job["steps"][-1]["run"]
+    assert 'pytest -q -m "" -o faulthandler_timeout=2400 ${{ env.SYNC_VOLUME }}' in job["steps"][-1]["run"]  # B-2727
 
 
 def test_every_test_runs_in_exactly_one_shard():

@@ -474,7 +474,7 @@ def label_row_tables(lines: list[Line], labelled: list[Line]) -> list[tuple[_Lab
             column[k] = a
         if not column:
             continue
-        for n, (cell_hits, _words) in enumerate(cells):
+        for n, (cell_hits, heading) in enumerate(cells):
             words = column.get(n)
             for h in cell_hits:
                 if h.field not in AMOUNT_FIELDS:
@@ -484,8 +484,9 @@ def label_row_tables(lines: list[Line], labelled: list[Line]) -> list[tuple[_Lab
                     continue
                 raw = " ".join(w.text for w in words)
                 score = 0.95 * h.strength * _min_conf(words)
+                label = " ".join(w.text for w in heading).strip(" :")  # its cell's heading ("Freight Amount", B-2831)
                 out.append((h, Reading(h.field, round(_amounts_in(raw)[0][0], 2), raw, _boxes(words), score,
-                                       "label-row-table")))  # fmt: skip
+                                       "label-row-table", label)))  # fmt: skip
     return out
 
 

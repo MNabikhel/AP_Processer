@@ -32,11 +32,12 @@ from typing import TYPE_CHECKING, Any
 
 from ..coding.line_tax import tax_name
 from ..core.schema import COMPANY_TAX
+from ..core.tax_setup import CANADIAN_TAX_TYPES
 from .jde_accounts import account_for, ani
 from .jde_formats import _date, _units
 from .jde_remarks import line_remark
 from .jde_retainage import retained
-from .jde_settings import RETAINAGE_TAX_NET, JdeSettings, company_of
+from .jde_settings import RETAINAGE_TAX_NET, JdeSettings, company_of, for_voucher
 from .jde_voucher import (
     RECOVERABLE_BY_CODE,
     _area_types,
@@ -155,6 +156,17 @@ def _other_company(v: _Voucher) -> bool:
     return isinstance(v.final.get(COMPANY_TAX), dict)
 
 
+def _not_canadian(v: _Voucher) -> int:
+    """What a Canadian company's invoice charges of taxes none of the GST, HST, PST and QST (cents): on no voucher
+    match row, and none of it for JD Edwards to work out. A company not checked for Canadian tax keys every tax it is
+    charged on a line of its own (``_charges``): 0."""
+    if _other_company(v):
+        return 0
+    return sum(_units(t.get("tax_amount"), v.decimals) for t in v.final.get("tax_lines") or []
+               if isinstance(t, dict) and t.get("tax_type") not in CANADIAN_TAX_TYPES
+               and abs(float(t.get("tax_amount") or 0)) > 0.004)  # fmt: skip
+
+
 def _charged(v: _Voucher, tax_type: str) -> int:
     """The tax of ``tax_type`` the invoice charges (cents)."""
     return sum(_units(t.get("tax_amount"), v.decimals) for t in _charges(v) if t["tax_type"] == tax_type)
@@ -236,6 +248,10 @@ def keyed_match(v: _Voucher, matched: VoucherMatch, settings: JdeSettings) -> Ke
                              f"{taxed}. Voucher Match takes a line that is on no order when its processing options "
                              "allow it: ask the JD Edwards team if it refuses one.")  # fmt: skip
     _apart_lines(v, matched, out, apart - recovered, shares, items, settings)
+    if other := _not_canadian(v):  # (a Canadian company's: on no row, nor for JD Edwards to work out, B-2673)
+        out.held.append(f"the invoice charges {_money(other)} of a tax that is none of the GST, HST, PST and QST (a "
+                        "tax line of type OTHER): JD Edwards works out none of it on a voucher match and it is on no "
+                        "row. Correct the tax line if it is one of them, or key the voucher by hand")  # fmt: skip
     out.tax = sum(_charged(v, t) for t in on_rows)
     _retainage(v, matched, out, settings, area)
     _tax_said(v, settings, out, on_rows, taxed_rows, area)
@@ -279,6 +295,7 @@ def _apart_lines(v: _Voucher, matched: VoucherMatch, out: KeyedMatch, apart: set
     if not apart:
         return
     exempt = settings.exempt_code.strip().upper()
+    keyed = for_voucher(v.final, settings)  # (its company's default business unit, D-301)
     by_account: dict[tuple[str, str, str], int] = {}
     for t in (t for t in (*ORDER, "OTHER") if t in apart):
         mine: list[tuple[tuple[str, str, str], int]] = []
@@ -286,7 +303,7 @@ def _apart_lines(v: _Voucher, matched: VoucherMatch, out: KeyedMatch, apart: set
             cents = (shares.get(row.invoice_line) or {}).get(t, 0)
             if cents:
                 li = items.get(row.invoice_line) or {}
-                own = account_for(li.get("predicted_gl_code") or "", li.get("predicted_cost_center") or "", settings)
+                own = account_for(li.get("predicted_gl_code") or "", li.get("predicted_cost_center") or "", keyed)
                 ledger = (row.subledger[0] or str(li.get("subledger") or ""),
                           row.subledger[1] or str(li.get("subledger_type") or ""))  # fmt: skip
                 mine.append(((row.account or (ani(own) if own is not None else ""), *ledger), cents))

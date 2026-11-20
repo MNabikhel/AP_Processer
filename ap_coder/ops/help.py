@@ -465,6 +465,16 @@ CHECKS: dict[str, CheckHelp] = {
         "someone who may change the settings adds it to Companies in the pilot (the change is kept in the activity "
         "log); else reject the invoice here and process it in JD Edwards as before.",
     ),
+    "COMPANY_NOT_IN_REPORT": CheckHelp(
+        ERP, "Company not in the companies report",
+        "With JD Edwards' companies loaded (JD Edwards files, card 9), the invoice's company is not one of them: the "
+        "company of its PO or of its business units, or one kept from an earlier load. JD Edwards may not have it, so "
+        "the voucher could be refused or keyed to the wrong books. It is never approved without a person, and only "
+        "with Approve anyway and a reason (kept with the approval).",
+        "Pick the company the invoice is for in the Company box. If the company is right and only missing from the "
+        "report, load the companies report again with it, or have someone who may change the settings name it in "
+        "Companies in the pilot (Settings → JD Edwards E1 → Accounts AP posts to).",
+    ),
     "US_TAX_NOT_CHECKED": CheckHelp(
         TAX, "Tax not checked for this company",
         "The invoice is for a company that is not checked for Canadian tax: only a company whose country is CA and "
@@ -520,6 +530,14 @@ CHECKS: dict[str, CheckHelp] = {
         "Nothing on the purchase order resembles this invoice line.",
         "Confirm the charge was agreed (e.g. extra freight or a rush fee) before approving.",
     ),
+    "PO_LINE_AMBIGUOUS": CheckHelp(
+        PO, "Which PO line?",
+        "The purchase order has several lines this invoice line could bill, with the same description and price (the "
+        "same item for two jobs, say), and nothing tells which: not the line's business unit or account, nor which "
+        "has room left for it. None is guessed.",
+        "Code the line to the business unit or account of the PO line it bills, then check again, or match it in the "
+        "ERP by hand.",
+    ),
     "PO_PRICE_OVER": CheckHelp(
         PO, "Price above the PO",
         "The unit price is higher than the price on the purchase order (beyond 2% or 50 cents).",
@@ -532,7 +550,8 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "PO_NOT_RECEIVED": CheckHelp(
         PO, "Not received yet",
-        "More has been billed than the ERP shows as received (three-way match).",
+        "More has been billed than the ERP shows as received (three-way match; with JD Edwards, only when Settings → "
+        "JD Edwards E1 matches to receipts).",
         "Check with receiving. Hold the invoice until the goods arrive, or approve only what was received.",
     ),
     "PO_OVER_BILLED": CheckHelp(
@@ -593,6 +612,17 @@ CHECKS: dict[str, CheckHelp] = {
         "Information only: no due date and no payment terms AP Coder understands were read, and the vendor master has "
         "none, so the due date is the invoice date plus the days to pay in Settings → Review.",
         "Check the terms on the invoice; type them in Payment terms (e.g. Net 45), or the due date if it is printed.",
+    ),
+    "JDE_TERMS_UNSUPPORTED": CheckHelp(
+        PAYMENT, "JD Edwards terms code not worked out",
+        "Information only: no due date and no payment terms AP Coder understands were read, and the supplier's JD "
+        "Edwards terms code has a rule AP Coder does not work out as JD Edwards does (JD Edwards files → Payment "
+        "terms): a proximate date other than a day of the next month or the end of the invoice's month, a fixed or "
+        "proximate due date with net days or a discount, split payments with no days between them, or a code not in "
+        "the table (an advanced payment term). So the due date is the invoice date plus the days to pay in Settings → "
+        "Review; JD Edwards works out its own from the code.",
+        "Check the due date against the supplier's terms; type it in Due date if it matters, or the terms in Payment "
+        "terms (e.g. Net 45).",
     ),
     "DUE_BEFORE_INVOICE": CheckHelp(
         PAYMENT, "Due before it was issued",

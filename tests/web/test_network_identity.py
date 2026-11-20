@@ -11,6 +11,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
+from ap_coder.coding.bulk import _recheck
 from ap_coder.core.store import APPROVED, PENDING, REVIEW, Store
 from ap_coder.web import identity
 from ap_coder.web.app import create_app
@@ -79,7 +80,11 @@ def test_two_colleagues_give_the_two_approvals_and_the_audit_trail_names_each(ap
     ana, ben = colleague(app, "10.0.0.5", "Ana"), colleague(app, "10.0.0.6", "Ben")
     invoice_id = store.list_invoices(REVIEW)[0]["id"]
     inv = store.get_invoice(invoice_id)
-    store.approve_invoice(invoice_id, inv["ai_output"], "Ana", login=identity.network_login("10.0.0.5"))
+    # what Ana's screen showed as she approved, kept with her approval (a warning new since is the second's, B-2695)
+    shown = [{"code": i["code"], "severity": i["severity"], "line": i["line_number"]}
+             for i in _recheck(store, store.reference_data(), web_settings(), inv) or []]  # fmt: skip
+    store.approve_invoice(invoice_id, inv["ai_output"], "Ana", login=identity.network_login("10.0.0.5"),
+                          open_issues=shown)  # fmt: skip
     assert store.get_invoice(invoice_id)["status"] == PENDING
     # Ana may not give the second approval, even under another name from the same computer.
     assert "Not done" in ana.get(ana.post(f"/review/{invoice_id}/final-approve", headers=PAGE).json()["redirect"]).text

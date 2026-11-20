@@ -208,6 +208,7 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
         left_invoices=[i for i in invoices if i["id"] in left_out],
         no_undo=jde_post.undo_problem(store, batch),
         site=jde_zfiles.batch_site(known, invoices),  # the keys the API sends too (D-182)
+        po_matches=jde_keying.po_matches(store, kept, settings.charge_account) if settings.po_matched else None,
     )
 
 
@@ -281,19 +282,20 @@ READY_FORMAT = "ready-1"  # ``ready_problems``' rows as kept for every process; 
 def ready_problems(store: Store, invoice_ids: list[int]) -> list[dict[str, Any]]:
     """The invoices ready to export (``invoice_ids``) that cannot go to JD Edwards, as the page lists them
     (``problem_rows``): ``jde_check``'s, worked out once for every process (D-169) and kept until an invoice, the
-    vendor master, the ERP register, JD Edwards' settings, the tax-rate file (the amount sent gross reads it, B-2074)
-    or the day change (0.6 s at 300,000 invoices with 1,100 ready, at every visit before: D-206). Making a batch
-    checks its invoices again (``_create_batch``). Shared: read it, don't change it."""
-    # (checked by the very settings it is kept for, not read again: B-2075)
-    text = store.get_setting(jde_settings.SETTING_KEY)
+    vendor master, the ERP register, JD Edwards' settings or companies, the tax-rate file (the amount sent gross reads
+    it, B-2074) or the day change (0.6 s at 300,000 invoices with 1,100 ready, at every visit before: D-206). Making a
+    batch checks its invoices again (``_create_batch``). Shared: read it, don't change it."""
+    # (checked by the very settings it is kept for, not read again: B-2075), with JD Edwards' companies as a batch
+    # made reads them (each one's currency, B-2697)
+    text, table = store.get_setting(jde_settings.SETTING_KEY), store.get_setting(companies.COMPANIES_SETTING)
 
     def work() -> list[dict[str, Any]]:
         invoices = store.get_invoices(invoice_ids)
-        problems = jde.validate(invoices, jde_settings.JdeSettings.from_json(text), store.vendor_ids(),
+        problems = jde.validate(invoices, jde_settings.from_texts(text, table), store.vendor_ids(),
                                 jde.prior_records(store, invoices=invoices))  # fmt: skip
         return problem_rows(store, problems, invoices)
 
-    asked = (invoice_ids, text, dt.date.today().isoformat(), store.rates_stamp())
+    asked = (invoice_ids, text, table, dt.date.today().isoformat(), store.rates_stamp())
     return store.shared_answer("jde_ready", work, version=READY_FORMAT, changes=("register", "vendors"), asked=asked)
 
 
@@ -568,8 +570,10 @@ def jde_dry_run(request: Request) -> Response:
     store = get_store(request)
     invoices = store.get_invoices([r["id"] for r in store.unexported_approved()])
     prior = jde.prior_records(store, invoices=invoices)  # only what has their numbers (D-156)
-    report = jde.dry_run(invoices, jde_settings.load(store), store.vendor_ids(), prior=prior,
-                         batch="(next)", fx_rates=store.fx_rates())  # fmt: skip
+    js = jde_settings.load(store)
+    report = jde.dry_run(invoices, js, store.vendor_ids(), prior=prior, batch="(next)", fx_rates=store.fx_rates(),
+                         po_matches=jde_keying.po_matches(store, invoices, js.charge_account) if js.po_matched
+                         else None)  # fmt: skip
     return download(jde.dry_run_text(report).encode("utf-8"), "ap_coder_jde_dry_run.txt", "text/plain; charset=utf-8")
 
 

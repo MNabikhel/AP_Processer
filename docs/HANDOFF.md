@@ -342,9 +342,11 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   a PST or QST the province's area does not hold goes on a line of its own on the PO line's account. Freight or a fee
   the PO has no line for is held, or added on an account (Settings → JD Edwards E1, *Charges not on the purchase
   order*). To try it: `python -m ap_coder.bench po-vouchers --out DIR` (thirteen made-up invoices, their PO files and
-  the rows expected, `bench/jde_po_vouchers.py`).
+  the rows expected, `bench/jde_po_vouchers.py`). Matched to the PO lines (2-way, the default) or the receipts (3-way:
+  what was received checked), *Match to* (D-281); two PO lines alike are shared out, never guessed (D-282); the rows
+  matched at approval are kept with the invoice, and its sheet and Z-files key those (D-284).
 - **Not confirmed:** E1's own receipt matching (P4314, F0411Z1T) for PO-matched vouchers: the Z-files' match rows
-  still name the invoice's line numbers, not the PO's.
+  name the PO's lines as the keying sheet does (D-284), in a layout still to confirm with the JD Edwards team.
 - **Left to expense** (D-139): the review screen's PO match shows what is left on each PO line after the invoice, from
   the line's amount or, when the PO file has it, an *Open amount* column (E1's AOPN, as of the last import). The AIS
   sync's PO read (`APC_OpenPOs_Read`) doesn't ask for AOPN yet: add it there to keep it current.

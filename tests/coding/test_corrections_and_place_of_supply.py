@@ -212,7 +212,7 @@ def test_a_final_approval_from_a_stale_page_is_refused(tmp_path, monkeypatch):
     client = client_for(store)
 
     def shown(page):
-        form = re.search(rf'action="/review/{iid}/final-approve">(.*?)</form>', page, re.S).group(1)
+        form = re.search(rf'action="/review/{iid}/final-approve"[^>]*>(.*?)</form>', page, re.S).group(1)
         return dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)"', form))
 
     queue_tab, invoice_page = shown(client.get("/review?tab=second").text), shown(client.get(f"/review/{iid}").text)

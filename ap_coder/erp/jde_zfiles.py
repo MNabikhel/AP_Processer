@@ -12,7 +12,7 @@ import hashlib
 import io
 from collections.abc import Iterable, Mapping
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..coding.line_tax import exempt_of, legacy_basis
 from .jde_accounts import VendorLookup, ani
@@ -29,7 +29,9 @@ from .jde_settings import (
     JdeSettings,
     company_of,
     domestic_of,
+    for_voucher,
     gl_date_of,
+    uses_glba,
 )
 from .jde_voucher import (
     EXEMPT_STATUSES,
@@ -41,6 +43,9 @@ from .jde_voucher import (
     sent_due,
     terms_code,
 )
+
+if TYPE_CHECKING:
+    from ..coding.po import VoucherMatch
 
 HEADER_COLUMNS = [
     "VLEDUS", "VLEDBT", "VLEDTN", "VLEDLN", "VLEDSP", "VLEDTC", "VLEDTR",
@@ -128,11 +133,13 @@ def _doc_type(v: _Voucher, settings: JdeSettings) -> str:
 def voucher_rows(
     invoice: dict[str, Any], vendor_an8: str, settings: JdeSettings, *, batch: int | str = "",
     fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None, prepared: _Voucher | None = None,
-    site: str = "",
+    site: str = "", matched: VoucherMatch | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:  # fmt: skip
     """(F0411Z1 rows, F0911Z1 rows, match rows) of one approved invoice, as {column: value}. Check it with
     ``validate`` first: an invoice with problems gives incomplete rows. ``prepared``: its voucher already prepared
-    for ``vendor_an8`` (``_vouchers``), not prepared again. ``site``: the batch's code (``batch_site``) in VLEDBT."""
+    for ``vendor_an8`` (``_vouchers``), not prepared again. ``site``: the batch's code (``batch_site``) in VLEDBT.
+    ``matched``: a PO-matched voucher's voucher match (``jde_keying.po_matches``, as its keying sheet keys it): the
+    order type and company, and each match row's PO line, are its (D-284)."""
     from .exports import entry_lines
 
     v = prepared if prepared is not None else _prepare(invoice, settings, str(vendor_an8 or "").strip(), on)
@@ -148,7 +155,7 @@ def voucher_rows(
     typed = settings.remarks == REMARKS_TYPED  # VNEXR: the line's remark, not the invoice number (D-210)
     rate = _rate(fx_rates, v.currency, domestic_of(final, settings)) if v.foreign else None
     common = {
-        **keys, "VLDCT": doc_type, "VLCO": company_of(final, settings), "VLMCU": settings.header_bu.strip(),
+        **keys, "VLDCT": doc_type, "VLCO": company_of(final, settings), "VLMCU": header_bu(final, settings),
         "VLAN8": str(vendor_an8 or "").strip(), "VLVINV": str(final.get("invoice_number") or "").strip()[:25],
         "VLDIVJ": julian(invoice_date), "VLDGJ": julian(gl_date), "VLDSVJ": julian(invoice_date),
         "VLTXA1": v.tax_area, "VLEXR1": v.tax_code, "VLCRRM": "F" if v.foreign else "D", "VLCRCD": v.currency,
@@ -158,12 +165,10 @@ def voucher_rows(
         "VLDDJ": julian(due) if settings.send_due_date and due is not None and due.year in E1_YEARS else "",
         "VLPST": settings.pay_status.strip(),
         "VLPO": po[:PO_WIDTH] if send_po else "",
-        "VLPDCT": settings.po_document_type.strip() if send_po else "",
-        "VLPKCO": (settings.po_company.strip().zfill(5) if settings.po_company.strip().isdigit()
-                   else settings.po_company.strip() or company_of(final, settings)) if send_po else "",
+        **dict(zip(("VLPDCT", "VLPKCO"), _order_of(final, settings, matched) if send_po else ("", ""), strict=True)),
         "VLRMK": _pay_item_remark(v, settings),
     }  # fmt: skip
-    if settings.bank_glba:  # the G/L bank account of the Pay from account (D-66); blank: E1's AAI PB
+    if uses_glba(settings):  # the G/L bank account of the Pay from account (D-66; its company's, D-301); blank: AAI PB
         common["VLGLBA"] = glba(final, settings)
 
     def amounts(gross: int, stam: int, atxa: int, code: str | None = None) -> dict[str, Any]:
@@ -194,16 +199,7 @@ def voucher_rows(
     line_codes = [exempt if no_tax and v.tax_code not in ("", exempt) else v.tax_code for no_tax in stated]
     if v.po_matched:
         header = {**common, "VLEDLN": 1, **amounts(v.gross, v.stam, v.atxa), **extras}
-        matches = []
-        for li in final.get("line_items") or []:
-            matches.append({
-                "EDUS": keys["VLEDUS"], "EDBT": keys["VLEDBT"], "EDTN": keys["VLEDTN"], "EDLN": 1,
-                "DOCO": po[:8], "DCTO": settings.po_document_type.strip(), "KCOO": common["VLPKCO"],
-                "LNID": li.get("line_number") or "", "LITM": "", "DSC1": _text(li.get("description"), 30),
-                "UORG": _plain(li.get("quantity")), "PRRC": _plain(li.get("unit_price"), 4),
-                "AEXP": _amount(_units(li.get("amount")), settings, v.decimals), "CRCD": v.currency,
-                "SBL": li.get("subledger") or "", "SBLT": li.get("subledger_type") or ""})  # fmt: skip
-        return [header], [], matches
+        return [header], [], _match_rows(v, keys, common, settings, matched)
 
     def dist_row(n: int, e: dict[str, Any]) -> dict[str, Any]:
         account: GlMap | None = e["account"]
@@ -275,6 +271,40 @@ def voucher_rows(
     return [header], [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
 
 
+def _order_of(final: Mapping[str, Any], settings: JdeSettings, matched: VoucherMatch | None) -> tuple[str, str]:
+    """(VLPDCT, VLPKCO) of a voucher sent with its PO: the order type and company its voucher match's rows name (the
+    PO file's, as the keying sheet keys them, D-284), else Settings' (the company's when Settings names none)."""
+    row = next((r for r in (matched.rows if matched is not None else []) if r.on_po), None)
+    company = settings.po_company.strip()
+    company = (company.zfill(5) if company.isdigit() else company) or company_of(final, settings)
+    if row is None:
+        return settings.po_document_type.strip(), company
+    return row.order_type or settings.po_document_type.strip(), row.order_company or company
+
+
+def _match_rows(v: _Voucher, keys: Mapping[str, Any], common: Mapping[str, Any], settings: JdeSettings,
+                matched: VoucherMatch | None) -> list[dict[str, Any]]:  # fmt: skip
+    """F0411Z1T's rows of a PO-matched voucher, one an invoice line, its PO number VLPO's and its order type and
+    company VLPDCT's and VLPKCO's (``_order_of``): with its voucher match (``matched``) each line's LNID the PO line's
+    own number ("12.000", as the keying sheet keys it; blank for a line on no PO line, a charge keyed on an account of
+    its own, D-265); without its rows (the PO not loaded) the invoice's line number, as before (D-284)."""
+    final = v.final
+    po = str(final.get("po_number") or "").strip()
+    rows = {r.invoice_line: r for r in matched.rows} if matched is not None and matched.rows else None
+    out = []
+    for li in final.get("line_items") or []:
+        row = rows.get(li.get("line_number")) if rows is not None else None
+        on_po = row is not None and row.on_po
+        out.append({
+            "EDUS": keys["VLEDUS"], "EDBT": keys["VLEDBT"], "EDTN": keys["VLEDTN"], "EDLN": 1,
+            "DOCO": po[:8], "DCTO": common["VLPDCT"], "KCOO": common["VLPKCO"],
+            "LNID": (row.line if on_po else "") if rows is not None else li.get("line_number") or "", "LITM": "",
+            "DSC1": _text(li.get("description"), 30), "UORG": _plain(li.get("quantity")),
+            "PRRC": _plain(li.get("unit_price"), 4), "AEXP": _amount(_units(li.get("amount")), settings, v.decimals),
+            "CRCD": v.currency, "SBL": li.get("subledger") or "", "SBLT": li.get("subledger_type") or ""})  # fmt: skip
+    return out
+
+
 def _ledger(line: dict[str, Any], account: GlMap) -> dict[str, str]:
     """A G/L line's VNSBL, VNSBLT and VNU: the invoice line's own subledger and units, its account's L or U (D-268);
     else the account mapping's subledger, and no units."""
@@ -332,9 +362,15 @@ def _entry_taxes(entries: list[dict[str, Any]], items: list[dict[str, Any]]) -> 
     return [set((li or {}).get("taxes_applied") or []) for li in entry_lines(entries, items)]
 
 
+def header_bu(final: dict[str, Any], settings: JdeSettings) -> str:
+    """VLMCU of an invoice: the header business unit of its company (D-301), else Settings'."""
+    return for_voucher(final, settings).header_bu.strip()
+
+
 def glba(final: dict[str, Any], settings: JdeSettings) -> str:
-    """VLGLBA of an invoice: the value mapped to its Pay from account, the code's case aside ("" when none)."""
-    mapped = {k.upper(): v for k, v in settings.bank_glba.items()}
+    """VLGLBA of an invoice: the value mapped to its Pay from account for its company (D-301), else in Settings, the
+    code's case aside ("" when none)."""
+    mapped = {k.upper(): v for k, v in for_voucher(final, settings).bank_glba.items()}
     return mapped.get(str(final.get("pay_from_account") or "").strip().upper(), "")
 
 
@@ -342,7 +378,7 @@ def bank_notes(invoices: list[dict[str, Any]], settings: JdeSettings) -> dict[in
     """{invoice id: [note]} for the invoices whose Pay from account has no G/L bank account mapped, while the mapping
     is in use (B-684): their VLGLBA is blank and E1 pays them from its default bank (AAI PB), which may not be the
     account AP chose. A note to check before loading, never a reason to hold an invoice back."""
-    if not settings.bank_glba:
+    if not uses_glba(settings):
         return {}
     out: dict[int, list[str]] = {}
     for inv in invoices:
@@ -362,7 +398,7 @@ def bank_notes(invoices: list[dict[str, Any]], settings: JdeSettings) -> dict[in
 
 def header_columns(settings: JdeSettings) -> list[str]:
     extra = [c for c in settings.po_extra_columns if c not in HEADER_COLUMNS] if settings.po_matched else []
-    bank = ["VLGLBA"] if settings.bank_glba and "VLGLBA" not in extra else []
+    bank = ["VLGLBA"] if uses_glba(settings) and "VLGLBA" not in extra else []
     return HEADER_COLUMNS + bank + extra
 
 
@@ -383,15 +419,18 @@ def export_batch(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None, *,
     batch: int | str = "", fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None,
     prepared: list[tuple[str, _Voucher]] | None = None, site: str = "",
+    po_matches: Mapping[int, VoucherMatch] | None = None,
 ) -> dict[str, bytes]:  # fmt: skip
-    """{"F0411Z1.csv": …, "F0911Z1.csv": …[, "F0411Z1T.csv": …]} for these invoices (validated first)."""
+    """{"F0411Z1.csv": …, "F0911Z1.csv": …[, "F0411Z1T.csv": …]} for these invoices (validated first).
+    ``po_matches``: {invoice: its voucher match} (``jde_keying.po_matches``) of the PO-matched ones (D-284)."""
     headers: list[dict[str, Any]] = []
     dists: list[dict[str, Any]] = []
     matches: list[dict[str, Any]] = []
     if prepared is None:
         prepared = _vouchers(invoices, settings, vendor_lookup, on)
     for inv, (an8, v) in zip(invoices, prepared, strict=True):
-        h, d, m = voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on, prepared=v, site=site)
+        h, d, m = voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on, prepared=v, site=site,
+                               matched=(po_matches or {}).get(v.inv_id))  # fmt: skip
         headers += h
         dists += d
         matches += m

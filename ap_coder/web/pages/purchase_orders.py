@@ -103,11 +103,12 @@ def po_detail(store: Store, p: dict[str, Any]) -> dict[str, Any] | None:
         return None
     billing = po_mod.po_billing(store, p["po_key"], full)
     invoices = billing.rows
-    matched: dict[Any, int | None] = {}
+    matched: dict[Any, tuple[int, ...]] = {}
     billed = billing.billed(full, invoices, matched=matched)
     billed_amount = billing.billed(full, invoices, amounts=True, matched=matched)
     # (a line billed by amount with what the ERP has open on it: against that, the invoices not exported yet, D-280)
     waiting = billing.billed(full, [i for i in invoices if i["export_batch"] is None], amounts=True, matched=matched)
+    received = po_mod._receipts_checked(store)  # (2-way: what was received not checked, D-281)
     lines = []
     for li in full["lines"]:
         coding = " · ".join(x for x in (li["gl_code"], li["cost_center"]) if x)
@@ -139,7 +140,7 @@ def po_detail(store: Store, p: dict[str, Any]) -> dict[str, Any] | None:
             continue
         done_qty = billed.get(li["line_number"], 0.0)
         over = done_qty > li["quantity"] + 1e-6
-        unreceived = li["received_quantity"] is not None and done_qty > li["received_quantity"] + 1e-6
+        unreceived = received and li["received_quantity"] is not None and done_qty > li["received_quantity"] + 1e-6
         flag = (
             ("Over-billed", "err", "")
             if over
