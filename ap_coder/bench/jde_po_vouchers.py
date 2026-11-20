@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from ..capture.reader.progress import PROGRESS_LINE
-from ..core.chart import split_account
+from ..core.chart import skip_word, split_account
 from ..erp.jde_prototype import prototype_settings
 from ..erp.jde_settings import AMOUNT_TAX, CHARGES_GL, JdeSettings, default_tax_map
 from .jde_company import Supplier, Truth, build, money
@@ -228,7 +228,10 @@ def area_settings(base: JdeSettings | None = None) -> JdeSettings:
 
 
 def _supplier(truth: Truth, name: str) -> Supplier:
-    return next(s for s in truth.suppliers if s.name.startswith(name))
+    """The first supplier whose name starts with ``name`` that is paid: a trade supplier, its payments not held and its
+    name not marked retired ("DNU", "DO NOT USE", a star), so its invoices are approved and keyed (B-2947)."""
+    return next(s for s in truth.suppliers if s.name.startswith(name) and s.kind == "trade" and s.hold_payment == "N"
+                and not skip_word(s.name) and s.name.strip() == s.name.strip("* "))  # fmt: skip
 
 
 def cases(truth: Truth) -> list[PoCase]:
@@ -407,7 +410,8 @@ To try them:
 2. Settings -> JD Edwards E1: tick "PO-matched vouchers"; under "Charges not on the purchase order" pick
    "Add each as its own G/L line" with the account {freight_in}.
 3. Purchase orders: load open_po_lines.xlsx, then order_details.xlsx.
-4. Drop the PDFs in, approve them, and make the keying sheet (Exports, JD Edwards keying sheet).
+4. Drop the PDFs in, approve them (each line on its PO line's account; on bc_zero_rated_mixed, confirm the coffee
+   line's PST exemption, as the screen asks), and make the keying sheet (Exports, JD Edwards keying sheet).
 5. Compare each voucher's Voucher Match rows with expected.json ("pilot": the prototype's tax areas; "areas": a tax
    area for each province, BC, SK and MB on code C).
 

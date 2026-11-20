@@ -78,6 +78,10 @@ LIKELY_AT = 0.85
 UNMEASURED_CAP = 0.8  # a value read only by wording the benchmark never prints (``UNMEASURED``), no check confirming
 REGISTRATION_FIELDS = ("gst_hst_registration_number", "qst_registration_number", "pst_registration_number")
 BILL_TO_REASON = "read only in the bill-to block: it may be the customer's number"
+# A total with something taken off it before the amount to pay (``TAKEN_OFF``, D-47, B-2492)
+TAKEN_OFF_REASON = (
+    "something is taken off before the amount to pay (a deposit, a holdback, a commission): a person checks it"
+)
 SINGLE_READER_CAP = 0.97  # highest confidence for a value only one reader found and no check confirms
 # Values read with no label of their own (``reader``: a receipt's date and time, a date beside the title): checked.
 UNLABELLED_METHODS = ("date-time", "title-dated", "letter-dated")
@@ -842,9 +846,7 @@ def _capped(fz: _Fusion, f: str, g: _Group, conf: float, raw: float, vouched: li
         reasons.append("read only where this supplier's value was before, and the template cannot vouch for it")
     if any(TAKEN_OFF in r.method for r in readings):
         conf = min(conf, _clamp(raw, UNMEASURED_CAP))
-        reasons.append(
-            "something is taken off before the amount to pay (a deposit, a holdback, a commission): a person checks it"
-        )
+        reasons.append(TAKEN_OFF_REASON)
     if any(TWO_SUBTOTALS in r.method for r in readings):
         conf = min(conf, SINGLE_READER_CAP)
         reasons.append("the totals add up with another subtotal printed too (before or after the charges)")

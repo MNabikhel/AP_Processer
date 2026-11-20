@@ -7241,3 +7241,25 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **How:** `settings_jde.company_values` lists the table while report 9 names two or more companies or any company
     has values of its own; a company report 9 no longer lists has its row too, "(not in report 9 now)". Emptying its
     boxes and saving removes them, and with one company the table goes.
+- **D-323** · **A billing holding part of its total back is keyed at the total before its holdback only by Voucher
+  Match, which retains it; on a standard voucher it is keyed by hand, said before approval** (B-2945, B-2946;
+  `jde_voucher._held_back`, `HOLDBACK_BY_HAND`; D-273, D-274).
+  - **Why:** a standard voucher (PO-matched vouchers off, the prototype's settings, or an invoice quoting no PO) has
+    no amount that retains a holdback: its gross, the total the billing is coded at (D-274), would pay the supplier
+    the holdback too. So, whatever the PO-matched setting, a voucher whose progress billing as read holds something
+    back is held from the keying sheet ("Not ready"), the batch files and the dry run, with why: "a billing that holds
+    back 4,500.00: keyed at its gross 47,250.00, the supplier would be paid the holdback too, not the 42,750.00 due.
+    Key it by hand, as JD Edwards keys a holdback".
+  - **On the review screen:** an error approved only anyway, with a reason, not a JD Edwards finding (those are
+    never approved anyway): nothing on the screen fixes it (the holdback as read is not edited, D-274), and the
+    approval keeps who said it is keyed by hand. Its total is held for a person to check, as a total printed above a
+    holdback is (B-2946, D-47).
+  - **The batch files** (and their dry run, and the API) can't carry a Retained Amount: F0411Z1T has no column for
+    one until the JD Edwards team confirms how (D-273's list), so loaded, a PO-matched billing would pay its holdback
+    too. Such a voucher (PO-matched, its billing holding something back) is held from them, said ("retains 4,500.00:
+    the batch files can't carry the Retained Amount yet …: key it from the keying sheet"; `jde_voucher.files_held`,
+    `jde.validate(files=True)`), and keyed from the keying sheet with its Retained Amount; the Exports page lists it
+    as not ready for the batch files only (B-2950).
+  - *Not chosen:* the amount due as the gross (the G/L lines and tax would not add up to it, and the holdback would
+    be lost from the payable); the holdback as a second pay item on hold (how the company keys one outside Voucher
+    Match is the JD Edwards team's to say); a warning only (the batch files would still pay it).

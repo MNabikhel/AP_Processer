@@ -110,6 +110,7 @@ A block follows the screen's order: the header, the pay item, the G/L distributi
 | PO number | as text, with its leading zeros; a note says when it is longer than the field's 8 characters | the purchase order, on the G/L distribution |
 | Tax explanation code, Tax rate/area | from the province of supply (*Province → tax area*) | *Tax Ex*, *Tax Rate/Area* |
 | Tax amount, Taxable amount | the tax on the pay item: what JD Edwards posts or is told (the notes say what it holds) | *Tax Amount*, *Taxable Amount* |
+| Pay status, Business unit | only when set, as the batch files send them (VLPST, VLMCU): Settings → JD Edwards E1's pay status when it is not A (approved), and the header business unit (a company's own, D-301) | the pay item's *Pay Status*, *Business Unit* |
 | Account number | `BU.Object.Subsidiary`, typed as it is, without padding | G/L Distribution: *Account Number* |
 | Account description | the GL account's name in AP Coder, to compare with what JD Edwards shows | not typed |
 | Amount | the line's amount net of the tax JD Edwards posts; a tax left in the expense is inside it | *Amount* |
@@ -312,7 +313,14 @@ due*. The tax is worked out on the whole amount matched (the holdback in it, as 
 GST) or on it less the retained, as Voucher Match's Retainage tab says (*Tax on a subcontract row that retains a
 holdback*); a billing charged the other way is held, so is a **holdback release** (it pays out a retainage JD Edwards
 releases itself) and any billing holding back while the setting is off. The work billed before is compared with
-what JD Edwards had vouchered on the lines (and AP Coder's invoices not in it yet): said when they differ.
+what JD Edwards had vouchered on the lines (and AP Coder's invoices not in it yet): said when they differ. A billing
+holding something back on a standard voucher (PO-matched vouchers off, or no PO) is never keyed at its total before
+the holdback, which would pay the supplier the holdback too: the review screen says it is keyed by hand
+(`HOLDBACK_BY_HAND`, approved only anyway, with a reason) and the keying sheet and batch files hold it (B-2945, D-323).
+The batch files can't carry a Retained Amount yet (F0411Z1T has none until the JD Edwards team confirms how): a
+PO-matched billing that holds something back is held from them, their dry run and the API ("retains 4,500.00: the
+batch files can't carry the Retained Amount yet …: key it from the keying sheet"), and keyed from the keying sheet
+with its Retained Amount (B-2950).
 
 ### PO numbers longer than 8 characters
 
@@ -322,7 +330,9 @@ and the clerk does not change what is printed: the voucher goes out with VLPO, V
 PO is kept in AP Coder (the invoice, its exports and reports), and VLRMK reads `AP Coder #<id> PO <number>`
 when that fits in its 30 characters. The review screen warns: "JD Edwards' PO field holds 8 characters: this
 PO number is kept in AP Coder and not sent". With *PO-matched vouchers* on, the PO is E1's order number the
-voucher is matched to, so one longer than 8 still holds the invoice back (D-87).
+voucher is matched to, so one longer than 8 still holds the invoice back (D-87), unless it matched an order ("PO#
+41105" for order 41105): VLPO then sends the order's number, as the keying sheet keys it, and that is what must fit
+(B-2921, B-2951).
 
 ## Checks before export (`jde.validate`)
 

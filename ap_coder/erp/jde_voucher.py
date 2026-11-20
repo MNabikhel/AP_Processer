@@ -17,7 +17,7 @@ from typing import Any
 from ..coding.line_tax import exempt_of, legacy_basis
 from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES
 from ..coding.terms import terms_key
-from ..core.schema import COMPANY_TAX
+from ..core.schema import COMPANY_TAX, PROGRESS_BILLING
 from .jde_accounts import VendorLookup, account_for, ani, resolve_an8
 from .jde_formats import E1_YEARS, NO_DECIMAL_CURRENCIES, _date, _negative, _norm, _units
 from .jde_settings import (
@@ -327,6 +327,9 @@ GL_PO = (
     "tax on a PO-matched voucher: JD Edwards distributes it from the receipts, and with the tax coded to G/L accounts "
     "it posts no tax of its own, so the tax would go nowhere: send it without the PO match"
 )
+# A billing that holds part of its total back (D-273, D-274), on a voucher of its own: none of JD Edwards' standard
+# voucher's amounts retains a holdback, so its gross would pay the supplier the holdback too (B-2945, D-323).
+HOLDBACK = "HOLDBACK_BY_HAND"
 # Code B accrues the PST on the whole voucher (B-922).
 PST_MIX = (
     "PST is owed on some lines and not on others (exempt): with code B JD Edwards would accrue PST on every line. "
@@ -507,8 +510,51 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str, on: dt.date |
             )
         return v
 
+    if why := _held_back(v, final):
+        add(why, HOLDBACK)
     _check_distribution(v, final, settings, dist, recoverable)
     return v
+
+
+def _held_back(v: _Voucher, final: dict[str, Any]) -> str:
+    """Why a voucher of a billing that holds part of its total back (its progress billing as read, D-274) is keyed by
+    hand ("" for any other): its gross is the total before the holdback, which a standard voucher would pay in full.
+    Voucher Match retains it on a subcontract's rows (D-273: ``jde_retainage``), a PO-matched voucher's own check."""
+    held = _holdback(v)
+    if held <= 0:
+        return ""
+    due = (final.get(PROGRESS_BILLING) or {}).get("amount_due")
+    owed = f", not the {float(due):,.2f} due" if due is not None else ""
+    return (f"a billing that holds back {held / 100:,.2f}: keyed at its gross {v.gross / 100:,.2f}, the supplier would "
+            f"be paid the holdback too{owed}. Key it by hand, as JD Edwards keys a holdback (Voucher Match's Retained "
+            "Amount on its subcontract)")  # fmt: skip
+
+
+def _holdback(v: _Voucher) -> int:
+    """The holdback of the voucher's billing as read (``PROGRESS_BILLING``, D-274), in cents: 0 for any other."""
+    return _units((v.final.get(PROGRESS_BILLING) or {}).get("holdback") or 0, v.decimals)
+
+
+def files_held(v: _Voucher) -> str:
+    """Why a PO-matched voucher is held from the batch files and the API ("" for any other): its billing holds part
+    of its total back, which its Voucher Match rows retain on the keying sheet (D-273), but F0411Z1T carries no
+    Retained Amount until the JD Edwards team confirms how: loaded, the voucher would pay the holdback too (B-2950,
+    D-323). A voucher keyed by hand for it is held already (``_held_back``)."""
+    held = _holdback(v)
+    if not v.po_matched or held <= 0:
+        return ""
+    return (f"retains {held / 100:,.2f}: the batch files can't carry the Retained Amount yet (until the JD Edwards "
+            "team confirms how F0411Z1T does): key it from the keying sheet")  # fmt: skip
+
+
+def _matched_order(final: dict[str, Any]) -> str:
+    """The number of the order a PO-matched voucher's kept voucher match names (``schema.VOUCHER_MATCH``, D-284), as
+    VLPO sends it (``jde_zfiles._order_of``); "" when none is kept."""
+    from ..coding.po import kept_voucher_match
+
+    kept = kept_voucher_match(final)
+    row = next((r for r in kept.rows if r.on_po), None) if kept is not None else None
+    return row.order_number.strip() if row is not None else ""
 
 
 def _check_header(v: _Voucher, final: dict[str, Any], settings: JdeSettings, an8: str,
@@ -525,9 +571,10 @@ def _check_header(v: _Voucher, final: dict[str, Any], settings: JdeSettings, an8
     elif len(number) > 25:
         add(f"invoice number {number!r} is longer than 25 characters (VLVINV)", "JDE_INVOICE_NUMBER_LONG")
     po = str(final.get("po_number") or "").strip()
-    # A PO-matched voucher is matched to E1's order by its number: one longer than VLPO holds can't be. As a reference
-    # only, it is left out of VLPO and kept in AP Coder (``po_not_sent``, D-87).
-    if po and len(po) > PO_WIDTH and settings.po_matched:
+    # A PO-matched voucher is matched to E1's order by its number: one longer than VLPO holds can't be, unless it
+    # matched an order (its voucher match kept), whose number VLPO sends (B-2921, B-2951). As a reference only, it is
+    # left out of VLPO and kept in AP Coder (``po_not_sent``, D-87).
+    if po and len(po) > PO_WIDTH and settings.po_matched and len(_matched_order(final) or po) > PO_WIDTH:
         add(f"PO number {po!r} is longer than 8 characters (VLPO)", "JDE_PO_LONG")
     invoice_date = _date(final.get("invoice_date"))
     if invoice_date is None:

@@ -165,8 +165,9 @@ def layout(store: Store) -> export_layout.Layout:
     return export_layout.Layout.from_json(store.get_setting(LAYOUT_SETTING))
 
 
-def jde_left_out(store: Store, batch: int) -> tuple[list[dict[str, Any]], dict[int, list[str]]]:
-    """(the batch's invoices, {invoice: why it cannot go to JD Edwards}) with the current JD Edwards settings.
+def jde_left_out(store: Store, batch: int, files: bool = True) -> tuple[list[dict[str, Any]], dict[int, list[str]]]:
+    """(the batch's invoices, {invoice: why it cannot go to JD Edwards}) with the current JD Edwards settings;
+    ``files``: for the batch files (False: the keying sheet, ``jde.validate``).
 
     A batch made as JD Edwards, or as its keying sheet, passed the checks when it was made and keeps every invoice:
     checking it again would count its own vouchers, once in the ERP register, as duplicates of themselves (B-2149:
@@ -180,7 +181,7 @@ def jde_left_out(store: Store, batch: int) -> tuple[list[dict[str, Any]], dict[i
     prior = jde.prior_records(store, exclude_ids=ids, invoices=invoices)  # only what has their numbers (D-156)
     created = (known or {}).get("created_at") or ""  # its G/L date's day, the export day's (B-2490)
     left_out = jde.validate(invoices, jde_settings.load(store), store.vendor_ids(), prior,
-                            on=dt.date.fromisoformat(created[:10]) if created else None)  # fmt: skip
+                            on=dt.date.fromisoformat(created[:10]) if created else None, files=files)  # fmt: skip
     return invoices, left_out
 
 
@@ -221,7 +222,8 @@ def jde_check(store: Store, invoice_ids: list[int],
     settings = jde_settings.load(store)
     blocking = jde_settings.settings_problems(settings) if files else []
     invoices = store.get_invoices(invoice_ids)
-    problems = jde.validate(invoices, settings, store.vendor_ids(), jde.prior_records(store, invoices=invoices))
+    problems = jde.validate(invoices, settings, store.vendor_ids(), jde.prior_records(store, invoices=invoices),
+                            files=files)  # fmt: skip
     ok = [] if blocking else [i["id"] for i in invoices if i["id"] not in problems]
     return ok, problems, blocking
 
@@ -230,7 +232,7 @@ def keying_file(store: Store, batch: int) -> tuple[bytes, str, str]:
     """The batch's JD Edwards keying sheet, from the approved data and the current JD Edwards settings: every invoice
     of the batch is on it, one the checks hold back (a batch made in another format, or settings changed since), or
     that JD Edwards has (or may have) through the API, on its "Not ready" sheet with why."""
-    invoices, left_out = jde_left_out(store, batch)
+    invoices, left_out = jde_left_out(store, batch, files=False)
     left_out = {**left_out, **jde_post.left_out_of_files(store, batch)}
     created = (store.export_batch(batch) or {}).get("created_at") or ""
     js = jde_settings.load(store)
@@ -280,8 +282,9 @@ def bank_accounts(store: Store) -> dict[str, dict[str, Any]]:
 READY_FORMAT = "ready-1"  # ``ready_problems``' rows as kept for every process; another when what is kept changes
 
 
-def ready_problems(store: Store, invoice_ids: list[int]) -> list[dict[str, Any]]:
-    """The invoices ready to export (``invoice_ids``) that cannot go to JD Edwards, as the page lists them
+def ready_problems(store: Store, invoice_ids: list[int], files: bool = True) -> list[dict[str, Any]]:
+    """The invoices ready to export (``invoice_ids``) that cannot go to JD Edwards (``files``: in its batch files,
+    else on its keying sheet), as the page lists them
     (``problem_rows``): ``jde_check``'s, worked out once for every process (D-169) and kept until an invoice, the
     vendor master, the ERP register, JD Edwards' settings or companies, the tax-rate file (the amount sent gross reads
     it, B-2074) or the day change (0.6 s at 300,000 invoices with 1,100 ready, at every visit before: D-206). Making a
@@ -293,10 +296,10 @@ def ready_problems(store: Store, invoice_ids: list[int]) -> list[dict[str, Any]]
     def work() -> list[dict[str, Any]]:
         invoices = store.get_invoices(invoice_ids)
         problems = jde.validate(invoices, jde_settings.from_texts(text, table), store.vendor_ids(),
-                                jde.prior_records(store, invoices=invoices))  # fmt: skip
+                                jde.prior_records(store, invoices=invoices), files=files)  # fmt: skip
         return problem_rows(store, problems, invoices)
 
-    asked = (invoice_ids, text, table, dt.date.today().isoformat(), store.rates_stamp())
+    asked = (invoice_ids, text, table, dt.date.today().isoformat(), store.rates_stamp(), files)
     return store.shared_answer("jde_ready", work, version=READY_FORMAT, changes=("register", "vendors"), asked=asked)
 
 
@@ -396,7 +399,7 @@ def exports_page(
     problems: list[dict[str, Any]] = []
     blocking: list[str] = []
     if fmt in JDE_FORMATS and ready:
-        problems = ready_problems(store, [r["id"] for r in ready])
+        problems = ready_problems(store, [r["id"] for r in ready], files=fmt == jde_settings.FORMAT)
         blocking = jde_settings.settings_problems(jde_settings.load(store)) if fmt == jde_settings.FORMAT else []
     held = {p["id"] for p in problems}
     rows = [{**r, "blocked": r["id"] in held or bool(blocking)} for r in ready]

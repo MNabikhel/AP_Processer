@@ -884,6 +884,25 @@ def test_a_document_type_other_than_the_standard_voucher_is_on_the_sheet():
     assert jde_zfiles.voucher_rows(credit(), "40417", js)[0][0]["VLDCT"] == "PD"
 
 
+def test_a_pay_status_and_a_header_business_unit_set_are_on_the_sheet_as_the_files_send_them():
+    """B-2948: Settings' pay status (VLPST: H, held) and header business unit (VLMCU, also a company's own, D-301) go
+    in the batch files but were not on the keying sheet: a voucher typed from it took JD Edwards' defaults (approved,
+    so it could be paid; the company's own business unit) where the batch holds it. The sheet gives them on the pay
+    item when they are set, as the files send them; the default pay status (A) and no business unit say nothing."""
+    js = settings(pay_status="H", header_bu="0021061010", company="00210")
+    (block,) = blocks(workbook([one_line()], js)[jde_keying.SHEET])
+    (row,) = jde_zfiles.voucher_rows(one_line(), "40417", js)[0]
+    assert (field(block, "Pay status").value, field(block, "Business unit").value) == ("H", "0021061010")
+    assert (row["VLPST"], row["VLMCU"]) == ("H", "0021061010")
+    own = settings(company="00210", company_values={"00210": {"header_bu": "0021099999"}})
+    (block,) = blocks(workbook([one_line()], own)[jde_keying.SHEET])
+    assert field(block, "Business unit").value == "0021099999" == jde_zfiles.voucher_rows(
+        one_line(), "40417", own)[0][0]["VLMCU"]  # fmt: skip
+    assert "Pay status" not in [c.value for row in block for c in row]  # (A, approved: JD Edwards' own default)
+    (plain,) = blocks(workbook([one_line()])[jde_keying.SHEET])
+    assert not {"Pay status", "Business unit"} & {c.value for row in plain for c in row}
+
+
 def test_a_tax_area_of_another_province_than_the_tax_charged_is_said_and_holds_nothing():
     """B-2345: the tax area follows the ship-to, while the tax charged can be another province's: an Alberta supplier
     charging the GST only on goods shipped to Ontario went to ONHST with 5% tax (and an Ontario supplier's HST on a
