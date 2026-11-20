@@ -282,9 +282,8 @@ GL_LINES = ImportSpec(
            "vouchers' document types, exported to Excel (.xlsx) or CSV; split by company or year into several files "
            "if it is large.",
     more="The lines of one document (company, type and number) are one voucher. The payable lines JD Edwards adds may "
-         "be left out of the export: a voucher without them is read as complete. Lines of another company than "
-         "JD Edwards' company in Settings are left out. A second file adds to the first: a voucher in both counts "
-         "once.",
+         "be left out of the export: a voucher without them is read as complete. Every company's lines are kept, "
+         "each voucher with its company. A second file adds to the first: a voucher in both counts once.",
     report="the G/L lines of JD Edwards' vouchers (its account ledger, F0911, as a table)", file_types=(XLSX, CSV),
     fix="Add the column to the query, export it again and load that file.", one_of=("account", "object"),
     columns=_columns(journal.FLAT_ALIASES, journal.FLAT_NEEDS, {
@@ -303,7 +302,7 @@ GL_LINES = ImportSpec(
         "debit plus and a credit minus", "supplier": "the supplier each voucher was for", "account": "the account "
         "string each line was coded to (business unit.object.subsidiary)", "object": "with the business unit and "
         "subsidiary, the account each line was coded to (instead of the account number)",
-        "remark": "AP's words on each line, learned with it", "company": "lines of another company are left out",
+        "remark": "AP's words on each line, learned with it", "company": "the company each voucher is of",
         "doc_type": "tells two vouchers of one number apart",
         "subledger": "the subledger each line was keyed with (an account whose posting edit code is L), learned with "
         "its coding", "subledger_type": "the type of that subledger", "units": "the units each line was keyed with "

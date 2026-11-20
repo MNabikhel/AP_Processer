@@ -382,3 +382,19 @@ def test_the_screen_exports_are_still_told_apart(exports):
     assert specs.workbook_report(made.OPEN_PO_HEADER) == "purchase_orders"
     assert specs.workbook_report(["Vendor Name", "Vendor ID", "Tax ID"]) is None
     assert specs.workbook_report(["Document Number", "Supplier Number", "Account Number", "Gross Amount"]) is None
+
+
+def test_the_gl_lines_card_says_every_companys_lines_are_kept_as_they_are():
+    """B-2747: the past coding (G/L lines) card said "Lines of another company than JD Edwards' company in Settings
+    are left out", and its Company column "lines of another company are left out": none is (D-266), every company's
+    vouchers are kept, each with its company."""
+    head = ["Document Number", "Doc Type", "Doc Co", "G/L Date", "Account Number", "Amount", "Supplier Number"]
+    rows = [[5001, "PV", "00100", "2026-03-04", "1001.5410", 10.0, 41001],
+            [5002, "PV", "00200", "2026-03-04", "2001.5410", 20.0, 41001]]  # fmt: skip
+    read = journal.read_journal(journal.sheet_csv([head, *rows]), payable_objects=journal.PayableObjects(()),
+                                tax_objects=())  # fmt: skip
+    assert sorted(v.company for v in read.vouchers) == ["00100", "00200"]
+    spec = SPECS["gl_lines"]
+    words = f"{spec.more} {next(c.about for c in spec.columns if c.field == 'company')}"
+    assert "left out" not in words.replace("payable lines JD Edwards adds may be left out", "")
+    assert "Every company's lines are kept" in spec.more
