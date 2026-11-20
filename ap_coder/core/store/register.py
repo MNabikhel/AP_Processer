@@ -206,16 +206,22 @@ class RegisterMixin:
             _search_kept(conn, None if top is None else 0, cleared=True)
             self._log(conn, "erp_register_imported", actor=actor, detail={"rows": 0, "total": 0, "cleared": True})
 
-    def erp_register(self, numbers: list[str] | None = None) -> list[dict[str, Any]]:
+    def erp_register(self, numbers: list[str] | None = None, companies: bool = False) -> list[dict[str, Any]]:
         """Every invoice in the imported ERP register, with its supplier number when JD Edwards' voucher list gave one
         (``an8``, "" otherwise); with ``numbers``, those with one of these invoice numbers (as compared:
-        ``norm_invoice_number``), in the same order."""
-        sql = ("SELECT vendor_key, vendor_name, an8, invoice_number, number_key, invoice_date, total, copies "
-               "FROM erp_invoices")  # fmt: skip
+        ``norm_invoice_number``), in the same order. ``companies``: each with the companies its JD Edwards vouchers
+        are entered under, as ``in_erp`` gives them (none for a bill of a register file: D-267)."""
+        listed = f", {_BILL_COMPANIES} AS companies" if companies else ""
+        sql = ("SELECT vendor_key, vendor_name, an8, invoice_number, number_key, invoice_date, total, copies"
+               f"{listed} FROM erp_invoices b")  # fmt: skip
         with self._conn() as conn:
             if numbers is None:
-                return [dict(r) for r in conn.execute(sql)]
-            return fetch_rows(conn, f"{sql} WHERE {_in_list('number_key')} ORDER BY rowid", (json.dumps(numbers),))
+                rows = [dict(r) for r in conn.execute(sql)]
+            else:
+                rows = fetch_rows(conn, f"{sql} WHERE {_in_list('number_key')} ORDER BY rowid", (json.dumps(numbers),))
+        for r in rows if companies else ():
+            r["companies"] = sorted(json.loads(r["companies"] or "[]"))
+        return rows
 
     def erp_register_rows(self, where: str, params: tuple[Any, ...] | list[Any] = (),
                           indexed: tuple[str, list[Any]] | None = None) -> list[dict[str, Any]]:  # fmt: skip

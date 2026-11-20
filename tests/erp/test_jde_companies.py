@@ -2,6 +2,7 @@
 gives none), in that company's currency (a US company's USD invoice is domestic, not foreign), and a company not
 checked for Canadian tax takes its tax area from its PO line or its supplier, else it is held."""
 
+import html
 import json
 
 from ap_coder.bench import jde_group
@@ -54,3 +55,112 @@ def test_the_settings_read_the_companies_currencies_and_never_save_them(tmp_path
     assert "company_currencies" not in json.loads(settings.to_json())
     assert not jde_settings.set_up(settings)  # (report 9 alone is no JD Edwards setup)
     assert AN8({}) == "10023"
+
+
+# --- A batch's duplicates, per company (D-287) ----------------------------------------------------------------------
+
+
+def _ready(tmp_path, template):
+    """The demo's approved invoices on a copy of ``template`` (Northwind's ready for JD Edwards), with JD Edwards' two
+    made-up companies loaded (report 9): the store, the dashboard and Northwind's coding."""
+    from tests.erp.test_jde_keying import demo
+    from tests.web.test_chart_eligible import _two_companies
+
+    store, client, northwind, _chinook = demo(tmp_path, template)
+    _two_companies(store)
+    return store, client, store.get_invoice(northwind["id"])["final_output"]
+
+
+def _approved(store, tmp_path, doc, number, company, over=()):
+    """A copy of ``doc`` numbered ``number`` for ``company``, approved with the warnings ``over`` (their codes)
+    showing: approved over them."""
+    from ap_coder.core.store import APPROVED
+
+    copy = {**doc, "invoice_number": number, "company": company}
+    inv_id = store.add_invoice(tmp_path / f"{number}-{company}-{len(store.unexported_approved())}.pdf", copy, {})
+    shown = [{"code": code, "severity": "warning", "line": None} for code in over]
+    store.approve_invoice(inv_id, copy, "Jordan Lee", open_issues=shown)
+    assert store.get_invoice(inv_id)["status"] == APPROVED
+    return inv_id
+
+
+def _in_jde(store, doc, number, company, document):
+    """A voucher of ``doc``'s supplier numbered ``number`` that JD Edwards' voucher list has under ``company``."""
+    store.import_erp_vouchers([{"key": f"{company}-PV-{document}-001", "vendor_name": doc["vendor_name"],
+                                "invoice_number": number, "total": doc["grand_total"],
+                                "invoice_date": doc["invoice_date"], "an8": "", "document": document}])  # fmt: skip
+
+
+def _page_holds(client, ids):
+    """{invoice: whether the Exports page (the keying sheet's format) shows it greyed out, not to tick}, and the page's
+    words."""
+    from ap_coder.erp import jde_keying
+
+    page = html.unescape(client.get(f"/exports?fmt={jde_keying.FORMAT}").text)
+    return {n: "disabled" in page.split(f'name="ids" value="{n}"', 1)[1].split(">", 1)[0] for n in ids}, page
+
+
+def _keyed(store, client, ids):
+    """A keying batch of ``ids`` made on the Exports page: (the invoices on it, those of its keying sheet's vouchers,
+    those of its Not ready sheet)."""
+    import io
+
+    import openpyxl
+
+    from ap_coder.erp import jde_keying
+    from tests.erp.test_jde_keying import blocks
+    from tests.webclient import follow, post
+
+    follow(client, post(client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": ids}))
+    batch = store.export_batches()[0]["id"]
+    wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/exports/batches/{batch}/download").content))
+    sheet = [int(b[0][1].value.rsplit(" ", 1)[1]) for b in blocks(wb[jde_keying.SHEET])]
+    held = [row[0] for row in wb[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True)]
+    return store.batch_invoice_ids(batch), sheet, held
+
+
+def test_ap_coders_own_invoice_of_another_company_approved_over_the_warning_goes_on_the_batch(
+    tmp_path, cost_centers_demo_template
+):
+    """B-2696: the batch's duplicate check matched by supplier and invoice number only: an invoice approved over
+    DUPLICATE_INVOICE_OTHER_COMPANY (the same number of the same supplier, for the other company) stayed greyed out
+    on the Exports page, never on a batch nor its keying sheet. Per company now: one of another company, approved over
+    the warning, goes; one of the same company is held as before, said on the page."""
+    from ap_coder.erp import jde_settings
+
+    store, client, doc = _ready(tmp_path, cost_centers_demo_template)
+    other = "DUPLICATE_INVOICE_OTHER_COMPANY"
+    first = _approved(store, tmp_path, doc, "NW-5101", "00210")
+    second = _approved(store, tmp_path, doc, "NW-5101", "00310", over=[other])  # in the same batch
+    out = _approved(store, tmp_path, doc, "NW-5102", "00310")
+    store.create_export_batch([out], jde_settings.FORMAT)  # exported before, for the other company
+    after = _approved(store, tmp_path, doc, "NW-5102", "00210", over=[other])
+    same = _approved(store, tmp_path, doc, "NW-5101", "00210", over=[other])  # the first's company: a duplicate
+    held, page = _page_holds(client, [first, second, after, same])
+    assert held == {first: False, second: False, after: False, same: True}
+    assert f"same supplier and invoice number as AP Coder #{first} in this batch" in page
+    on_batch, sheet, not_ready = _keyed(store, client, [first, second, after, same])
+    assert on_batch == sheet == [first, second, after] and not_ready == []
+
+
+def test_a_bill_in_jd_edwards_under_another_company_holds_an_invoice_only_until_approved_over_it(
+    tmp_path, cost_centers_demo_template
+):
+    """B-2696: a bill JD Edwards has under another company (DUPLICATE_OTHER_COMPANY, a warning) held the invoice at
+    the batch as "already in the ERP", approved over the warning or not. Approved over it, it goes on the batch; under
+    its own company it is held as before; under another, loaded since its approval (no one approved it over that), it
+    is held, said so, to be reopened."""
+    store, client, doc = _ready(tmp_path, cost_centers_demo_template)
+    _in_jde(store, doc, "NW-5201", "00310", "700201")
+    _in_jde(store, doc, "NW-5202", "00210", "700202")
+    over = _approved(store, tmp_path, doc, "NW-5201", "00210", over=["DUPLICATE_OTHER_COMPANY"])
+    own = _approved(store, tmp_path, doc, "NW-5202", "00210")
+    since = _approved(store, tmp_path, doc, "NW-5203", "00210")
+    _in_jde(store, doc, "NW-5203", "00310", "700203")
+    held, page = _page_holds(client, [over, own, since])
+    assert held == {over: False, own: True, since: True}
+    assert f"already in the ERP (invoice NW-5202, dated {doc['invoice_date']})" in page
+    assert (f"already in the ERP under company 00310 (invoice NW-5203, dated {doc['invoice_date']}), not 00210, "
+            "found since it was approved: reopen it to check its company") in page  # fmt: skip
+    on_batch, sheet, not_ready = _keyed(store, client, [over, own, since])
+    assert on_batch == sheet == [over] and not_ready == []

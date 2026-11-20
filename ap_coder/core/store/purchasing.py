@@ -308,6 +308,15 @@ class PurchasingMixin:
                 found[key] = {**heads[key], "lines": rows, "total": round(sum(li["amount"] for li in rows), 2)}
         return found
 
+    def invoice_companies(self, ids: list[int]) -> dict[int, str]:
+        """{invoice: the company it is coded to} (its coding's, the approved one else AP Coder's; "" none decided) of
+        the invoices ``ids``, read off their codings by SQLite, not each one decoded."""
+        if not ids:
+            return {}
+        with self._conn() as conn:
+            found = conn.execute(_COMPANIES, (json.dumps(sorted(set(ids))),)).fetchall()
+        return {int(n): company_code(company) for n, company in found}
+
     def orders_numbered(self, number: str) -> list[dict[str, Any]]:
         """The purchase orders (their heads) with this number as people mean it (``keys.po_key``), by key: one, or
         several when two companies or order types share it (D-267)."""
