@@ -934,3 +934,32 @@ def test_in_a_browser_a_right_click_on_a_lines_box_opens_the_line_menu_unless_it
     page.wait_for_timeout(150)
     assert page.locator(MENU).count() == 0
     assert errors == []
+
+
+SCROLLED = """sel => new Promise((done) => {
+  const el = sel ? document.querySelector(sel) : document.scrollingElement;
+  const at = el.scrollTop;
+  (sel ? el : window).addEventListener("scroll", () => requestAnimationFrame(() => done(el.scrollTop - at)), { once: true });
+  el.scrollTop += 60;
+})"""  # scrolls the element (the window with none) and answers how far once its scroll event has been handled
+
+
+def test_in_a_browser_a_lines_menu_stays_open_while_the_page_viewer_scrolls_and_closes_with_the_window_b2850(
+    browser, store
+):
+    """B-2850: a right-click on a line moves the page viewer to the line's place on the page, smoothly; a scroll more
+    than 0.25 s after the menu opened closed it, so on a slow computer the line's menu closed by itself under the
+    pointer. Only a scroll that moves what the menu is for (the window's, the viewer's for the page's menu) closes it."""
+    page, errors = _review(browser, store.list_invoices(REVIEW)[0]["id"])
+    _menu(page, _lines(page).first.locator("[data-del-row]"))
+    page.wait_for_timeout(300)  # past the moment the right-click's own scroll is taken for
+    assert page.evaluate(SCROLLED, ".iv-stage") != 0  # the viewer scrolled: the line did not move
+    assert page.locator(MENU).count() == 1
+    assert page.evaluate(SCROLLED, None) != 0  # the window scrolled: the line moved from under its menu
+    assert page.locator(MENU).count() == 0
+    # the page's menu goes with the viewer's own scroll
+    _menu(page, page.locator(".iv-stage"), position=_blank_spot(page))
+    page.wait_for_timeout(300)
+    assert page.evaluate(SCROLLED, ".iv-stage") != 0
+    assert page.locator(MENU).count() == 0
+    assert errors == []
