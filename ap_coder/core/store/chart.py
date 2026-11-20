@@ -479,9 +479,15 @@ class ChartMixin:
         return dict(self.summary_memo("chart_edit_counts", count, topic="", asked=self.chart_version()))
 
     def chart_lists(self) -> tuple[dict[str, tuple[str, str]], dict[str, str]]:
-        """The GL accounts and cost centers the chart gives (``chart.account_lists``), worked out by SQLite."""
-        with self._conn() as conn:
-            return _lists(conn)
+        """The GL accounts and cost centers the chart gives (``chart.account_lists``), worked out by SQLite once a
+        change of the chart (``chart_version``: GL accounts and Cost centers count them at each view, B-2748). Shared:
+        read them, don't change them."""
+
+        def lists() -> tuple[dict[str, tuple[str, str]], dict[str, str]]:
+            with self._conn() as conn:
+                return _lists(conn)
+
+        return self.summary_memo("chart_lists", lists, topic="", asked=self.chart_version())
 
     def business_units(self) -> list[BuRow]:
         """Every business unit of the business unit master as imported."""
