@@ -140,7 +140,7 @@ def voucher_rows(
     ``validate`` first: an invoice with problems gives incomplete rows. ``prepared``: its voucher already prepared
     for ``vendor_an8`` (``_vouchers``), not prepared again. ``site``: the batch's code (``batch_site``) in VLEDBT.
     ``matched``: a PO-matched voucher's voucher match (``jde_keying.po_matches``, as its keying sheet keys it): the
-    order type and company, and each match row's PO line, are its (D-284)."""
+    order's number, type and company, and each match row's PO line, are its (D-284, B-2921)."""
     from .exports import entry_lines
 
     v = prepared if prepared is not None else _prepare(invoice, settings, str(vendor_an8 or "").strip(), on)
@@ -153,6 +153,7 @@ def voucher_rows(
     po = str(final.get("po_number") or "").strip()
     # VLPO, VLPDCT and VLPKCO go together (B-457); a PO longer than VLPO is not sent, only kept in the remark (D-87).
     send_po = bool(po) and (v.po_matched or (settings.send_po_reference and len(po) <= PO_WIDTH))
+    order = _order_of(po, final, settings, matched) if send_po else ("", "", "")
     typed = settings.remarks == REMARKS_TYPED  # VNEXR: the line's remark, not the invoice number (D-210)
     rate = _rate(fx_rates, v.currency, domestic_of(final, settings)) if v.foreign else None
     common = {
@@ -165,8 +166,7 @@ def voucher_rows(
         # and ``validate`` lists it for the README's "check before loading".
         "VLDDJ": julian(due) if settings.send_due_date and due is not None and due.year in E1_YEARS else "",
         "VLPST": settings.pay_status.strip(),
-        "VLPO": po[:PO_WIDTH] if send_po else "",
-        **dict(zip(("VLPDCT", "VLPKCO"), _order_of(final, settings, matched) if send_po else ("", ""), strict=True)),
+        **dict(zip(("VLPO", "VLPDCT", "VLPKCO"), order, strict=True)),
         "VLRMK": _pay_item_remark(v, settings),
     }  # fmt: skip
     if uses_glba(settings):  # the G/L bank account of the Pay from account (D-66; its company's, D-301); blank: AAI PB
@@ -277,25 +277,28 @@ def voucher_rows(
     return [header], [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
 
 
-def _order_of(final: Mapping[str, Any], settings: JdeSettings, matched: VoucherMatch | None) -> tuple[str, str]:
-    """(VLPDCT, VLPKCO) of a voucher sent with its PO: the order type and company its voucher match's rows name (the
-    PO file's, as the keying sheet keys them, D-284), else Settings' (the company's when Settings names none)."""
+def _order_of(po: str, final: Mapping[str, Any], settings: JdeSettings,
+              matched: VoucherMatch | None) -> tuple[str, str, str]:  # fmt: skip
+    """(VLPO, VLPDCT, VLPKCO) of a voucher sent with its PO ``po``: the order its voucher match's rows name, its number,
+    type and company as the PO file has them and the keying sheet keys them (not the PO as typed, "PO-40917", which
+    names no order: D-284, B-2921); else the PO as typed and Settings' type and company (the company's when Settings
+    names none)."""
     row = next((r for r in (matched.rows if matched is not None else []) if r.on_po), None)
     company = settings.po_company.strip()
     company = (company.zfill(5) if company.isdigit() else company) or company_of(final, settings)
     if row is None:
-        return settings.po_document_type.strip(), company
-    return row.order_type or settings.po_document_type.strip(), row.order_company or company
+        return po[:PO_WIDTH], settings.po_document_type.strip(), company
+    return (row.order_number[:PO_WIDTH], row.order_type or settings.po_document_type.strip(),
+            row.order_company or company)  # fmt: skip
 
 
 def _match_rows(v: _Voucher, keys: Mapping[str, Any], common: Mapping[str, Any], settings: JdeSettings,
                 matched: VoucherMatch | None) -> list[dict[str, Any]]:  # fmt: skip
-    """F0411Z1T's rows of a PO-matched voucher, one an invoice line, its PO number VLPO's and its order type and
+    """F0411Z1T's rows of a PO-matched voucher, one an invoice line, its order number VLPO's and its order type and
     company VLPDCT's and VLPKCO's (``_order_of``): with its voucher match (``matched``) each line's LNID the PO line's
     own number ("12.000", as the keying sheet keys it; blank for a line on no PO line, a charge keyed on an account of
     its own, D-265); without its rows (the PO not loaded) the invoice's line number, as before (D-284)."""
     final = v.final
-    po = str(final.get("po_number") or "").strip()
     items = final.get("line_items") or []
     rows = _line_rows(items, matched.rows) if matched is not None and matched.rows else None
     out = []
@@ -304,7 +307,7 @@ def _match_rows(v: _Voucher, keys: Mapping[str, Any], common: Mapping[str, Any],
         on_po = row is not None and row.on_po
         out.append({
             "EDUS": keys["VLEDUS"], "EDBT": keys["VLEDBT"], "EDTN": keys["VLEDTN"], "EDLN": 1,
-            "DOCO": po[:8], "DCTO": common["VLPDCT"], "KCOO": common["VLPKCO"],
+            "DOCO": common["VLPO"], "DCTO": common["VLPDCT"], "KCOO": common["VLPKCO"],
             "LNID": (row.line if on_po else "") if rows is not None else li.get("line_number") or "", "LITM": "",
             "DSC1": _text(li.get("description"), 30), "UORG": _plain(li.get("quantity")),
             "PRRC": _plain(li.get("unit_price"), 4), "AEXP": _amount(_units(li.get("amount")), settings, v.decimals),
