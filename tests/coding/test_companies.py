@@ -157,25 +157,33 @@ def test_a_companys_name_inside_the_suppliers_own_never_decides(group, reference
     assert output["company"] == "00230"
 
 
+# An intercompany invoice: Maple Ridge Constructors Ltd. (00220, a supplier too) bills Maple Ridge Holdings Ltd. (00210)
+INTERCOMPANY = (
+    "Maple Ridge Constructors Ltd.\n1180 Marine Drive, Kamloops, BC V2C 1A4\nInvoice #: IC-2611\nBill To:\n"
+    "Maple Ridge Holdings Ltd.\n410 Elm Street, Edmonton, AB T5J 0N3\nDescription Qty Amount\n"
+    "Crane time for Fraser Bend Civil Ltd., job 2403 1 2,000.00\n"
+)
+SENDER = ("Maple Ridge Constructors Ltd.", "MAPLE RIDGE CONSTRUCTORS LTD")  # (report 9's name, the vendor list's)
+
+
+def _suppliers_of_the_group(store):
+    suppliers = (("MAPLE RIDGE CONSTRUCTORS LTD", "4410900"), ("MAPLE RIDGE HOLDINGS LTD", "4410901"),
+                 ("KELSO READY MIX LTD", "4410101"))  # fmt: skip
+    store.import_vendor_master([{"vendor_name": n, "erp_id": e} for n, e in suppliers], by_erp_id=True)
+
+
 def test_a_company_of_the_group_printed_as_the_sender_is_offered_to_pick_never_the_one_billed(group, ground_truth):
     """B-2790 (D-298): report 9's names are never read as the supplier, so an intercompany invoice (Maple Ridge
     Constructors Ltd., 00220, a supplier too, billing Maple Ridge Holdings Ltd.) was left with no supplier and no
     company, nothing said of who sent it. A company of the group printed outside the page's bill-to and ship-to that
     is a supplier in the vendor master is offered for a person to pick: never the company billed, the one decided, the
     supplier chosen, or a company that is no supplier."""
-    suppliers = (("MAPLE RIDGE CONSTRUCTORS LTD", "4410900"), ("MAPLE RIDGE HOLDINGS LTD", "4410901"),
-                 ("KELSO READY MIX LTD", "4410101"))  # fmt: skip
-    group.import_vendor_master([{"vendor_name": n, "erp_id": e} for n, e in suppliers], by_erp_id=True)
-    page = ("Maple Ridge Constructors Ltd.\n1180 Marine Drive, Kamloops, BC V2C 1A4\nInvoice #: IC-2611\nBill To:\n"
-            "Maple Ridge Holdings Ltd.\n410 Elm Street, Edmonton, AB T5J 0N3\nDescription Qty Amount\n"
-            "Crane time for Fraser Bend Civil Ltd., job 2403 1 2,000.00\n")  # fmt: skip
+    _suppliers_of_the_group(group)
     unread = _coding(ground_truth, vendor_name="")
-    sender = ("Maple Ridge Constructors Ltd.", "MAPLE RIDGE CONSTRUCTORS LTD")  # (report 9's name, the vendor list's)
-    assert companies.group_suppliers(group, page, unread) == [sender]
-    assert companies.group_suppliers(group, page, _coding(ground_truth, vendor_name="Kelso Ready Mix Ltd.")) == [sender]
+    assert companies.group_suppliers(group, INTERCOMPANY, unread) == [SENDER]
     for coding in (_coding(ground_truth, vendor_name="", company="00220"),  # the company it is for
                    _coding(ground_truth, vendor_name="MAPLE RIDGE CONSTRUCTORS LTD")):  # fmt: skip
-        assert companies.group_suppliers(group, page, coding) == []
+        assert companies.group_suppliers(group, INTERCOMPANY, coding) == []
     # an outside supplier's invoice to a company of the group (a supplier too) and shipped to another
     page = (
         "Kelso Ready Mix Ltd.\n88 Industrial Way, Calgary, AB T2E 7H1\nBill to: Maple Ridge Constructors Ltd.\n"
@@ -184,6 +192,43 @@ def test_a_company_of_the_group_printed_as_the_sender_is_offered_to_pick_never_t
     assert companies.group_suppliers(group, page, unread) == []
     group.set_setting(companies.COMPANIES_SETTING, '{"00220": {"name": "Maple Ridge Constructors Ltd."}}')
     assert companies.group_suppliers(group, "Maple Ridge Constructors Ltd.\nBill to: Someone\n", unread) == []
+
+
+def test_a_company_billed_under_a_label_written_otherwise_or_a_supplier_in_the_box_is_never_offered(
+    group, ground_truth
+):
+    """B-2792: an outside supplier's invoice billed to one company of the group and shipped to another, its blocks
+    labelled "Bill-To:" and "Ship-To:" (or "BILL-TO", "SOLD-TO:", "Invoiced To:", "Customer Name:", "Billing
+    Address:"), offered both companies as its supplier, the outside supplier read in the vendor box all the same: the
+    labels took their words apart by spaces only, and a supplier in the box never stopped the offer. Offered only with
+    no supplier in the box, or one of the company's own names (the company billed, typed or picked by mistake)."""
+    _suppliers_of_the_group(group)
+    unread = _coding(ground_truth, vendor_name="")
+    for bill, ship in (("Bill-To:", "Ship-To:"), ("BILL-TO", "SHIP-TO"), ("SOLD-TO:", "Delivery Address:"),
+                       ("Invoiced To:", "Shipping Address:"), ("Customer Name:", "Ship - To"),
+                       ("Billing Address:", "Deliver-To:")):  # fmt: skip
+        page = (
+            f"Kelso Ready Mix Ltd.\n88 Industrial Way, Calgary, AB T2E 7H1\n{bill}\nMaple Ridge Holdings Ltd.\n"
+            f"410 Elm Street, Edmonton, AB T5J 0N3\n{ship}\nMaple Ridge Constructors Ltd., Kelso Bridge yard\n"
+        )
+        assert companies.group_suppliers(group, page, unread) == [], bill
+    kelso = _coding(ground_truth, vendor_name="Kelso Ready Mix Ltd.")
+    assert companies.group_suppliers(group, INTERCOMPANY, kelso) == []
+    billed = _coding(ground_truth, vendor_name="Maple Ridge Holdings Ltd.")  # the customer, in the box by mistake
+    assert companies.group_suppliers(group, INTERCOMPANY, billed) == [SENDER]
+
+
+def test_the_sender_is_offered_whatever_its_remit_to_says_to_the_attention_of(group, ground_truth):
+    """B-2793: an intercompany invoice whose remit-to reads "Please remit to: / Attn: Accounts Receivable / Maple Ridge
+    Constructors Ltd." offered nothing: the "Attn:" line opened a customer block inside the supplier's remit-to, and
+    the sender's name in it was taken for the customer's. An "Attn:" line opens one only outside a remit-to."""
+    _suppliers_of_the_group(group)
+    unread = _coding(ground_truth, vendor_name="")
+    remit = "Please remit to:\nAttn: Accounts Receivable\nMaple Ridge Constructors Ltd.\nPO Box 400, Kamloops, BC\n"
+    assert companies.group_suppliers(group, INTERCOMPANY + remit, unread) == [SENDER]
+    # the customer's own "Attn:" line, its name under it and no bill-to label: still the customer's
+    page = INTERCOMPANY.replace("Bill To:\n", "ATTN: Accounts Payable\n")
+    assert "Bill To" not in page and companies.group_suppliers(group, page, unread) == [SENDER]
 
 
 def test_a_short_name_decides_only_printed_as_a_word_of_its_own_in_capitals(group, reference, ground_truth):

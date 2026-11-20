@@ -249,16 +249,28 @@ def addressed_to(text: str) -> str:
     return "\n".join(out)
 
 
+# A customer's block labelled in other words than _CUSTOMER_LABEL's and _SHIP_LABEL's (``customer_block``, B-2792).
+_CUSTOMER_WORDS = re.compile(
+    r"(?i)\binvoiced\s*to\b|^\W*(?:customer|client)\s+(?:name|address)\b|\b(?:billing|shipping|delivery)\s+address\b"
+)
+
+
 def customer_block(text: str) -> tuple[str, str]:
     """(the page's bill-to and ship-to blocks, the rest of it): each "Bill to", "Ship to", "Client" or "Attn:"
-    label's line and the ``ADDRESS_BLOCK_LINES`` under it, up to a remit-to (the supplier's) or the line items'
-    headings. Who an invoice is for, told from who sent it by the page's text alone (``companies.group_suppliers``,
-    D-298)."""
-    block, rest, until = [], [], -1
+    label's line ("Bill-To", "SOLD-TO", "Invoiced To", "Customer Name", "Billing Address" too) and the
+    ``ADDRESS_BLOCK_LINES`` under it, up to a remit-to (the supplier's: an "Attn:" in it is the supplier's too) or the
+    line items' headings. Who an invoice is for, told from who sent it by the page's text alone
+    (``companies.group_suppliers``, D-298)."""
+    block, rest, until, remit = [], [], -1, -1  # (the last line of the customer's block, and of a remit-to)
     for n, line in enumerate(text.splitlines()):
-        if _SHIP_LABEL.search(line) or _CUSTOMER_LABEL.search(line) or _ATTENTION.search(line):
+        label = line.replace("-", " ")  # "Bill-To:", "SHIP-TO" (B-2792)
+        if any(rx.search(label) for rx in (_SHIP_LABEL, _CUSTOMER_LABEL, _CUSTOMER_WORDS)) or (
+            n > remit and _ATTENTION.search(label)  # "Attn: Accounts Receivable" in a remit-to (B-2793)
+        ):
             until = n + ADDRESS_BLOCK_LINES
-        elif _REMIT_LABEL.search(line) or _TABLE_HEADING.match(line):
+        elif _REMIT_LABEL.search(label):
+            until, remit = -1, n + REMIT_BLOCK_LINES
+        elif _TABLE_HEADING.match(label):
             until = -1
         (block if n <= until else rest).append(line)
     return "\n".join(block), "\n".join(rest)

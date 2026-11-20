@@ -308,10 +308,12 @@ def group_suppliers(store: Any, text: str, coding: InvoiceCoding) -> list[tuple[
     (``text``) outside its bill-to and ship-to (``offline_coder.customer_block``) that are suppliers in use of the
     vendor master: one of them may have billed the invoice to another (an intercompany invoice), and their names are
     never read as the supplier (``own_names``: the bill-to prints one on every outside invoice), so a person is
-    offered it to pick (D-298). Never the company the invoice is for (``coding.company``), one in its bill-to or
-    ship-to, or the supplier chosen (its name, and a name only inside it); [] with fewer than two companies."""
+    offered it to pick (D-298). Only with no supplier in the box, or one of the company's own names (the company
+    billed, by mistake: B-2792); never the company the invoice is for (``coding.company``), one in its bill-to or
+    ship-to, or the supplier in the box (its name, and a name only inside it); [] with fewer than two companies."""
     table = companies(store)
-    if len(table) < 2 or not text.strip():
+    supplier = vendor_key(coding.vendor_name)
+    if len(table) < 2 or not text.strip() or (supplier and supplier not in map(vendor_key, own_names(store))):
         return []
     from ..ai.offline_coder import customer_block
     from ..core.keys import IN_ERP
@@ -319,7 +321,7 @@ def group_suppliers(store: Any, text: str, coding: InvoiceCoding) -> list[tuple[
 
     names = name_variations(store)
     billed, rest = customer_block(text)
-    printed = _named(rest, names, vendor_key(coding.vendor_name)) - _named(billed, names, "")
+    printed = _named(rest, names, supplier) - _named(billed, names, "")
     out = []
     for code in sorted((printed - {company_code(coding.company)}) & set(table)):
         name = table[code].name

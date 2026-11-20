@@ -165,15 +165,18 @@ SIBLING = jde_group.GroupSupplier(*next(r for r in jde_group.SUPPLIERS if r[0] =
 KELSO = {"vendor_name": "KELSO READY MIX LTD", "erp_id": "4410101"}
 
 
-def _invoice(store, sender: str, billed: str, number: str, gst: str = "") -> int:
-    """A made-up invoice of ``sender`` to ``billed``, read and coded by the pipeline as one dropped in: its id."""
+def _invoice(store, sender: str, billed: str, number: str, gst: str = "", bill: str = "Bill To:",
+             ship: tuple[str, str] = ("", "")) -> int:  # fmt: skip
+    """A made-up invoice of ``sender`` to ``billed`` (under the label ``bill``; ``ship``: a ship-to's label and name
+    beside it), read and coded by the pipeline as one dropped in: its id."""
     from ap_coder.ai.pipeline import InvoicePipeline
     from tests.pdfs import text_pdf
     from tests.webclient import web_settings
 
     items = [(50, 50, sender, 14), (50, 68, "1180 Marine Drive, Kamloops, BC V2C 1A4"), (400, 50, "INVOICE", 14),
              (400, 70, f"Invoice #: {number}"), (400, 84, "Invoice Date: 2026-10-14"), (400, 98, "Terms: Net 30"),
-             (400, 112, f"GST/HST No. {gst}" if gst else ""), (50, 120, "Bill To:"), (50, 134, billed),
+             (400, 112, f"GST/HST No. {gst}" if gst else ""), (50, 120, bill), (50, 134, billed),
+             (300, 120, ship[0]), (300, 134, ship[1]),
              (50, 148, "410 Elm Street, Edmonton, AB T5J 0N3"), (50, 220, "Description"), (400, 220, "Qty"),
              (500, 220, "Amount"), (50, 236, "Project management, October"), (400, 236, "1"), (500, 236, "2,000.00"),
              (400, 300, "Subtotal"), (500, 300, "2,000.00"), (400, 314, "GST 5%"), (500, 314, "100.00"),
@@ -231,6 +234,26 @@ def test_an_intercompany_invoice_offers_the_company_of_the_group_that_sent_it_an
     assert answer["header"]["help"]["vendor_name"]["actions"] == [  # the page's own reading, never the company billed
         {"label": "Use Kelso Ready Mix Ltd. from the page", "value": "Kelso Ready Mix Ltd."}
     ]
+
+
+def test_an_outside_suppliers_invoice_labelled_bill_to_with_a_hyphen_never_offers_the_companies_it_names(client, store):
+    """B-2792 on the screen: an outside supplier's invoice, read with its supplier in the vendor box, billed to Maple
+    Ridge Holdings Ltd. under "Bill-To:" and shipped to Maple Ridge Constructors Ltd. under "Ship-To:" (two of the
+    group, no company decided, both suppliers too) offered both as its supplier under the vendor box: one click put
+    the customer in place of the supplier."""
+    load_sample_setup(store)
+    _card(client, jde_group.companies_xlsx())
+    holdings = {"vendor_name": "MAPLE RIDGE HOLDINGS LTD", "erp_id": "4410901"}
+    store.import_vendor_master([{"vendor_name": SIBLING.name, "erp_id": str(SIBLING.number)}, holdings, KELSO],
+                               by_erp_id=True)  # fmt: skip
+    outside = _invoice(store, "Kelso Ready Mix Ltd.", "Maple Ridge Holdings Ltd.", "KR-4411", bill="Bill-To:",
+                       ship=("Ship-To:", "Maple Ridge Constructors Ltd."))  # fmt: skip
+    read = store.get_invoice(outside)["ai_output"]
+    assert read["vendor_name"] == "Kelso Ready Mix Ltd." and not read.get("company")
+    assert "data-help-use" not in _vendor_box(client, outside)
+    cleared = {**Draft.stored(read).header, "vendor_name": ""}
+    answer = client.post(f"/review/{outside}/check", data=cleared, headers=PAGE).json()
+    assert "of the group" not in answer["header"]["help"].get("vendor_name", {}).get("text", "")
 
 
 @pytest.fixture
