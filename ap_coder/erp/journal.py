@@ -633,12 +633,19 @@ def _voided(voucher: Voucher) -> bool:
 
 def payable_left_out(journal: Journal) -> bool:
     """Whether the account ledger as a table came without its payable lines (none needs a trade payable object to
-    tell its payable lines from AP's coding): more of its vouchers have none and do not add up to nothing than add up
-    to nothing. A voided voucher counts for neither, and one voucher that adds up to nothing without a payable line
-    (an amount moved between accounts) does not decide it alone (B-2740)."""
-    left_out = sum(v.payable_left_out for v in journal.vouchers)
-    whole = sum(v.balanced and not v.payable_left_out and not _voided(v) for v in journal.vouchers)
-    return journal.flat and left_out > whole
+    tell its payable lines from AP's coding): a voucher of it has none and does not add up to nothing, no line of it
+    is a payable object's, and no object closes two or more of the vouchers that add up to nothing and most of them
+    (``_closing``), as a trade payable object closes those posted with it, however many are not posted yet (B-2751).
+    A voided voucher (each account's lines add up to nothing) says nothing of it, nor one voucher moving an amount
+    between accounts (B-2740)."""
+    if not journal.flat or not any(v.payable_left_out for v in journal.vouchers):
+        return False
+    if any(line.kind == PAYABLE for voucher in journal.vouchers for line in voucher.lines):
+        return False
+    whole = [v for v in journal.vouchers if v.balanced and not v.payable_left_out and not _voided(v)]
+    closing = _closing(whole)
+    trade = closing.best()
+    return not trade or closing.either[trade] < max(2, CLOSES_MOST * len(whole))
 
 
 def cut_by_excel(journal: Journal, units: Iterable[str] = (), objects: Iterable[str] = ()) -> list[str]:

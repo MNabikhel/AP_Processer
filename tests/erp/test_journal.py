@@ -656,6 +656,27 @@ def test_a_voucher_whose_lines_add_up_to_nothing_does_not_say_the_payable_lines_
     assert not jr.payable_left_out(jr.read_journal(whole, payable_objects=jr.PayableObjects(()), tax_objects=()))
 
 
+def test_an_export_with_its_posted_vouchers_payable_lines_has_them_however_many_are_not_posted_yet():
+    """B-2751: past B-2740, an account ledger whose vouchers posted carry their trade payable line, among more not
+    posted yet (no payable line until they are), was read as one without payable lines: no trade payable object
+    was worked out, and the payable and tax lines were learned as AP's coding. An object closing two or more of the
+    vouchers that add up to nothing, and most of them, says the payable lines are in."""
+    rows = []
+    for n in range(3):  # posted: the trade payable line JD Edwards adds
+        supplier = f"4100{n + 1}"
+        rows += [gl(5000 + n, f"{MAIN}.7410", 100.0, supplier=supplier),
+                 gl(5000 + n, f"{MAIN}.{GST}", 5.0, supplier=supplier, line=2.0),
+                 gl(5000 + n, f"{MAIN}.{TRADE}", -105.0, supplier=supplier, line=3.0)]  # fmt: skip
+    for n in range(4):  # not posted yet: none
+        rows += [gl(6000 + n, f"{MAIN}.7410", 200.0), gl(6000 + n, f"{MAIN}.{GST}", 10.0, line=2.0)]
+    data = flat(*rows)
+    assert not jr.payable_left_out(jr.read_journal(data, payable_objects=jr.PayableObjects(()), tax_objects=()))
+    payable, tax, _why = jr.suggest_objects(data)
+    assert (payable.trade, tax) == ((TRADE,), (GST,))
+    read = jr.read_journal(data, payable_objects=payable, tax_objects=tax)
+    assert {coding.line.object for coding in jr.coding_lines(read)} == {"7410"}
+
+
 ACCOUNT_PARTS = [
     ("Business Unit", "Object Account", "Subsidiary"),
     ("Cost Center", "Obj Acct", "Sub"),
