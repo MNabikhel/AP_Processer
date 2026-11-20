@@ -22,12 +22,14 @@ All of them in one workbook, a sheet each, are loaded by one click (``pages/jde_
 Nothing is read here: each card calls the importer the command line and the other pages call, and shows what it
 says. Every card looks before it keeps (D-234): the file is uploaded and shown first (its name and rows, each column
 of the report found as which header or missing, its other columns and first rows: ``erp/import_specs``), and "Load"
-is offered only when it is that report with every column it needs (there is no "load it anyway"); a file that is
-another report this page loads says which card it goes on. Each card says which JD Edwards report to export and its
-columns, and gives a blank template of them. The chart and the business units are replaced whole by their file.
-Two things the files cannot say are offered with one click each, never set alone: the meals accounts (the accounts
-whose names read like meals: ``_meals``) and JD Edwards' company number (the one company of the business units:
-``_company_offer``). In server mode loading is an Admin's (web/roles.py).
+is offered only when it is that report with every column it needs (there is no "load it anyway" for a column
+missing); a file that is another report this page loads says which card it goes on. A chart refused as cut short
+(D-272) is shown again with why and what it holds, and Load anyway for someone who may change the settings
+(D-300). Each card says which JD Edwards report to export and its columns, and gives a blank template of them. The
+chart and the business units are replaced whole by their file. Two things the files cannot say are offered with one
+click each, never set alone: the meals accounts (the accounts whose names read like meals: ``_meals``) and JD
+Edwards' company number (the one company of the business units: ``_company_offer``). In server mode loading is an
+Admin's (web/roles.py).
 """
 
 from __future__ import annotations
@@ -44,18 +46,21 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.coding import companies, vendor_info
 from ap_coder.coding import po as po_mod
-from ap_coder.coding.terms import JDE_TERMS_ALIASES, JDE_TERMS_SETTING, jde_table, jde_words
+from ap_coder.coding.terms import JDE_TERMS_ALIASES, JDE_TERMS_SETTING, jde_table, jde_unsupported, jde_words
 from ap_coder.coding.vendors import master_columns, master_rows
 from ap_coder.core import chart, chart_file, ui
 from ap_coder.core.headers import match_columns
+from ap_coder.core.permissions import SETTINGS
 from ap_coder.core.reference_data import reads_like_meals
 from ap_coder.core.store import Store
+from ap_coder.core.store.chart import ChartCutShort
 from ap_coder.core.store.vendor_master import JDE_FILES, name_marker
 from ap_coder.erp import import_specs, jde_settings, journal, registers
 from ap_coder.erp.import_specs import SPECS, ImportSpec
 from ap_coder.erp.journal import looks_like_journal
 from ap_coder.ops import chart_cmd, journal_cmd
 from ap_coder.web import files
+from ap_coder.web.access import has
 from ap_coder.web.core import current_store, done, get_store, one_connection, page_router, refuse, render, reviewer
 from ap_coder.web.files import (
     EMPTY,
@@ -111,6 +116,8 @@ LOADED = "That file is loaded already: the card says what it holds. To load anot
 LOADING, LOADING_MOST = "jde-files-loading:", 600
 BEING_LOADED = ("That file is being loaded now (a chart takes 10 to 20 seconds): nothing more to do. Open the page "
                 "again in a moment to see what was loaded.")  # fmt: skip
+ANYWAY_WHO = ("Only someone who may change the settings can load a chart that looks cut short. Nothing was "
+              "changed.")  # fmt: skip
 JOURNAL_XLSX = ("This is the Transaction Journal saved as an Excel workbook: it is read as CSV. Open it in Excel, "
                 "save it as CSV UTF-8 (File, Save As) and load that file.")  # fmt: skip
 
@@ -263,6 +270,7 @@ def _export_look(card: str, token: str) -> dict[str, Any] | None:
     at = import_specs.header_row(rows[: chart_file.HEADER_ROWS], [SPECS[key] for key in import_specs.JDE_REPORTS])
     look = _look(card, token, head["name"], rows[at] if rows else [], count=max(head["count"] - at - 1, 0))
     look["loading"] = _being_loaded(token)  # (a Load of it under way: the card says so, B-2437)
+    look["refused"] = head.get("refused")  # (refused as cut short: why, what it holds, Load anyway; B-2832)
     look["gl"] = head.get("gl")  # (the GL accounts its load lists: ``_gl_replaced``)
     look["sample"] = import_specs.preview(rows, at, look["check"].found.values()) if rows else None
     if not rows:
@@ -583,7 +591,10 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
         "optional": OPTIONAL,
         "rows_of": rows_of,
         "rows_one": {"companies": "company"},
-        "terms_table": sorted(terms_table.items()),
+        "terms_table": [
+            (code, row, f"rule not supported ({why})" if (why := jde_unsupported(row)) else jde_words(row))
+            for code, row in sorted(terms_table.items())
+        ],
         "areas_table": sorted(areas_table.items()),
         "areas_said": jde_settings.tax_areas_compared(areas_table, jde_settings.load(store)) if areas_table else [],
         "companies_said": companies_said(
@@ -667,7 +678,9 @@ def _attention(card: str, look: dict[str, Any] | None, loaded: int, store: Store
 
 @router.get(HERE, response_class=HTMLResponse)
 def jde_files_page(request: Request) -> HTMLResponse:
-    return render(request, "jde_files.html", "jde_files", **page_context(get_store(request), request.query_params))
+    may_anyway = has(request, SETTINGS)  # (a chart refused as cut short loaded anyway: B-2832)
+    return render(request, "jde_files.html", "jde_files", **page_context(get_store(request), request.query_params),
+                  may_anyway=may_anyway)  # fmt: skip
 
 
 # --- 1 and 2: the chart of accounts and the business units ----------------------------------------------------------
@@ -737,8 +750,9 @@ def _keep_export(request: Request, card: str, name: str, content: bytes) -> JSON
 
 
 @router.post(HERE + "/chart/load")
-async def chart_load(request: Request, token: str = Form(""), whole: str = Form("")) -> JSONResponse:
-    return await run_in_threadpool(_chart_import, request, "chart", token, bool(whole))  # (15,000 rows: 10 to 20 s)
+async def chart_load(request: Request, token: str = Form(""), whole: str = Form(""),
+                     anyway: str = Form("")) -> JSONResponse:  # fmt: skip
+    return await run_in_threadpool(_chart_import, request, "chart", token, bool(whole), bool(anyway))  # (10 to 20 s)
 
 
 @router.post(HERE + "/units/load")
@@ -747,22 +761,32 @@ async def units_load(request: Request, token: str = Form(""), whole: str = Form(
 
 
 @one_connection
-def _chart_import(request: Request, card: str, token: str, whole: bool = False) -> JSONResponse:
+def _chart_import(request: Request, card: str, token: str, whole: bool = False, anyway: bool = False) -> JSONResponse:
     """Load the uploaded chart or business unit file as its card showed it: only a file with every column the
-    report needs (no "load it anyway" here; the command line keeps its --anyway). ``whole``: it replaces the whole
-    chart or every business unit (start over), not only the companies it names (D-267)."""
+    report needs (no "load it anyway" for a column missing; the command line keeps its --anyway). ``whole``: it
+    replaces the whole chart or every business unit (start over), not only the companies it names (D-267). A chart
+    refused as cut short (D-272) goes back to its card, which says why and what the file holds and offers Load anyway
+    (``anyway``) to someone who may change the settings (B-2832)."""
     look, upload = _export_look(card, token), json.loads(current_store().ephemeral(LOOK_KIND, token) or b"{}")
     kept = get_upload(upload.get("upload"))
     if look is None or kept is None:
         return refuse(_gone(token))
     if look["problem"]:
         return refuse(look["problem"])
+    if anyway and not has(request, SETTINGS):
+        return refuse(ANYWAY_WHO, status=403)
     owner = secrets.token_urlsafe(8)
     if not current_store().take_lease(LOADING + token, owner, LOADING_MOST):  # (a Load of it under way, B-2437)
         return refuse(BEING_LOADED)
     given = {"charts": [(kept.content, "", kept.name)]} if card == "chart" else {"units_source": kept.content}
     try:
-        said = chart_cmd.import_files(get_store(request), **given, actor=reviewer(), whole=whole)
+        said = chart_cmd.import_files(get_store(request), **given, actor=reviewer(), whole=whole,
+                                      anyway=anyway and card == "chart")  # fmt: skip
+    except ChartCutShort as exc:
+        refused = {"why": exc.why, "said": [line.strip() for line in exc.said], "whole": whole}
+        kept_look = json.dumps({**upload, "refused": refused}, ensure_ascii=False, separators=(",", ":"))
+        current_store().keep_ephemeral(LOOK_KIND, kept_look.encode("utf-8"), SAID_TTL, token=token)
+        return done(request, _shown(card, token))
     except ValueError as exc:  # (a ChartError too: the file cannot be read as what it should be)
         return refuse(f"Not loaded: {exc}")
     finally:
@@ -1046,11 +1070,18 @@ def load_table(store: Store, card: str, df: Any) -> list[str]:
             said.append("Each invoice is now told which company it is for; one nothing decides is held for a person "
                         "to pick.")  # fmt: skip
     elif card == "terms":
-        said.append(
-            "A supplier's terms code now counts as its terms: "
-            + "; ".join(f"{code} {jde_words(row)}" for code, row in sorted(table.items())[:6])
-            + ("…" if len(table) > 6 else ".")
-        )
+        worked = [code for code, row in sorted(table.items()) if not jde_unsupported(row)]
+        if worked:
+            said.append(
+                "A supplier's terms code now counts as its terms: "
+                + "; ".join(f"{code} {jde_words(table[code])}" for code in worked[:6])
+                + ("…" if len(worked) > 6 else ".")
+            )
+        if apart := [f"{code}: {jde_unsupported(table[code])}" for code in sorted(set(table) - set(worked))]:
+            more = f"; and {len(apart) - 6} more (listed on the card)" if len(apart) > 6 else ""
+            said.append(f"Not worked out as JD Edwards does, so an invoice of these is due by the days to pay "
+                        f"(Settings → Review) and says to check its due date: {'; '.join(apart[:6])}"
+                        f"{more}.")  # fmt: skip
     else:
         said += jde_settings.tax_areas_compared(table, jde_settings.load(store)) or [
             "Every tax area Settings gives a province is one of JD Edwards', at the rate of its taxes."

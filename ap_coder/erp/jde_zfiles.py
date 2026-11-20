@@ -29,7 +29,9 @@ from .jde_settings import (
     JdeSettings,
     company_of,
     domestic_of,
+    for_voucher,
     gl_date_of,
+    uses_glba,
 )
 from .jde_voucher import (
     EXEMPT_STATUSES,
@@ -153,7 +155,7 @@ def voucher_rows(
     typed = settings.remarks == REMARKS_TYPED  # VNEXR: the line's remark, not the invoice number (D-210)
     rate = _rate(fx_rates, v.currency, domestic_of(final, settings)) if v.foreign else None
     common = {
-        **keys, "VLDCT": doc_type, "VLCO": company_of(final, settings), "VLMCU": settings.header_bu.strip(),
+        **keys, "VLDCT": doc_type, "VLCO": company_of(final, settings), "VLMCU": header_bu(final, settings),
         "VLAN8": str(vendor_an8 or "").strip(), "VLVINV": str(final.get("invoice_number") or "").strip()[:25],
         "VLDIVJ": julian(invoice_date), "VLDGJ": julian(gl_date), "VLDSVJ": julian(invoice_date),
         "VLTXA1": v.tax_area, "VLEXR1": v.tax_code, "VLCRRM": "F" if v.foreign else "D", "VLCRCD": v.currency,
@@ -166,7 +168,7 @@ def voucher_rows(
         **dict(zip(("VLPDCT", "VLPKCO"), _order_of(final, settings, matched) if send_po else ("", ""), strict=True)),
         "VLRMK": _pay_item_remark(v, settings),
     }  # fmt: skip
-    if settings.bank_glba:  # the G/L bank account of the Pay from account (D-66); blank: E1's AAI PB
+    if uses_glba(settings):  # the G/L bank account of the Pay from account (D-66; its company's, D-301); blank: AAI PB
         common["VLGLBA"] = glba(final, settings)
 
     def amounts(gross: int, stam: int, atxa: int, code: str | None = None) -> dict[str, Any]:
@@ -360,9 +362,15 @@ def _entry_taxes(entries: list[dict[str, Any]], items: list[dict[str, Any]]) -> 
     return [set((li or {}).get("taxes_applied") or []) for li in entry_lines(entries, items)]
 
 
+def header_bu(final: dict[str, Any], settings: JdeSettings) -> str:
+    """VLMCU of an invoice: the header business unit of its company (D-301), else Settings'."""
+    return for_voucher(final, settings).header_bu.strip()
+
+
 def glba(final: dict[str, Any], settings: JdeSettings) -> str:
-    """VLGLBA of an invoice: the value mapped to its Pay from account, the code's case aside ("" when none)."""
-    mapped = {k.upper(): v for k, v in settings.bank_glba.items()}
+    """VLGLBA of an invoice: the value mapped to its Pay from account for its company (D-301), else in Settings, the
+    code's case aside ("" when none)."""
+    mapped = {k.upper(): v for k, v in for_voucher(final, settings).bank_glba.items()}
     return mapped.get(str(final.get("pay_from_account") or "").strip().upper(), "")
 
 
@@ -370,7 +378,7 @@ def bank_notes(invoices: list[dict[str, Any]], settings: JdeSettings) -> dict[in
     """{invoice id: [note]} for the invoices whose Pay from account has no G/L bank account mapped, while the mapping
     is in use (B-684): their VLGLBA is blank and E1 pays them from its default bank (AAI PB), which may not be the
     account AP chose. A note to check before loading, never a reason to hold an invoice back."""
-    if not settings.bank_glba:
+    if not uses_glba(settings):
         return {}
     out: dict[int, list[str]] = {}
     for inv in invoices:
@@ -390,7 +398,7 @@ def bank_notes(invoices: list[dict[str, Any]], settings: JdeSettings) -> dict[in
 
 def header_columns(settings: JdeSettings) -> list[str]:
     extra = [c for c in settings.po_extra_columns if c not in HEADER_COLUMNS] if settings.po_matched else []
-    bank = ["VLGLBA"] if settings.bank_glba and "VLGLBA" not in extra else []
+    bank = ["VLGLBA"] if uses_glba(settings) and "VLGLBA" not in extra else []
     return HEADER_COLUMNS + bank + extra
 
 

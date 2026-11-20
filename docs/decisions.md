@@ -6964,3 +6964,61 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - *Left as it is:* an invoice the batch check holds stays in Ready to export, listed with why, and is not put on a
     keying batch's Not ready sheet (B-2148): that sheet lists what a batch holds that its own checks hold back at
     download.
+- **D-300** · **A chart refused as cut short can be loaded anyway from its card, by someone who may change the
+  settings** (B-2832; D-272 had the page name the command line's `--anyway`).
+  - **What is refused stays refused for anyone:** a file with no account, or none that may be posted to (it is no
+    chart), and a file without a column the report needs (D-234: the command line keeps its `--anyway`). Only a
+    refresh that *looks* cut short (`ChartCutShort`: a company, or the whole chart, with less than half the accounts
+    it has now; a company found in fewer files than last time) may be loaded anyway: JD Edwards may really have that.
+  - **The card:** the refusal sends the page back to the file's card, which says why (no command named), what the file
+    holds (what the load read, the lines the command line prints), and for a person with the settings permission (on a
+    laptop: everyone) Load anyway behind a box to tick ("This is what JD Edwards has now"); for anyone else who
+    loads files, who can. The server refuses the anyway of anyone without the permission (403). Start over (`whole`)
+    is kept as it was ticked.
+  - **Recorded:** the load's event (`accounts_imported`) keeps `anyway`, why it looked cut short; Activity says
+    "loaded anyway: ...". The command line's `--anyway` records it the same way.
+- **D-301** · **The open G/L period, the default and header business units and the G/L bank account are each
+  company's own in a group, else Settings' single value** (B-2833; D-182 the open period, D-66 VLGLBA, D-267 the
+  companies).
+  - **Kept:** `JdeSettings.company_values`, `{company: {open_from, open_to, default_bu, header_bu, bank_glba}}`, only
+    what is set (`clean_company_values`). A voucher is keyed with `of_company(settings, its company)`
+    (`for_voucher`): Settings with that company's values put in; Settings themselves for a company with none, so one
+    company (and a group that sets none) is keyed exactly as before. The PO company (VLPKCO) is not one of them.
+  - **A company's open period is both days together:** either day set gives the company its own period (the other
+    blank: no start, or no end), never one day of its own and the other of Settings'. Its bank accounts are added to
+    Settings' (a Pay from account it maps none for takes Settings'); VLGLBA is sent once any is mapped, in Settings or
+    for a company (`uses_glba`).
+  - **Where it counts:** the voucher's checks and G/L date (`_prepare`, `gl_date_of`, `period_problem`), VLMCU and
+    VLGLBA (`voucher_rows`, `glba`, `bank_notes`), a PO-matched voucher's tax lines (`jde_match`), the API's checks
+    before a send (`jde_post`: and JD Edwards refusing a voucher as in a closed period holds that company's month
+    only), the pilot's score (`ops/pilot_score.py`). The accruals' late batches (`late_after`) are a batch's, not a
+    company's: a batch is late after the period end when any company's open period starts after it.
+  - **The page:** Settings → JD Edwards E1, a card with a row per company once report 9 names two or more: the open
+    period, Default BU, Header BU and a box per bank account in use (and any mapped since put out of use); a blank
+    box takes the value above. A form without the table keeps what is saved.
+  - **Speed:** a company's settings share the account mapping's index with Settings' (`SHARED`,
+    `jde_accounts._gl_index`), so a group's vouchers are prepared as fast as one company's.
+- **D-302** · **A supplier's JD Edwards terms code is due as JD Edwards works it out, for the rules F0014 gives;
+  any other is said, never guessed** (B-2834; D-266 read the discount and net days, "*Not done:* F0014's prox, split
+  and fixed-date rules").
+  - **Read** (`terms.jde_table`, each only when set): *Due Date* (PNDDJ), *Prox Date Month* and *Prox Date Day*
+    (PNPXDM, PNPXDD), *Number of Split Payments* and *Days To Pay Aging* (PNNSP, PNDTPA): the data items of F0014
+    as JD Edwards' payment terms retrieval function names them (DDJ, PXDM, PXDD, NSP, DTPA), titled on the build
+    sheet as the data dictionary does. Oracle's documentation: a fixed due date is the due date; a proximate date
+    is the day of the month that many months after the invoice's (month 0, day 31: the end of its month); split
+    payments are equal, the first at the net days, each next that many days later, the discount all on the first.
+  - **Worked out** (`jde_words`, as words `parse_terms` reads back, so the rest of AP Coder is unchanged): a
+    discount and net days ("2/10 Net 30"); a fixed due date alone ("Due 2026-12-31"); a proximate date alone of
+    month 1 ("Net 31st prox": a shorter month's last day) or month 0 day 31 ("Due end of month"); split payments
+    some days apart ("Net 30 in 3 payments 30 days apart": the due date is the first's; the review screen's
+    *Payment due* lists each, `Payment.instalments`).
+  - **Said, not guessed** (`jde_unsupported`): two of those rules together, a fixed or proximate date with net days
+    or a discount (how JD Edwards combines them is not documented), a proximate date of any other month or day, a
+    due date that is not a date AP Coder reads (a Julian number: ReportsNow prints dates), split payments with no
+    days between them, and, a table loaded, a code of 3 characters or fewer not in it (an advanced payment term:
+    F00141 with its due date rules F00142, work day calendars and installments F00144, which AP Coder does not
+    load). Such a code reads as no terms (`JDE_UNSUPPORTED`): the invoice is due by Settings' days to pay and says
+    so (JDE_TERMS_UNSUPPORTED, information only, in place of TERMS_NOT_FOUND); the card and its load list them.
+  - **Not changed:** VLDDJ is still sent only from what the invoice prints (B-924): a voucher of the supplier's own
+    terms leaves its due date to JD Edwards. JD Edwards' blank code (its most used terms) is still not read: a row
+    with no code is left out, and a supplier with no code has no terms.

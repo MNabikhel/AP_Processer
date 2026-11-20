@@ -25,6 +25,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from ..core.headers import jde_names
+from ..core.parsing import parse_date
 from ..core.safe import parse_amount
 from .money import times
 
@@ -198,6 +199,11 @@ class Terms:
     net_months: int | None = None  # "Net 1 month": calendar months (net_days then holds about 30 a month)
     prox_day: int | None = None  # "Net 10 prox": that day of the next month (net_days then holds about 30)
     discount_prox_day: int | None = None  # "2/10th prox": the discount runs to that day of the next month
+    # JD Edwards' rules (F0014, D-302): due on a fixed day ("Due 2026-12-31": net_days then holds 0), or in equal
+    # payments that many days apart, the first at the net days ("Net 30 in 3 payments 30 days apart").
+    fixed_due: str | None = None
+    splits: int | None = None
+    split_days: int | None = None
 
 
 @dataclass(frozen=True)
@@ -214,10 +220,37 @@ class Payment:
     def discount_open(self, today: dt.date | None = None) -> bool:
         return self.discount_by is not None and self.discount_by >= (today or dt.date.today())
 
+    def instalments(self) -> list[dt.date]:
+        """Each payment's due date: the terms' split payments as JD Edwards makes them, the first on the due date
+        (D-302); else the due date alone."""
+        if self.due is None:
+            return []
+        if not self.terms.splits or self.source not in ("terms", "vendor"):
+            return [self.due]
+        return [self.due + dt.timedelta(days=(self.terms.split_days or 0) * n) for n in range(self.terms.splits)]
+
+
+# JD Edwards' fixed due date and split payments as ``jde_words`` writes them (D-302).
+_FIXED_DUE = re.compile(r"due\s+(\d{4}-\d{2}-\d{2})", re.I)
+_SPLITS = re.compile(r"\s+in\s+(\d{1,2})\s+payments\s+(\d{1,3})\s+days\s+apart$", re.I)
+
 
 @functools.lru_cache(maxsize=4096)  # a report reads the terms of every approved invoice: most say the same (D-110)
 def parse_terms(text: str | None) -> Terms:
     text = (text or "").strip()
+    if not text or text.startswith(JDE_UNSUPPORTED):  # (a JD Edwards rule not worked out: no terms, never a guess)
+        return Terms()
+    if fixed := _FIXED_DUE.fullmatch(text):
+        return Terms(net_days=0, fixed_due=fixed.group(1)) if _date(fixed.group(1)) else Terms()
+    if split := _SPLITS.search(text):
+        first, (splits, apart) = _read_terms(text[: split.start()]), (int(g) for g in split.groups())
+        plain = first.net_days is not None and not (first.on_receipt or first.eom or first.prox_day or
+                                                    first.discount_prox_day or first.net_months)  # fmt: skip
+        return replace(first, splits=splits, split_days=apart) if plain and splits > 1 and apart > 0 else Terms()
+    return _read_terms(text)
+
+
+def _read_terms(text: str) -> Terms:
     if not text:
         return Terms()
     eom = _eom(text)
@@ -275,6 +308,11 @@ def terms_label(t: Terms) -> str:
     """What terms mean, in one standard wording ("Net 30", "2/10 Net 30", "Net 30 EOM", "Due on receipt", "Net 10th
     prox"...), "" when nothing was understood. It reads back as the same terms (``parse_terms``), so it is the key of
     the JD Edwards payment terms table (D-91): "Net 30", "30 days" and "N30" are one row."""
+    if t.fixed_due:
+        return f"Due {t.fixed_due}"
+    if t.splits:
+        first = terms_label(replace(t, splits=None, split_days=None))
+        return f"{first} in {t.splits} payments {t.split_days} days apart"
     if t.on_receipt:
         return "Due on receipt"
     if t.net_days is None:
@@ -352,7 +390,9 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vend
         due, source = printed, "printed"
     elif invoice_date and terms.net_days is not None:
         start = _start(invoice_date, terms)
-        if terms.prox_day:
+        if terms.fixed_due:
+            due = _date(terms.fixed_due)
+        elif terms.prox_day:
             due = _prox(invoice_date, terms.prox_day)
         elif terms.net_months:
             due = _add_months(start, terms.net_months)
@@ -423,9 +463,13 @@ def payment_findings(
         )  # fmt: skip
     if p.source == "default" and float(coding.get("grand_total") or 0) > 0:  # never silent (B-663)
         printed = (coding.get("payment_terms") or "").strip()
-        what = f"Payment terms “{printed}” not understood" if printed else "Payment terms not found"
-        findings.append((INFO, "TERMS_NOT_FOUND", f"{what}: the due date assumes {default_days} days (Settings → "
-                         "Review, Days to pay). Check the invoice."))  # fmt: skip
+        if vendor_terms.startswith(JDE_UNSUPPORTED):  # the supplier's JD Edwards code, its rule not worked out (D-302)
+            findings.append((INFO, "JDE_TERMS_UNSUPPORTED", f"{vendor_terms}, check the due date: it assumes "
+                             f"{default_days} days (Settings → Review, Days to pay)"))  # fmt: skip
+        else:
+            what = f"Payment terms “{printed}” not understood" if printed else "Payment terms not found"
+            findings.append((INFO, "TERMS_NOT_FOUND", f"{what}: the due date assumes {default_days} days (Settings → "
+                             "Review, Days to pay). Check the invoice."))  # fmt: skip
     left = p.days_left(today)
     if left is not None and left < 0 and float(coding.get("grand_total") or 0) > 0:
         ago = f"overdue since {overdue_since(p.due)}" if left < -LONG_OVERDUE_DAYS else f"{-left} days ago"
@@ -453,14 +497,22 @@ JDE_TERMS_ALIASES: dict[str, tuple[str, ...]] = {
     "discount_pct": ("Discount Percent", "Discount %", "Percent - Discount", *jde_names("F0014", "PN", "DCP")),
     "discount_days": ("Discount Days", "Days - Discount", *jde_names("F0014", "PN", "DCD")),
     "net_days": ("Net Days to Pay", "Days - Net Days to Pay", "Net Days", *jde_names("F0014", "PN", "NDTP")),
+    # JD Edwards' other rules (D-302): a fixed due date, a proximate date, split payments
+    "due_date": ("Due Date", "Fixed Due Date", "Date - Net Due", *jde_names("F0014", "PN", "DDJ")),
+    "prox_month": ("Prox Date Month", "Proximate Month", "Proximate Date Month", "Prox Date - Months", "Prox Month",
+                   *jde_names("F0014", "PN", "PXDM")),
+    "prox_day": ("Prox Date Day", "Proximate Day", "Proximate Date Day", "Prox Day", *jde_names("F0014", "PN", "PXDD")),
+    "splits": ("Number of Split Payments", "Split Payments", *jde_names("F0014", "PN", "NSP")),
+    "split_days": ("Days To Pay Aging", "Days to Pay - Aging", *jde_names("F0014", "PN", "DTPA")),
 }  # fmt: skip
 JDE_TERMS_NEEDS = ("code", "net_days")
 
 
 def jde_table(records: list[dict[str, Any]], columns: dict[str, str]) -> tuple[dict[str, dict[str, Any]], int]:
-    """(the table: {code: {"description", "discount_pct", "discount_days", "net_days"}}, how many rows were left
-    out: no code, or net days that are no number) of the F0014 export's rows under ``columns`` ({field: header}).
-    A discount as JD Edwards keeps it, a fraction (.02), is read as the percent it is (2)."""
+    """(the table: {code: {"description", "discount_pct", "discount_days", "net_days"}, and the other rules' fields
+    only when set: "due_date" (YYYY-MM-DD, else as written), "prox_month", "prox_day", "splits", "split_days"}, how
+    many rows were left out: no code, or net days that are no number) of the F0014 export's rows under ``columns``
+    ({field: header}). A discount as JD Edwards keeps it, a fraction (.02), is read as the percent it is (2)."""
     table: dict[str, dict[str, Any]] = {}
     left = 0
     for record in records:
@@ -475,23 +527,71 @@ def jde_table(records: list[dict[str, Any]], columns: dict[str, str]) -> tuple[d
             "discount_pct": round(pct * 100 if 0 < pct < 1 else pct, 3),
             "discount_days": int(parse_amount(cell.get("discount_days")) or 0),
         }  # fmt: skip
+        for name in ("prox_month", "prox_day", "splits", "split_days"):
+            if number := int(parse_amount(cell.get(name)) or 0):
+                table[cell["code"].upper()][name] = number
+        if (due := cell.get("due_date", "")) not in ("", "0"):  # (a date-time's day; as written when it isn't one)
+            table[cell["code"].upper()]["due_date"] = str(parse_date(due[:10]) or due)
     return table, left
 
 
+def jde_unsupported(row: dict[str, Any]) -> str:
+    """Why AP Coder does not work out a code's due date as JD Edwards does ("" when it does, D-302): it works out a
+    discount and net days, a fixed due date alone, a proximate date alone of a day of the next month or the end of
+    the invoice's month, and split payments some days apart (the first at the net days); not two of these together,
+    nor a fixed or proximate date with net days or a discount."""
+    net, pct, fixed = row.get("net_days") or 0, row.get("discount_pct") or 0, str(row.get("due_date") or "")
+    month, day, splits, apart = (row.get(name) or 0 for name in ("prox_month", "prox_day", "splits", "split_days"))
+    rules = [rule for rule, given in (("a fixed due date", fixed), ("a proximate date", month or day),
+                                      ("split payments", splits > 1)) if given]  # fmt: skip
+    if len(rules) > 1:
+        return f"{' and '.join(rules)} together"
+    if fixed and _date(fixed) is None:
+        return f"its due date “{fixed}” is not a date AP Coder reads"
+    if (fixed or month or day) and (net or pct):
+        return f"{rules[0]} with {'a discount' if pct else 'net days'}"
+    if (month or day) and not (month == 1 and 1 <= day <= 31 or month == 0 and day == 31):
+        return f"proximate month {month}, day {day}"
+    if splits > 1 and apart <= 0:
+        return f"{splits} split payments with no days between them"
+    return ""
+
+
 def jde_words(row: dict[str, Any]) -> str:
-    """A code's terms as the words AP Coder reads ("2/10 Net 30", "Net 45", "Due on receipt")."""
+    """A code's terms as the words AP Coder reads ("2/10 Net 30", "Net 45", "Due on receipt", "Net 31st prox", "Due
+    end of month", "Due 2026-12-31", "Net 30 in 3 payments 30 days apart"), its rule one ``jde_unsupported`` passes."""
     pct, days, net = row.get("discount_pct") or 0, row.get("discount_days") or 0, row.get("net_days") or 0
+    if row.get("due_date"):
+        return f"Due {row['due_date']}"
+    if row.get("prox_month") or row.get("prox_day"):
+        return f"Net {_ordinal(row['prox_day'])} prox" if row.get("prox_month") else "Due end of month"
+    if (row.get("splits") or 0) > 1:
+        first = f"{pct:g}/{days} Net {net}" if pct and days else f"Net {net}"
+        return f"{first} in {row['splits']} payments {row['split_days']} days apart"
     if pct and days:
         return f"{pct:g}/{days} Net {net}"
     return f"Net {net}" if net else "Due on receipt"
 
 
+# A supplier's JD Edwards code AP Coder does not work out as JD Edwards does: read as no terms (``parse_terms``), said.
+JDE_UNSUPPORTED = "JD Edwards terms code"
+CODE_WIDTH = 3  # a JD Edwards payment terms code (PTC) is 3 characters at most
+
+
 def jde_meaning(text: Any, table: dict[str, dict[str, Any]]) -> str:
     """A supplier's terms as AP Coder reads them: a code of JD Edwards' table (``jde_table``) as the words it stands
-    for (``jde_words``), anything else as written."""
+    for (``jde_words``); a code whose rule it does not work out, or (a table loaded) one not in it, as that
+    (``JDE_UNSUPPORTED``, D-302); anything else as written."""
     written = str(text or "").strip()
     row = table.get(written.upper()) if written else None
-    return jde_words(row) if row else written
+    if row is None and table and written and len(written) <= CODE_WIDTH:
+        why = ("not in JD Edwards' payment terms loaded (F0014): an advanced payment term's due date rules (F00141, "
+               "F00142) are not read")  # fmt: skip
+    elif row is not None:
+        why = jde_unsupported(row)
+    else:
+        return written
+    return f"{JDE_UNSUPPORTED} {written.upper()}: rule not supported ({why})" if why else jde_words(row)
 
 
 def jde_table_of(text: str | None) -> dict[str, dict[str, Any]]:

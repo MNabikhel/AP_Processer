@@ -248,6 +248,32 @@
           JDE team gives it. Blank: no VLGLBA (E1 takes its default bank, AAI PB); once any is filled, the dry run and
           each batch's README list the invoices paid from an account left blank.</small></fieldset>
     </details>
+    {% if company_values %}
+    {# Each company's own open period, business units and bank accounts (D-301): blank takes the value above. #}
+    <details class="st-details" id="company-values-card"{% if js.company_values %} open{% endif %}>
+      <summary>Each company's own: its open period, business units and bank accounts</summary>
+      <p class="muted">An invoice is keyed with its company's own values; a box left blank takes the one above. A
+        company's open period is both days together: give either, and the other blank means no start or no end.</p>
+      <div class="table-wrap">
+        <table class="apc-table st-edit" id="company-values">
+          <thead><tr><th>Company</th><th>Open period from</th><th>Open period to</th><th>Default BU</th><th>Header BU (VLMCU)</th><th>G/L bank account (VLGLBA)</th></tr></thead>
+          <tbody>
+            {% for c in company_values %}
+            <tr><td><input type="hidden" name="cv_company" value="{{ c.code }}">{{ c.code }} {{ c.name }}</td>
+              <td><input type="date" name="cv_open_from" value="{{ c.open_from }}" aria-label="Open period from, {{ c.name }}"></td>
+              <td><input type="date" name="cv_open_to" value="{{ c.open_to }}" aria-label="Open period to, {{ c.name }}"></td>
+              <td><input type="text" name="cv_default_bu" value="{{ c.default_bu }}" maxlength="12" aria-label="Default BU, {{ c.name }}"></td>
+              <td><input type="text" name="cv_header_bu" value="{{ c.header_bu }}" maxlength="12" aria-label="Header business unit, {{ c.name }}"></td>
+              <td>{% for b in c.banks %}<label class="field inline">{{ b.code }}
+                <input type="hidden" name="cv_glba_company" value="{{ c.code }}"><input type="hidden" name="cv_glba_code" value="{{ b.code }}">
+                <input type="text" name="cv_glba" value="{{ b.glba }}" aria-label="VLGLBA for {{ b.code }}, {{ c.name }}"></label>
+                {% else %}<span class="muted small">No bank accounts yet</span>{% endfor %}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    {% endif %}
     {% if team %}</details>{% endif %}
     <div><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save JD Edwards settings</button></div>
   </form>

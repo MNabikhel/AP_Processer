@@ -392,6 +392,8 @@ def _chart_text(d: dict[str, Any]) -> str:
             said.append(f"{verb}: {', '.join(parts)}")
     if d.get("by_hand"):
         said.append(f"kept as changed by hand: {', '.join(d['by_hand'][:8])}{' …' if len(d['by_hand']) > 8 else ''}")
+    if d.get("anyway"):  # (loaded though it looked cut short, B-2832)
+        said.append(f"loaded anyway: {d['anyway']}")
     return "; ".join(said)
 
 

@@ -468,6 +468,39 @@ def test_jde_lists_every_bank_account_with_its_g_l_bank_account(client, store):
     assert jde_settings.load(store).bank_glba == {"CAD-OP": "00012345"}
 
 
+def test_jde_settings_keep_each_companys_own_period_business_units_and_bank_accounts(client, store):
+    """B-2833 (D-301): with several companies, the open period, the default and header business units and each bank
+    account's VLGLBA were one for all of them. Each company's own are kept (a company left blank takes the values
+    above), shown again, and a period ending before it starts is refused."""
+    from ap_coder.bench import jde_group
+    from ap_coder.coding import banks
+
+    rows, _ = banks.clean_rows([{"code": "CAD-OP", "name": "Operating", "currency": "CAD"}])
+    store.save_bank_accounts(rows)
+    assert 'id="company-values"' not in client.get("/settings/jde").text  # (one company: no such table)
+    store.set_setting("jde_companies", json.dumps({c[0]: {"name": c[1], "currency": c[2], "country": c[3]}
+                                                   for c in jde_group.GROUP[:2]}))  # fmt: skip
+    table = client.get("/settings/jde").text.split('id="company-values"', 1)[1].split("</table>", 1)[0]
+    assert 'name="cv_company" value="00210"' in table and 'name="cv_glba_code" value="CAD-OP"' in table
+    own = {"cv_company": ["00210", "00220"], "cv_open_from": ["2026-10-01", ""], "cv_open_to": ["2026-10-31", ""],
+           "cv_default_bu": ["21000", ""], "cv_header_bu": ["21000", ""], "cv_glba_company": ["00210", "00220"],
+           "cv_glba_code": ["CAD-OP", "CAD-OP"], "cv_glba": ["22222", ""]}  # fmt: skip
+    follow(client, post(client, "/settings/jde", general_form(**own)))
+    assert jde_settings.load(store).company_values == {"00210": {
+        "open_from": "2026-10-01", "open_to": "2026-10-31", "default_bu": "21000", "header_bu": "21000",
+        "bank_glba": {"CAD-OP": "22222"}}}  # fmt: skip
+    table = client.get("/settings/jde").text.split('id="company-values"', 1)[1].split("</table>", 1)[0]
+    assert 'value="2026-10-31"' in table and 'value="22222"' in table
+    backwards = post(client, "/settings/jde", general_form(**{**own, "cv_open_to": ["2026-09-30", ""]}))
+    assert backwards.status_code == 400 and "Company 00210's open period must end on or after its first day" in (
+        backwards.text)  # fmt: skip
+    follow(client, post(client, "/settings/jde", general_form(company="7")))  # a form without the table keeps it
+    assert jde_settings.load(store).company_values["00210"]["default_bu"] == "21000"
+    store.remove_bank_account("CAD-OP")  # a bank account no longer in use keeps its box, as in Settings' own list
+    table = client.get("/settings/jde").text.split('id="company-values"', 1)[1].split("</table>", 1)[0]
+    assert 'name="cv_glba_code" value="CAD-OP"' in table and 'value="22222"' in table
+
+
 def test_jde_gl_mapping_tax_areas_and_address_numbers(client, store):
     rows = {"gl_code": ["6100", "", "6200"], "cost_center": ["", "", "OPS"], "bu": ["100", "", "200"],
             "obj": ["6100", "", ""], "sub": ["", "", ""], "sbl": ["", "", ""], "sblt": ["", "", ""]}  # fmt: skip

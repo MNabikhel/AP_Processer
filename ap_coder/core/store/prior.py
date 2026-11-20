@@ -31,6 +31,11 @@ _REMARKS = """SELECT final_gl, COALESCE(final_cc, '') AS final_cc, final_remark,
     COUNT(*) AS lines, MAX(id) AS newest FROM feedback WHERE vendor_key = ? AND final_gl NOT IN ('', 'UNASSIGNED')
     AND final_remark != '' GROUP BY final_gl, COALESCE(final_cc, ''), final_remark, remark_from, outcome
     ORDER BY newest DESC LIMIT ?"""
+_LEDGERS = """SELECT final_gl, COALESCE(final_cc, '') AS final_cc, final_subledger, final_subledger_type, final_units,
+    ledger_from, outcome, COUNT(*) AS lines, MAX(id) AS newest FROM feedback WHERE vendor_key = ?
+    AND final_gl NOT IN ('', 'UNASSIGNED') AND (final_subledger != '' OR final_units IS NOT NULL)
+    GROUP BY final_gl, COALESCE(final_cc, ''), final_subledger, final_subledger_type, final_units, ledger_from, outcome
+    ORDER BY newest DESC LIMIT ?"""
 _NAMES = """SELECT supplier_key, MAX(supplier_number) AS supplier_number, supplier_name, COUNT(*) AS vouchers
     FROM journal_vouchers WHERE counted = 1 AND supplier_key != '' GROUP BY supplier_key, supplier_name
     ORDER BY supplier_key, supplier_name"""
@@ -97,8 +102,11 @@ class PriorMixin:
         highest lesson id}), "descriptions": the latest ``DESCRIPTIONS_READ`` different lines of them ({"final_gl",
         "final_cc", "description", "outcome", "lines", "newest"}, the newest first), "remarks": the latest different
         remarks approved with them ({"final_gl", "final_cc", "final_remark", "remark_from", "outcome", "lines",
-        "newest"}, the newest first; D-213)}. Lines left without an account are not counted."""
+        "newest"}, the newest first; D-213), "ledgers": the subledgers and units approved with them ({"final_gl",
+        "final_cc", "final_subledger", "final_subledger_type", "final_units", "ledger_from" ("person": typed),
+        "outcome", "lines", "newest"}, the newest first; B-2830)}. Lines left without an account are not counted."""
         with self._conn() as conn:
             return {"accounts": fetch_rows(conn, _APPROVED, (key,)),
                     "descriptions": fetch_rows(conn, _DESCRIPTIONS, (key, DESCRIPTIONS_READ)),
-                    "remarks": fetch_rows(conn, _REMARKS, (key, DESCRIPTIONS_READ))}  # fmt: skip
+                    "remarks": fetch_rows(conn, _REMARKS, (key, DESCRIPTIONS_READ)),
+                    "ledgers": fetch_rows(conn, _LEDGERS, (key, DESCRIPTIONS_READ))}  # fmt: skip

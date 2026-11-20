@@ -169,3 +169,45 @@ def test_a_keying_sheet_with_no_subledger_or_units_keeps_its_four_columns():
     data, _, _ = jde_keying.build([plain], jde_settings.JdeSettings(), lambda final: "51001", batch=1)
     ws = openpyxl.load_workbook(io.BytesIO(data))[jde_keying.SHEET]
     assert [c.value for c in ws[1]] == jde_keying.LINE_COLUMNS
+
+
+def _approve(store, tmp_path, coding, reference, name, **typed):
+    """``coding`` read in and approved, a person typing ``typed`` ({line number: {field: value}}) under its lines."""
+    import copy
+
+    output, _ = finalise_coding(coding, reference, Settings(), store=store)
+    iid = store.add_invoice(tmp_path / name, output, {"requires_review": True})
+    final = copy.deepcopy(output)
+    for li in final["line_items"]:
+        li.update(typed.get(f"line{li['line_number']}", {}))
+    store.approve_invoice(iid, final, "pat")
+
+
+def test_a_subledger_and_units_a_person_typed_fill_the_suppliers_next_invoice(store, tmp_path):
+    """B-2830: what a person typed under an L or U line was approved and forgotten: the supplier's next invoice to the
+    same accounts asked for it again, until the next past coding was loaded."""
+    reference = _chart(store)
+    _approve(store, tmp_path, _coding(("5480", 250.0, 1), ("5490", 180.0, 0)), reference, "a.pdf",
+             line1={"subledger": "4500123", "subledger_type": "W"}, line2={"units": 95.0})  # fmt: skip
+    output, report = finalise_coding(_coding(("5480", 300.0, 1), ("5490", 150.0, 0)), reference, Settings(),
+                                     store=store)  # fmt: skip
+    assert _found(report) == []
+    first, second = output["line_items"]
+    assert (first["subledger"], first["subledger_type"], second["units"]) == ("4500123", "W", 95.0)
+
+
+def test_a_subledger_a_person_typed_outweighs_the_past_coding(store, tmp_path):
+    """B-2830: a person's correction outweighs history, as with the account: three past lines to 4500777, one typed
+    4500999 here, the next invoice takes 4500999; units a person approved here, the same each time, before the past
+    coding's."""
+    reference = _chart(store)
+    _journal(store, *[("5480", 100.0, "4500777", "W", None)] * 3, *[("5490", 50.0, "", "", 40.0)] * 2)
+    _approve(store, tmp_path, _coding(("5480", 250.0, 1), ("5490", 60.0, 0)), reference, "a.pdf",
+             line1={"subledger": "4500999", "subledger_type": "W"}, line2={"units": 55.0})  # fmt: skip
+    output, _ = finalise_coding(_coding(("5480", 300.0, 1), ("5490", 70.0, 0)), reference, Settings(), store=store)
+    first, second = output["line_items"]
+    assert (first["subledger"], second["units"]) == ("4500999", 55.0)
+    _approve(store, tmp_path, _coding(("5490", 60.0, 0)), reference, "b.pdf", line1={"units": 65.0})
+    output, report = finalise_coding(_coding(("5490", 70.0, 0)), reference, Settings(), store=store)
+    assert "units" not in output["line_items"][0]  # 55 and 65: units that change are never guessed
+    assert _found(report) == [(1, "JDE_UNITS_NEEDED")]

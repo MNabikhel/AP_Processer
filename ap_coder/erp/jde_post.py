@@ -186,7 +186,8 @@ def _payloads(store: Any, batch: int) -> tuple[dict[int, dict[str, Any]], dict[i
             problems.setdefault(inv["id"], []).extend(blocking)
         # the batch's day, when that is it
         day, moved = jde_settings.gl_date_of(inv.get("final_output") or {}, settings, on)
-        if inv["id"] not in problems and (closed := jde_settings.period_problem(day, settings)):
+        own = jde_settings.for_voucher(inv.get("final_output") or {}, settings)  # (its company's period, D-301)
+        if inv["id"] not in problems and (closed := jde_settings.period_problem(day, own)):
             problems[inv["id"]] = [closed]
         if inv["id"] in problems:
             continue
@@ -774,7 +775,8 @@ class _Run:
     def __init__(self, store: Any, total: int, progress: Callable[[dict[str, Any]], None] | None) -> None:
         self.text = store.get_setting(jde_settings.SETTING_KEY)
         self.settings = settings = jde_settings.JdeSettings.from_json(self.text)
-        self.refused: tuple[dt.date, int, dt.date, str] | None = None  # (through, invoice, its G/L date, JDE's words)
+        # each company's (D-301): (through, invoice, its G/L date, JDE's words)
+        self.refused: dict[str, tuple[dt.date, int, dt.date, str]] = {}
         # a lost answer's "not there" believed only this long after it was lost (or after the send's longest), B-1880
         cfg = jde_ais.AisSettings.from_json(store.get_setting(jde_ais.SETTING_KEY))
         self.resend, self.longest = settings.resend_seconds, send_seconds(settings, cfg)
@@ -803,34 +805,38 @@ class _Run:
     def closed(self, store: Any, payload: dict[str, Any]) -> str:
         """Why the voucher's G/L date can't be posted now ("" when it can): its period closed since its dry run (the
         open period moved on in Settings: read again when it changes), or JD Edwards refused one of this run's vouchers
-        as in a closed period, dated in the same month or later (D-182)."""
+        as in a closed period, dated in the same month or later (D-182), both of its company's (D-301)."""
         text = store.get_setting(jde_settings.SETTING_KEY)
         if text != self.text:
             self.text, self.settings = text, jde_settings.JdeSettings.from_json(text)
-        day = jde_formats.from_julian((payload["pay_items"] or [{}])[0].get("VLDGJ"))
+        head = (payload["pay_items"] or [{}])[0]
+        day, company = jde_formats.from_julian(head.get("VLDGJ")), str(head.get("VLCO") or "")
         if day is None:
             return ""
-        if self.refused and day <= self.refused[0]:
-            _, invoice, refused, words = self.refused
+        if (seen := self.refused.get(company)) and day <= seen[0]:
+            _, invoice, refused, words = seen
             return (f"JD Edwards refused AP Coder #{invoice}'s G/L date {refused} as in a closed period ({words}): "
                     f"this one, dated {day}, waits. Set JD Edwards' open period in Settings → JD Edwards E1, then dry "
                     "run again")  # fmt: skip
-        if jde_settings.period_problem(day, self.settings):
+        own = jde_settings.of_company(self.settings, company)
+        if jde_settings.period_problem(day, own):
             return (
                 f"the period of its G/L date {day} was closed since its dry run (Settings → JD Edwards E1's open "
-                f"period: from {self.settings.open_from or '…'} to {self.settings.open_to or '…'}): dry run again"
+                f"period: from {own.open_from or '…'} to {own.open_to or '…'}): dry run again"
             )
         return ""
 
     def refusal(self, row: dict[str, Any] | None, payload: dict[str, Any]) -> None:
-        """JD Edwards refused this voucher: as in a closed period, the rest of its month and before it wait."""
+        """JD Edwards refused this voucher: as in a closed period, the rest of its month and before it wait, its
+        company's (D-301)."""
         words = str((row or {}).get("error") or "")
-        day = jde_formats.from_julian((payload["pay_items"] or [{}])[0].get("VLDGJ"))
+        head = (payload["pay_items"] or [{}])[0]
+        day, company = jde_formats.from_julian(head.get("VLDGJ")), str(head.get("VLCO") or "")
         if day is None or not PERIOD_REFUSED.search(words):
             return
         through = (day.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)  # its month's end
-        if self.refused is None or through > self.refused[0]:
-            self.refused = (through, row["invoice_id"], day, words[:200])  # type: ignore[index]
+        if company not in self.refused or through > self.refused[company][0]:
+            self.refused[company] = (through, row["invoice_id"], day, words[:200])  # type: ignore[index]
 
     def done(self, row: dict[str, Any], status: str) -> None:
         if status != "skipped":
