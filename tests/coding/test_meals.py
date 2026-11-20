@@ -18,7 +18,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import load_reference_data
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup
-from ap_coder.erp import exports, jde, jde_review, jde_settings, jde_zfiles
+from ap_coder.erp import exports, jde, jde_review, jde_settings, jde_voucher, jde_zfiles
 from tests.conftest import DATA
 from tests.webclient import gt as _gt
 
@@ -338,7 +338,7 @@ def test_a_tip_written_another_way_carries_no_tax():
 
 # --- A tip is told by the invoice it is on, not by its words alone (D-310) ------------------------------------------
 
-# The tips the word rules tried on 2026-11-12 and 13 had to keep, and the owner's (docs/TODO.md).
+# The tips the word rules tried on 2026-11-12 and 13 had to keep, and the owner's two (the last).
 TIPS = (
     "Tip", "Tips", "Server - thank you", "Gratuity 18%", "Driver tip", "Pourboire - merci!", "Gratuité", "Tip amount",
     "Tip total", "Tip - Visa", "Credit card tip", "Tip (cash)", "Tip: Server John", "Tip for Maria", "Tip to driver",
@@ -411,7 +411,7 @@ def _bc(vendor, lines):
     return doc
 
 
-# What a tip word names on an invoice that takes no tips (docs/TODO.md), and a count of something bought from a
+# What a tip word names on an invoice that takes no tips (the owner's four), and a count of something bought from a
 # supplier whose name says restaurant: each is a purchase.
 PURCHASES = (
     ("Lakeside Learning Centre", [(1, 450.0, "6150", "Excel tips workshop"), (1, 36.0, "6150", "Course workbook")]),
@@ -433,6 +433,26 @@ def test_a_purchase_named_with_a_tip_word_takes_its_share_of_the_tax(vendor, lin
     amounts = [li["amount"] for li in doc["line_items"]]
     assert [kept for _, kept, _ in expense] == split(doc["tax_lines"][1]["tax_amount"], amounts)
     assert [tip for tip, _ in _tips(doc)] == [False] * len(lines)
+
+
+def test_the_pst_owed_on_a_voucher_leaves_out_the_tips_the_posting_does():
+    """D-310: GST charged and no PST, the JD Edwards voucher self-assesses the PST only when every line owes it, tips
+    left out: "Thank you cards" marked PST-exempt beside paper that owes it is a mix (held back), while a bistro's
+    tip marked so is left out, as the posting leaves it out."""
+
+    def charged_gst_only(vendor, lines):
+        doc = _bc(vendor, lines)
+        for item, exempt in zip(doc["line_items"], ([], ["PST"]), strict=True):
+            item.update(taxes_applied=["GST"], tax_exempt=exempt)
+        gst = doc["tax_lines"][0]
+        doc.update(
+            tax_lines=[gst], tax_total=gst["tax_amount"], grand_total=round(doc["subtotal"] + gst["tax_amount"], 2)
+        )
+        return InvoiceCoding.model_validate(doc).model_dump()
+
+    cards = charged_gst_only("Harbour Stationers", PURCHASES[3][1])
+    tip = charged_gst_only("Riverbend Bistro", [(1, 100.0, "6100", "Order 4471"), (1, 12.34, "6900", "Tip")])
+    assert (jde_voucher.pst_owed(cards), jde_voucher.pst_owed(tip)) == (jde_voucher.SOME_OWED, jde_voucher.ALL_OWED)
 
 
 def test_the_excel_and_csv_lines_carry_the_meals_half():
