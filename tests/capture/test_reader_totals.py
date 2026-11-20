@@ -457,3 +457,24 @@ def test_a_french_bill_to_label_in_the_infinitive_is_the_customers_block(tmp_pat
         (500, 368, "105,00"), (50, 400, "TPS/TVH : 123456782 RT0001"),
     ])  # fmt: skip
     assert ONE_ROW_CUSTOMER not in [r.value for r in read_fields(build_layout(path))["vendor_name"]]
+
+
+_LABELS = ["Billing Address", "SHIPPING ADDRESS:", "Adresse de facturation", "Adresse de livraison :", "Bill-To:",
+           "BILL-TO", "Ship-To:", "Sold-To"]  # fmt: skip
+
+
+@pytest.mark.parametrize("label", _LABELS)
+def test_a_billing_or_shipping_address_label_or_a_hyphenated_bill_to_is_the_customers_block(tmp_path, label):
+    """B-2784: "Billing Address", "Shipping Address", "Adresse de facturation" and "Bill-To" (a hyphen for the space)
+    were no bill-to labels: the customer's name under them, the supplier's only in its logo, was read as the
+    supplier."""
+    from tests.pdfs import ONE_ROW_CUSTOMER
+
+    path = _pdf(tmp_path / "label.pdf", [
+        (400, 50, "INVOICE", 14), (400, 70, "Invoice #: 118204"), (400, 84, "Invoice Date: 2026-09-14"),
+        (50, 130, label), (50, 144, ONE_ROW_CUSTOMER), (50, 158, _STREET), (50, 172, _CITY),
+        (50, 260, "Description"), (500, 260, "Amount"), (50, 276, "Widgets"), (500, 276, "100.00"),
+        (400, 340, "Subtotal"), (500, 340, "100.00"), (400, 354, "GST 5%"), (500, 354, "5.00"), (400, 368, "Total"),
+        (500, 368, "105.00"), (50, 400, "GST/HST No. 123456782 RT0001"),
+    ])  # fmt: skip
+    assert ONE_ROW_CUSTOMER not in [r.value for r in read_fields(build_layout(path))["vendor_name"]]

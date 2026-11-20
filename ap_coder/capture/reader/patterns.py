@@ -179,10 +179,12 @@ def _bare_qst_numbers(layout: DocLayout) -> list[Reading]:
     return out
 
 
-_BILL_TO = re.compile(r"^(bill(?:ed)?\s*to|sold\s*to|ship\s*to|invoice\s*to|deliver\s*to|for\s*:|to\s*:|service\s*address|"
+# "Bill-To" as "Bill To", "Billing Address" (B-2784).
+_BILL_TO = re.compile(r"^(bill(?:ed)?[\s-]*to|sold[\s-]*to|ship[\s-]*to|invoice[\s-]*to|deliver[\s-]*to|for\s*:|to\s*:|"
+                      r"(?:service|billing|shipping)\s*address|"
                       # French as "Facturé à" and as "Facturer à" (B-2783).
                       r"account\s*(?:holder|name)|customer|client|factur(?:[ée]|er)\s*a|vendu\s*a|livr(?:[ée]|er)?\s*a|"
-                      r"expedier\s*a|adresse\s*de\s*livraison|attention|attn|"
+                      r"expedier\s*a|adresse\s*de\s*(?:livraison|facturation)|attention|attn|"
                       # The customer under another name (B-1542): "Prepared for:", "Destinataire :", "Adressé à :".
                       r"prepared\s*for|purchaser|buyer|recipient|destinataire|adresse\s*a)(?:\b|(?<=:))")  # fmt: skip
 
