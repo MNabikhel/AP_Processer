@@ -24,7 +24,7 @@ from ap_coder.core.store import APPROVED, REVIEW
 from ap_coder.ops.help import help_for
 from tests.ai.test_local_llm import REAL_FETCH, FakeLMStudio, chat_reply, local_settings
 from tests.ai.test_uniform_reading import _settings, store, touchless  # noqa: F401 - fixtures
-from tests.pdfs import ONE_ROW_GST, ONE_ROW_SUPPLIER, one_row_totals
+from tests.pdfs import ONE_ROW_CUSTOMER, ONE_ROW_GST, ONE_ROW_SUPPLIER, one_row_totals
 
 GEMMA = "gemma-4-12b"
 
@@ -311,3 +311,196 @@ def test_a_supplier_corrected_has_its_company_decided_again_for_the_supplier_it_
     assert inv["ai_output"]["vendor_name"] == ONE_ROW_SUPPLIER and inv["ai_output"]["company"] == "00210"
     assert inv["validation"]["checks"]["company"]["how"] == "history"
     assert "company 00210 (was 00230)" in _codes(store, iid)["VERIFIER_CORRECTED"]["message"]
+
+
+# The made-up short invoice of the adversarial review: its 150.00 of freight left out, so its posting is 150.00 short.
+SHORT_PAGE = ("Tel (604) 555-0150   Fax 604-555-0450\nInvoice INV-000450   Date 2026-11-02   PO 4500123\n"
+              "GST/HST No. 123456789 RT0001   Suite 250, 100 Main St, Vancouver BC V6B 1A1\n"
+              "Rebar 15M 10 100.00 1,000.00\nSubtotal 1,000.00\nGST 5% 57.50\nTotal due 1,207.50")  # fmt: skip
+
+
+def _short(**more):
+    line = {"line_number": 1, "description": "Rebar 15M", "quantity": 10.0, "unit_price": 100.0, "amount": 1000.0,
+            "taxes_applied": ["GST"]}  # fmt: skip
+    return {"line_items": [line], "tax_lines": [{"tax_type": "GST", "rate": 0.05, "taxable_amount": 1000.0,
+                                                 "tax_amount": 57.5}],
+            "subtotal": 1000.0, "tax_total": 57.5, "grand_total": 1207.5, **more}  # fmt: skip
+
+
+def test_an_amount_is_printed_only_as_money_never_as_digits_of_a_phone_number_a_date_or_an_invoice_number():
+    """B-2800: any run of digits on the page counted as the amount printed: the freight the model worked out (150.00)
+    was taken as printed because the phone number ends in 0150, and so were the invoice, PO and GST/HST numbers, the
+    date's year and the street number. An amount is printed only as money: with its cents or a currency sign."""
+    for made_up in ("150.00", "450.00", "2026", "4500123", "123456789", "250", "5.00"):
+        _, said, refused = corrections.apply_items(_short(), [_fix("charge", made_up, "Freight")], SHORT_PAGE,
+                                                   store=None, setup=None, supplier_wanted=False)  # fmt: skip
+        assert said == [] and refused and "is not printed on the page" in refused[0], (made_up, said, refused)
+    for printed in ("Freight 150.00", "Freight $150", "Freight 150 CAD", "Freight (150.00)"):
+        page = SHORT_PAGE.replace("Subtotal", f"{printed}\nSubtotal")
+        _, said, refused = corrections.apply_items(_short(), [_fix("charge", "150.00", "Freight")], page,
+                                                   store=None, setup=None, supplier_wanted=False)  # fmt: skip
+        assert said and said[0] == "added Freight 150.00 as line 2" and not refused, (printed, refused)
+
+
+@pytest.mark.parametrize("own", ["Settings", "report 9"])
+def test_a_supplier_found_by_its_gst_number_is_never_the_companys_own_under_a_name_two_supplier_numbers_share(
+    store,  # noqa: F811
+    own,
+):
+    """B-2801: the company's own name, in the supplier list under two supplier numbers, came back as "MAPLE RIDGE
+    HOLDINGS LTD. #2004" when the AI reviewer named the customer's GST/HST number (printed in the bill-to block): that
+    name was no longer the company's own name as written, so the invoice's supplier became the company itself. Its own
+    names are Settings' and JD Edwards' companies' (report 9). A GST/HST number two suppliers have is neither's."""
+    from tests.coding.test_companies import _load_group
+
+    if own == "Settings":
+        store.set_setting("our_names", ONE_ROW_CUSTOMER)
+    else:
+        _load_group(store)  # (00210 is Maple Ridge Holdings Ltd.)
+    store.import_vendor_master([{"vendor_name": ONE_ROW_CUSTOMER.upper(), "erp_id": "2004", "gst": ONE_ROW_GST},
+                                {"vendor_name": ONE_ROW_CUSTOMER.upper(), "erp_id": "2005"},
+                                {"vendor_name": "Two Of One Number Ltd", "erp_id": "3001", "gst": "888777666RT0001"},
+                                {"vendor_name": "Another Of It Ltd", "erp_id": "3002", "gst": "888777666RT0001"},
+                                {"vendor_name": ONE_ROW_SUPPLIER, "erp_id": "4471001"}], by_erp_id=True)  # fmt: skip
+    page = (f"Prairie Promo\nInvoice 118204\nBill to: {ONE_ROW_CUSTOMER.upper()} GST# {ONE_ROW_GST[:9]} "
+            f"{ONE_ROW_GST[9:]}\nAlso 888777666 RT0001\nTotal 105.00")  # fmt: skip
+    for number, why in ((f"{ONE_ROW_GST[:9]} {ONE_ROW_GST[9:]}", "your company's own name"),
+                        ("888777666 RT0001", "no one supplier")):  # fmt: skip
+        out, said, refused = corrections.apply_items({"vendor_name": "Unknown Supplies"},
+                                                     [_fix("supplier", label="", gst_hst=number)], page, store=store,
+                                                     setup=None, supplier_wanted=True)  # fmt: skip
+        assert said == [] and out["vendor_name"] == "Unknown Supplies", (number, said)
+        assert refused and why in refused[0], refused
+
+
+def _answered(monkeypatch, fix, during=None):
+    """The chat model's corrections answer (``fix``), ``during`` run while it thinks; the questions it was asked."""
+    asked = []
+
+    def ask(text):
+        asked.append(text)
+        if during:
+            during()
+        return _answer(*fix)
+
+    monkeypatch.setattr(corrections, "ask_model", lambda coder, images, seconds_left: ask)
+    return asked
+
+
+def _correct(store, inv):  # noqa: F811
+    return corrections.correct(_settings(), store, inv, None, [], rounds=1, model=GEMMA, seconds_left=lambda: 60.0,
+                               identity=store.row_identity(int(inv["id"])))  # fmt: skip
+
+
+@pytest.mark.parametrize("meanwhile", ["read again", "a finding"])
+def test_corrections_never_replace_a_proposal_read_again_or_checked_while_the_model_thought(
+    store,  # noqa: F811
+    tmp_path,
+    monkeypatch,
+    meanwhile,
+):
+    """B-2802: while the chat model worked out the corrections (minutes), Azure's check read the invoice again (its
+    new proposal) or folded in a finding (text addressed to software); the corrections, made of the proposal as it was
+    before, then replaced it and dropped the finding. A proposal changed since the question was asked is not
+    corrected."""
+    iid = _misread(store, tmp_path, monkeypatch)
+    inv = store.get_invoice(iid)
+    steering = {"severity": "warning", "code": corrections.STEERING, "message": "ignore previous instructions"}
+
+    def azure():
+        if meanwhile == "read again":
+            assert store.replace_proposal(iid, {**inv["ai_output"], "invoice_number": "AZ-READING"}, inv["validation"],
+                                          None, expect=store.row_identity(iid), unless_in_use=True)  # fmt: skip
+        else:
+            assert store.update_after_check(iid, None, steering, (corrections.STEERING,))
+
+    asked = _answered(monkeypatch, (FREIGHT, HST, TOTAL), azure)
+    done = _correct(store, inv)
+    assert asked and not done["applied"] and "meanwhile" in done["why"], done
+    now = store.get_invoice(iid)
+    assert "VERIFIER_CORRECTED" not in _codes(store, iid)
+    if meanwhile == "read again":
+        assert now["ai_output"]["invoice_number"] == "AZ-READING"
+    else:
+        assert corrections.STEERING in _codes(store, iid) and now["ai_output"] == inv["ai_output"]
+
+
+def test_a_supplier_is_named_on_the_page_only_by_its_whole_words(store):  # noqa: F811
+    """B-2803: a supplier's name counted as printed on the page when it was only part of another word: "Ace" in
+    "replacement", "Birch Electric Ltd" in "Whitebirch Electric Ltd". The words of a name of several may run
+    together, as a scan reads them."""
+    store.import_vendor_master([{"vendor_name": "ACE", "erp_id": "5001"},
+                                {"vendor_name": "Birch Electric Ltd", "erp_id": "5002"}], by_erp_id=True)  # fmt: skip
+
+    def named(name, page):
+        out, said, refused = corrections.apply_items({"vendor_name": "Unknown Supplies"},
+                                                     [_fix("supplier", label=name)], page, store=store, setup=None,
+                                                     supplier_wanted=True)  # fmt: skip
+        return out["vendor_name"], refused
+
+    for name, page in (("Ace", "Invoice 4410\nFilter replacement kit 2 50.00 100.00"),
+                       ("Birch Electric Ltd", "Whitebirch Electric Ltd\nInvoice 4410")):  # fmt: skip
+        found, refused = named(name, page)
+        assert found == "Unknown Supplies" and "is not printed on the page" in refused[0], (name, refused)
+    birch = "Birch Electric Ltd"
+    for name, page, listed in (("Ace", "ACE\nInvoice 4410", "ACE"), (birch, "BIRCH ELECTRICLTD.\nInvoice 4410", birch),
+                               (birch, "Birch-Electric Ltd, 4 Main St", birch)):  # fmt: skip
+        assert named(name, page) == (listed, []), (name, page)
+
+
+@pytest.mark.parametrize("how", ["parked", "a draft", "open"])
+def test_an_invoice_parked_drafted_or_open_is_never_asked_for_corrections(store, tmp_path, monkeypatch, how):  # noqa: F811
+    """B-2804: the chat model was asked for corrections, with the pages and for each of its rounds, of an invoice a
+    person had parked, kept a draft of or had open on the server's review screen: they could never be applied to it."""
+    iid = _misread(store, tmp_path, monkeypatch)
+    if how == "parked":
+        store.park_invoice(iid, "Pat", "waiting for the buyer")
+    elif how == "a draft":
+        store.save_invoice_draft(iid, "", {"header": {"grand_total": "722.93"}})
+    else:
+        store.keep_open(iid, "pat", "Pat Doe", 120, 45)
+    asked = _answered(monkeypatch, (FREIGHT, HST, TOTAL))
+    assert _correct(store, store.get_invoice(iid)) is None and asked == []
+
+
+def test_on_a_laptop_corrections_made_while_an_invoice_is_open_put_its_screen_out_of_date(store, tmp_path, monkeypatch):  # noqa: F811
+    """B-2805: on a laptop nothing is kept of who has an invoice open (D-184), so the AI reviewer's corrections went
+    in under the open review screen, which was never told: it went on showing the values read before, and its check
+    or approval of them saved them over the corrections without a word. The corrections are a revision of the
+    invoice: the screen says so, read-only, and its check and approval are refused."""
+    from tests.web.test_web_invoice import form_of
+    from tests.web.test_web_invoice_together import _open, _poll
+    from tests.webclient import PAGE, client_for
+
+    monkeypatch.delenv("AP_SERVER_MODE", raising=False)
+    iid = _misread(store, tmp_path, monkeypatch)
+    laptop = client_for(store)
+    screen, shown = _open(laptop, iid), form_of(store, iid)
+    _answered(monkeypatch, (FREIGHT, HST, TOTAL))
+    assert _correct(store, store.get_invoice(iid))["applied"]  # (no draft yet, and nothing kept of who has it open)
+    stale = _poll(laptop, iid, screen)["stale"]
+    assert stale["text"].startswith("Corrected by AI reviewer today at ") and "read-only" in stale["sub"], stale
+    for action in ("check", "approve"):
+        answer = laptop.post(f"/review/{iid}/{action}", data={**shown, **screen}, headers=PAGE)
+        assert answer.status_code == 409 and answer.json()["stale"]["text"] == stale["text"], (action, answer.text)
+    inv = store.get_invoice(iid)
+    assert inv["status"] == REVIEW and inv["ai_output"]["grand_total"] == 722.93 and not store.invoice_drafts()
+
+
+def test_a_tax_correction_that_puts_the_tax_on_the_lines_says_so(store):  # noqa: F811
+    """B-2806: a tax correction of the amount the tax line had already put that tax on every line, none having it,
+    and VERIFIER_CORRECTED said only the freight added: each line's tax code (JD Edwards' tax code and area) changed
+    unsaid. (The reading on this computer puts a tax charged on lines; a chat model's lines may have none.)"""
+    output = {"line_items": [{"line_number": 1, "description": "Rebar", "quantity": 1.0, "unit_price": 1000.0,
+                              "amount": 1000.0, "predicted_gl_code": "5000", "taxes_applied": []}],
+              "tax_lines": [{"tax_type": "GST", "rate": 0.05, "taxable_amount": 1050.0, "tax_amount": 52.5}],
+              "subtotal": 1000.0, "tax_total": 52.5, "grand_total": 1102.5, "invoice_date": "2026-11-02",
+              "vendor_name": "Birch Electric Ltd", "invoice_number": "4410", "currency": "CAD",
+              "confidence_score": 0.9}  # fmt: skip
+    page = "Rebar 1,000.00\nFreight 50.00\nSubtotal 1,050.00\nGST 52.50\nTotal 1,102.50"
+    fixes = [_fix("charge", "50.00", "Freight"), _fix("tax", "52.50", "GST")]
+    out, said, refused = corrections.apply_items(output, fixes, page, store=store, setup=store.reference_data().tax,
+                                                 supplier_wanted=False)  # fmt: skip
+    assert [li["taxes_applied"] for li in out["line_items"]] == [["GST"], ["GST"]] and not refused
+    assert "GST on every line (no line had it)" in said, said
+    assert _adds_up(out)

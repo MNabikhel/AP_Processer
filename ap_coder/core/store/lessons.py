@@ -6,6 +6,7 @@ the page reader's new reading (``replace_proposal``)."""
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import sqlite3
 from collections.abc import Callable
@@ -54,6 +55,14 @@ _LESSON = (
     "AND a.corrected = 1 AND a.value = lessons.value) + MAX(lessons.corrected - (SELECT COUNT(*) FROM "
     "lesson_approvals a WHERE a.situation = lessons.situation AND a.corrected = 1), 0) AS agreeing FROM lessons"
 )
+
+
+def proposal_version(output: Any, validation: Any) -> str:
+    """Which proposal an invoice has: its coding and its findings as stored (not the queue's re-check kept beside
+    them). Work begun on one (the AI reviewer's corrections, minutes of the chat model) replaces it only while it is
+    still that one (``replace_proposal``'s ``version``): not once it was read again or a finding was folded in."""
+    issues = validation.get("issues") if isinstance(validation, dict) else None
+    return hashlib.sha256(json.dumps([output, issues], sort_keys=True, default=str).encode()).hexdigest()
 
 
 class LessonsMixin:
@@ -553,7 +562,7 @@ class LessonsMixin:
     def replace_proposal(
         self, invoice_id: int, output: dict[str, Any], report: Any, capture: Any, meta: dict[str, Any] | None = None,
         actor: str = "AP Coder", *, expect: tuple[Any, ...] | None = None, unless_in_use: bool = False,
-        by: str = "page reader",
+        by: str = "page reader", version: str | None = None, action: str = "proposal_updated",
     ) -> bool:  # fmt: skip
         """Replace what AP Coder proposes for an invoice nobody has worked on yet (the page reader read it after
         it was processed): the coding, its checks and confidence, the columns the queue shows, the capture
@@ -564,8 +573,10 @@ class LessonsMixin:
         reopened invoice keeps the reviewer's coding), and still ``expect`` (``row_identity``, taken before the page
         reader read it: a backup restored meanwhile may hold another invoice under the same number).
         ``unless_in_use``: nor while a person has it open or keeps a draft of it (checked in the same transaction:
-        Azure Document Intelligence's reading again, D-245; the AI reviewer's corrections, D-263). Otherwise nothing
-        changes and it returns False. ``by``: who changed it, in its history."""
+        Azure Document Intelligence's reading again, D-245; the AI reviewer's corrections, D-263). ``version``: only
+        while its proposal is still that one (``proposal_version``, B-2802). Otherwise nothing changes and it returns
+        False. ``by``: who changed it, in its history; ``action``: its event (the AI reviewer's corrections,
+        ``verifier_corrected``, are a revision: a review screen drawn before them is out of date, B-2805)."""
         if not output:
             return False
         validation = report.to_dict() if hasattr(report, "to_dict") else dict(report or {})
@@ -579,13 +590,17 @@ class LessonsMixin:
         with self._conn() as conn:
             begin_write(conn)  # checked and changed in one go: an approval cannot slip in between
             row = conn.execute(
-                "SELECT status, edits, final_output, reviewer, ai_output, meta, file_sha256, created_at FROM invoices "
-                "WHERE id = ?",
+                "SELECT status, edits, final_output, reviewer, ai_output, validation, meta, file_sha256, created_at "
+                "FROM invoices WHERE id = ?",
                 (invoice_id,),
             ).fetchone()
             if (row is None or row["status"] != REVIEW or row["final_output"] or row["reviewer"]
                     or json.loads(row["edits"] or "null") or not _same_row(row, expect)):  # fmt: skip
                 return False
+            if version is not None and version != proposal_version(
+                json.loads(row["ai_output"] or "null"), json.loads(row["validation"] or "null")
+            ):
+                return False  # read again, or checked again, meanwhile
             if unless_in_use and self._in_use(conn, invoice_id):
                 return False
             merged = {**(json.loads(row["meta"] or "null") or {}), **(meta or {})}
@@ -602,7 +617,7 @@ class LessonsMixin:
             )  # fmt: skip
             if capture is not None:
                 self._save_capture(conn, invoice_id, capture)
-            self._log(conn, "proposal_updated", invoice_id, actor, {
+            self._log(conn, action, invoice_id, actor, {
                 "by": by, "changes": diff_coding(json.loads(row["ai_output"] or "null") or {}, output),
                 "confidence": validation.get("adjusted_confidence"),
                 "requires_review": bool(validation.get("requires_review", True)),

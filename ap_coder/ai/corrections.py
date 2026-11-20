@@ -7,8 +7,9 @@ is missing or unsure while a supplier list is loaded) is asked one more question
 wrong, and the values corrected (a charge left out of the lines such as freight, a line's amount, a tax, the subtotal
 or the total, the supplier). The corrections are applied (``apply_items``, ``checked``) only when
 
-* every amount in them is printed on the page (the words the PDF's text or OCR gave, and the page reader's
-  transcription: ``page_text``): the model can't invent a number;
+* every amount in them is printed on the page as money (the words the PDF's text or OCR gave, and the page reader's
+  transcription: ``page_text``; with its cents or a currency sign, never the digits of a phone, invoice or GST/HST
+  number or a date: ``_printed_money``): the model can't invent a number;
 * with all of them applied the invoice's own checks pass: the lines add up to the subtotal, each tax is its rate on
   the lines it is on, subtotal and taxes are the total (``taxmath.math_check``), and ``validate_coding`` finds no
   totals error and no error the invoice did not have;
@@ -16,10 +17,13 @@ or the total, the supplier). The corrections are applied (``apply_items``, ``che
 * nothing in them quotes text addressed to software (D-259); an invoice with such text is not asked at all.
 
 Otherwise nothing changes: the review goes on as before, and its warnings say what it read. When they pass, they are
-applied to the invoice only while nobody has worked on it (``Store.replace_proposal``): each field they changed is
-marked as the AI reviewer's (its source, and a reason that starts ``CORRECTED_BY``), and VERIFIER_CORRECTED says what
-was corrected and why. That finding always sends the invoice to a person (``supplier.ALWAYS_A_PERSON``): never
-touchless, never bulk-approved because of an AI correction. The review that follows is of the corrected invoice.
+applied to the invoice only while nobody has worked on it (``Store.replace_proposal``: not parked, open or drafted, and
+its proposal still the one asked about, ``proposal_version``): each field they changed is marked as the AI reviewer's
+(its source, and a reason that starts ``CORRECTED_BY``), and VERIFIER_CORRECTED says what was corrected and why. That
+finding always sends the invoice to a person (``supplier.ALWAYS_A_PERSON``): never touchless, never bulk-approved
+because of an AI correction. They are a revision of the invoice (``verifier_corrected``): a review screen open on it
+(a laptop keeps nothing of who has it open) is out of date, says so, and saves nothing over them. The review that
+follows is of the corrected invoice.
 
 The question is asked in the reviewer's thread, between the page reader's invoices (never while it reads), at most
 ``rounds`` times (Settings → Reading) and within half of the reviewer's minutes, so the review has the rest; a round
@@ -217,6 +221,58 @@ def _plain_words(text: str) -> str:
     return " ".join(re.sub(r"[^0-9a-z]+", " ", str(text).casefold()).split())
 
 
+def _printed_name(name: str, text: str) -> bool:
+    """``name`` is printed in ``text`` as whole words, never inside another word ("Ace" in "replacement"); the words of
+    a name of several may run together, as a scan reads them ("BIRCH ELECTRICLTD.")."""
+    words = _plain_words(name).split()
+    return bool(words) and re.search(rf"\b{' ?'.join(map(re.escape, words))}\b", _plain_words(text)) is not None
+
+
+_CENTS = re.compile(r"\d[.,]\d{2}(?!\d)")
+_CURRENCY = re.compile(r"[$€£]|(?<![a-z])(?:cad|cdn|usd|eur|gbp)(?![a-z])", re.I)
+_CURRENCY_BEFORE = re.compile(r"(?:[$€£]|(?<![a-z])(?:cad|cdn|usd|eur|gbp)) ?\Z", re.I)  # ("CAD 150", "CA$150")
+_CURRENCY_AFTER = re.compile(r" ?(?:[$€£]|(?:cad|cdn|usd|eur|gbp)(?![a-z]))(?! ?\.?\d)", re.I)  # (not the next one's)
+_NEXT_ONES_SIGN = re.compile(r"\s*[$€£]\s*\Z")  # (the "$" find_amounts gives "75.00" in "75.00 $150.00")
+_JOINED_BEFORE = re.compile(r"(?:[\d#]|\w[-/.])\Z")  # a digit or "#" right before, or a letter or digit and "-" "/" "."
+_LETTER_BEFORE = re.compile(r"[^\W\d]\Z")  # (a scan's "Total1,207.50" has its cents; "RT0001" is no amount)
+_JOINED_AFTER = re.compile(r"[\w%]| %|[-/.]\d")  # a letter, digit or "%" right after, or a "-", "/" or "." and a digit
+
+
+def _printed_money(text: str) -> list[float]:
+    """Each amount ``text`` prints as money (without its sign): with its cents ("150.00", "1 234,56", "(50.00)") or a
+    currency sign or code right beside it ("$150", "150 CAD"). Never the digits of an identifier, a number run into
+    letters or other digits ("(604) 555-0150", "INV-000450", "2026-11-02", "V6B 1A1", "RT0001"), nor a rate ("5.00%"):
+    a phone, invoice, PO or GST/HST number, a date or a street number is no amount printed."""
+    from ..core.parsing import find_amounts
+
+    found = []
+    for value, start, end in find_amounts(text):
+        if (sign := _NEXT_ONES_SIGN.search(text, start, end)) and re.match(r"\s*\.?\d", text[end : end + 3]):
+            end = sign.start()
+        shown = text[start:end]
+        start, end = start + len(shown) - len(shown.lstrip()), end - len(shown) + len(shown.rstrip())
+        cents = _CENTS.search(text, start, end)
+        before = _CURRENCY.match(text, start) or _CURRENCY_BEFORE.search(text, max(0, start - 4), start)
+        after = _CURRENCY_AFTER.match(text, end)
+        lead = start + (text[start : start + 1] in "-−–")  # (a minus run into a word is its hyphen: "INV-450.00")
+        if not before and (_JOINED_BEFORE.search(text, max(0, lead - 2), lead)
+                           or not cents and _LETTER_BEFORE.search(text, max(0, start - 1), start)):  # fmt: skip
+            continue  # run into a word or a number ("RT0001", "555-0150"; run into its currency, "CAD150", is money)
+        if not after and _JOINED_AFTER.match(text, end):
+            continue  # ("5.00%", "2026-11-02"; "722.93CAD" is money)
+        if cents or before or after or _CURRENCY.search(text, start, end):
+            found.append(abs(value))
+    return found
+
+
+def _which_lines(some: list[dict[str, Any]], lines: list[dict[str, Any]]) -> str:
+    """ "every line", "line 2", "lines 1, 2 and 4": ``some`` of the invoice's ``lines``."""
+    numbers = [str(li.get("line_number")) for li in some]
+    if len(some) == len(lines):
+        return "every line"
+    return f"line {numbers[0]}" if len(numbers) == 1 else f"lines {', '.join(numbers[:-1])} and {numbers[-1]}"
+
+
 def _rate(given: Any, amount: float, base: float, lines: int, out: dict[str, Any], setup: Any) -> float | None:
     """The tax's rate: the one given (a rate printed), else a rate in force on the invoice's date that makes the
     amount of ``base`` (GST under an HST label is the GST's 5%: D-262); None when none does."""
@@ -246,22 +302,25 @@ def _supplier(item: dict[str, Any], text: str, store: Any, out: dict[str, Any]) 
         return "no supplier list"
     name = " ".join(str(item.get("label") or "").split())
     number = norm_gst(str(item.get("gst_hst") or ""))
+    numbered = ""
     if number:
         if number not in {norm_gst(n) for n, *_ in find_gst_numbers(text)}:
             return f"GST/HST number {item.get('gst_hst')} is not printed on the page"
         one = store.supplier_of_tax_number(number)
         if one is None:
             return f"no one supplier in the supplier list has GST/HST number {item.get('gst_hst')}"
-        name = with_number(one) if store.vendors_sharing(one["display_name"]) else str(one["display_name"])
-    elif not name or _plain_words(name) not in _plain_words(text):
+        name = str(one["display_name"])
+        numbered = with_number(one) if store.vendors_sharing(name) else ""  # (one of the suppliers of its name)
+    elif not _printed_name(name, text):
         return f"{name or 'the supplier'} is not printed on the page"
     else:
         found = store.find_vendor(name)
         if found is None or not found.get("in_master") or store.vendors_sharing(name):
             return f"{name} is not one supplier in the supplier list"
         name = str(found["display_name"])
-    if vendor_key(name) in our_name_keys(store):
+    if vendor_key(name) in our_name_keys(store):  # (its name as the list has it, never "... #2004": B-2801)
         return f"{name} is your company's own name"
+    name = numbered or name
     if vendor_key(name) == vendor_key(out.get("vendor_name") or ""):
         return f"{name} is the supplier already"
     return name, number
@@ -275,13 +334,12 @@ def apply_items(output: dict[str, Any], items: list[dict[str, Any]], text: str, 
     from ..capture.instructions import found_in
     from ..capture.normalize import parse_amount
     from ..coding.money import add_up
-    from ..core.parsing import find_amounts
     from ..core.reference_data import UNASSIGNED
 
     out = copy.deepcopy({k: v for k, v in output.items() if k != "gl_distribution"})
     lines: list[dict[str, Any]] = out.setdefault("line_items", [])
     taxes: list[dict[str, Any]] = out.setdefault("tax_lines", [])
-    printed = [abs(v) for v, _, _ in find_amounts(text)]
+    printed = _printed_money(text)
     old_base = {t.get("tax_type"): add_up(li["amount"] for li in lines
                                           if t.get("tax_type") in (li.get("taxes_applied") or []))
                 for t in taxes}  # fmt: skip
@@ -352,7 +410,8 @@ def apply_items(output: dict[str, Any], items: list[dict[str, Any]], text: str, 
                 refused.append(f"{what}: the invoice has {tax} at more than one rate")
                 continue
             marked = [li for li in lines if tax in (li.get("taxes_applied") or [])]
-            if not marked:  # a tax no line carries: on every line that is not exempt from it
+            newly = not marked
+            if newly:  # a tax no line carries: on every line that is not exempt from it
                 marked = [li for li in lines if not li.get("tax_status") and tax not in (li.get("tax_exempt") or [])]
             base = add_up(li["amount"] for li in marked)
             rate = _rate(item.get("rate"), amount, base, len(marked), out, setup)
@@ -361,6 +420,8 @@ def apply_items(output: dict[str, Any], items: list[dict[str, Any]], text: str, 
                 continue
             for li in marked:
                 li["taxes_applied"] = sorted({*(li.get("taxes_applied") or []), tax})
+            if newly and same:  # (a new tax line says the lines' amount it is on)
+                said.append(f"{tax} on {_which_lines(marked, lines)} (no line had it)")
             if same:
                 if abs(float(same[0].get("tax_amount") or 0) - amount) < 0.005 and not item.get("rate"):
                     continue
@@ -473,11 +534,13 @@ def mark(capture: Any, before: dict[str, Any], after: dict[str, Any]) -> list[st
 
 def _store(store: Any, inv: dict[str, Any], output: dict[str, Any], report: Any, said: list[str], problem: str,
            identity: Any, model: str) -> str:  # fmt: skip
-    """The corrected coding into the invoice, still untouched and not in use: ``said`` as VERIFIER_CORRECTED, the
-    findings made after processing kept (but those the corrections settle). The finding's message; "" when it was not
-    applied (a person has it open, or worked on it, or a backup was restored meanwhile)."""
+    """The corrected coding into the invoice, still untouched, not in use and its proposal still the one ``inv`` had
+    when the question was asked: ``said`` as VERIFIER_CORRECTED, the findings made after processing kept (but those
+    the corrections settle). The finding's message; "" when it was not applied (a person has it open, or worked on it,
+    it was read or checked again, or a backup was restored meanwhile)."""
     from ..coding.bulk import _kept
     from ..coding.validation import INFO, Issue
+    from ..core.store.lessons import proposal_version
 
     iid = int(inv["id"])
     if store.restoring() or store.row_identity(iid) != identity:
@@ -496,8 +559,9 @@ def _store(store: Any, inv: dict[str, Any], output: dict[str, Any], report: Any,
     if capture is not None:
         mark(capture, inv.get("ai_output") or {}, output)
     note = {"applied": said, "problem": problem, "model": model, "at": dt.datetime.now().isoformat(timespec="seconds")}
-    updated = store.replace_proposal(iid, output, report, capture, {"verifier_corrections": note}, expect=identity,
-                                     unless_in_use=True, by=NAME)  # fmt: skip
+    updated = store.replace_proposal(iid, output, report, capture, {"verifier_corrections": note}, NAME,
+                                     expect=identity, unless_in_use=True, by=NAME, action="verifier_corrected",
+                                     version=proposal_version(inv.get("ai_output"), inv.get("validation")))  # fmt: skip
     return message if updated else ""
 
 
@@ -506,7 +570,8 @@ def correct(settings: Any, store: Any, inv: dict[str, Any], coder: Any, images: 
             names: dict[str, str] | None = None) -> dict[str, Any] | None:  # fmt: skip
     """Ask the AI reviewer to correct an invoice with a problem, and apply what the page and the math confirm. What
     was asked and what came of it ({"problems", "applied", "refused", "message", "rounds", ...}); None when nothing
-    was asked (no problem, a person's coding on it, text addressed to software on it, no page text). Never raises."""
+    was asked (no problem, a person's coding on it, parked, open or drafted: never applied then, text addressed to
+    software on it, no page text). Never raises."""
     try:
         return _correct(settings, store, inv, coder, images, rounds, seconds_left, identity, model, names)
     except Exception as exc:  # noqa: BLE001 - the corrections are an extra: the review goes on
@@ -517,9 +582,14 @@ def correct(settings: Any, store: Any, inv: dict[str, Any], coder: Any, images: 
 def _correct(settings: Any, store: Any, inv: dict[str, Any], coder: Any, images: list[Any], rounds: int,
              seconds_left: Callable[[], float], identity: Any, model: str,
              names: dict[str, str] | None) -> dict[str, Any] | None:  # fmt: skip
+    from ..capture.workflow import has_draft
+    from ..core.store import REVIEW
+
     iid = int(inv["id"])
     output = inv.get("ai_output") or {}
     if inv.get("final_output") or inv.get("reviewer") or inv.get("edits"):  # a person's coding: theirs to correct
+        return None
+    if inv.get("status") != REVIEW or store.open_by(iid) or has_draft(store, iid):  # (``replace_proposal`` refuses)
         return None
     capture = _capture(store, iid)
     wrong = [] if addressed_to_software(inv, capture) else problems(store, inv, output, capture)
@@ -581,7 +651,7 @@ def _correct(settings: Any, store: Any, inv: dict[str, Any], coder: Any, images:
             if message:
                 outcome.update(applied=said, message=message)
             else:
-                outcome["why"] = "not applied: a person has it open or worked on it"
+                outcome["why"] = "not applied: a person has it open or worked on it, or it changed meanwhile"
             break
         earlier = {"corrections": items, "not applied": refused}
     log.info("%s: invoice %s %s", NAME, iid, f"corrected ({'; '.join(outcome['applied'])})" if outcome["applied"]
