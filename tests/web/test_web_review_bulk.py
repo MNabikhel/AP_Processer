@@ -608,9 +608,17 @@ def test_a_gl_account_taken_out_while_the_job_runs_leaves_the_invoices_coded_to_
 
     def meanwhile(store_, reference, settings, invoice_id, stamp, server):
         out = real(store_, reference, settings, invoice_id, stamp, server)
-        if invoice_id == ids[0]:  # the Admin's change, from another worker
-            admin = Store(store.path)
-            admin.save_accounts("gl_accounts", [r for r in admin.list_accounts("gl_accounts") if r["code"] != "6800"])
+        if invoice_id == ids[0]:  # the Admin's change, from another worker (its own connection)
+
+            def remove() -> None:
+                admin = Store(store.path)
+                admin.save_accounts(
+                    "gl_accounts", [r for r in admin.list_accounts("gl_accounts") if r["code"] != "6800"]
+                )
+
+            worker = threading.Thread(target=remove)
+            worker.start()
+            worker.join(30)
         return out
 
     monkeypatch.setattr(bulk, "_still_clean", meanwhile)
@@ -659,3 +667,22 @@ def test_the_queue_asks_the_pay_from_rule_of_the_vendor_the_invoice_is_filed_und
                     invoice_number="L-9")  # fmt: skip
     assert inv not in review.attention(store, store.reference_data(), store.list_invoices(REVIEW))
     assert inv not in bulk.sort_for_bulk(store)[1]
+
+
+def test_a_bulk_approval_job_reads_the_lists_again_only_once_another_connection_wrote(store, monkeypatch):
+    """B-2971: B-2967's job read the reference data and the checks stamp at every invoice, each concatenating the
+    whole GL accounts and cost centers lists (19 ms an invoice with a chart of 20,000 accounts and 8,000 cost
+    centers). They are read again only once another connection has written since."""
+    ids = _clean(store, 4)
+    calls = []
+
+    def counted(name: str):
+        real = getattr(store, name)
+        return lambda: calls.append(name) or real()
+
+    for name in ("reference_data", "checks_stamp"):
+        monkeypatch.setattr(store, name, counted(name))
+    job, _ = store.start_bulk_job("", {"name": "Sam", "login": "sam", "server": False, "as": {}},
+                                  _asked(store, ids), bulk.JOB_FORMAT)  # fmt: skip
+    jobs.run_bulk(store, web_settings(), store.claim_bulk_job("r", jobs.BULK_STALE, bulk.JOB_FORMAT), "r")
+    assert store.bulk_job(job)["approved"] == ids and sorted(calls) == ["checks_stamp", "reference_data"]

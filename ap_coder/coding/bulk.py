@@ -625,9 +625,11 @@ def approve_in_job(
     when someone else has it open on their review screen (``Store.open_by``) or edits of it kept there (``bulk_step``
     looks there too). Raises ``Stopping`` once ``stopping()`` is true, or the job is no longer ``runner``'s. Returns ""
     once every invoice is done, else why it stopped: what ``refused()`` says (the person may no longer approve).
-    Each invoice is checked against the lists and settings as they are when the job comes to it (B-2967)."""
+    Each invoice is checked against the lists and settings as they are when the job comes to it (B-2967): read again
+    once another connection has written since (B-2971), as the job's own approvals never change them."""
     person = job["person"]
     taken = set(job["approved"]) | {s[0] for s in job["skipped"]}
+    lists: tuple[int | None, ReferenceData, str] | None = None  # (when they were read, the reference data, its stamp)
     for invoice_id, identity, listed in job["ids"]:
         if invoice_id in taken:
             continue
@@ -644,9 +646,11 @@ def approve_in_job(
             why = "no longer in the queue"
         elif list(now) != identity:
             why = CHANGED
-        else:  # (the reference data kept comes back while its stamp has not moved)
-            output, why = _still_clean(store, store.reference_data(), settings, invoice_id, store.checks_stamp(),
-                                       bool(person.get("server")))  # fmt: skip
+        else:
+            moment = store.others_wrote()
+            if lists is None or moment is None or moment != lists[0]:
+                lists = (moment, store.reference_data(), store.checks_stamp())
+            output, why = _still_clean(store, lists[1], settings, invoice_id, lists[2], bool(person.get("server")))
         if output is not None and (why := _open_elsewhere(store, invoice_id, job["owner"])):
             output = None  # (theirs to approve as they see it, though nothing of theirs is checked yet)
 
