@@ -436,3 +436,21 @@ def test_another_company_picked_draws_the_screen_again_for_that_companys_account
     assert page.input_value("select[data-company]") == "00310" and "company=00310" in seed()
     assert "Not checked for Canadian tax (currency USD)" in page.inner_text(".inv-company")
     assert not errors
+
+
+def test_an_edit_whose_check_a_refused_approval_called_off_is_checked_and_kept(browser, chart_company):
+    """B-2986: an account typed in a box, then Approve clicked at once: the approval called off the edit's check, was
+    refused (the chart has no such account), and nothing checked the edit after: the screen still said Ready with
+    Approve open, and leaving lost the edit (no draft kept). Refused, the edit is checked and kept."""
+    page, errors = _review(browser, chart_company, "one_line")
+    store, invoice_id = chart_company.store, chart_company.invoices["one_line"][1]
+    typed = f"{chart_company.truth.company.main_business_unit}.9999.9999"
+    page.fill(FIRST, typed)
+    with page.expect_response(lambda r: r.url.endswith("/approve")) as approval:
+        page.click("[data-approve]")  # at once, its check still to come
+    assert approval.value.status == 400 and "is not in the chart of accounts" in approval.value.json()["error"]
+    settle(page)
+    assert page.input_value(FIRST) == typed and page.is_disabled("[data-approve]")
+    assert page.query_selector('[data-grid="lines"] [data-row]:nth-child(1).is-fix')
+    assert (store.invoice_draft(invoice_id, "") or {"lines": [{}]})["lines"][0].get("predicted_gl_code") == "9999.9999"
+    assert store.get_invoice(invoice_id)["status"] == REVIEW and not errors

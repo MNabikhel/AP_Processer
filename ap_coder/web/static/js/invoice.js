@@ -54,6 +54,7 @@ let timer = 0;
 let stale = null; // what the screen said once it was out of date (showStale): nothing is checked or sent from it after
 let running = null; // the check under way (a promise), with any rounds asked for meanwhile
 let queued = false; // edits made while a check runs: check again after it
+let owed = false; // an edit's check that Approve called off: checked once the approval does not go through (B-2986)
 const checking = document.querySelector("[data-checking]"); // "Checking…" beside the approve bar meanwhile
 
 function input(name) {
@@ -664,6 +665,7 @@ document.addEventListener(
     if (f === form) {
       // Approving sends every field as it is now: a check still waiting (the field just left fired "change") would
       // only reach the server after the approval, and be told the invoice is no longer in the queue.
+      if (timer) owed = true;
       clearTimeout(timer);
       timer = 0;
       showChecking();
@@ -683,6 +685,14 @@ document.addEventListener(
   },
   true,
 );
+/** An approval refused, or its question put away: the edit whose check it called off is checked (and kept) now, so
+    the bar and the findings follow what the screen shows (B-2986). */
+function checkOwed() {
+  if (!owed) return;
+  owed = false;
+  check();
+}
+form?.addEventListener("apc:refused", checkOwed);
 document.addEventListener("click", (e) => {
   const a = e.target.closest("a[href]");
   if (!a || !form || !(timer || running) || a.target || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -1800,7 +1810,10 @@ document.addEventListener("apc:ask-why", (event) => {
   };
   skip.addEventListener("click", () => send(false));
   save.addEventListener("click", () => send(true));
-  dialog.addEventListener("cancel", () => dialog.remove());
+  dialog.addEventListener("cancel", () => {
+    dialog.remove();
+    checkOwed();
+  });
   dialog.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
       e.preventDefault();
