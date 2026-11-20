@@ -130,7 +130,7 @@ def test_the_lookup_the_docs_give_finds_an_archived_a_frozen_and_a_new_entry(tmp
     command = commands.pop()
     new = f"B-{new_entry.FROZEN['B'] + 1}"  # (a bug's file, made here)
     (tmp_path / "docs" / "bugs").mkdir(parents=True)
-    (tmp_path / "docs" / "bugs" / f"{new}.md").write_text(f"- **{new}** · the first in a file · low · `t`\n")
+    (tmp_path / "docs" / "bugs" / f"{new}.md").write_text(f"- **{new}** · a bug's file · low · `t`\n", encoding="utf-8")
     looked_up = {"B-1234": (ROOT, "docs/archive/bugs-2026-10.md"), "B-2997": (ROOT, "docs/BUGS.md"),
                  new: (tmp_path, f"docs/bugs/{new}.md"), "D-34": (ROOT, "docs/archive/decisions-2026-10.md"),
                  "D-200": (ROOT, "docs/decisions.md"), "D-328": (ROOT, "docs/decisions/D-328.md")}  # fmt: skip
