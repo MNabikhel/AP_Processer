@@ -10,8 +10,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ap_coder.capture import layout
+from ap_coder.coding.tax import build_gl_distribution
+from ap_coder.coding.taxmath import invoice_taxes
 from ap_coder.core.config import Settings
+from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import REVIEW
+from ap_coder.erp import jde_settings, jde_voucher
 from ap_coder.web.app import create_app
 from ap_coder.web.core import invoice_dir
 from tests.pdfs import RECEIPTS, receipt
@@ -324,6 +328,43 @@ def test_one_file_alone_is_read_as_it_always_was(app, client, store, tmp_path):
     gone = client.post("/process/voucher", data={"names": ["IMG_0413.pdf", "../ap_coder.db"], "kind": "pages"},
                        headers=PAGE)  # fmt: skip
     assert gone.status_code == 409 and "../ap_coder.db is no longer in the invoices folder" in gone.json()["error"]
+
+
+# A made-up Vancouver dinner with a 20% terminal tip printed after the GST, and a book: GST only, the PST to
+# self-assess (D-310: neither name nor line says a meal, so the tip is told as a share of its receipt).
+VANCOUVER_DINNER = ["Cedarline Kitchen & Bar", "410 Harbour Road, Vancouver, BC V5N 2T2",
+                    "GST No. 811223344 RT0001", "", "Receipt No: 3391", "Date: 2026-05-05", "", "HALIBUT|38.00",
+                    "RIBEYE|52.00", "", "SUBTOTAL|90.00", "GST 5%|4.50", "TIP|18.00", "TOTAL|112.50"]  # fmt: skip
+VANCOUVER_BOOK = ["Larchwood Books", "88 Alder Street, Vancouver, BC V6E 1A9", "GST No. 897152666 RT0001", "",
+                  "Receipt No: 55120", "Date: 2026-05-06", "", "Hardcover book|25.00", "",
+                  "Subtotal|25.00", "GST 5%|1.25", "Total|26.25"]  # fmt: skip
+
+
+def test_a_claims_receipt_keeps_the_tip_it_found_and_its_voucher_owes_the_pst_on_every_line(app, client, store,
+                                                                                          tmp_path):  # fmt: skip
+    """B-2861: the dinner's receipt alone finds its tip (20% of its 90.00), but the claim of it and the book, one
+    invoice with no supplier named, did not: the tip was no longer the last line and was taken as a share of both
+    receipts. The tip, out of scope, beside lines that owe the PST, made the voucher's PST owed on some lines only,
+    and JD Edwards' self-assessed code was held. Each receipt's tip is now a share of its own lines."""
+    paths = [receipt(tmp_path, "dinner.pdf", VANCOUVER_DINNER), receipt(tmp_path, "book.pdf", VANCOUVER_BOOK)]
+    assert upload(client, paths, voucher="claim").json()["ok"]
+    assert finished(app, client)["result"]["ok"] == 1
+    (invoice,) = stored(store)
+    final = dict(invoice["ai_output"])
+    final.update(vendor_name="Dana Whitlock", invoice_number="EXP-0526", supplier_province="BC", ship_to_province="BC")
+    for li in final["line_items"]:  # a staff dinner: on another account than meals (D-90)
+        li["predicted_gl_code"] = "6900" if li["description"].startswith("Cedarline") else "6000"
+    coding = InvoiceCoding.model_validate({k: v for k, v in final.items() if k in InvoiceCoding.model_fields})
+    setup = store.reference_data().tax
+    final["gl_distribution"] = build_gl_distribution(coding, setup)
+    assert [(li.description, li.tax_status) for li in coding.line_items] == [
+        ("Cedarline Kitchen & Bar: HALIBUT", ""), ("Cedarline Kitchen & Bar: RIBEYE", ""),
+        ("Cedarline Kitchen & Bar: Tip", "out_of_scope"), ("Larchwood Books: Hardcover book", "")]  # fmt: skip
+    assert [line.tip for line in invoice_taxes(coding, setup).lines] == [False, False, True, False]
+    assert jde_voucher.pst_owed(final) == jde_voucher.ALL_OWED
+    voucher = jde_voucher._prepare({"id": invoice["id"], "final_output": final},
+                                   jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX), "10023")  # fmt: skip
+    assert voucher.tax_code == "B" and jde_voucher.PST_MIX not in voucher.problems
 
 
 def test_in_a_browser_files_are_ticked_or_picked_put_in_order_and_sent_as_one_voucher(chromium, app, store, tmp_path):

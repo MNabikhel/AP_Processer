@@ -7111,3 +7111,34 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Not changed:** VLDDJ is still sent only from what the invoice prints (B-924): a voucher of the supplier's own
     terms leaves its due date to JD Edwards. JD Edwards' blank code (its most used terms) is still not read: a row
     with no code is left out, and a supplier with no code has no terms.
+- **D-310** · **A tip is told by the invoice it is on, not by its words alone** (B-2860; the owner's to-do, after the
+  four word rules tried on 2026-11-12 and 13 each lost real tips).
+  - **The rule** (`coding/tax.py` `tip_lines`, `invoice_tips`): a line is a tip when its words say tip, gratuity,
+    pourboire, thank you or merci (`_TIP`, as before), it is not a count of something at a price (more than one, at
+    a unit price that makes its amount), and either the invoice takes tips: a line coded to a meals account (the GL
+    accounts marked meals, D-90), or the supplier's name or any line saying a meal, a stay, a ride or a personal
+    service (`_TAKES_TIPS`: restaurant, bistro, dinner, catering, hotel, "1 night", taxi, fare, salon, massage, tour,
+    instructor...); or, on an invoice that says neither, it is printed after the other lines and is a whole 10 to 25%
+    of them, to the cent, before the tax printed or with it (a terminal's 15% of 100.00 + 13.00 HST is 16.95). On an
+    expense claim (D-216) the lines are a tip's own receipt's (`_bill`: the lines in a row named "<merchant>: ...")
+    and the tax read on them (B-2861): the claim, one invoice of every receipt, keeps the tips each receipt found.
+  - **Why by the invoice:** a tip's own words are free ("Dinner tip for Mike", "Three-course dinner tip", "Cooking
+    class instructor tip"), so every rule on the words around a tip word lost some; a purchase named with a tip word
+    comes from a supplier that takes no tips ("Excel tips workshop" from a training centre, "Pipette tips for lab",
+    "Tip fee at landfill", "Thank you cards"). The supplier's usual account reaches the rule through the lines' codes
+    (the coding memory and the supplier's past coding code a restaurant's lines to the meals account), so the rule
+    needs no database: the posting, the Tax check, the meals warning (MEALS_TAX_LINES), the JD Edwards pay items
+    (`jde_zfiles._claimed_shares`), the PST owed on a voucher (`jde_voucher.pst_owed`) and a PO-matched voucher's
+    rows (`jde_match._line_shares`, B-2862) all take the same tips; a voucher's meals accounts are those its G/L
+    distribution halved (`jde_voucher.meals_accounts`). A share must be a whole percent and come after the lines, so a
+    purchase's amount rarely passes for one; a count at a price is never a tip, from any supplier ("Piping tips set",
+    3 x 12.00, from a restaurant supply).
+  - **Kept:** each of the 75 tips the word rules had to keep, and the owner's two (`tests/coding/test_meals.py`
+    `TIPS`), is a tip on an invoice with a meals line, from a bistro or with a dinner line, and as 18% or 15% of the
+    lines on any invoice; a tip printed after the tax (B-931) is untaxed as before. Words a supplies invoice says too
+    ("driver", "delivery", "hair", "nails", "room" alone) are not in `_TAKES_TIPS`.
+  - **Not caught:** a tip on an invoice that says nothing of its kind and is no whole share of it ("Tip 5.00" after
+    "Services 37.00": it takes its share of the tax, as any line), and a purchase named with a tip word on an invoice
+    that takes tips ("Tip trays for restaurant", "Thank you lunch" on the meals account: no share, as before).
+  - **Measured:** the reading benches, quick, on the commit before and after (`run`, `lines`, `coding`), are the same
+    to the line: none of their invoices has a line with a tip word.

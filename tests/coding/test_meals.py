@@ -11,12 +11,14 @@ import pytest
 
 from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.coding import taxreturn
+from ap_coder.coding.money import split
 from ap_coder.coding.tax import TaxRateTable, TaxSetup, build_gl_distribution, load_tax_mapping
+from ap_coder.coding.taxmath import invoice_taxes
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import load_reference_data
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup
-from ap_coder.erp import exports, jde, jde_review, jde_settings, jde_zfiles
+from ap_coder.erp import exports, jde, jde_review, jde_settings, jde_voucher, jde_zfiles
 from tests.conftest import DATA
 from tests.webclient import gt as _gt
 
@@ -332,6 +334,147 @@ def test_a_tip_written_another_way_carries_no_tax():
     """B-869: "Server - thank you" is a tip too."""
     dist = _dist(_on([(100.0, MEALS, "Dinner for 4"), (15.0, "6900", "Server - thank you")], 13.0))
     assert _split(dist)[0] == [(MEALS, 6.50, 106.50), ("6900", 0.0, 15.0)]
+
+
+# --- A tip is told by the invoice it is on, not by its words alone (D-310) ------------------------------------------
+
+# The tips the word rules tried on 2026-11-12 and 13 had to keep, and the owner's two (the last).
+TIPS = (
+    "Tip", "Tips", "Server - thank you", "Gratuity 18%", "Driver tip", "Pourboire - merci!", "Gratuité", "Tip amount",
+    "Tip total", "Tip - Visa", "Credit card tip", "Tip (cash)", "Tip: Server John", "Tip for Maria", "Tip to driver",
+    "Tip per server", "Gratuity - Table 5", "Pourboire - Table 12", "Pourboire inclus", "Pourboire facultatif",
+    "Pourboire pour le serveur", "Pourboire du personnel", "Gratuité incluse", "Gratuité suggérée", "Merci beaucoup",
+    "Auto-gratuity 18% large party", "Driver tip - Uber Eats", "Thank you for your business", "18% gratuity",
+    "Tip $5.00", "Cash tip for Maria", "Staff tips for December", "Driver tip for delivery", "Included gratuity at 15%",
+    "Mandatory gratuity for large party", "Server tip included", "Le pourboire pour Marie", "The tip is included",
+    "Le pourboire est inclus", "Employee tip distribution", "Staff tips Dec", "Credit card tips paid out",
+    "Dinner gratuity at 18%", "Taxi tip at airport", "Taxi tip to airport", "Uber tip for driver",
+    "Service tip to server", "Bellhop tip for bags", "Hotel housekeeping tips for stay", "Lunch and tip for team",
+    "Thank you for dining", "Thank you for dining with us", "Holiday tip for the driver",
+    "Repas et pourboire pour le serveur", "Dinner tip for Mike", "Hotel tip for the maid", "Christmas tip for Joe",
+    "Souper pourboire pour Marie", "Thank you for visiting", "Tip for tour guide", "Guide tip for Maria",
+    "Card tip for server", "Delivery fee and tip", "Tip for bags", "Tip jar donation", "Nail tip for technician",
+    "Gratuité de 18%", "Gratuité pour le personnel", "Livraison pourboire au livreur",
+    "Merci beaucoup pour votre pourboire", "Tip paid by card", "Ski lift ticket and tip for instructor",
+    "Gratuity on 100.00", "Gratuity set at 18%", "Tip set to 15%", "Three-course dinner tip",
+    "Cooking class instructor tip",
+)  # fmt: skip
+
+
+def _tips(doc, setup=None):
+    """Each line of ``doc`` as the Tax check has it: (a tip, its share of the invoice's first tax)."""
+    found = invoice_taxes(InvoiceCoding.model_validate(doc), setup or _setup())
+    return [(line.tip, line.taxes[0].amount) for line in found.lines]
+
+
+def test_a_tip_on_an_invoice_that_takes_tips_carries_no_tax():
+    """D-310: a line with a tip word is a tip on an invoice that takes tips, whatever else its words say: one with a
+    line coded to a meals account (its tax all on the meal: half of all 13.00 expensed), from a supplier whose name
+    says a meal, a stay, a ride or a personal service, or with a line that does. 12.34 is no share of the 100.00."""
+    lost = []
+    for text in TIPS:
+        dist = _dist(_on([(100.0, MEALS, "Client evening"), (12.34, "6900", text)], 13.0))
+        if _split(dist) != ([(MEALS, 6.50, 106.50), ("6900", 0.0, 12.34)], [("2310", 6.50)]):
+            lost.append(("meals account", text))
+        for vendor, first in (("Riverbend Bistro", "Order 4471"), (_gt(ON)["vendor_name"], "Dinner for 4")):
+            doc = {**_on([(100.0, "6100", first), (12.34, "6900", text)], 13.0), "vendor_name": vendor}
+            if _tips(doc) != [(False, 13.0), (True, 0.0)]:
+                lost.append((vendor, first, text))
+    assert lost == []
+
+
+def test_a_tip_that_is_a_share_of_the_lines_before_it_carries_no_tax():
+    """D-310: on an invoice that says nothing of its kind, a tip word's line printed after the lines and a whole 10 to
+    25% of them, before the tax or with it, is a tip: 18% of 1,000.00 of event services, 15% of 100.00 + 13.00 HST."""
+    lost = []
+    for text in TIPS:
+        for lines, hst in (([(1000.0, "6100", "Event services"), (180.0, "6900", text)], 130.0),
+                           ([(100.0, "6100", "Event services"), (16.95, "6900", text)], 13.0)):  # fmt: skip
+            if _tips(_on(lines, hst)) != [(False, hst), (True, 0.0)]:
+                lost.append((lines[-1][0], text))
+    assert lost == []
+
+
+def _bc(vendor, lines):
+    """A British Columbia invoice from ``vendor`` of ``lines`` [(quantity, unit price, account, description)], each
+    line charged GST and PST."""
+    doc = _on([(round(q * p, 2), gl, text) for q, p, gl, text in lines], 0.0)
+    for item, (q, p, _, _) in zip(doc["line_items"], lines, strict=True):
+        item.update(quantity=q, unit_price=p, taxes_applied=["GST", "PST"], tax_exempt=[], tax_status="")
+    base = doc["subtotal"]
+    gst, pst = round(base * 0.05, 2), round(base * 0.07, 2)
+    doc.update(vendor_name=vendor, supplier_province="BC", ship_to_province="BC", tax_total=round(gst + pst, 2),
+               grand_total=round(base + gst + pst, 2), tax_lines=[
+        {"tax_type": "GST", "province": "", "rate": 0.05, "taxable_amount": base, "tax_amount": gst},
+        {"tax_type": "PST", "province": "BC", "rate": 0.07, "taxable_amount": base, "tax_amount": pst},
+    ])  # fmt: skip
+    return doc
+
+
+# What a tip word names on an invoice that takes no tips (the owner's four), and a count of something bought from a
+# supplier whose name says restaurant: each is a purchase.
+PURCHASES = (
+    ("Lakeside Learning Centre", [(1, 450.0, "6150", "Excel tips workshop"), (1, 36.0, "6150", "Course workbook")]),
+    ("Norfield Scientific", [(2, 14.25, "6400", "Nitrile gloves, box"), (1, 64.8, "6400", "Pipette tips for lab")]),
+    ("Ridgeback Disposal", [(1, 185.0, "6500", "Bin rental, 20 yd"), (1, 140.0, "6500", "Haul to landfill"),
+                            (1, 62.4, "6500", "Tip fee at landfill")]),
+    ("Harbour Stationers", [(10, 8.99, "6000", "Printer paper, ream"), (1, 21.5, "6000", "Thank you cards")]),
+    ("Brightwater Restaurant Supply", [(1, 240.0, "6000", "Sheet pans"), (3, 12.0, "6000", "Piping tips set")]),
+)  # fmt: skip
+
+
+@pytest.mark.parametrize(("vendor", "lines"), PURCHASES, ids=[vendor for vendor, _ in PURCHASES])
+def test_a_purchase_named_with_a_tip_word_takes_its_share_of_the_tax(vendor, lines):
+    """B-2860: any line with a tip word was a tip, so "Excel tips workshop", "Pipette tips for lab", "Tip fee at
+    landfill" or "Thank you cards" took none of the tax printed: the PST kept in the expense was all posted to the
+    invoice's other lines. On an invoice that takes no tips, or bought by the count, each takes its share (D-310)."""
+    doc = _bc(vendor, lines)
+    expense, _ = _split(_dist(doc, _setup(meals=())))
+    amounts = [li["amount"] for li in doc["line_items"]]
+    assert [kept for _, kept, _ in expense] == split(doc["tax_lines"][1]["tax_amount"], amounts)
+    assert [tip for tip, _ in _tips(doc)] == [False] * len(lines)
+
+
+def test_the_pst_owed_on_a_voucher_leaves_out_the_tips_the_posting_does():
+    """D-310: GST charged and no PST, the JD Edwards voucher self-assesses the PST only when every line owes it, tips
+    left out: "Thank you cards" marked PST-exempt beside paper that owes it is a mix (held back), while a bistro's
+    tip marked so is left out, as the posting leaves it out."""
+
+    def charged_gst_only(vendor, lines):
+        doc = _bc(vendor, lines)
+        for item, exempt in zip(doc["line_items"], ([], ["PST"]), strict=True):
+            item.update(taxes_applied=["GST"], tax_exempt=exempt)
+        gst = doc["tax_lines"][0]
+        doc.update(
+            tax_lines=[gst], tax_total=gst["tax_amount"], grand_total=round(doc["subtotal"] + gst["tax_amount"], 2)
+        )
+        return InvoiceCoding.model_validate(doc).model_dump()
+
+    cards = charged_gst_only("Harbour Stationers", PURCHASES[3][1])
+    tip = charged_gst_only("Riverbend Bistro", [(1, 100.0, "6100", "Order 4471"), (1, 12.34, "6900", "Tip")])
+    assert (jde_voucher.pst_owed(cards), jde_voucher.pst_owed(tip)) == (jde_voucher.SOME_OWED, jde_voucher.ALL_OWED)
+
+
+def test_a_voucher_match_keys_the_tip_the_posting_leaves_untaxed_with_no_tax():
+    """B-2862: a staff dinner on PO 4100, all on the meals account: the posting and the review screen take its
+    gratuity for a tip (D-310), but the voucher match read the lines with a Tax setup of no meals account, so the
+    gratuity took 52.00 of the HST and was keyed Tax Y. The match takes the meals accounts the posting halved."""
+    from ap_coder.coding.po import MatchRow, VoucherMatch
+    from ap_coder.erp import jde_match
+
+    doc = _on([(1625.0, MEALS, "Set menu"), (480.0, MEALS, "Beverages"), (400.0, MEALS, "Gratuity")], 273.65)
+    doc["line_items"][0].update(quantity=25, unit_price=65.0)
+    doc["tax_lines"][0]["taxable_amount"] = 2105.0
+    doc.update(vendor_name="Cedarline Kitchen & Bar", po_number="4100")
+    coding = InvoiceCoding.model_validate(doc)
+    final = {**coding.model_dump(), "gl_distribution": build_gl_distribution(coding, _setup())}
+    settings = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX)
+    voucher = jde_voucher._prepare({"id": 1, "final_output": final}, settings, "10023")
+    rows = [MatchRow(n, li["description"], "4100", "OP", "00001", f"{n}.000", None, "", li["amount"], "100.6320",
+                     None, tax=("Y", "", "")) for n, li in enumerate(final["line_items"], 1)]  # fmt: skip
+    keyed = jde_match.keyed_match(voucher, VoucherMatch(rows=rows), settings)
+    assert [(row.amount, row.taxed) for row in keyed.rows] == [(1625.0, "Y"), (480.0, "Y"), (400.0, "N")]
+    assert keyed.tax == 27365 and keyed.warnings == []
 
 
 def test_the_excel_and_csv_lines_carry_the_meals_half():

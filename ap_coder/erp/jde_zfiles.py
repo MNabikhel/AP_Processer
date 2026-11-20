@@ -328,7 +328,7 @@ def _claimed_shares(v: _Voucher) -> list[int] | None:
     """Each distribution line's claimable share of the recoverable taxes E1 posts, as the GL distribution has them
     (``tax.tax_shares``, half of a meals line's share: D-90), in the currency's units; None when the invoice's lines
     can't be read back or don't match the distribution lines (then the pay items split the tax themselves)."""
-    from ..coding.tax import half_down, is_meals, tax_shares
+    from ..coding.tax import half_down, invoice_tips, is_meals, tax_shares
     from ..core.schema import InvoiceCoding
     from .exports import entry_lines
 
@@ -344,11 +344,12 @@ def _claimed_shares(v: _Voucher) -> list[int] | None:
         return None
     meals_codes = {str(e.get("gl_code") or "").strip() for e in v.entries if e.get("meals_tax")}
     places = v.decimals
+    tips = invoice_tips(coding, meals_codes)  # a meals line is on it: the tips the distribution has (D-310)
     per_line = [0] * len(items)
     for tl in coding.tax_lines:
         if tl.tax_type not in v.recoverable_types or abs(tl.tax_amount) < 0.005:
             continue
-        for idx, share in tax_shares(coding.line_items, tl, places, coding.tax_lines):
+        for idx, share in tax_shares(coding.line_items, tl, places, coding.tax_lines, tips):
             meal = is_meals(coding.line_items[idx].predicted_gl_code, meals_codes)
             per_line[idx] += _units(half_down(share, places) if meal else share, v.decimals)
     shares = [per_line[i] if i is not None else 0 for i in lines]
