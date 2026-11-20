@@ -6859,3 +6859,15 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     say later: the rules change as files are loaded, and a person may have picked it. A company not in report 9 is a
     warning (`US_TAX_NOT_CHECKED`), not an error: the pilot may name one (D-272). An invoice approved before report 9
     and not reopened is exported under Settings' company, as approved.
+- **D-290** · **A business unit whose posting edit code is K (its budget locked) takes postings, as blank and ACT
+  do** (`core/chart.py` `ACTIVE`; every path reads it: the chart in memory, the database's `IndexedPairs`, the cost
+  centers, `chart load`'s count of closed business units, the Business units table's note; B-2744).
+  - **Why:** report 2's Job Sts is F0006 MCPECC, the business unit's posting edit code (UDC H00/PE). In JD Edwards,
+    K lets transactions post to the business unit and locks only its original budget (changed by change orders);
+    Job Cost locks a job's budget by setting it to K, so a construction group's open jobs are many of them K. Read as
+    closed, each was never offered and a line coded to one was BU_INACTIVE, an error Approve anyway never covers,
+    where JD Edwards takes the voucher. The accounts' own K already took postings (`KNOWN_EDITS`, D-272).
+  - **What:** a business unit is closed when its status is anything but ACT, blank or K: N (no postings) and P (no
+    postings, the job may be purged) are, as any other. *Not chosen:* a setting of the business units' codes (as
+    Accounts AP posts to is the accounts'): JD Edwards says what K means, and a person who wants one job closed
+    changes its status by hand (D-221).

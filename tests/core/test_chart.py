@@ -319,6 +319,24 @@ def test_a_business_unit_with_no_status_is_active_and_one_with_any_other_status_
     assert set(chart.account_lists(_chart().rows, units)[1]) == (set(cf.COST_CENTERS) | {CLOSED}) - {"07310K"}
 
 
+def test_a_job_with_its_budget_locked_takes_postings(tmp_path):
+    """B-2744 (D-290): a business unit's posting edit code K (F0006 MCPECC, the build sheet's Job Sts) is JD Edwards'
+    "budget locked": its transactions post, only its original budget is locked. It was read as closed: never offered,
+    and a line coded to it a BU_INACTIVE error. N and P still take no postings."""
+    from ap_coder.core.store import Store
+
+    units = [chart.BuRow(HOME, "Budget locked", status="K"), chart.BuRow(OTHER, "No postings", status="N"),
+             chart.BuRow("07310K", "Purged", status="P")]  # fmt: skip
+    store = Store(tmp_path / "ap.db")
+    store.import_business_units(units)
+    store.import_chart(_chart().rows)
+    for pairs in (AccountPairs(_chart().rows, units), store.account_pairs()):
+        assert pairs.status(HOME, "5410") == OK and HOME in pairs.business_units() and HOME in pairs.bus_of("5410")
+        assert pairs.status(OTHER, "5410") == pairs.status("07310K", "5410") == BU_INACTIVE
+        assert pairs.closed_units() == sorted([OTHER, "07310K"])
+    assert HOME in chart.account_lists(_chart().rows, units)[1] and HOME in store.chart_lists()[1]
+
+
 def test_a_code_stored_as_a_number_is_refused_since_its_zeros_may_be_lost():
     records = [{"Business Unit": "0731066120", "Object Account": "5410", "L D": 6.0},
                {"Business Unit": 731066120, "Object Account": 42, "Subsidiary": 7.0, "L D": 7},
