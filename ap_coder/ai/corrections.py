@@ -257,12 +257,20 @@ def _printed_money(text: str) -> list[float]:
         lead = start + (text[start : start + 1] in "-−–")  # (a minus run into a word is its hyphen: "INV-450.00")
         if not before and (_JOINED_BEFORE.search(text, max(0, lead - 2), lead)
                            or not cents and _LETTER_BEFORE.search(text, max(0, start - 1), start)):  # fmt: skip
-            continue  # (run into its currency, "CAD150.00", "722.93CAD", it is money)
+            continue  # run into a word or a number ("RT0001", "555-0150"; run into its currency, "CAD150", is money)
         if not after and _JOINED_AFTER.match(text, end):
-            continue
+            continue  # ("5.00%", "2026-11-02"; "722.93CAD" is money)
         if cents or before or after or _CURRENCY.search(text, start, end):
             found.append(abs(value))
     return found
+
+
+def _which_lines(some: list[dict[str, Any]], lines: list[dict[str, Any]]) -> str:
+    """ "every line", "line 2", "lines 1, 2 and 4": ``some`` of the invoice's ``lines``."""
+    numbers = [str(li.get("line_number")) for li in some]
+    if len(some) == len(lines):
+        return "every line"
+    return f"line {numbers[0]}" if len(numbers) == 1 else f"lines {', '.join(numbers[:-1])} and {numbers[-1]}"
 
 
 def _rate(given: Any, amount: float, base: float, lines: int, out: dict[str, Any], setup: Any) -> float | None:
@@ -412,10 +420,7 @@ def apply_items(output: dict[str, Any], items: list[dict[str, Any]], text: str, 
             for li in marked:
                 li["taxes_applied"] = sorted({*(li.get("taxes_applied") or []), tax})
             if newly and same:  # (a new tax line says the lines' amount it is on)
-                numbers = [str(li.get("line_number")) for li in marked]
-                where = ("every line" if len(marked) == len(lines) else f"line {numbers[0]}" if len(numbers) == 1
-                         else f"lines {', '.join(numbers[:-1])} and {numbers[-1]}")  # fmt: skip
-                said.append(f"{tax} on {where} (no line had it)")
+                said.append(f"{tax} on {_which_lines(marked, lines)} (no line had it)")
             if same:
                 if abs(float(same[0].get("tax_amount") or 0) - amount) < 0.005 and not item.get("rate"):
                     continue
