@@ -18,21 +18,119 @@ def test_a_module_brings_its_own_tests_and_those_that_import_it():
     assert "tests/coding/test_guesses_and_learned_codes.py" in picked  # imports ap_coder.coding.terms by name
 
 
-def test_a_widely_imported_module_brings_only_its_own_tests():
-    picked = check.tests_for(["ap_coder/core/store/invoices.py"])  # a part of the store package
-    assert picked and all(p.startswith("tests/core/test_store") for p in picked)
+def test_a_widely_imported_module_brings_its_own_tests_and_the_quickest_of_those_that_import_it():
+    picked = check.picks(["ap_coder/core/store/invoices.py"])["ap_coder/core/store/invoices.py"]  # a store part
+    assert {"tests/core/test_store_package.py", "tests/core/test_store_session.py"} <= picked
+    assert len(picked) < 60  # (of the hundreds that import the store)
+    mirror = ROOT / "tests" / "coding"
+    users = [mirror / "test_slow.py", mirror / "test_quick.py", mirror / "test_new.py", ROOT / "tests/web/test_x.py"]
+    times = {"tests/coding/test_slow.py": [30.0, 19.0], "tests/coding/test_quick.py": [1.0, 0.5],
+             "tests/web/test_x.py": [0.0, 0.0]}  # fmt: skip
+    # Its own folder's first, the quickest first (a file not timed yet: UNTIMED), up to BUDGET seconds.
+    assert check.quickest(users, mirror, times) == {mirror / "test_quick.py", mirror / "test_new.py"}
+    assert check.quickest(users[:1], mirror, {"tests/coding/test_slow.py": [99.0, 99.0]}) == {users[0]}  # never none
 
 
 def test_a_changed_test_runs_itself_and_a_page_script_its_page_tests():
-    assert check.tests_for(["tests/coding/test_tax.py"]) == ["tests/coding/test_tax.py"]
+    assert check.tests_for(["tests/coding/test_tax.py"]) == sorted(["tests/coding/test_tax.py", *check.RULES])
     assert "tests/web/test_web_invoice.py" in check.tests_for(["ap_coder/web/static/js/invoice.js"])
 
 
 def test_a_script_the_package_and_the_shared_test_files_bring_their_tests():
     assert "tests/launcher/test_update.py" in check.tests_for(["scripts/upgrade.py"])
-    assert check.tests_for(["ap_coder/__init__.py"]) == ["tests/meta/test_moved_modules.py"]
+    assert check.picks(["ap_coder/__init__.py"]) == {"ap_coder/__init__.py": {"tests/meta/test_moved_modules.py"}}
     assert check.tests_for(["tests/conftest.py"]) is None  # the whole default run
     assert check.tests_for(["pyproject.toml", "ap_coder/coding/tax.py"]) is None
+
+
+def test_any_change_to_the_app_the_scripts_or_the_tests_runs_the_rules_that_check_the_whole_tree():
+    """D-329: the KEPT list of tests/meta/test_core_imports.py (a store part moved, 6420278) and the offline guard's
+    TOUCHPOINTS (a script added, b4c06bf) failed only in CI: no test named after the files changed checks them."""
+    assert set(check.RULES) <= set(check.tests_for(["ap_coder/core/store/learning.py"]))
+    assert "tests/offline/test_offline_guard.py" in check.tests_for(["scripts/new.py"])
+    for changed in ("ap_coder/coding/gone.py", "ap_coder/web/templates/review.html", "tests/web/test_new.py"):
+        assert set(check.RULES) <= set(check.tests_for([changed])), changed  # (deleted, not Python, new)
+    assert not any(t.startswith("tests/meta/") for t in check.tests_for(["tests/meta/test_caches.py"]))  # (in one)
+    for path in check.RULES:
+        assert (ROOT / path).exists(), path
+
+
+def test_every_test_named_by_hand_is_there():
+    """A test renamed would leave its module (or doc) in OWN with none of its tests."""
+    missing = [f"{f}: {t}" for f, tests in check.OWN.items() for t in tests if not list(ROOT.glob(t))]
+    assert not missing and (ROOT / check.DOC_RULES[0]).is_file(), missing
+    assert all((ROOT / f).is_file() for f in check.OWN), [f for f in check.OWN if not (ROOT / f).is_file()]
+
+
+def test_a_changed_doc_runs_the_rules_every_doc_is_held_to_and_the_tests_that_open_it():
+    rules = [t for t in check.DOC_RULES if (ROOT / t).is_file()]  # (test_log_entries.py: once it is there)
+    for log in ("docs/BUGS.md", "docs/decisions.md", "docs/bugs/README.md", "docs/decisions/D-329.md", ".ignore"):
+        assert check.tests_for([log]) == rules, log
+    for doc in ("docs/WHATS_NEW.md", "docs/QUICK_START.md"):  # what the Help page shows
+        assert {*rules, "tests/web/test_web_help.py"} <= set(check.tests_for([doc])), doc
+    assert "tests/meta/test_how_it_runs_doc.py" in check.tests_for(["docs/HOW_IT_RUNS.md"])
+    assert "tests/meta/test_agent_profile.py" in check.tests_for([".claude/agents/developer.md"])
+    assert set(rules) <= set(check.tests_for(["CLAUDE.md"])) and check.tests_for(["notes.txt"]) == []
+
+
+def test_no_module_of_the_app_goes_without_tests():
+    """These 28 modules got no test at all and the check said OK (offline_coder.py, the review screen's routes...):
+    each now brings tests of its own, the quickest of its many importers or those named in OWN."""
+    names = """__main__ ai/offline_coder bench/__main__ bench/jde_company capture/bridge capture/layout
+        capture/normalize capture/types capture/workflow coding/taxmath core/store/summary erp/__init__
+        erp/jde_retainage ops/__init__ ops/doctor ops/jde_cmd ops/service_windows web/identity web/invoice_form
+        web/pages/__init__ web/pages/invoice_approve web/pages/invoice_document web/pages/invoice_lines
+        web/pages/invoice_router web/pages/month_end web/pages/settings_hub web/pages/settings_jde web/pages/who"""
+    modules = [f"ap_coder/{name}.py" for name in names.split()]
+    found = check.picks(modules)
+    assert check.untested(found) == []
+    assert "tests/ai/test_offline_coding.py" in found["ap_coder/ai/offline_coder.py"]
+
+
+def test_a_changed_module_no_test_is_picked_for_fails_the_check(monkeypatch, capsys):
+    monkeypatch.setattr(check, "picks", lambda files: {f: set() for f in files})
+    code, out, _ = _checked(monkeypatch, capsys, ["ap_coder/coding/tax.py", "docs/BUGS.md", "--no-walk"])
+    assert code == 1 and "NO TESTS RAN FOR ap_coder/coding/tax.py" in out and "check: OK" not in out
+    assert "docs/BUGS.md" not in out  # (a doc is no module)
+
+
+def test_a_run_from_another_folder_picks_the_same_tests(monkeypatch, tmp_path):
+    """The part of a package (core/store/invoices.py) was looked for from the folder check.py ran in: 0 tests."""
+    changed = ["ap_coder/core/store/invoices.py", "ap_coder/coding/terms.py", "docs/WHATS_NEW.md"]
+    monkeypatch.chdir(ROOT)
+    here = check.tests_for(changed)
+    monkeypatch.chdir(tmp_path)
+    assert check.tests_for(changed) == here and "tests/core/test_store_session.py" in here
+
+
+def test_the_rules_run_their_slow_tests_but_no_browser_nor_the_offline_guards_whole_walks(monkeypatch, capsys):
+    ran = []
+    monkeypatch.setattr(check, "pytest", lambda args: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
+    assert check.main(["ap_coder/coding/terms.py", "--no-walk"]) == 0
+    rules, tests = ran
+    assert rules[:4] == ["-m", "", "-k", "not in_a_browser"] and set(rules[-len(check.RULES) :]) == set(check.RULES)
+    left_out = [rules[i + 1] for i, a in enumerate(rules) if a == "--deselect"]
+    assert "tests/offline/test_offline_guard.py::test_the_whole_walk_works_in_a_network_namespace_without_network" in (
+        left_out
+    )
+    assert left_out and not any(t.startswith("tests/meta/") for t in left_out)
+    assert "tests/coding/test_terms.py" in tests and "-m" not in tests and not set(check.RULES) & set(tests)
+    assert capsys.readouterr().out.startswith("Rules: tests/core/test_store_package.py tests/meta ")
+
+
+def test_a_changed_function_near_the_length_limit_gets_a_warning(monkeypatch, capsys):
+    from tests.meta.test_function_length import LIMIT
+
+    assert LIMIT - 15 < check.NEAR < LIMIT and 900 < check.NEAR_PART < 1000
+    monkeypatch.setattr(check, "changed_lines", lambda f: None)  # (all of it new)
+    warned = check.near_limits(["ap_coder/bench/__main__.py", "ap_coder/core/store/summary.py", "docs/BUGS.md"])
+    assert any(w.startswith("ap_coder/bench/__main__.py::main: ") for w in warned)  # (265 lines)
+    assert any(w.startswith("ap_coder/core/store/summary.py: ") for w in warned)  # (997 lines)
+    monkeypatch.setattr(check, "changed_lines", lambda f: {1})  # the docstring only: no function changed
+    assert check.near_limits(["ap_coder/bench/__main__.py"]) == []
+    code, out, _ = _checked(monkeypatch, capsys, ["ap_coder/core/store/summary.py", "--no-walk"])
+    assert code == 0 and "near the limit: split before adding: ap_coder/core/store/summary.py" in out
+    assert out.rstrip().endswith("check: OK")
 
 
 def test_outside_a_git_checkout_it_asks_for_the_files(monkeypatch, capsys):
