@@ -30,7 +30,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from ..core.safe import csv_row
-from ..core.schema import FROM_VENDOR_LIST
+from ..core.schema import COMPANY_TAX, FROM_VENDOR_LIST
 from ..core.store import APPROVED, PARKED, PENDING, REVIEW, Store
 from ..core.store.summary import broken, computed
 from .money import half_up, nil, times
@@ -271,7 +271,7 @@ def tax_facts(row: dict[str, Any], approval: dict[str, Any] | None) -> dict[str,
     for position, tl in enumerate(doc.get("tax_lines") or []):
         tax_type = str(tl.get("tax_type") or "").upper()
         amount = round(float(tl.get("tax_amount") or 0), 2)
-        if tax_type not in GROUPS or abs(amount) < 0.005:
+        if tax_type not in GROUPS or abs(amount) < 0.005 or not_canadian(doc):
             continue
         not_claimed = meals.get(position, 0.0)
         number, issue = _registration_issue(tax_type, doc)
@@ -281,6 +281,12 @@ def tax_facts(row: dict[str, Any], approval: dict[str, Any] | None) -> dict[str,
     return {"cur": str(doc.get("currency") or "CAD").upper(), "total": float(doc.get("grand_total") or 0),
             "vendor": str(doc.get("vendor_name") or ""), "number": str(doc.get("invoice_number") or ""),
             "err": charged_in_error(row, approval), "lines": lines, "supply": supply_inputs(doc)}  # fmt: skip
+
+
+def not_canadian(doc: dict[str, Any]) -> bool:
+    """Whether an invoice's company is not checked for Canadian tax (a US one, ``schema.COMPANY_TAX``, D-267): none of
+    its tax is a Canadian company's to claim back or to self-assess (B-2872)."""
+    return isinstance(doc.get(COMPANY_TAX), dict)
 
 
 def _json(text: str | None) -> Any:
@@ -492,7 +498,7 @@ def self_assessment_facts(doc: dict[str, Any]) -> dict[str, Any]:
     items = doc.get("line_items") or []
     return {
         "supply": supply_inputs(doc),
-        "base": {t: self_assessed_base(doc, items, t, charged) for t in ("PST", "QST")},
+        "base": {t: 0.0 if not_canadian(doc) else self_assessed_base(doc, items, t, charged) for t in ("PST", "QST")},
         "vendor": str(doc.get("vendor_name") or ""),
         "number": str(doc.get("invoice_number") or ""),
         "cur": str(doc.get("currency") or "CAD").upper(),

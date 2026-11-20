@@ -254,3 +254,24 @@ def test_self_assessment_uses_the_place_of_supply_of_the_tax_checks(tmp_path):
     assert [(s.invoice_number, s.province, s.tax_type) for s in items] == [("U-1", "BC", "PST")]
     hst = {"tax_type": "HST", "province": "", "rate": 0.13, "taxable_amount": 100.0, "tax_amount": 13.0}
     assert taxreturn.province("HST", hst, {"supplier_province": "ON"}, taxreturn.supply_setup(store)) == "BC"
+
+
+def test_a_us_companys_invoices_are_never_on_the_canadian_tax_reports(tmp_path):
+    """B-2872: with several JD Edwards companies (D-267), a US company's approved invoice was on the Self-assessment
+    report as BC PST owed (no ship-to in Canada: Settings → Review's province, British Columbia, taken for where it
+    was delivered), and a Canadian supplier's GST charged to it was an input tax credit to claim, though the company
+    is not checked for Canadian tax: neither is a Canadian company's to claim or to self-assess."""
+    from tests.coding.test_companies import _load_group
+
+    store = Store(tmp_path / "t.db")
+    load_sample_setup(store)
+    _load_group(store)
+    store.set_setting("our_province", "BC")
+    picked = {"company_how": "picked", "ship_to_province": "OUTSIDE_CANADA"}
+    for company in ("00310", "00220"):
+        _approved(store, tmp_path, "pacific_BC_GST_PST_PO-77120", invoice_number=f"G-{company}", company=company,
+                  **picked)  # fmt: skip
+        _approved(store, tmp_path, "chinook_AB_GST_CCO-26-10418", invoice_number=f"N-{company}", company=company,
+                  tax_lines=[], tax_total=0.0, grand_total=1746.0, **picked)  # fmt: skip
+    assert {c.invoice_number for c in taxreturn.build(store, *YEAR).claims} == {"G-00220"}
+    assert {s.invoice_number for s in taxreturn.self_assessment(store, *YEAR)} == {"N-00220"}
