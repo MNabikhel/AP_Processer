@@ -105,6 +105,13 @@ _PROVINCE_AT = re.compile(
     r"(?:\(|\b)(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)"
     rf"(?:(?:\)|\b)\s*,?\s*{_POSTAL}|(?={_POSTAL}(?![A-Za-z0-9])){_POSTAL})"
 )
+# A scan's postal code with one of its last three characters lost too ("Regina,SKS4P48" for S4P 4K8, B-2891): after a
+# city's comma, the province code and five characters that start with its own letter (``_POSTAL_LETTERS``).
+_PROVINCE_CUT = re.compile(
+    r",\s*(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)\s*([A-Z])[\dOI][A-Z]\s?[\dOIA-Z]{2}(?![A-Za-z0-9])"
+)
+_POSTAL_LETTERS = {"NL": "A", "NS": "B", "PE": "C", "NB": "E", "QC": "GHJ", "ON": "KLMNP", "MB": "R", "SK": "S",
+                   "AB": "T", "BC": "V", "NT": "X", "NU": "X", "YT": "Y"}  # fmt: skip
 # A province spelled out or abbreviated after a city's comma or in brackets, then its postal code or the line's end:
 # "Toronto, Ontario M5V 2T6", "Burnaby, British Columbia", "Québec (Québec) G1V 2M2", "Vancouver, B.C.", "Regina,
 # Sask." (``schema.province_named`` says which). A bare code ("Vancouver, BC") still needs its postal code, and with
@@ -171,6 +178,16 @@ def read_invoice(path: str | Path, store: Any = None, layout: DocLayout | None =
 
 def _values(capture: CaptureResult) -> dict[str, Any]:
     return {f: r.value for f, r in capture.fields.items() if r.value not in (None, "")}
+
+
+def _unread_quantity(li: Any) -> float:
+    """A line read with no quantity: its amount at its unit price when that is a whole number of them (a scan's OCR
+    lost a short "-4", B-2892), else 1."""
+    if li.unit_price and li.amount:
+        count = round(float(li.amount) / float(li.unit_price))
+        if count and abs(count * float(li.unit_price) - float(li.amount)) <= 0.011:
+            return float(count)
+    return 1.0
 
 
 def _amount(values: dict[str, Any], field: str) -> float:
@@ -409,6 +426,9 @@ def _province_of(text: str, named: bool = True) -> str:
     m = _PROVINCE_AT.search(text or "")
     if m:
         return m.group(1)
+    for m in _PROVINCE_CUT.finditer(text or ""):
+        if m.group(2) in _POSTAL_LETTERS[m.group(1)]:
+            return m.group(1)
     for m in _PROVINCE_NAMED_AT.finditer(text or ""):
         name, letters = m.group(1), re.sub(r"[\W\d_]", "", m.group(1))
         if m.group("postal"):
@@ -802,7 +822,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         readings_data = [(said, 1.0, subtotal, subtotal)]
     else:
         readings_data = [
-            (li.description or f"Line {i}", li.quantity if li.quantity is not None else 1.0,
+            (li.description or f"Line {i}", li.quantity if li.quantity is not None else _unread_quantity(li),
              li.unit_price if li.unit_price is not None
              else float(li.amount) / li.quantity if li.quantity else float(li.amount), float(li.amount))
             for i, li in enumerate(readings, 1)

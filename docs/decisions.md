@@ -6991,6 +6991,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     number, a date, a postal code), nor a rate; a receipt's tax flag after its cents ("4.50GP") and a French "$" after
     it ("75 $ 150 $") are its own (B-2808). A whole-dollar amount printed bare ("Freight 150") is not taken: the
     correction is refused and nothing changes, as for any amount not printed. A tax no line can carry is refused.
+    number, a date, a postal code), nor a rate. A whole-dollar amount printed bare ("Freight 150") is not taken: the
+    correction is refused and nothing changes, as for any amount not printed.
   - **A supplier** is never the company's own: its name is compared with Settings' names and JD Edwards' companies'
     as the supplier list has it, before a supplier number is added ("NAME #2004"). Its name printed on the page is
     whole words; only a name of several words may have them run together, as a scan reads it.

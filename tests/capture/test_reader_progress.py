@@ -120,3 +120,18 @@ def test_an_invoice_that_holds_nothing_back_is_no_progress_billing():
     assert read_progress([*plain, "Holdback   0.00"]) is None
     assert read_progress([*plain, "Holdback of 10% is payable within 60 days of completion."]) is None
     assert read_progress([*plain, "The holdback release will be invoiced at substantial performance."]) is None
+
+
+def test_a_scans_tax_rows_with_the_spaces_lost_are_read(tmp_path):
+    """B-2890: a scan's OCR runs a tax's name into its rate ("9.GST5%on45,000.00", "HST13%on80,000.00"): each is still
+    the billing's tax, so it adds up and its amounts are used (it read no tax, and the billing was coded at nothing)."""
+    application = ["4.Totalcompleted todate   45,000.00", "5.Less previous applications   0.00",
+                   "6.Workcompleted thisperiod   45,000.00", "7.Lessholdback10%   (4,500.00)",
+                   "8.Net amount thisperiod   40,500.00", "9.GST5%on45,000.00   2,250.00",
+                   "10.Current payment due   42,750.00"]  # fmt: skip
+    read = read_progress(application)
+    assert (read["taxes"], read["adds_up"]) == ({"GST": 2250.0}, True)
+    invoice = ["Mechanical rough-in-work thisperiod   80,000.00", "Subtotal   80,000.00",
+               "Lessholdback 10%   (8,000.00)", "HST13%on80,000.00   10,400.00", "Amountdue   82,400.00"]  # fmt: skip
+    read = read_progress(invoice)
+    assert (read["taxes"], read["amount_due"], read["adds_up"]) == ({"HST": 10400.0}, 82400.0, True)
