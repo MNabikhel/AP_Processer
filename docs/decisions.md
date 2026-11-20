@@ -6964,6 +6964,26 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - *Left as it is:* an invoice the batch check holds stays in Ready to export, listed with why, and is not put on a
     keying batch's Not ready sheet (B-2148): that sheet lists what a batch holds that its own checks hold back at
     download.
+- **D-297** · **The master workbook's survey is bounded in time, not only in size: its tags paired as they are found,
+  a row of 8 MB at most, the rows ended with the sheet's data, each sheet read once and 1 GB of sheets in all**
+  (B-2760, B-2761; D-271's patterns, a lazy `(.*?)</row>`, searched to the end of the XML from each element never
+  closed: an upload of 1 KB held the server for hours).
+  - **How** (`chart_file._elements`): each start tag of a row, a cell, a value, a text or a shared string is paired
+    with the end tag after it, and no pattern runs past the next tag. An element never closed, or an end tag with
+    none open, is no workbook's XML: refused in plain words as a workbook that cannot be read, as openpyxl refuses
+    it. A block is cut before a row's start (a row closed in itself too: Excel's empty row given a height) and the
+    rows end with `</sheetData>` (merged cells or links after them never read); 8 MB with no row in it
+    (`ROW_MOST`; the chart's export: 7 KB a row) is refused. A cell past column 1,000 is never padded out to, a
+    reference past Excel's last column (XFD) is one past it however many letters it has, and ten rows at most go to
+    `pick`. Two sheets of one part are refused; the sheets surveyed may unzip to 1 GB in all (`SURVEYED_MOST`: the
+    made-up reports unzip to 9 times their size, a 50 MB upload to about 460 MB).
+  - *Measured* (a shared 4-core machine): the made-up company's year, 2.4 MB, 33,830 rows: 0.53 s before, 0.51 s
+    now, the same counts and first rows (also compared in blocks of 200 bytes to 8 MB, prefixed XML, gaps). Made-up
+    sheets well formed but no export's: empty rows 16 MB/s, rows of 990 empty cells 5 MB/s, so a part of 250 MB
+    about 50 s and 1 GB of them about 3 minutes, the worst left (in time the XML's length, and only for a person
+    with the setup permission).
+  - *Not chosen:* an XML reader (ElementTree's: an event in Python for each element, and its entities to guard); a
+    smaller bound in all (a real upload of 50 MB is near 500 MB).
 - **D-300** · **A chart refused as cut short can be loaded anyway from its card, by someone who may change the
   settings** (B-2832; D-272 had the page name the command line's `--anyway`).
   - **What is refused stays refused for anyone:** a file with no account, or none that may be posted to (it is no
@@ -7022,23 +7042,3 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Not changed:** VLDDJ is still sent only from what the invoice prints (B-924): a voucher of the supplier's own
     terms leaves its due date to JD Edwards. JD Edwards' blank code (its most used terms) is still not read: a row
     with no code is left out, and a supplier with no code has no terms.
-- **D-297** · **The master workbook's survey is bounded in time, not only in size: its tags paired as they are found,
-  a row of 8 MB at most, the rows ended with the sheet's data, each sheet read once and 1 GB of sheets in all**
-  (B-2760, B-2761; D-271's patterns, a lazy `(.*?)</row>`, searched to the end of the XML from each element never
-  closed: an upload of 1 KB held the server for hours).
-  - **How** (`chart_file._elements`): each start tag of a row, a cell, a value, a text or a shared string is paired
-    with the end tag after it, and no pattern runs past the next tag. An element never closed, or an end tag with
-    none open, is no workbook's XML: refused in plain words as a workbook that cannot be read, as openpyxl refuses
-    it. A block is cut before a row's start (a row closed in itself too: Excel's empty row given a height) and the
-    rows end with `</sheetData>` (merged cells or links after them never read); 8 MB with no row in it
-    (`ROW_MOST`; the chart's export: 7 KB a row) is refused. A cell past column 1,000 is never padded out to, a
-    reference past Excel's last column (XFD) is one past it however many letters it has, and ten rows at most go to
-    `pick`. Two sheets of one part are refused; the sheets surveyed may unzip to 1 GB in all (`SURVEYED_MOST`: the
-    made-up reports unzip to 9 times their size, a 50 MB upload to about 460 MB).
-  - *Measured* (a shared 4-core machine): the made-up company's year, 2.4 MB, 33,830 rows: 0.53 s before, 0.51 s
-    now, the same counts and first rows (also compared in blocks of 200 bytes to 8 MB, prefixed XML, gaps). Made-up
-    sheets well formed but no export's: empty rows 16 MB/s, rows of 990 empty cells 5 MB/s, so a part of 250 MB
-    about 50 s and 1 GB of them about 3 minutes, the worst left (in time the XML's length, and only for a person
-    with the setup permission).
-  - *Not chosen:* an XML reader (ElementTree's: an event in Python for each element, and its entities to guard); a
-    smaller bound in all (a real upload of 50 MB is near 500 MB).
