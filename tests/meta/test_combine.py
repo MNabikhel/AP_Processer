@@ -295,14 +295,24 @@ def test_a_log_whose_merge_base_git_could_not_make_is_left_to_a_person(repo, cap
     assert "docs/BUGS.md: the branches have more than one merge base, and git's merge of those conflicts here" in said
 
 
-def test_the_checks_run_on_the_files_the_merges_changed(repo, monkeypatch, capsys):
+def test_the_checks_run_on_the_files_the_merges_changed_and_the_whole_tree_rules_once(repo, monkeypatch, capsys):
+    """scripts/check.py runs its RULES for a change to code (here scripts/), so only it runs; for docs only (and a
+    file outside the app, the scripts and the tests) the rules are run first."""
     branch("one", {"app.py": "RATE = 2\n", "docs/BUGS.md": BUGS + "- **B-12** · one · low · `t2`\n"})
+    branch("code", {"scripts/tool.py": "RATE = 3\n"})
     ran = []
     monkeypatch.setattr(combine, "run_step", lambda command: ran.append(command[1:]) or True)
 
     assert combine.main(["one", "--onto", "main"]) == 0
+    assert combine.main(["code"]) == 0
 
-    assert ran == [["-m", "pytest", "-q", "-m", "", "tests/meta"], ["scripts/check.py", "app.py", "docs/BUGS.md"]]
+    rules = ["-m", "pytest", "-q", "-m", "", *combine.RULES]
+    assert "tests/meta" in combine.RULES
+    assert ran == [rules, ["scripts/check.py", "app.py", "docs/BUGS.md"], ["scripts/check.py", "scripts/tool.py"]]
+    said = capsys.readouterr().out
+    assert "the rules that check the whole tree (run first, as only docs changed)" in said
+    assert "Checking: scripts/check.py on the 1 file the merges changed, and the rules that check the whole tree " \
+           "(run by it)" in said  # fmt: skip
     monkeypatch.setattr(combine, "run_step", lambda command: False)
     git("checkout", "-q", "-b", "again", "main")
     assert combine.main(["one"]) == 1
