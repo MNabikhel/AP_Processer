@@ -49,6 +49,10 @@ CHART_COLUMNS = ("bu", "object", "subsidiary", "description", "lod", "posting_ed
 BU_COLUMNS = ("code", "name", "company", "type", "status")
 STAGED_COLUMNS = (*CHART_COLUMNS, "line")  # a row staged (``chart_load``): its row of the file too (D-272)
 HASH_KEY = "chart_hash"  # what the two tables hold (settings: read by the reference data's stamp)
+# What the GL accounts and cost centers were last worked out with (settings, JSON): the business units' statuses that
+# take postings (``chart.ACTIVE``) and the chart's mark of that time (``HASH_KEY``), recorded with each mark. An older
+# build records nothing: lists it worked out since have another mark (B-2752, ``migrations._chart_active``).
+ACTIVE_KEY = "chart_active"
 ASIDE_KEY = "chart_set_aside"  # what a person typed on the codes that left the lists (settings, JSON)
 NAMED = 50  # the codes an import's result and its event name of each kind (the counts say them all)
 NO_ACCOUNT = ("No account of the chart may be posted to on a business unit that is active, so there would be no GL "
@@ -71,6 +75,17 @@ def _count(conn: sqlite3.Connection) -> int:
 
 def _units(conn: sqlite3.Connection) -> list[BuRow]:
     return [BuRow(*r) for r in conn.execute(f"SELECT {', '.join(BU_COLUMNS)} FROM business_units ORDER BY code")]
+
+
+def _lists_rule(mark: str) -> str:
+    """``ACTIVE_KEY``'s value for lists worked out now, the chart's mark being ``mark``."""
+    return json.dumps({"statuses": list(ACTIVE), "mark": mark})
+
+
+def _lists_worked_out(conn: sqlite3.Connection) -> None:
+    """Records what the GL accounts and cost centers are worked out with (``ACTIVE_KEY``), of the chart's mark now."""
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (HASH_KEY,)).fetchone()
+    _put(conn, ACTIVE_KEY, _lists_rule(row[0] if row else ""))
 
 
 def _settings(conn: sqlite3.Connection) -> ChartSettings:
@@ -747,13 +762,16 @@ class ChartMixin:
         the reference data and the checks are worked out again. An import's, a rebuild's, and a row changed by hand
         (``by_hand``, which records its own event). The mark is random, not a hash of every row (D-272: 9 s of 3,500,000
         accounts under the write lock): another chart, after a backup restored and the same count of changes, still
-        never passes for the one a process kept (B-2125)."""
+        never passes for the one a process kept (B-2125). Each follows the lists worked out: recorded with what they
+        were worked out with (``ACTIVE_KEY``, B-2752)."""
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?, '1') "
             "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1",
             (VERSION_KEY,),
         )
-        _put(conn, HASH_KEY, secrets.token_hex(10))
+        mark = secrets.token_hex(10)
+        _put(conn, HASH_KEY, mark)
+        _put(conn, ACTIVE_KEY, _lists_rule(mark))
 
     def _rebuild_account_lists(self, conn: sqlite3.Connection, was: dict[str, tuple[str, str]],
                                given: tuple[dict[str, tuple[str, str]], dict[str, str]] | None = None

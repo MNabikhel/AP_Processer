@@ -6980,8 +6980,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **A database loaded before:** its GL accounts and cost centers were worked out with K closed, while the chart's
     answers read the statuses as they are: a K job's accounts were offered and a line coded to one CC_UNKNOWN
     (B-2750). Its lists are worked out again once when a business unit has a status that takes postings now and did
-    not then (`migrations._chart_active`, settings.chart_active: the statuses they were worked out with; 5 s at
-    3,370,000 accounts). No schema version of its own: an older AP Coder still opens the database.
+    not then (`migrations._chart_active`, settings.chart_active: the statuses they were worked out with and the
+    chart's mark then, recorded with each change of the chart; 5 s at 3,370,000 accounts). No schema version of its
+    own: an older AP Coder still opens the database, and lists it works out again there (a report loaded) have
+    another mark, so the next open here works them out again (B-2752).
 - **D-295** · **The AI reviewer's corrections, reviewed** (D-263, D-184; an adversarial review, 20 Nov 2026; B-2800 to
   B-2806).
   - **An amount printed on the page** is one printed as money: with its cents, or a currency sign or code right
