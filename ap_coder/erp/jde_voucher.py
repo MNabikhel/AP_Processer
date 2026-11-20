@@ -217,10 +217,15 @@ def pst_owed(final: dict[str, Any]) -> str:
     """Whether the PST not charged is owed on every line of the invoice (ALL_OWED), on none (NONE_OWED: each exempt,
     zero-rated or out of scope) or on some only (SOME_OWED). Lines with no amount, and tips, don't count."""
     from ..coding.line_tax import NOT_DUE, tax_state
-    from ..coding.tax import is_tip
+    from ..coding.tax import tip_lines
 
-    items = [li for li in final.get("line_items") or [] if isinstance(li, dict) and abs(_units(li.get("amount")))]
-    items = [li for li in items if not is_tip(SimpleNamespace(description=li.get("description")))] or items
+    lines = [li for li in final.get("line_items") or [] if isinstance(li, dict)]
+    meals = {str(e.get("gl_code") or "").strip() for e in _distribution(final) if e.get("meals_tax")}
+    tips = tip_lines([SimpleNamespace(**li) for li in lines], str(final.get("vendor_name") or ""), meals,
+                     float(final.get("tax_total") or 0))  # fmt: skip
+    items = [li for i, li in enumerate(lines) if abs(_units(li.get("amount"))) and i not in tips] or [
+        li for li in lines if abs(_units(li.get("amount")))
+    ]
     if not items:
         return ALL_OWED
     basis = legacy_basis(items, final.get("tax_lines") or [])

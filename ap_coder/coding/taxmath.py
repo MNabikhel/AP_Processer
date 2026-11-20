@@ -41,8 +41,8 @@ from .tax import (
     TaxSetup,
     currency_places,
     gap_lines,
+    invoice_tips,
     is_meals,
-    is_tip,
     meals_parts,
     on_its_lines,
     short,
@@ -513,16 +513,18 @@ def invoice_taxes(coding: InvoiceCoding, setup: TaxSetup) -> InvoiceTaxes:
     Where the printed tax goes is the posting's (``tax.build_gl_distribution``; the JD Edwards pay item, D-210): a tax
     the Tax setup recovers is on the pay item, one it does not is kept in the line's expense (or on its own account),
     and half the recoverable tax of a meals line stays in the line. ``keyed`` is the line with what is kept in it. A
-    tip line takes none of a tax, whatever its code. A provincial tax due and not charged is the line's ``due``: at
-    the official rate, in no amount keyed.
+    tip line (``tax.invoice_tips``) takes none of a tax, whatever its code. A provincial tax due and not charged is
+    the line's ``due``: at the official rate, in no amount keyed.
 
     Not shown as certain: lines whose prices include the tax show their share of the printed tax, which is in the
     amount printed (``tax_included``); the lines of one tax at two rates take their own rate when their amounts tell
     which is which, else a share at no rate; two federal taxes or rates are reported as two tax areas (``areas``)."""
     sums, rows = _check(coding, setup)
     items, places, province = sums.items, sums.places, sums.province
-    posted = _posted(items, coding.tax_lines, setup, places)
-    worked = {r["tax_type"]: _worked_out(sums, r, posted.get(r["tax_type"], {})) for r in rows if r["kind"] == "tax"}
+    tips = invoice_tips(coding, setup.meals_gl_codes)
+    posted = _posted(items, coding.tax_lines, setup, places, tips)
+    worked = {r["tax_type"]: _worked_out(sums, r, posted.get(r["tax_type"], {}), tips)
+              for r in rows if r["kind"] == "tax"}  # fmt: skip
     due = _due(sums)
     codes = [tax_code_of(li) for li in items]
     by_amount: dict[str, float] = {}
@@ -533,7 +535,7 @@ def invoice_taxes(coding: InvoiceCoding, setup: TaxSetup) -> InvoiceTaxes:
     lines = []
     for i, li in enumerate(items):
         taxes, notes = _taxes_of(i, li, worked, posted, setup, province)
-        tip = is_tip(li)
+        tip = i in tips
         if tip and any(t.marked and nil(t.worked_out) for t in taxes):
             notes.append("A tip: none of the tax printed is put on it.")
         inside = add_up(t.inside for t in taxes)
@@ -555,7 +557,7 @@ def invoice_taxes(coding: InvoiceCoding, setup: TaxSetup) -> InvoiceTaxes:
                         add_up(line.inside for line in lines), areas, sums.tax_included, tuple(notes))  # fmt: skip
 
 
-def _posted(items: list[Any], tax_lines: list[Any], setup: TaxSetup, places: int) -> _Posted:
+def _posted(items: list[Any], tax_lines: list[Any], setup: TaxSetup, places: int, tips: frozenset[int]) -> _Posted:
     """{tax: {line position: [recovered, kept in the line, on the tax's own account]}}: each line's share of each
     printed tax (``tax.tax_shares``) by where the Tax setup sends it, half a meals line's recoverable tax kept in the
     line (``tax.meals_parts``): the rules ``build_gl_distribution`` posts by."""
@@ -566,9 +568,9 @@ def _posted(items: list[Any], tax_lines: list[Any], setup: TaxSetup, places: int
         part = _PARTS.index(_WHERE[setup.treatment(tl.tax_type).treatment])
         meals: dict[int, float] = {}
         if part == 0 and tl.tax_type in MEALS_RESTRICTED and setup.meals_gl_codes:
-            meals = dict(meals_parts(items, tl, setup.meals_gl_codes, places, tax_lines))
+            meals = dict(meals_parts(items, tl, setup.meals_gl_codes, places, tax_lines, tips))
         of_tax = out.setdefault(tl.tax_type, {})
-        for idx, share in tax_shares(items, tl, places, tax_lines):
+        for idx, share in tax_shares(items, tl, places, tax_lines, tips):
             parts = of_tax.setdefault(idx, [0.0, 0.0, 0.0])
             kept = meals.get(idx, 0.0)
             parts[part] = half_up(parts[part] + share - kept)
@@ -609,7 +611,8 @@ def _lines_of_each_rate(items: list[Any], marked: list[int], groups: list[list[A
     return [*out, left]
 
 
-def _worked_out(sums: _Sums, row: dict[str, Any], posted: dict[int, list[float]]) -> dict[int, _Worked]:
+def _worked_out(sums: _Sums, row: dict[str, Any], posted: dict[int, list[float]],
+                tips: frozenset[int]) -> dict[int, _Worked]:  # fmt: skip
     """{line position: its amount of one tax, worked out} from the tax's row of the Tax check."""
     tax_type, items, places = row["tax_type"], sums.items, sums.places
     found = sums.numbers[tax_type]
@@ -635,7 +638,7 @@ def _worked_out(sums: _Sums, row: dict[str, Any], posted: dict[int, list[float]]
     if by_share:
         return {i: (add_up(posted.get(i, ())), SHARE, found.rate, where) for i in sorted({*marked, *posted})}
     # The line x the rate, out of what the rate gives on the lines marked. A tip takes none, as it takes no share.
-    taxed = [i for i in marked if not is_tip(items[i])] or marked
+    taxed = [i for i in marked if i not in tips] or marked
     amounts = [items[i].amount for i in taxed]
     gives = found.expected if len(taxed) == len(marked) else times(add_up(amounts), found.rate, places)
     by_rate = dict(zip(taxed, split(gives, amounts, places), strict=True))
