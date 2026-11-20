@@ -6782,7 +6782,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
 - **D-284** · **A PO-matched voucher's Voucher Match rows are kept with the invoice when it is approved; its keying
   sheet and its Z-files key those, and the Z-files name the order and its lines as the sheet does** (`schema.
   VOUCHER_MATCH`, `coding/po.py` `kept_match`, `kept_voucher_match`, `pipeline._erp_findings`, `jde_keying.
-  po_matches`, `jde_zfiles._order_of`, `_match_rows`; B-2671, B-2672).
+  po_matches`, `jde_zfiles._order_of`, `_match_rows`; B-2671, B-2672). This settles D-264's F0411Z1T, left naming the
+  invoice's line numbers.
   - **Why:** a batch's sheet is made again from the approved data at each download (D-75): after the purchase orders
     were loaded again (the vouchers keyed, a line JD Edwards closed left out, what is open changed) its invoices'
     matches were made afresh, so a sheet downloaded again said "Not ready", or matched another line. And the Z-files
