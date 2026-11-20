@@ -431,11 +431,12 @@ up to R04110ZA's processing options: confirm it with the JDE team.
 EDUS, EDBT, EDTN, EDLN (the pay item), DOCO (PO number), DCTO (PO type), KCOO (PO company), LNID, LITM (blank:
 AP Coder does not know the item number), DSC1 (description), UORG (quantity) and PRRC (unit price) written with a
 decimal point, AEXP (amount, in the amount format), CRCD (currency) and SBL, SBLT (the line's subledger and its
-type, D-268; blank for most lines). A row for each invoice line, its order, type, company and LNID those of the PO
-line the keying sheet matches it to (D-264, D-284): LNID is that PO line's own number as JD Edwards shows it, with
-its decimal point like UORG and PRRC (`12.000`; E1 stores it as 12000), blank for a line on no PO line (a charge
-keyed on an account of its own, D-265). When the PO's lines are not loaded (no match to give), DCTO and KCOO are
-Settings' and LNID the invoice's line number (1, 2, 3: *not* a PO line), as before.
+type, D-268; blank for most lines). A row for each invoice line: DOCO, DCTO and KCOO as VLPO, VLPDCT and VLPKCO (the
+order's type and company as the keying sheet keys them, D-284), and LNID the own number of the PO line the keying
+sheet matches it to (D-264), as JD Edwards shows it, with its decimal point like UORG and PRRC (`12.000`; E1 stores it
+as 12000), blank for a line on no PO line (a charge keyed on an account of its own, D-265). When the PO's lines are
+not loaded (no match to give), DCTO and KCOO are Settings' and LNID the invoice's line number (1, 2, 3: *not* a PO
+line), as before.
 
 ## Test import checklist (for the pilot tester's IT)
 

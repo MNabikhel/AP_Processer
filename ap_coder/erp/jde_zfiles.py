@@ -282,10 +282,10 @@ def _order_of(final: Mapping[str, Any], settings: JdeSettings, matched: VoucherM
 
 def _match_rows(v: _Voucher, keys: Mapping[str, Any], common: Mapping[str, Any], settings: JdeSettings,
                 matched: VoucherMatch | None) -> list[dict[str, Any]]:  # fmt: skip
-    """F0411Z1T's rows of a PO-matched voucher, one an invoice line: with its voucher match (``matched``) each line's
-    order, its type and company and the PO line's own number (LNID "12.000", as the keying sheet keys it; blank for a
-    line on no PO line, a charge keyed on an account of its own, D-265); without its rows (the PO not loaded) the PO
-    number, Settings' type and company and the invoice's line number, as before (D-284)."""
+    """F0411Z1T's rows of a PO-matched voucher, one an invoice line, its PO number VLPO's and its order type and
+    company VLPDCT's and VLPKCO's (``_order_of``): with its voucher match (``matched``) each line's LNID the PO line's
+    own number ("12.000", as the keying sheet keys it; blank for a line on no PO line, a charge keyed on an account of
+    its own, D-265); without its rows (the PO not loaded) the invoice's line number, as before (D-284)."""
     final = v.final
     po = str(final.get("po_number") or "").strip()
     rows = {r.invoice_line: r for r in matched.rows} if matched is not None and matched.rows else None
@@ -295,7 +295,7 @@ def _match_rows(v: _Voucher, keys: Mapping[str, Any], common: Mapping[str, Any],
         on_po = row is not None and row.on_po
         out.append({
             "EDUS": keys["VLEDUS"], "EDBT": keys["VLEDBT"], "EDTN": keys["VLEDTN"], "EDLN": 1,
-            "DOCO": (row.order_number if on_po else po)[:8], "DCTO": common["VLPDCT"], "KCOO": common["VLPKCO"],
+            "DOCO": po[:8], "DCTO": common["VLPDCT"], "KCOO": common["VLPKCO"],
             "LNID": (row.line if on_po else "") if rows is not None else li.get("line_number") or "", "LITM": "",
             "DSC1": _text(li.get("description"), 30), "UORG": _plain(li.get("quantity")),
             "PRRC": _plain(li.get("unit_price"), 4), "AEXP": _amount(_units(li.get("amount")), settings, v.decimals),
