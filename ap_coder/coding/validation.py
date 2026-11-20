@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from ..ai.extraction import ExtractionResult
+from ..capture.types import QUANTITY_NOTE
 from ..core import chart
 from ..core.keys import company_code
 from ..core.reference_data import UNASSIGNED, ReferenceData
@@ -357,6 +358,9 @@ def _line_issues(coding: InvoiceCoding, reference: ReferenceData, add: Any) -> N
                 f"quantity × unit price = {expected:.2f} but the amount is {li.amount:.2f}",
                 li.line_number,
             )
+        elif QUANTITY_NOTE in li.reasoning_justification:  # (worked out of the amount and price, B-2896)
+            add(INFO, "QUANTITY_WORKED_OUT", f"quantity {li.quantity:g} worked out from the amount at the unit price: "
+                f"{QUANTITY_NOTE}; check it on the page", li.line_number)  # fmt: skip
 
         pair = _pair_issue(reference, li, tax_gls)
         if pair is not None:

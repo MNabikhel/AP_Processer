@@ -681,6 +681,12 @@ CHECKS: dict[str, CheckHelp] = {
         "On this line, quantity times unit price differs from the amount (by more than rounding).",
         "Correct the quantity, unit price or amount to match the document.",
     ),
+    "QUANTITY_WORKED_OUT": CheckHelp(
+        READING, "Quantity worked out",
+        "This line's quantity was not read (a scan can lose a short number): it is the line's amount divided by its "
+        "unit price, a whole number of them. Nothing is held for it.",
+        "Look at the quantity on the document and change it if it differs.",
+    ),
     "LINE_NUMBERING": CheckHelp(
         TOTALS, "Line numbers out of order",
         "Line numbers are not 1, 2, 3… which can mean a line was skipped.",

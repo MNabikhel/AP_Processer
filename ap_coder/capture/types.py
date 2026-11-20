@@ -223,6 +223,10 @@ LINE_SOURCES = {
 }
 
 
+# What a coded line's reasoning says of a quantity worked out (``LineReading.quantity_from``): QUANTITY_WORKED_OUT.
+QUANTITY_NOTE = "the quantity was not read"
+
+
 @dataclass
 class LineReading:
     description: str
@@ -244,12 +248,17 @@ class LineReading:
     # total proves there is none; None where no cell was read (blank, or not found: never "exempt" by itself). None
     # for the whole when the table has no tax column. ``bridge.printed_taxes`` reads them with the invoice's taxes.
     taxes_read: dict[str, float | None] | None = None
+    # How the quantity was worked out when it was not read: the amount at the unit price ("209.60 ÷ 52.40", B-2892),
+    # said on the coded line (``QUANTITY_NOTE``) and by an info finding (B-2896); "" when it was read, or is none.
+    quantity_from: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["boxes"] = [b.to_list() for b in self.boxes]
         if self.taxes_read is None:  # (most invoices: stored as before)
             del d["taxes_read"]
+        if not self.quantity_from:
+            del d["quantity_from"]
         return d
 
     @classmethod
@@ -258,7 +267,8 @@ class LineReading:
                    [Box.from_list(b) for b in d.get("boxes") or []], float(d.get("score") or 0),
                    str(d.get("source") or ""), [str(s) for s in d.get("agreed") or []],
                    str(d.get("tax_flags") or ""), str(d.get("read_as") or ""),
-                   dict(d["taxes_read"]) if isinstance(d.get("taxes_read"), dict) else None)  # fmt: skip
+                   dict(d["taxes_read"]) if isinstance(d.get("taxes_read"), dict) else None,
+                   str(d.get("quantity_from") or ""))  # fmt: skip
 
 
 @dataclass
