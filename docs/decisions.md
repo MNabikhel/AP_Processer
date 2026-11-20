@@ -6811,3 +6811,27 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     box takes the value above. A form without the table keeps what is saved.
   - **Speed:** a company's settings share the account mapping's index with Settings' (`SHARED`,
     `jde_accounts._gl_index`), so a group's vouchers are prepared as fast as one company's.
+- **D-302** · **A supplier's JD Edwards terms code is due as JD Edwards works it out, for the rules F0014 gives;
+  any other is said, never guessed** (B-2834; D-266 read the discount and net days, "*Not done:* F0014's prox, split
+  and fixed-date rules").
+  - **Read** (`terms.jde_table`, each only when set): *Due Date* (PNDDJ), *Prox Date Month* and *Prox Date Day*
+    (PNPXDM, PNPXDD), *Number of Split Payments* and *Days To Pay Aging* (PNNSP, PNDTPA): the data items of F0014
+    as JD Edwards' payment terms retrieval function names them (DDJ, PXDM, PXDD, NSP, DTPA), titled on the build
+    sheet as the data dictionary does. Oracle's documentation: a fixed due date is the due date; a proximate date
+    is the day of the month that many months after the invoice's (month 0, day 31: the end of its month); split
+    payments are equal, the first at the net days, each next that many days later, the discount all on the first.
+  - **Worked out** (`jde_words`, as words `parse_terms` reads back, so the rest of AP Coder is unchanged): a
+    discount and net days ("2/10 Net 30"); a fixed due date alone ("Due 2026-12-31"); a proximate date alone of
+    month 1 ("Net 31st prox": a shorter month's last day) or month 0 day 31 ("Due end of month"); split payments
+    some days apart ("Net 30 in 3 payments 30 days apart": the due date is the first's; the review screen's
+    *Payment due* lists each, `Payment.instalments`).
+  - **Said, not guessed** (`jde_unsupported`): two of those rules together, a fixed or proximate date with net days
+    or a discount (how JD Edwards combines them is not documented), a proximate date of any other month or day, a
+    due date that is not a date AP Coder reads (a Julian number: ReportsNow prints dates), split payments with no
+    days between them, and, a table loaded, a code of 3 characters or fewer not in it (an advanced payment term:
+    F00141 with its due date rules F00142, work day calendars and installments F00144, which AP Coder does not
+    load). Such a code reads as no terms (`JDE_UNSUPPORTED`): the invoice is due by Settings' days to pay and says
+    so (JDE_TERMS_UNSUPPORTED, information only, in place of TERMS_NOT_FOUND); the card and its load list them.
+  - **Not changed:** VLDDJ is still sent only from what the invoice prints (B-924): a voucher of the supplier's own
+    terms leaves its due date to JD Edwards. JD Edwards' blank code (its most used terms) is still not read: a row
+    with no code is left out, and a supplier with no code has no terms.

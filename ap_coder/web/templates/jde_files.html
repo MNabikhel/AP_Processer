@@ -403,7 +403,7 @@
 {% endcall %}
 {% call table_card(7, "terms", "event", "JD Edwards' payment terms (F0014), an Excel workbook (.xlsx) or CSV") %}
   {% if terms_table %}<details class="imp-more" id="terms-table"><summary>The {{ terms_table | length | plural("terms code") }} loaded</summary>
-    <ul class="imp-said">{% for code, row in terms_table %}<li><b>{{ code }}</b> {{ row.description }} <span class="muted">· net {{ row.net_days }} days{% if row.discount_pct %}, {{ row.discount_pct }}% within {{ row.discount_days }} days{% endif %}</span></li>{% endfor %}</ul></details>{% endif %}
+    <ul class="imp-said">{% for code, row, said in terms_table %}<li><b>{{ code }}</b> {{ row.description }} <span class="muted">· {{ said }}</span></li>{% endfor %}</ul></details>{% endif %}
 {% endcall %}
 {% call table_card(8, "areas", "map", "JD Edwards' tax areas (F4008), an Excel workbook (.xlsx) or CSV") %}
   {% if areas_table %}<ul class="imp-said" id="areas-said">{% for line in areas_said %}<li>{{ line }}</li>{% else %}<li>Every tax area Settings gives a province is one of JD Edwards', at the rate of its taxes.</li>{% endfor %}</ul>{% endif %}

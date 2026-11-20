@@ -46,7 +46,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.coding import companies, vendor_info
 from ap_coder.coding import po as po_mod
-from ap_coder.coding.terms import JDE_TERMS_ALIASES, JDE_TERMS_SETTING, jde_table, jde_words
+from ap_coder.coding.terms import JDE_TERMS_ALIASES, JDE_TERMS_SETTING, jde_meaning, jde_table, jde_unsupported
 from ap_coder.coding.vendors import master_columns, master_rows
 from ap_coder.core import chart, chart_file, ui
 from ap_coder.core.headers import match_columns
@@ -591,7 +591,7 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
         "optional": OPTIONAL,
         "rows_of": rows_of,
         "rows_one": {"companies": "company"},
-        "terms_table": sorted(terms_table.items()),
+        "terms_table": [(code, row, jde_meaning(code, terms_table)) for code, row in sorted(terms_table.items())],
         "areas_table": sorted(areas_table.items()),
         "areas_said": jde_settings.tax_areas_compared(areas_table, jde_settings.load(store)) if areas_table else [],
         "companies_said": companies_said(
@@ -1067,11 +1067,18 @@ def load_table(store: Store, card: str, df: Any) -> list[str]:
             said.append("Each invoice is now told which company it is for; one nothing decides is held for a person "
                         "to pick.")  # fmt: skip
     elif card == "terms":
-        said.append(
-            "A supplier's terms code now counts as its terms: "
-            + "; ".join(f"{code} {jde_words(row)}" for code, row in sorted(table.items())[:6])
-            + ("…" if len(table) > 6 else ".")
-        )
+        worked = [code for code, row in sorted(table.items()) if not jde_unsupported(row)]
+        if worked:
+            said.append(
+                "A supplier's terms code now counts as its terms: "
+                + "; ".join(f"{code} {jde_meaning(code, table)}" for code in worked[:6])
+                + ("…" if len(worked) > 6 else ".")
+            )
+        if apart := [jde_meaning(code, table) for code in sorted(set(table) - set(worked))]:  # (D-302)
+            more = f"; and {len(apart) - 6} more (listed on the card)" if len(apart) > 6 else ""
+            said.append(f"Not worked out as JD Edwards does, so an invoice of these is due by the days to pay "
+                        f"(Settings → Review) and says to check its due date: {'; '.join(apart[:6])}"
+                        f"{more}.")  # fmt: skip
     else:
         said += jde_settings.tax_areas_compared(table, jde_settings.load(store)) or [
             "Every tax area Settings gives a province is one of JD Edwards', at the rate of its taxes."
