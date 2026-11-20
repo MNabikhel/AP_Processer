@@ -95,7 +95,7 @@ guides, the bug log (BUGS.md), decisions (decisions.md) and the owner's to-do li
 - No company data in the repo: the data folder (`private/` or `~/APCoder`) and `.env` are git-ignored.
 - User-facing wording: "pilot tester" for the person running the pilot, never "manager". Plain English.
 - A bug fix starts with a failing test, then the fix, then its entry; a significant choice gets one too. Each is a file
-  numbered as written, never by hand: `python scripts/new_entry.py B|D "text"` (D-328; format: top of docs/BUGS.md).
+  numbered as written, never by hand: `python scripts/new_entry.py B|D "text"` (D-328; format: the top of each log).
 
 ## Working here in few steps
 - Coding work (a fix, a feature, a test, a question about the code) runs best as the `developer` agent

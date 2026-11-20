@@ -128,7 +128,7 @@ def test_the_lookup_the_docs_give_finds_an_archived_a_frozen_and_a_new_entry(tmp
     commands = {re.sub(r"[BD]-\d+", "{}", command) for found in given.values() for command in found}
     assert all(given.values()) and len(commands) == 1, given
     command = commands.pop()
-    new = f"B-{new_entry.FROZEN['B'] + 1}"  # (no bug has a file yet: one made here)
+    new = f"B-{new_entry.FROZEN['B'] + 1}"  # (a bug's file, made here)
     (tmp_path / "docs" / "bugs").mkdir(parents=True)
     (tmp_path / "docs" / "bugs" / f"{new}.md").write_text(f"- **{new}** · the first in a file · low · `t`\n")
     looked_up = {"B-1234": (ROOT, "docs/archive/bugs-2026-10.md"), "B-2997": (ROOT, "docs/BUGS.md"),
