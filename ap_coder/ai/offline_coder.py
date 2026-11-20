@@ -513,17 +513,18 @@ def _charge_label(text: str, amount: float) -> str:
     return ""
 
 
-def _charges_outside(text: str, short: float, freight: float) -> list[tuple[str, float]]:
+def _charges_outside(text: str, short: float, freight: float, label: str = "") -> list[tuple[str, float]]:
     """The charges printed outside the line table, of what the lines fall ``short`` of the subtotal and the freight
     read beside it: each one READ from the page, never worked out as what is missing. The freight (``freight``: the
-    reader's own field) is one; what is short beside it is one only when that amount is printed under a label of its
-    own (``_charge_label``). Anything else is left short: the lines stay as read, the totals check fails and
-    ``_lines_to_check`` says why, where a line "Charges not in the line table" of whatever was missing made a wrong
-    reading add up unseen (the tax taken back off lines read with their tax in them, B-2107; the discount of a line
-    read before it, B-2199)."""
+    reader's own field) is one, described by the label the reader read it under (``label``: a totals table of one
+    row's "Freight Amount", B-2831), else the one printed beside it; what is short beside it is one only when that
+    amount is printed under a label of its own (``_charge_label``). Anything else is left short: the lines stay as
+    read, the totals check fails and ``_lines_to_check`` says why, where a line "Charges not in the line table" of
+    whatever was missing made a wrong reading add up unseen (the tax taken back off lines read with their tax in them,
+    B-2107; the discount of a line read before it, B-2199)."""
     out = []
     if abs(freight) >= 0.01:
-        out.append((_charge_label(text, freight) or READ_CHARGE, freight))
+        out.append((label or _charge_label(text, freight) or READ_CHARGE, freight))
         short = round(short - freight, 2)
     label = _charge_label(text, short) if abs(short) >= 0.01 else ""
     return [*out, (label, short)] if label else out
@@ -684,7 +685,10 @@ def _with_charges(capture: CaptureResult, readings: list[Any], rows: list[tuple[
     LINE_AMOUNTS_TO_CHECK), in ``_lines_to_check``'s words."""
     short = round(expected - sum(r[3] for r in rows), 2)
     if (readings or freight) and abs(short) >= 0.01:
-        rows = [*rows, *((label, 1.0, amount, amount) for label, amount in _charges_outside(text, short, freight))]
+        charges = capture.fields.get("other_charges")
+        label = charges.label if charges is not None and freight else ""
+        rows = [*rows, *((label, 1.0, amount, amount) for label, amount in _charges_outside(text, short, freight,
+                                                                                            label))]  # fmt: skip
     capture.checks = [c for c in capture.checks if c.get("code") != LINES_CHECK]
     doubt = (
         _lines_to_check(

@@ -203,6 +203,40 @@ def test_each_new_report_loads_on_its_own_card_too(client, store, truth, workboo
     assert "MB: the tax area MB-GSTPST in Settings is not one of JD Edwards" in page
 
 
+def test_the_payment_terms_card_says_each_codes_rule_and_those_not_worked_out(client, store):
+    """B-2834 (D-302): F0014's proximate date, fixed due date and split payments, titled as the build sheet says, are
+    read; the card lists each code as it is worked out, and its load says which ones are not, never guessed."""
+    from tests.coding.test_terms import F0014_RULES
+
+    head = [title for _field, title in made.BUILD_SHEET["payment_terms"]]
+    order = ["PNPTC", "PNPTD", "PNDCP", "PNDCD", "PNNDTP", "PNDDJ", "PNPXDM", "PNPXDD", "PNNSP", "PNDTPA"]
+    rows = [dict(zip(order, (r[0], r[1], r[2], r[3], r[4], r[5], r[8], r[9], r[6], r[7]), strict=True))
+            for r in F0014_RULES]  # fmt: skip
+    book = openpyxl.Workbook()
+    book.active.append(head)
+    for row in rows:
+        book.active.append([row[f] for f, _title in made.BUILD_SHEET["payment_terms"]])
+    data = io.BytesIO()
+    book.save(data)
+    _shown, page = _card(client, "terms", "terms/upload-table", "terms/load-table", data.getvalue(), "terms.xlsx")
+    assert set(store.jde_terms_table()) == {r[0] for r in F0014_RULES}
+    assert (
+        "A supplier&#39;s terms code now counts as its terms: E Net 31st prox; M Due end of month; P Net 15th "
+        "prox; S 2/10 Net 30 in 3 payments 30 days apart; Y Due 2026-12-31."
+    ) in page
+    assert (
+        "Not worked out as JD Edwards does, so an invoice of these is due by the days to pay (Settings → Review) "
+        "and says to check its due date: D: its due date “126365” is not a date AP Coder reads; Q: proximate month "
+        "3, day 15; R: a proximate date with a discount; V: 2 split payments with no days between them."
+    ) in page
+    listed = page.split('id="terms-table"', 1)[1].split("</details>", 1)[0]
+    assert '<b>E</b> End of next month <span class="muted">· Net 31st prox</span>' in listed
+    assert (
+        '<b>Q</b> 15th, 3 months on <span class="muted">· rule not supported (proximate month 3, day 15)</span>'
+        in listed
+    )
+
+
 def test_a_report_on_another_card_is_named_with_its_card(client, workbook):
     """The open PO lines dropped on the business units' card, or the payment terms on the tax areas', say which card
     they go on; nothing is loaded."""

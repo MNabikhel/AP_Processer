@@ -433,6 +433,12 @@ def _supply_part(request: Request, our_province: str | None, site_provinces: str
     saved)."""
     store = get_store(request)
     names = None if our_names is None else "\n".join(n.strip() for n in our_names.splitlines() if n.strip())
+    unknown = companies.unknown_variations(store, names or "")
+    if unknown:  # a company mistyped would decide invoices for one JD Edwards may not have (B-2694)
+        first = next(iter(companies.companies(store).values()))
+        return refuse(f"Not saved: {', '.join(f'“{line}”' for line in unknown)} name no company of the companies "
+                      "report (JD Edwards files, card 9). Write each name, = and the number of one of its companies, "
+                      f"e.g. {first.name} = {first.code}.")  # fmt: skip
     province = None if our_province is None else our_province.strip().upper()
     if province and province not in PROVINCE_NAMES:
         return refuse("Choose a province from the list.")

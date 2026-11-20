@@ -100,7 +100,8 @@ def test_nothing_decides_so_the_invoice_is_held_to_pick_the_company(group, refer
     output, codes, report = _check(group, reference, _coding(ground_truth))
     assert "company" not in output and codes["COMPANY_UNKNOWN"].severity == "error"
     assert codes["COMPANY_UNKNOWN"].message == "Pick the company this invoice is for: nothing on it decides one"
-    output, codes, report = _check(group, reference, _coding(ground_truth, company="220"))  # a person's pick
+    picked = _coding(ground_truth, company="220", company_how="picked")  # a person's pick
+    output, codes, report = _check(group, reference, picked)
     assert output["company"] == "00220" and "COMPANY_UNKNOWN" not in codes
     assert report.checks["company"]["how"] == "picked"
 
@@ -154,6 +155,46 @@ def test_a_companys_name_inside_the_suppliers_own_never_decides(group, reference
     page = "Fraser Bend Civil Testing Inc.\nBill to: Fraser Bend Civil Ltd., 9 River Rd\n"
     output, _codes, _report = _check(group, reference, coding, page)
     assert output["company"] == "00230"
+
+
+def test_a_short_name_decides_only_printed_as_a_word_of_its_own_in_capitals(group, reference, ground_truth):
+    """B-2690: a name of three letters or fewer in Settings → Review ("Art = 230", "MRB = 310") was read in any word
+    of the page, whatever its case: "Art supplies" or "art" in a description decided the invoice was 00230's. Such a
+    name now decides only printed as a word of its own in capitals ("MRB"), never inside another or run into one."""
+    group.set_setting("our_names", "Art = 230\nMRB = 310")
+    for page in ("Northwind IT Solutions Inc.\nArt supplies for the lobby\n", "Ship to: the art room, 2nd floor\n",
+                 "Ship to: Mrb yard\n", "Bill to: MRBInc, Spokane WA\n", "Cartage 4 hrs\n"):  # fmt: skip
+        output, codes, _report = _check(group, reference, _coding(ground_truth), page)
+        assert "company" not in output and "COMPANY_UNKNOWN" in codes, page
+    output, _codes, report = _check(group, reference, _coding(ground_truth), "Bill to: MRB Inc., Spokane WA\n")
+    assert output["company"] == "00310" and report.checks["company"]["how"] == "name"
+    output, _codes, _report = _check(group, reference, _coding(ground_truth), "ATTN: ART DEPT.\n")
+    assert output["company"] == "00230"
+
+
+def test_a_companys_name_run_together_on_a_scan_decides_as_printed_with_its_spaces(group, reference, ground_truth):
+    """B-2691: a scan's text runs words together ("MapleRidge ConstructorsLtd."), and the names on the page were
+    compared word by word: none decided, so an invoice of a supplier billing two companies was held to pick one, and
+    a bill already in JD Edwards under the other company was said as the duplicate error, not as another company's.
+    The names are now compared without their spaces and punctuation too, a word's start and end kept (a capital after
+    a small letter starts one); a name only inside the supplier's own still never decides."""
+    voucher = {"key": "00210-PV-700101-001", "vendor_name": "Northwind IT Solutions Inc.",
+               "invoice_number": ground_truth["invoice_number"], "total": ground_truth["grand_total"],
+               "invoice_date": "2026-01-02", "an8": "", "document": "700101"}  # fmt: skip
+    group.import_erp_vouchers([voucher, {**voucher, "key": "00220-PV-700102-001", "invoice_number": "N-2"}])
+    page = "NORTHWINDIT SOLUTIONSINC.\nBillTo: MapleRidge ConstructorsLtd.\n400PineSt, Calgary AB\n"
+    output, codes, report = _check(group, reference, _coding(ground_truth), page)
+    assert output["company"] == "00220" and report.checks["company"]["how"] == "name"
+    assert "DUPLICATE_OTHER_COMPANY" in codes and "DUPLICATE_IN_ERP" not in codes
+    for page in ("Bill to: MAPLERIDGE CONSTRUCTORS LTD.\n", "Billto:MAPLERIDGECONSTRUCTORS\n"):
+        assert _check(group, reference, _coding(ground_truth), page)[0]["company"] == "00220", page
+    # a word that only begins with a name is not the name; nor is a name inside the supplier's own, run together
+    group.set_setting("our_names", "Cascade = 320\nFraser Bend = 230")
+    output, codes, _report = _check(group, reference, _coding(ground_truth), "Yard: 1 Cascadeview Ave\n")
+    assert output.get("company") != "00320"
+    coding = _coding(ground_truth, vendor_name="Fraser Bend Aggregates Ltd.")
+    output, codes, _report = _check(group, reference, coding, "FraserBend AggregatesLtd.\nBill to: Mrb Inc.\n")
+    assert output.get("company") != "00230"
 
 
 def test_report_9_loaded_after_an_invoice_was_read_its_checks_again_read_the_names_on_its_page(tmp_path):
@@ -211,6 +252,73 @@ def test_the_business_units_of_its_lines_decide_last(group, reference, ground_tr
     assert "company" not in output and "COMPANY_UNKNOWN" in codes
 
 
+def test_how_the_company_was_decided_is_kept_and_ap_coders_own_is_decided_again_as_the_facts_change(
+        group, reference, ground_truth):  # fmt: skip
+    """B-2692: a company decided once stayed the coding's whatever the rules said later (D-285's "left as it is"):
+    decided by a name on the page, then its PO loaded naming another company, it kept the first, said as "picked" by
+    a person nobody was. The coding now keeps how its company was decided: a person's pick is kept, AP Coder's own
+    decided again at each check; one kept before (no source) is AP Coder's."""
+
+    def again(output, **changes):
+        return InvoiceCoding.model_validate({**{k: v for k, v in output.items() if k != "gl_distribution"},
+                                             **changes})  # fmt: skip
+
+    page = "Bill to: MAPLE RIDGE CONSTRUCTORS LTD, 400 Pine St\n"
+    first, _codes, _report = _check(group, reference, _coding(ground_truth, vendor_name="Lakeside Steel Ltd"), page)
+    assert (first["company"], first["company_how"]) == ("00220", "name")
+    line = {"po_number": "PO-88213", "vendor_name": "Lakeside Steel Ltd", "order_type": "OP", "order_company": "00310",
+            "line_number": 1, "description": "Rebar", "quantity": 3, "unit_price": 1450.0, "amount": 4350.0,
+            "status": "open"}  # fmt: skip
+    group.import_purchase_orders([line])
+    output, _codes, report = _check(group, reference, again(first), page)
+    assert (output["company"], output["company_how"]) == ("00310", "po")
+    assert report.checks["company"]["said"] == "the company of PO PO-88213"
+    # a person's pick is kept, whatever the rules say
+    output, codes, report = _check(group, reference, again(first, company="00230", company_how="picked"), page)
+    assert (output["company"], output["company_how"], report.checks["company"]["how"]) == ("00230", "picked", "picked")
+    assert "PO_COMPANY_DIFFERS" in codes
+    # a company kept before its source was: AP Coder's, decided again
+    kept = {k: v for k, v in first.items() if k != "company_how"}
+    assert _check(group, reference, again(kept, company="00230"), page)[0]["company_how"] == "po"
+    # nothing decides it any more: held for a person again, not kept on a rule that no longer gives it
+    output, codes, _report = _check(group, reference, again(first, po_number=""), "")
+    assert "company" not in output and "company_how" not in output and "COMPANY_UNKNOWN" in codes
+
+
+def test_a_company_not_in_report_9_is_an_error_approved_only_anyway_unless_the_pilot_names_it(
+        group, reference, ground_truth):  # fmt: skip
+    """B-2693: a company the coding names that report 9 does not list (a PO's company, a business unit's, one kept from
+    an earlier load) was only the warning that its tax is not checked: approved by a person who saw it, its voucher
+    went to JD Edwards under a company JD Edwards may not have. It is an error that only Approve anyway with a reason
+    passes, unless the pilot names that company (D-272)."""
+    import dataclasses
+
+    from ap_coder.coding.validation import Issue
+    from ap_coder.web.invoice_findings import is_hard
+
+    picked = _coding(ground_truth, company="00999", company_how="picked")
+    output, codes, _report = _check(group, reference, picked)
+    assert output["company"] == "00999" and codes["COMPANY_NOT_IN_REPORT"].severity == "error"
+    assert codes["COMPANY_NOT_IN_REPORT"].message == (
+        "Company 00999 isn't in the companies report (JD Edwards files, card 9): pick the company this invoice is "
+        "for, or approve anyway saying why")  # fmt: skip
+    assert not is_hard(Issue("error", "COMPANY_NOT_IN_REPORT", ""))
+    line = {"po_number": "PO-88213", "vendor_name": "Northwind IT Solutions Inc.", "order_type": "OP",
+            "order_company": "00999", "line_number": 1, "description": "Laptop", "quantity": 3, "unit_price": 1450.0,
+            "amount": 4350.0, "status": "open"}  # fmt: skip
+    group.import_purchase_orders([line])
+    output, codes, _report = _check(group, reference, _coding(ground_truth))
+    assert output["company_how"] == "po" and "COMPANY_NOT_IN_REPORT" in codes
+    # named in the pilot: allowed (D-272); a pilot without it holds it as it always did, said once
+    chart = group.chart_settings()
+    group.save_chart_settings(dataclasses.replace(chart, pilot=("00210", "00999")))
+    _output, codes, _report = _check(group, reference, _coding(ground_truth))
+    assert "COMPANY_NOT_IN_REPORT" not in codes and "COMPANY_NOT_IN_PILOT" not in codes
+    group.save_chart_settings(dataclasses.replace(chart, pilot=("00210",)))
+    _output, codes, _report = _check(group, reference, _coding(ground_truth))
+    assert "COMPANY_NOT_IN_PILOT" in codes and "COMPANY_NOT_IN_REPORT" not in codes
+
+
 # --- A US company ------------------------------------------------------------------------------------------------
 
 
@@ -220,11 +328,37 @@ def test_a_us_company_has_every_check_but_the_canadian_tax_ones_and_always_goes_
 
     wrong_rate = _coding(ground_truth, gst_hst_registration_number="")
     wrong_rate.tax_lines[0].rate = 0.15
-    _output, canadian, _report = _check(group, reference, wrong_rate.model_copy(update={"company": "00220"}))
+    picked = {"company_how": "picked"}
+    _output, canadian, _report = _check(group, reference, wrong_rate.model_copy(update={"company": "00220", **picked}))
     assert {"TAX_RATE_NONSTANDARD", "GST_HST_NUMBER_MISSING"} & set(canadian)
-    _output, us, _report = _check(group, reference, wrong_rate.model_copy(update={"company": "00320"}))
+    _output, us, _report = _check(group, reference, wrong_rate.model_copy(update={"company": "00320", **picked}))
     assert not {"TAX_RATE_NONSTANDARD", "GST_HST_NUMBER_MISSING", "ITC_AT_RISK"} & set(us)
     assert us["US_TAX_NOT_CHECKED"].severity == "warning"
     assert us["US_TAX_NOT_CHECKED"].message == ("Company 00320 is not checked for Canadian tax (currency USD): its tax "
                                                 "is not checked here, confirm it is right")  # fmt: skip
     assert "US_TAX_NOT_CHECKED" in ALWAYS_A_PERSON and "COMPANY_UNKNOWN" in ALWAYS_A_PERSON
+
+
+def test_report_9s_country_and_currency_are_read_however_they_are_written(tmp_path):
+    """B-2689: report 9's country was taken as its first three letters: "CAN" and "Canada" were no "CA", so a
+    Canadian company in CAD lost its Canadian tax checks (and "United States" read as "UNI"); its currency likewise
+    with a space inside. Now CA, CAN, Canada (any case, spaces) are CA; US, USA, United States, U.S. are US."""
+    store = Store(tmp_path / "ap.db")
+    rows = [list(jde_group.TITLES["build"]), ["00210", "Maple Ridge Holdings Ltd.", " cad ", "CAN"],
+            ["00220", "Maple Ridge Constructors Ltd.", "C AD", "canada "], ["00230", "Fraser Bend Civil Ltd.", "CAD",
+            " ca "], ["00310", "Maple Ridge Builders Inc.", "usd", "USA"], ["00320", "Cascade Line Contractors Inc.",
+            "USD", "United States"], ["00330", "Cascade Line West Inc.", "USD", "U.S."],
+            ["00410", "Maple Ridge Caribbean Ltd.", "USD", "Barbados"]]  # fmt: skip
+    _load_group(store, rows)
+    table = companies.companies(store)
+    assert {code: (c.currency, c.country) for code, c in table.items()} == {
+        "00210": ("CAD", "CA"), "00220": ("CAD", "CA"), "00230": ("CAD", "CA"), "00310": ("USD", "US"),
+        "00320": ("USD", "US"), "00330": ("USD", "US"), "00410": ("USD", "BAR")}  # fmt: skip
+    assert [companies.canadian(store, code)[0] for code in table] == [True, True, True, False, False, False, False]
+    # report 9 as an older load kept it: read the same way
+    store.set_setting(companies.COMPANIES_SETTING, json.dumps({"00210": {"name": "A", "currency": "cad ",
+                                                                         "country": "CAN"},
+                                                               "00310": {"name": "B", "currency": "USD",
+                                                                         "country": "us"}}))  # fmt: skip
+    assert companies.canadian(store, "00210") == (True, "CA and CAD")
+    assert companies.companies(store)["00310"].country == "US"

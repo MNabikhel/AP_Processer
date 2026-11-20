@@ -95,7 +95,9 @@ jobs:
       - name: Install
         run: python -m pip install -e ".[dev]"
       - name: The sync at the company's size
-        run: python -m pytest -q -m "" ${{ env.SYNC_VOLUME }}
+        # Its threads' stacks dumped only past 40 minutes, a hang, not at pyproject's 5 (faulthandler_timeout): on
+        # Windows, Python 3.12 crashed dumping the threads of this 20-minute test while they ran (B-2727)
+        run: python -m pytest -q -m "" -o faulthandler_timeout=2400 ${{ env.SYNC_VOLUME }}
 
   lint:
     # ruff gives the same answer on every OS and Python, so it runs once (it ran in each of the 8 test cells).

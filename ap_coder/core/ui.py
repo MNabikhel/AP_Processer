@@ -77,6 +77,7 @@ FIELD_WORDS = {
     "payment_terms": "payment terms", "supplier_province": "supplier province", "ship_to_province": "place of supply",
     "original_invoice_number": "invoice credited", "remit_bank_account": "vendor's bank details",
     "pay_from_account": "Pay from account", "line_gl": "GL account", "company": "company",
+    "company_how": "how the company was decided",
 }  # fmt: skip
 
 

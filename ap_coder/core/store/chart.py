@@ -314,6 +314,15 @@ class ChartRefused(ValueError):
     said: list[str] = []  # noqa: RUF012  (each refusal's own, set where it is raised again)
 
 
+class ChartCutShort(ChartRefused):
+    """A refresh refused as cut short (D-272), which ``anyway`` loads: ``why`` it looks so, in words that name no
+    command (the page offers Load anyway, B-2832)."""
+
+    def __init__(self, message: str, why: str) -> None:
+        super().__init__(message)
+        self.why = why
+
+
 @dataclass
 class Staged:
     """A chart read into ``chart_load`` (``Store.stage_chart``): the files (``parts``), the rows given (``given``),
@@ -387,23 +396,23 @@ def _parts(conn: sqlite3.Connection) -> dict[str, list[str]]:
         else {}  # fmt: skip
 
 
-def _refuse_cut_short(conn: sqlite3.Connection, staged: Staged, by_company: bool) -> None:
-    """``ChartRefused`` for a refresh that looks cut short (D-272): of each company it loads (``by_company``; else the
-    whole chart), less than ``SHRINK_MOST`` of the accounts it has now; a company loaded last time from several files
-    (``CHART_PARTS``) found in fewer of this load's."""
+def _cut_short(conn: sqlite3.Connection, staged: Staged, by_company: bool) -> ChartCutShort | None:
+    """The refusal of a refresh that looks cut short (D-272), None when it does not: of each company it loads
+    (``by_company``; else the whole chart), less than ``SHRINK_MOST`` of the accounts it has now; a company loaded
+    last time from several files (``CHART_PARTS``) found in fewer of this load's."""
     live = _live_accounts(conn)
     anyway = " If that is what JD Edwards has now, import it again with --anyway (python -m ap_coder chart import)."
     if by_company:
         short = [f"{co} ({staged.by_company[co]:,} accounts, {live[co]:,} now)" for co in sorted(staged.by_company)
                  if co and live[co] and staged.by_company[co] < live[co] * SHRINK_MOST]  # fmt: skip
         if short:
-            raise ChartRefused(f"Not loaded: the file has less than half the accounts loaded now of company "
-                               f"{', '.join(short)}, so it looks cut short or filtered, and the chart was left as it "
-                               f"was.{anyway}")  # fmt: skip
+            why = (f"the file has less than half the accounts loaded now of company {', '.join(short)}, so it looks "
+                   "cut short or filtered")  # fmt: skip
+            return ChartCutShort(f"Not loaded: {why}, and the chart was left as it was.{anyway}", why)
     elif sum(live.values()) and staged.accounts < sum(live.values()) * SHRINK_MOST:
-        raise ChartRefused(f"Not loaded: the file has {staged.accounts:,} accounts, less than half the "
-                           f"{sum(live.values()):,} loaded now, so it looks cut short or filtered, and the chart was "
-                           f"left as it was.{anyway}")  # fmt: skip
+        why = (f"the file has {staged.accounts:,} accounts, less than half the {sum(live.values()):,} loaded now, so "
+               "it looks cut short or filtered")  # fmt: skip
+        return ChartCutShort(f"Not loaded: {why}, and the chart was left as it was.{anyway}", why)
     before = _parts(conn)
     split = []
     for company, now in sorted(staged.company_parts.items()):
@@ -412,10 +421,12 @@ def _refuse_cut_short(conn: sqlite3.Connection, staged: Staged, by_company: bool
             split.append(f"company {company} came from {len(had)} files last time ({', '.join(had)}); this import "
                          f"has it in {len(now)} ({', '.join(sorted(now))})")  # fmt: skip
     if split:
-        raise ChartRefused(f"Not loaded: {'; '.join(split)}. A company split across files is loaded with all of them "
-                           "in one import (python -m ap_coder chart import --chart a.txt --chart b.txt), so that "
-                           "no part of it is lost; the chart was left as it was. If it now comes in fewer files, "
-                           "import it with --anyway.")  # fmt: skip
+        why = "; ".join(split)
+        return ChartCutShort(f"Not loaded: {why}. A company split across files is loaded with all of them in one "
+                             "import (python -m ap_coder chart import --chart a.txt --chart b.txt), so that no part "
+                             "of it is lost; the chart was left as it was. If it now comes in fewer files, import it "
+                             "with --anyway.", why)  # fmt: skip
+    return None
 
 
 def _keep_parts(conn: sqlite3.Connection, staged: Staged, whole: bool) -> None:
@@ -591,8 +602,9 @@ class ChartMixin:
         whole chart. Refused (``ChartRefused``, a ``ValueError``; nothing changed) for no account at all (the wrong
         file) or none that may be posted to; and, unless ``anyway``, for a load that looks cut short (D-272): a company
         (or the whole chart) with less than ``SHRINK_MOST`` of the accounts it has now, or a company loaded before from
-        several files with fewer of them now (``CHART_PARTS``). Returns {"rows", "added", "updated", "removed"} of the
-        chart, "companies" (those replaced, when another company's accounts were kept) and what the lists' rebuild did
+        several files with fewer of them now (``CHART_PARTS``; ``ChartCutShort``). Returns {"rows", "added", "updated",
+        "removed"} of the chart, "companies" (those replaced, when another company's accounts were kept), "anyway" (why
+        it looked cut short, when ``anyway`` loaded it: kept with its event, B-2832) and what the lists' rebuild did
         (``_rebuild_account_lists``). ``without``: the columns the export did not have (``Rows.without``), kept for
         ``chart_without``; ``summary``: what the import said of its files, kept with its event for the page."""
         with self._conn() as conn:
@@ -603,9 +615,12 @@ class ChartMixin:
                                    "nothing was changed.")  # fmt: skip
             by_hand = self._loaded_by_hand(conn)  # (D-221: kept across a load)
             scope, companies = _scope(conn, whole, staged.by_company)
-            if not anyway:
-                _refuse_cut_short(conn, staged, scope != "1")
+            refused = _cut_short(conn, staged, scope != "1")
+            if refused is not None and not anyway:
+                raise refused
             result = {**_staged_changes(conn, scope), **({"companies": companies} if companies else {})}
+            if refused is not None:  # (loaded though it looks cut short: its event says why it would not be, B-2832)
+                result["anyway"] = refused.why
             if by_hand:
                 result["by_hand"] = by_hand[:NAMED]
             lists = _lists(conn)

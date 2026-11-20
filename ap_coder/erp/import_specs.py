@@ -350,9 +350,15 @@ PAYMENT_TERMS = ImportSpec(
         "code": ("Payment terms code", "Payment Terms Code"),
         "description": ("Description", "Payment Terms Description"),
         "discount_pct": ("Discount percent", "Discount Percent"), "discount_days": ("Discount days", "Discount Days"),
-        "net_days": ("Net days to pay", "Net Days to Pay"),
+        "net_days": ("Net days to pay", "Net Days to Pay"), "due_date": ("Fixed due date", "Due Date"),
+        "prox_month": ("Proximate month", "Prox Date Month"), "prox_day": ("Proximate day", "Prox Date Day"),
+        "splits": ("Split payments", "Number of Split Payments"), "split_days": ("Days between payments",
+                                                                                 "Days To Pay Aging"),
     }, {"code": "the code a supplier has", "net_days": "when an invoice of the code is due",
-        "discount_pct": "the early-payment discount", "discount_days": "until when the discount is offered"}),
+        "discount_pct": "the early-payment discount", "discount_days": "until when the discount is offered",
+        "due_date": "a code due on one day", "prox_month": "a code due on a day of a later month (with the day)",
+        "prox_day": "that day", "splits": "a code paid in equal payments",
+        "split_days": "the days between those payments"}),
     find=_matcher(terms.JDE_TERMS_ALIASES),
 )  # fmt: skip
 

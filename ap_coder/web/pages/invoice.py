@@ -143,6 +143,10 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         mode = _mode(inv)
         if mode in ("approved", "pending", "rejected", "parked"):  # nothing left to read: no reading tools' warning
             context["banner"] = ""
+        if mode == "pending":  # what it says since its first approval: approved only anyway, with why (B-2695)
+            from ap_coder.web.pages.review import new_warnings, second_check
+
+            context["second_new"] = new_warnings(second_check(store, settings, inv)[1])
         return render(request, "invoice.html", "review", mode=mode, reading_status=status, **context,
                       manager=_manager_context(request, store, inv), **_closed(store, reference, inv))  # fmt: skip
     saved_at = str((_drafts(request).get(invoice_id) or {}).get("saved_at") or "")  # edits kept from before

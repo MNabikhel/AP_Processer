@@ -537,4 +537,4 @@ def test_a_remark_typed_with_a_month_names_the_next_invoices_month(books, tmp_pa
 def test_a_database_made_before_gets_the_remark_columns(store):
     with store._conn() as conn:
         columns = [row[1] for row in conn.execute("PRAGMA table_info(feedback)")]
-    assert columns[-2:] == ["final_remark", "remark_from"]
+    assert columns[columns.index("final_remark") + 1] == "remark_from"  # (columns added since come after them)

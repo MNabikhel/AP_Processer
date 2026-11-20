@@ -109,7 +109,8 @@ def test_a_tax_amount_read_on_a_line_is_kept_and_an_invoice_without_one_is_store
     stored = json.dumps(coding.to_output())
     assert all(list(line) == TARGET_LINE for line in json.loads(stored)["line_items"])
     assert json.dumps(InvoiceCoding.model_validate(json.loads(stored)).to_output()) == stored
-    assert json.loads(coding.model_dump_json()) == {**json.loads(stored), "pay_from_account": "", "company": ""}
+    assert json.loads(coding.model_dump_json()) == {**json.loads(stored), "pay_from_account": "", "company": "",
+                                                    "company_how": ""}  # fmt: skip
     assert "taxes_read" not in coding.line_items[0].model_dump()
     assert "taxes_read" not in coding.model_dump_json()
 
