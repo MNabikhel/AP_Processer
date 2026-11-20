@@ -492,3 +492,36 @@ def test_every_invoice_of_the_set_is_approved_on_the_review_screen_and_keyed_as_
         rows, check = blocks[case.number]
         assert rows == [_cells(row) for row in case.expected(PILOT)], case.name
         assert check[3].endswith(": balanced"), case.name
+
+
+def test_the_next_billing_of_a_subcontractor_is_read_with_only_the_taxes_it_prints(
+    chart_company, chart_company_client, tmp_path
+):
+    """B-2949: the subcontractor's first application for payment approved on the review screen (its supplier's
+    template learning where its GST is printed), its next billing, an invoice laid out otherwise (Ontario's HST), was
+    read with a GST of 82,400.00 at 100% beside its HST: the template's reading at that spot, a check value, kept by
+    the billing's coding, which takes each tax its rows print. A billing that adds up as printed is coded with its own
+    taxes only, so it is coded as it should be and its review screen says nothing of the GST."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from tests.review_page import ReviewPage
+    from tests.webclient import web_settings
+
+    store = chart_company.store
+    folder = tmp_path / "set"
+    first, later = jde_po_vouchers.write_progress(folder, chart_company.truth)[:2]
+    load_pos(store, {jde_po_vouchers.SUBCONTRACT_FILE: (folder / jde_po_vouchers.SUBCONTRACT_FILE).read_bytes()})
+    pipeline = InvoicePipeline(web_settings(), store.reference_data(), store=store)
+    page = ReviewPage(chart_company_client, pipeline.process(folder / "first_billing.pdf").invoice_id)
+    page.set_account(1, first.po_lines[0].account)
+    page.check()
+    assert "redirect" in page.approve(anyway="keyed by hand in Voucher Match")
+    invoice_id = pipeline.process(folder / "later_billing.pdf").invoice_id
+    read = store.get_invoice(invoice_id)["ai_output"]
+    want = later.coding()
+    assert [(t["tax_type"], t["rate"], t["taxable_amount"], t["tax_amount"]) for t in read["tax_lines"]] == [
+        (t["tax_type"], t["rate"], t["taxable_amount"], t["tax_amount"]) for t in want["tax_lines"]]  # fmt: skip
+    assert (read["subtotal"], read["tax_total"], read["grand_total"]) == (80000.0, 10400.0, 90400.0)
+    page = ReviewPage(chart_company_client, invoice_id)
+    page.set_account(1, later.po_lines[0].account)
+    page.check()
+    assert not {"TAX_LINES_TOTAL_MISMATCH", "POSTING_UNBALANCED", "TAX_RATE_NONSTANDARD"} & set(page.findings)

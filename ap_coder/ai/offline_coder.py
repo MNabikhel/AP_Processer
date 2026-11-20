@@ -882,9 +882,9 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
 
 def _progress_values(values: dict[str, Any], layout: DocLayout | None) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """(the reading's values, the progress billing read): a progress billing's own when it is one that adds up as
-    printed (``reader.progress``, no release): the work this period the subtotal, each tax as printed, the total the
-    one before the holdback (the work and the taxes), whatever totals the reader chose (its amount due is net of the
-    holdback)."""
+    printed (``reader.progress``, no release): the work this period the subtotal, each tax as printed and no other
+    (it adds up without one: a supplier's template reading another layout's spot, B-2949), the total the one before
+    the holdback (the work and the taxes), whatever totals the reader chose (its amount due is net of the holdback)."""
     progress = read_progress(layout_rows(layout)) if layout is not None else None
     if not progress or not progress["adds_up"] or progress["release"]:
         return values, None
@@ -894,6 +894,8 @@ def _progress_values(values: dict[str, Any], layout: DocLayout | None) -> tuple[
     for field, tax_type in _TAXES:
         if tax_type in taxes:
             out[field] = taxes[tax_type]
+        else:
+            out.pop(field, None)
     out.pop("other_charges", None)
     return out, progress
 
