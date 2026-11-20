@@ -305,6 +305,21 @@ def test_gl_lines_without_payable_lines_holding_a_voided_voucher_are_loaded(tmp_
     assert not [line for line in store.journal_lines_for(str(supplier.number)) if line["remark"] == "VOIDED"]
 
 
+def test_gl_lines_without_payable_lines_keep_the_saved_payable_objects(tmp_path, capsys, truth):
+    """B-2749: the build sheet's G/L lines, their payable lines left out, have no line to say the payable objects by,
+    so none was worked out of them; loading them saved that none over the trade and intercompany payable objects the
+    Transaction Journal had given (2110, 2150): the control accounts were offered and coded to again, unwarned
+    (D-269). The saved payable objects stay; the tax object is the file's."""
+    assert _run(tmp_path, capsys, "import", _file(tmp_path, truth))[0] == 0
+    store = _store(tmp_path)
+    assert store.journal_objects() == {"trade": ("2110",), "intercompany": ("2150",), "tax": ("2420",)}
+    control = store.chart_settings().control
+    state, said = journal_cmd.load(store, _gl_lines(tmp_path, truth, "2024.csv").read_bytes(), "2024.csv")
+    assert state == journal_cmd.DONE, said
+    assert store.journal_objects() == {"trade": ("2110",), "intercompany": ("2150",), "tax": ("2420",)}
+    assert store.chart_settings().control == control
+
+
 def test_saved_objects_of_another_company_are_passed_over_for_the_files_own(tmp_path, capsys, truth):
     assert _run(tmp_path, capsys, "import", _file(tmp_path, truth))[0] == 0
     other = jde_exports.journal_csv(truth).replace(b".2110,", b".2188,").replace(b"00210", b"00530")
