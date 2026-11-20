@@ -123,7 +123,8 @@ def _sheet(client, batch):
     from tests.erp.test_jde_keying import blocks
 
     wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/exports/batches/{batch}/download").content))
-    sheet = [int(b[0][1].value.rsplit(" ", 1)[1]) for b in blocks(wb[jde_keying.SHEET])]
+    sheet = [int(b[0][1].value.rsplit(" ", 1)[1]) for b in blocks(wb[jde_keying.SHEET])
+             if str(b[0][0].value).startswith("Voucher ")]  # fmt: skip
     return sheet, [(row[0], row[-1]) for row in wb[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True)]
 
 
@@ -187,3 +188,26 @@ def test_the_exports_page_reads_jd_edwards_companies_as_a_batch_made_does(tmp_pa
     assert held == {usd: False}
     on_batch, sheet, not_ready = _keyed(store, client, [usd])
     assert on_batch == sheet == [usd] and not_ready == []
+
+
+def test_an_invoice_approved_before_its_company_was_decided_is_held_from_jd_edwards(
+    tmp_path, cost_centers_demo_template
+):
+    """B-2698: an invoice approved while AP Coder knew one company (no company on its coding: its voucher is keyed
+    under Settings → JD Edwards E1's), then JD Edwards' companies loaded (report 9), went to JD Edwards under Settings'
+    company with nothing said, whichever company it is (D-285's "left as it is"). It is held, said so, to be reopened
+    for its company: greyed out on the Exports page, and on the Not ready sheet of a keying sheet made before and
+    downloaded again."""
+    from tests.erp.test_jde_keying import demo
+    from tests.web.test_chart_eligible import _two_companies
+
+    store, client, northwind, _chinook = demo(tmp_path, cost_centers_demo_template)
+    later = _approved(store, tmp_path, store.get_invoice(northwind["id"])["final_output"], "NW-5501", "")
+    assert _page_holds(client, [later])[0] == {later: False}  # one company: Settings', as before
+    assert _keyed(store, client, [northwind["id"]]) == ([northwind["id"]], [northwind["id"]], [])
+    _two_companies(store)
+    held, page = _page_holds(client, [later])
+    why = ("approved before its company was decided (JD Edwards' companies were loaded since): reopen it to pick its "
+           "company")  # fmt: skip
+    assert held == {later: True} and why in page
+    assert _sheet(client, store.export_batches()[0]["id"]) == ([], [(northwind["id"], why)])

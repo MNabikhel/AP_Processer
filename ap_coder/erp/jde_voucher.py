@@ -39,6 +39,10 @@ NO_AN8_FIX = (
     "pick the vendor from the vendor list, or add its number in Settings → JD Edwards E1 → Supplier address numbers"
 )
 BAD_AN8 = "is not a JDE address number"
+# An invoice approved while AP Coder knew one company, JD Edwards' companies loaded since (D-267): its voucher would go
+# under Settings' company, whichever company it is (B-2698).
+NO_COMPANY = ("approved before its company was decided (JD Edwards' companies were loaded since): reopen it to pick "
+              "its company")  # fmt: skip
 
 EXEMPT_STATUSES = ("exempt", "zero_rated")  # a line's tax_status that E1 takes as exempt (D-64)
 
@@ -670,11 +674,17 @@ def sent_tax(invoice: dict[str, Any], settings: JdeSettings, an8: str = "") -> f
 def _vouchers(invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup,
               on: dt.date | None = None) -> list[tuple[str, _Voucher]]:  # fmt: skip
     """Each invoice's (supplier number, voucher), in their order: prepared once for a whole check, export or dry run,
-    then handed to ``validate``, ``voucher_rows`` and ``dry_run`` as ``prepared``."""
+    then handed to ``validate``, ``voucher_rows`` and ``dry_run`` as ``prepared``. With several companies, one with
+    no company of its own (approved before they were loaded) is held (``NO_COMPANY``): the review screen holds an
+    invoice in review with none already (``COMPANY_UNKNOWN``)."""
     out = []
     for inv in invoices:
-        an8 = resolve_an8(inv.get("final_output") or {}, vendor_lookup, settings)
-        out.append((an8, _prepare(inv, settings, an8, on)))
+        final = inv.get("final_output") or {}
+        an8 = resolve_an8(final, vendor_lookup, settings)
+        v = _prepare(inv, settings, an8, on)
+        if settings.several_companies and not str(final.get("company") or "").strip():
+            v.add(NO_COMPANY, "JDE_NO_COMPANY")
+        out.append((an8, v))
     return out
 
 
