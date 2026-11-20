@@ -12,6 +12,7 @@ from ap_coder.coding import banks
 from ap_coder.core.store import APPROVED, REJECTED, REVIEW
 from ap_coder.erp import jde_settings
 from ap_coder.web import invoice_coding
+from tests.browser import settle, wait_until
 from tests.web import test_web_invoice as screen
 from tests.web.test_web_invoice import PAGE, check, form_of
 from tests.webclient import client_for, web_settings
@@ -35,7 +36,7 @@ def _open(browser, path: str, width=1366, height=768, wait_viewer=True):
     page.goto(f"{base}{path}")
     if wait_viewer:
         page.wait_for_selector(".iv-sheet:not(.loading)")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.wait_for_timeout(300)
     return page
 
@@ -82,7 +83,7 @@ def test_in_a_browser_approve_anyway_at_1366_overlaps_nothing_and_asks_for_the_r
     page.wait_for_selector("[data-override-reason]:not([hidden])")
     page.locator("[data-override-reason]").fill("")
     page.locator("[form=inv][name=invoice_number]").focus()
-    page.wait_for_timeout(700)
+    settle(page)  # the reason emptied: checked, and the bar drawn again
     assert not _overlap(page, ".inv-override", ".rvw-math")
     assert not _overlap(page, ".inv-override", ".rvw-post-sub")
     clipped = page.evaluate("""() => [...document.querySelectorAll(
@@ -132,8 +133,8 @@ def test_in_a_browser_opening_an_invoice_keeps_the_header_and_the_checks_in_view
     assert page.evaluate("scrollY") == 0
     top = page.evaluate("document.querySelector('.inv-checks').getBoundingClientRect().top")
     assert 0 <= top < 400
-    page.keyboard.type("1")  # typing in it brings it into view, above the approve bar
-    page.wait_for_timeout(900)
+    page.keyboard.type("1")  # typing in it brings it into view, above the approve bar (once checked)
+    settle(page)
     at = page.evaluate("""() => [document.activeElement.getBoundingClientRect().bottom,
       document.querySelector('.inv-actionbar').getBoundingClientRect().top]""")
     assert at[0] <= at[1] + 1
@@ -145,7 +146,7 @@ def test_in_a_browser_the_approved_banner_shows_on_the_next_invoice(browser, sto
     page.keyboard.press("Control+Enter")
     page.wait_for_url(re.compile(r"/review/\d+"), timeout=10000)
     page.wait_for_selector(".flash")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.wait_for_timeout(600)
     box = page.evaluate("document.querySelector('.flash').getBoundingClientRect().top")
     assert page.evaluate("scrollY") == 0 and 0 <= box < 300
@@ -361,7 +362,7 @@ def test_in_a_browser_draft_saved_stays_off_the_document_card(browser, store):
 def test_in_a_browser_reopen_focuses_its_reason_and_the_clear_queue_its_action(browser, store):
     page = _open(browser, f"/review/{_id(store, 'Northwind', APPROVED)}")
     page.locator("summary", has_text="Reopen for correction").click()
-    page.wait_for_timeout(200)  # the toggle event comes after the click
+    wait_until(page, lambda: page.evaluate("document.activeElement.name") == "reason")  # (its toggle event, after)
     assert page.evaluate("document.activeElement.name") == "reason"
     for inv in store.list_invoices(REVIEW):
         store.approve_invoice(inv["id"], store.get_invoice(inv["id"])["ai_output"], "Jordan Lee")

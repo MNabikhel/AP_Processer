@@ -4,7 +4,10 @@ A test file's ``browser`` fixture is ``with browser_on(chromium, app) as opened:
 the app served on a free port of 127.0.0.1 for the test, and every page the test opened closed after it. The
 module-scoped ``chromium`` fixture (tests/conftest.py) launches one Chromium per test file; each test launched its
 own before (1-2 s each). Without Playwright and a Chromium the browser tests skip, unless ``AP_REQUIRE_BROWSER=1``
-(CI's browser job), where they fail (``chromium_path``)."""
+(CI's browser job), where they fail (``chromium_path``).
+
+After an action, a test waits for the page to have done with it (``settle``: nothing under way, by the page's own
+word) or for what it should show (``wait_until``, Playwright's ``wait_for_*``), never a fixed time (D-299)."""
 
 from __future__ import annotations
 
@@ -80,3 +83,74 @@ def wait_until(page: Any, condition: Any, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while not condition() and time.monotonic() < deadline:
         page.wait_for_timeout(50)
+
+
+# What a page says is at work (aria-busy, D-299): the review screen's form while an edit waits for its check or the
+# check runs, a line action's button until its lines are drawn, a file being read, a slow page's link until it comes.
+BUSY = '[aria-busy]:not([aria-busy="false"])'
+BUSY_NOW = f"() => [...document.querySelectorAll('{BUSY}')].map((e) => e.outerHTML.slice(0, 80))"  # (what they are)
+SETTLED, SETTLE_WAIT = 0.1, 15.0  # seconds: nothing under way this long is settled; waited for at most this
+
+
+class Counted:
+    """The tests' Chromium (the ``chromium`` fixture, tests/conftest.py): Playwright's ``Browser``, but every page
+    opened in it has its requests under way counted, for ``settle``."""
+
+    def __init__(self, chromium: Any) -> None:
+        self._chromium = chromium
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._chromium, name)
+
+    def new_context(self, **options: Any) -> Any:
+        return _counting(self._chromium.new_context(**options))
+
+    def new_page(self, **options: Any) -> Any:
+        page = self._chromium.new_page(**options)
+        _counting(page.context)
+        return page
+
+
+def _counting(context: Any) -> Any:
+    under_way: set[Any] = set()
+    context.on("request", lambda r: under_way.add(r))  # (Playwright marks a handler: a set's own method takes no mark)
+    context.on("requestfinished", lambda r: under_way.discard(r))
+    context.on("requestfailed", lambda r: under_way.discard(r))
+    context.under_way = under_way
+    return context
+
+
+def _asked_by(request: Any, page: Any) -> bool:
+    try:
+        return request.frame.page is page
+    except Exception:  # (a worker's request: no frame)
+        return True
+
+
+def settle(page: Any, wait: float = SETTLE_WAIT) -> None:
+    """Until ``page`` has nothing under way, for ``SETTLED`` in a row: no request of its unanswered (counted from its
+    opening: ``Counted``) and nothing on it saying it is at work (``BUSY``). After an action, before the next one or
+    an assert on what the page drew: the review screen checks an edit 0.2-0.45 s after it and draws the answer,
+    which a fixed wait outlasted only on a quick computer. Playwright's "networkidle" is no such wait: it comes once
+    a page, so asked for again later it returns at once (B-2851). Fails, saying what was still under way, when the
+    page has not settled within ``wait`` seconds."""
+    page.wait_for_load_state("networkidle")  # the page's opening (once it has come, this returns at once)
+    under_way = getattr(page.context, "under_way", set())
+    deadline = time.monotonic() + wait
+    since = None
+    while True:
+        busy = [r.url for r in list(under_way) if _asked_by(r, page)]
+        if not busy:
+            try:
+                busy = page.evaluate(BUSY_NOW)
+            except Exception as e:  # (the page being left or drawn again: under way too)
+                busy = [str(e)]
+        now = time.monotonic()
+        if busy:
+            since = None
+        elif since is None:
+            since = now
+        elif now - since >= SETTLED:
+            return
+        assert now < deadline, f"the page has not settled in {wait} s: {busy} still under way"
+        page.wait_for_timeout(20)

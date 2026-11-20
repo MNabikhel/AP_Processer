@@ -13,7 +13,7 @@ from ap_coder.core import authenticator
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.app import create_app
 from ap_coder.web.core import page_meta
-from tests.browser import browser_on, wait_until
+from tests.browser import browser_on, settle, wait_until
 from tests.conftest import SAMPLE_STEM
 from tests.webclient import add_clean, authenticator_code, enrol, known_vendors, web_settings
 
@@ -271,14 +271,14 @@ def test_in_a_browser_edits_made_after_the_session_ended_come_back_after_logging
     _said_ended(page)
     assert page.url.endswith(path) and box.input_value() == "AFTER-THE-END"
     box.fill("AFTER-IT-WAS-SAID")
-    page.wait_for_timeout(600)  # (its check refused too: the edit kept in the tab)
+    settle(page)  # (its check refused too: the edit kept in the tab)
     _sign_in_again(page)
     _again(page, store, "clara")
     page.wait_for_url(f"**{path}")
     page.wait_for_function(
         "() => document.querySelector('[form=inv][name=invoice_number]').value === 'AFTER-IT-WAS-SAID'"
     )
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert store.get_invoice(invoice)["status"] == "review"  # nothing approved behind the login
     page.reload()  # kept on the server as the draft, not only in the tab
     assert page.locator('[form="inv"][name="invoice_number"]').input_value() == "AFTER-IT-WAS-SAID"
@@ -302,7 +302,7 @@ def test_in_a_browser_edits_kept_when_the_session_ended_are_never_shown_to_someo
     assert kept and kept["account"] == "clara" and ["invoice_number", "CLARAS-EDIT"] in kept["fields"]  # kept: B-1678
     _again(page, store, "april")
     page.wait_for_url(f"**{path}")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert page.locator('[form="inv"][name="invoice_number"]').input_value() == number
     assert page.evaluate("Object.keys(sessionStorage).filter(k => k.startsWith('apc-unsaved'))") == []
     assert errors == []

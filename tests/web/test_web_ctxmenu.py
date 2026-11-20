@@ -17,7 +17,7 @@ from ap_coder.core.store import REVIEW, Store
 from ap_coder.web import invoice_findings, invoice_form
 from ap_coder.web.app import create_app
 from ap_coder.web.invoice_form import Draft
-from tests.browser import browser_on
+from tests.browser import browser_on, settle
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
 from tests.web.test_web_invoice import check, form_of
 from tests.webclient import PAGE, REVIEW_SCREEN
@@ -189,7 +189,7 @@ def _review(browser, invoice_id):
              window.__prevented = e.defaultPrevented; }), true)"""
     )
     page.wait_for_selector(".iv-sheet:not(.loading)")
-    page.wait_for_load_state("networkidle")  # the opening check has answered
+    settle(page)  # the opening check has answered
     return page, errors
 
 
@@ -235,7 +235,7 @@ def test_in_a_browser_right_click_a_details_name_clear_it_and_undo_puts_it_back(
     assert box.input_value() == "" and menu.count() == 0
     undo = page.locator("#toasts .flash-act")
     assert undo.is_visible() and "cleared" in page.inner_text("#toasts")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     with _checked(page) as sent:
         undo.click()
     assert box.input_value() == before
@@ -258,7 +258,7 @@ def test_in_a_browser_not_on_this_invoice_leaves_it_blank_with_a_note_and_nothin
     with _checked(page) as sent:
         _item(page, "absent").click()
     assert '["gst_hst_registration_number"]' in (sent.value.post_data or "")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert box.input_value() == ""
     label = page.locator('.inv-details [data-field="gst_hst_registration_number"]')
     assert label.locator(".inv-absent").is_visible() and "Not on this invoice" in label.inner_text()
@@ -339,21 +339,21 @@ def test_in_a_browser_duplicate_insert_copy_from_above_and_clear_a_lines_account
     description = _lines(page).first.locator("textarea[name=line_description]").input_value()
     _menu(page, _lines(page).first.locator("[data-del-row]"))
     _item(page, "duplicate").click()
-    page.wait_for_load_state("networkidle")  # (its check redraws the grid, and a menu opened meanwhile: B-2644)
+    settle(page)  # (its check redraws the grid, and a menu opened meanwhile: B-2644)
     assert _lines(page).count() == n + 1
     assert _lines(page).nth(1).locator("textarea[name=line_description]").input_value() == description
     numbers = page.eval_on_selector_all("[data-grid=lines] [name=line_number]", "s => s.map(x => x.value)")
     assert numbers == [str(i + 1) for i in range(n + 1)] or len(set(numbers)) == n + 1, numbers
     _menu(page, _lines(page).first.locator("[data-del-row]"))
     _item(page, "insert").click()
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert _lines(page).count() == n + 2
     assert _lines(page).nth(1).locator("textarea[name=line_description]").input_value() == ""
     assert _gl(page, 1) == "UNASSIGNED"
     # the new line: its account from the line above, then cleared again
     _menu(page, _lines(page).nth(1).locator("[data-del-row]"))
     _item(page, "above").click()
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert _gl(page, 1) == _gl(page, 0) != "UNASSIGNED"
     assert _lines(page).nth(1).locator(".pk-input").input_value().startswith(_gl(page, 0))
     _menu(page, _lines(page).nth(1).locator("[data-del-row]"))
@@ -387,7 +387,7 @@ def test_in_a_browser_a_line_added_between_others_leaves_their_numbers_so_approv
     _item(page, "delete").click()  # the copy stands for line 1 now, under its own number
     numbers = page.eval_on_selector_all("[data-grid=lines] [name=line_number]", "s => s.map(x => x.value)")
     assert numbers == [str(n + 1)] + [str(i) for i in range(2, n + 1)], numbers
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.locator("[data-approve]").click()
     page.wait_for_url(lambda u: "flash" in u or f"/review/{invoice_id}" not in u, timeout=15000)
     with store._conn() as conn:
@@ -574,7 +574,7 @@ def test_in_a_browser_the_queue_remembers_its_filter_and_where_it_was_scrolled(b
     page.wait_for_selector(".iv-sheet:not(.loading)")
     page.locator("[data-nav=queue]").click()  # the queue's address without its filter
     page.wait_for_url(re.compile(r"/review\?show=all&sort=amount$"))
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.wait_for_function("y => Math.abs(window.scrollY - y) < 40", arg=y)
     assert errors == []
 
@@ -590,7 +590,7 @@ def test_in_a_browser_back_from_an_invoice_opened_from_a_sorted_queue_loads_the_
     page.goto(base + "/review")
     with page.expect_navigation():
         page.select_option(".rq-toolbar select[name=sort]", "amount")  # its form: ?show=all&q=&sort=amount
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.evaluate("window.scrollTo(0, 260)")
     y = page.evaluate("window.scrollY")
     assert y > 100
@@ -599,7 +599,7 @@ def test_in_a_browser_back_from_an_invoice_opened_from_a_sorted_queue_loads_the_
     loads: list[str] = []
     page.on("request", lambda r: loads.append(r.url) if r.resource_type == "document" else None)
     page.locator("[data-nav=queue]").click()
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.wait_for_function("y => Math.abs(window.scrollY - y) < 40", arg=y, timeout=3000)
     assert len(loads) == 1 and "sort=amount" in page.url, loads
     assert page.evaluate("document.activeElement.getAttribute('href')") == href  # the keyboard goes on from it
@@ -619,14 +619,14 @@ def test_in_a_browser_back_from_an_invoice_opened_after_show_more_loads_the_queu
     page.goto(base + "/review?limit=2")
     with page.expect_navigation():
         page.click(".rq-more")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert page.locator(".rq-list a.rq-row").count() == 4
     page.eval_on_selector(".rq-list li:last-child a.rq-row", "a => a.click()")
     page.wait_for_selector(".iv-sheet:not(.loading)")
     loads: list[str] = []
     page.on("request", lambda r: loads.append(r.url) if r.resource_type == "document" else None)
     page.locator("[data-nav=queue]").click()
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert len(loads) == 1 and "limit=4" in page.url, loads
     assert page.locator(".rq-list a.rq-row").count() == 4 and errors == []
 
@@ -666,7 +666,7 @@ def test_in_a_browser_a_tax_lines_taxable_follows_the_lines_ticked_with_it_b610(
     tax = page.locator("[data-grid=taxes] > tr").nth(at)
     with page.expect_response(lambda r: r.url.endswith("/check")):  # its findings redrawn before the next change
         tax.locator("[name=tax_taxable]").fill("100.00")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     code.select_option(codes[0])
     assert _taxable(page, kind) == "100.00"
     _menu(page, tax.locator("td").first)
@@ -780,7 +780,7 @@ def test_in_a_browser_a_new_blank_tax_line_does_not_take_the_ticked_sum_b622(bro
     new.locator("[name=tax_type]").select_option(kind)
     assert new.locator("[name=tax_taxable]").input_value() == ""
     code = _lines(page).first.locator("select[data-tax-code]")  # the line's tax code (D-64)
-    page.wait_for_load_state("networkidle")
+    settle(page)
     with _checked(page):
         code.select_option("EXEMPT")
     assert new.locator("[name=tax_taxable]").input_value() == ""  # stays blank: not a second copy of the sum
@@ -838,13 +838,13 @@ def test_in_a_browser_a_note_is_posted_once_however_often_it_is_sent_b625(browse
     box.press("Enter")
     box.press("Enter")
     page.wait_for_selector("[data-notes] .ev")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert len(notes) == 1, notes
     page.locator('.inv-details input[name="po_number"]').fill("PO-5678")
     box.fill("second note")
     page.locator("[data-note-form] button[type=submit]").dblclick()
     page.wait_for_function("() => document.querySelectorAll('[data-notes] .ev').length === 2")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert len(notes) == 2, notes
     assert page.locator("[data-notes] .ev").count() == 2
     assert errors == []
@@ -863,14 +863,14 @@ def test_in_a_browser_the_queue_restores_only_the_view_an_invoice_was_opened_fro
     page.goto(base + f"/review/{invoice_id}")
     page.wait_for_selector(".iv-sheet:not(.loading)")
     page.locator("[data-nav=queue]").click()
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert page.url.endswith("/review"), page.url
     # opened from the queue, but the queue's address has its own message: it is shown, not replaced
     page.goto(base + "/review?show=all&sort=amount")
     page.eval_on_selector(".rq-list li:first-child a.rq-row", "a => a.click()")
     page.wait_for_selector(".iv-sheet:not(.loading)")
     page.goto(base + "/review?flash=nope", referer=base + f"/review/{invoice_id}")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert "show=all" not in page.url, page.url
     assert errors == []
 
@@ -889,9 +889,11 @@ def test_in_a_browser_a_detail_left_long_ago_is_not_filled_by_a_double_click_b62
     word, x, y = _plain_word(page, invoice_id)
     page.wait_for_timeout(900)  # longer than the window
     page.mouse.dblclick(x, y)
-    page.wait_for_timeout(400)
+    settle(page)
     assert box.input_value() == "" and teaches == []
-    # typed in just now: the detail is the one meant
+    # typed in just now: the detail is the one meant (the window long again: finding the word asks the server, which
+    # took longer than the short one on a slow runner, and nothing was filled: B-2852)
+    page.evaluate("window.AP_ARMED_MS = 60000")
     box.click()
     box.type("x")
     box.press("Backspace")
@@ -939,7 +941,8 @@ def test_in_a_browser_a_right_click_on_a_lines_box_opens_the_line_menu_unless_it
 SCROLLED = """sel => new Promise((done) => {
   const el = sel ? document.querySelector(sel) : document.scrollingElement;
   const at = el.scrollTop;
-  (sel ? el : window).addEventListener("scroll", () => requestAnimationFrame(() => done(el.scrollTop - at)), { once: true });
+  const said = () => requestAnimationFrame(() => done(el.scrollTop - at));
+  (sel ? el : window).addEventListener("scroll", said, { once: true });
   el.scrollTop += 60;
 })"""  # scrolls the element (the window with none) and answers how far once its scroll event has been handled
 
@@ -949,7 +952,8 @@ def test_in_a_browser_a_lines_menu_stays_open_while_the_page_viewer_scrolls_and_
 ):
     """B-2850: a right-click on a line moves the page viewer to the line's place on the page, smoothly; a scroll more
     than 0.25 s after the menu opened closed it, so on a slow computer the line's menu closed by itself under the
-    pointer. Only a scroll that moves what the menu is for (the window's, the viewer's for the page's menu) closes it."""
+    pointer. Only a scroll that moves what the menu is for (the window's, the viewer's for the page's menu) closes
+    it."""
     page, errors = _review(browser, store.list_invoices(REVIEW)[0]["id"])
     _menu(page, _lines(page).first.locator("[data-del-row]"))
     page.wait_for_timeout(300)  # past the moment the right-click's own scroll is taken for

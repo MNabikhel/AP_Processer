@@ -509,7 +509,7 @@ function applyTaxRows(taxes, posted) {
 async function check() {
   clearTimeout(timer);
   timer = 0;
-  if (!form || readOnly || stale || form.dataset.sending) return; // being approved, read-only or out of date
+  if (!form || readOnly || stale || form.dataset.sending) return void showChecking(); // being approved, read-only or out of date
   if (running) {
     queued = true;
     return running;
@@ -534,6 +534,7 @@ async function check() {
       } else if (answer.error) toast({ text: answer.error, tone: "err" }, 9000);
     } while (queued);
   })();
+  showChecking();
   if (checking) checking.textContent = "Checking…";
   let saved = false;
   try {
@@ -541,6 +542,7 @@ async function check() {
     saved = lastCheckOk && lastDraft;
   } finally {
     running = null;
+    showChecking();
     keepFocusInView(); // the sections drawn again may have moved the box being worked in under the approve bar
     // Every edit is kept as a draft on the server as it is checked: say so, so leaving the page is no worry (only
     // when one is kept, B-825).
@@ -576,6 +578,14 @@ function soon(ms = 450) {
   followTicks(); // every edit comes here: a tax line's taxable follows the lines whose tax code carries it (B-610)
   clearTimeout(timer);
   timer = setTimeout(checkSoon, ms);
+  showChecking();
+}
+
+/** The form is busy (aria-busy) from an edit until its check has answered and the answer is drawn: what waits on the
+    screen to have done with an edit (the browser tests' ``settle``, D-299) asks it. */
+function showChecking() {
+  if (form && (timer || running)) form.setAttribute("aria-busy", "true");
+  else form?.removeAttribute("aria-busy");
 }
 
 /** The check an edit starts: put off while an Account box is typed in (``typingAccount``). Approving, leaving and a
@@ -655,6 +665,7 @@ document.addEventListener(
       // only reach the server after the approval, and be told the invoice is no longer in the queue.
       clearTimeout(timer);
       timer = 0;
+      showChecking();
       // A check under way: the approval waits for its answer, which draws the draft's revision it is at (B-1937)
       if (passing === f || !running) return;
     } else if (!form || passing === f || !(timer || running)) return;
@@ -1868,6 +1879,7 @@ function showStale(said) {
   stale = said;
   clearTimeout(timer);
   timer = 0;
+  showChecking();
   lockFields();
   if (approveButton) approveButton.disabled = true;
   document.querySelector(".inv-actionbar")?.setAttribute("hidden", "");
