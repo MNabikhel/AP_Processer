@@ -32,3 +32,17 @@ def test_a_small_day_is_read_approved_keyed_and_scored(tmp_path):
     assert card["buyer_trap"]["keying"] == [1, 1], misses  # (B-2720: the bill-to under the company's own name)
     shown = (tmp_path / "pilot_day.md").read_text(encoding="utf-8")
     assert "| all | 8 |" in shown and f"## Every miss ({len(misses)})" in shown
+
+
+def test_the_commands_help_is_printed(capsys):
+    """B-2723: `python -m ap_coder.bench pilotday --help` stopped on "TypeError: %o format": the --quick help said
+    "15% of each category", and argparse reads a lone % as a format code."""
+    import argparse
+
+    import pytest
+
+    parser = argparse.ArgumentParser(prog="bench")
+    pilot_day.add_parser(parser.add_subparsers(dest="command"))
+    with pytest.raises(SystemExit) as done:
+        parser.parse_args(["pilotday", "--help"])
+    assert done.value.code == 0 and "of each category" in capsys.readouterr().out

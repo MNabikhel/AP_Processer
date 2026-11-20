@@ -1222,7 +1222,8 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     """``pilotday``'s command line, under ``python -m ap_coder.bench``."""
     p = sub.add_parser("pilotday", help="the pilot tester's day on a made-up construction group, end to end through "
                        "the app, scored against the truth (D-275)")  # fmt: skip
-    p.add_argument("--quick", action="store_true", help=f"{QUICK_SHARE:.0%} of each category (about 35 invoices)")
+    quick = f"{QUICK_SHARE:.0%} of each category (about 35 invoices)".replace("%", "%%")  # (argparse: a % is a format)
+    p.add_argument("--quick", action="store_true", help=quick)
     p.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same day")
     p.add_argument("--scanned", type=float, default=0.1, help="share of invoices made as scans (default 0.1)")
     p.add_argument("--out", default="bench_pilotday", help="output folder (default bench_pilotday)")
