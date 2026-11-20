@@ -100,7 +100,8 @@ def test_nothing_decides_so_the_invoice_is_held_to_pick_the_company(group, refer
     output, codes, report = _check(group, reference, _coding(ground_truth))
     assert "company" not in output and codes["COMPANY_UNKNOWN"].severity == "error"
     assert codes["COMPANY_UNKNOWN"].message == "Pick the company this invoice is for: nothing on it decides one"
-    output, codes, report = _check(group, reference, _coding(ground_truth, company="220"))  # a person's pick
+    picked = _coding(ground_truth, company="220", company_how="picked")  # a person's pick
+    output, codes, report = _check(group, reference, picked)
     assert output["company"] == "00220" and "COMPANY_UNKNOWN" not in codes
     assert report.checks["company"]["how"] == "picked"
 
@@ -251,6 +252,39 @@ def test_the_business_units_of_its_lines_decide_last(group, reference, ground_tr
     assert "company" not in output and "COMPANY_UNKNOWN" in codes
 
 
+def test_how_the_company_was_decided_is_kept_and_ap_coders_own_is_decided_again_as_the_facts_change(
+        group, reference, ground_truth):  # fmt: skip
+    """B-2692: a company decided once stayed the coding's whatever the rules said later (D-285's "left as it is"):
+    decided by a name on the page, then its PO loaded naming another company, it kept the first, said as "picked" by
+    a person nobody was. The coding now keeps how its company was decided: a person's pick is kept, AP Coder's own
+    decided again at each check; one kept before (no source) is AP Coder's."""
+
+    def again(output, **changes):
+        return InvoiceCoding.model_validate({**{k: v for k, v in output.items() if k != "gl_distribution"},
+                                             **changes})  # fmt: skip
+
+    page = "Bill to: MAPLE RIDGE CONSTRUCTORS LTD, 400 Pine St\n"
+    first, _codes, _report = _check(group, reference, _coding(ground_truth, vendor_name="Lakeside Steel Ltd"), page)
+    assert (first["company"], first["company_how"]) == ("00220", "name")
+    line = {"po_number": "PO-88213", "vendor_name": "Lakeside Steel Ltd", "order_type": "OP", "order_company": "00310",
+            "line_number": 1, "description": "Rebar", "quantity": 3, "unit_price": 1450.0, "amount": 4350.0,
+            "status": "open"}  # fmt: skip
+    group.import_purchase_orders([line])
+    output, _codes, report = _check(group, reference, again(first), page)
+    assert (output["company"], output["company_how"]) == ("00310", "po")
+    assert report.checks["company"]["said"] == "the company of PO PO-88213"
+    # a person's pick is kept, whatever the rules say
+    output, codes, report = _check(group, reference, again(first, company="00230", company_how="picked"), page)
+    assert (output["company"], output["company_how"], report.checks["company"]["how"]) == ("00230", "picked", "picked")
+    assert "PO_COMPANY_DIFFERS" in codes
+    # a company kept before its source was: AP Coder's, decided again
+    kept = {k: v for k, v in first.items() if k != "company_how"}
+    assert _check(group, reference, again(kept, company="00230"), page)[0]["company_how"] == "po"
+    # nothing decides it any more: held for a person again, not kept on a rule that no longer gives it
+    output, codes, _report = _check(group, reference, again(first, po_number=""), "")
+    assert "company" not in output and "company_how" not in output and "COMPANY_UNKNOWN" in codes
+
+
 # --- A US company ------------------------------------------------------------------------------------------------
 
 
@@ -260,9 +294,10 @@ def test_a_us_company_has_every_check_but_the_canadian_tax_ones_and_always_goes_
 
     wrong_rate = _coding(ground_truth, gst_hst_registration_number="")
     wrong_rate.tax_lines[0].rate = 0.15
-    _output, canadian, _report = _check(group, reference, wrong_rate.model_copy(update={"company": "00220"}))
+    picked = {"company_how": "picked"}
+    _output, canadian, _report = _check(group, reference, wrong_rate.model_copy(update={"company": "00220", **picked}))
     assert {"TAX_RATE_NONSTANDARD", "GST_HST_NUMBER_MISSING"} & set(canadian)
-    _output, us, _report = _check(group, reference, wrong_rate.model_copy(update={"company": "00320"}))
+    _output, us, _report = _check(group, reference, wrong_rate.model_copy(update={"company": "00320", **picked}))
     assert not {"TAX_RATE_NONSTANDARD", "GST_HST_NUMBER_MISSING", "ITC_AT_RISK"} & set(us)
     assert us["US_TAX_NOT_CHECKED"].severity == "warning"
     assert us["US_TAX_NOT_CHECKED"].message == ("Company 00320 is not checked for Canadian tax (currency USD): its tax "

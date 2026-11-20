@@ -70,6 +70,49 @@ def test_the_company_box_holds_an_invoice_until_a_company_is_picked(client, stor
     assert "Company 00310 is not checked for Canadian tax (currency USD)" in html.unescape(picked["sections"]["checks"])
 
 
+def _box(client, invoice_id: int) -> str:
+    page = html.unescape(client.get(f"/review/{invoice_id}").text)
+    return page.split('data-field="company"', 1)[1].split("</label>", 1)[0]
+
+
+def test_the_company_box_says_how_its_company_was_decided_and_only_a_persons_pick_is_kept(client, store):
+    """B-2692 on the review screen: the Company box says how its company was decided (AP Coder's rule, or a person's
+    pick). AP Coder's company, the box left as it was drawn, is decided again as the facts change; one a person
+    picks (the box's hidden field set as it is changed, or a form that posts another company) is kept and approved
+    as picked."""
+    load_sample_setup(store)
+    invoice_id = add_clean(store)
+    _card(client, jde_group.companies_xlsx())
+    inv = store.get_invoice(invoice_id)
+    voucher = {"key": "00230-PV-700101-001", "vendor_name": inv["ai_output"]["vendor_name"], "invoice_number": "N-1",
+               "total": 10.0, "invoice_date": "2026-01-02", "an8": "", "document": "700101"}  # fmt: skip
+    store.import_erp_vouchers([voucher])
+    box = _box(client, invoice_id)
+    assert '<option value="00230" selected>' in box and 'name="company_how" form="inv" value=""' in box
+    assert ("Decided by AP Coder from the supplier's history: the only company this supplier has billed. Decided "
+            "again as the invoice changes; pick one to keep it.") in re.sub(r"<[^>]+>", "", box)  # fmt: skip
+    # the screen as drawn, then the supplier bills another company too: decided again, none now
+    data = {**Draft.stored(inv["ai_output"]).header, "company": "00230", "company_how": ""}
+    store.import_erp_vouchers([{**voucher, "key": "00210-PV-700102-001", "invoice_number": "N-2"}])
+    answer = client.post(f"/review/{invoice_id}/check", data=data, headers=PAGE).json()
+    assert answer["header"]["values"]["company"] == ""
+    assert "Pick the company this invoice is for" in html.unescape(answer["sections"]["checks"])
+    # picked by a person: kept, and said so
+    picked = {**data, "company": "00230", "company_how": "picked"}
+    answer = client.post(f"/review/{invoice_id}/check", data=picked, headers=PAGE).json()
+    assert "company" not in answer["header"]["values"] and "company" not in answer["header"]["flags"]
+    box = _box(client, invoice_id)
+    assert '<option value="00230" selected>' in box and 'value="picked" data-company-how' in box
+    assert "Picked by a person: kept whatever else the invoice says." in re.sub(r"<[^>]+>", "", box)
+    assert follow(client, client.post(f"/review/{invoice_id}/approve", data=picked, headers=PAGE))
+    final = store.get_invoice(invoice_id)["final_output"]
+    assert (final["company"], final["company_how"]) == ("00230", "picked")
+    # a form without the hidden field (an older screen): another company than the screen had is a pick
+    assert Draft.from_form({"company": "00310"}, Draft.stored(inv["ai_output"])).company_how == "picked"
+    assert Draft.from_form({"company": "00230"}, Draft.stored(final)).company_how == "picked"
+    assert Draft.from_form({"company": "00230", "company_how": ""}, Draft.stored(final)).company_how == ""
+
+
 def test_settings_turn_a_companys_canadian_tax_checks_on_or_off_and_say_how_they_were_worked_out(client, store):
     from ap_coder.erp import jde_settings
     from ap_coder.web.core import SHOW_JDE

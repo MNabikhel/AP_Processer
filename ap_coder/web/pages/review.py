@@ -945,7 +945,7 @@ def _not_approvable_now(store: Store, settings: Any, inv: dict[str, Any]) -> lis
     An error the first approver approved anyway, with their reason, stays approved over unless "Approve anyway" never
     covers it (``is_hard``); warnings never keep it."""
     reference = reference_or_none(store)
-    found = bulk._recheck(store, reference, settings, inv) if reference is not None else None
+    found = bulk._recheck(store, reference, settings, inv, approved=True) if reference is not None else None
     first = next(iter(store.events(inv["id"], ["approved"], limit=1)), None)
     over = {(i.get("code"), i.get("line")) for i in ((first or {}).get("detail") or {}).get("open_issues") or []
             if i.get("severity") == "error"}  # fmt: skip

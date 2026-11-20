@@ -226,7 +226,8 @@
             <option value=""{% if not company.value %} selected{% endif %}>Pick the company</option>
             {% for code, label in company.options %}<option value="{{ code }}"{% if code == company.value %} selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
-          {% if company.said %}<span class="inv-field-note small muted"><span class="ms" aria-hidden="true">info</span>{{ company.said }}</span>{% endif %}
+          <input type="hidden" name="company_how" form="inv" value="{{ company.how }}" data-company-how>
+          {% if company.source %}<span class="inv-field-note small muted" data-company-source><span class="ms" aria-hidden="true">info</span><span><b>{{ company.source }}</b>{% if company.said %}: {{ company.said }}{% endif %}{% if company.how %}: kept whatever else the invoice says.{% else %}. Decided again as the invoice changes; pick one to keep it.{% endif %}</span></span>{% endif %}
           {% if company.tax %}<span class="inv-field-note small muted"><span class="ms" aria-hidden="true">public</span>{{ company.tax }}</span>{% endif %}
           <span class="inv-flag small" data-flag{% if 'company' not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("company", "") }}</span></span>
         </label>

@@ -39,6 +39,7 @@ from ..core.store import REVIEW, Store
 from ..core.store._base import CHECKS_STAMP_KEY
 from ..core.store.bulk_jobs import CHANGED, GONE
 from ..core.store.summary import QUEUE_READ, computed
+from . import companies
 from .review import codes_to_pick
 from .vendors import moved_off_hold
 
@@ -105,10 +106,11 @@ def _kept(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _recheck(
-    store: Store, reference: ReferenceData, settings: Settings, row: dict[str, Any]
+    store: Store, reference: ReferenceData, settings: Settings, row: dict[str, Any], approved: bool = False
 ) -> list[dict[str, Any]] | None:
     """The coding's checks of an invoice in the queue as they come out today (what ``bulk_approve`` checks), as
-    stored findings; None when its coding can't be read (the stored checks stand)."""
+    stored findings; None when its coding can't be read (the stored checks stand). ``approved``: its approved coding
+    (the second approval's check), checked for the company it was approved under, its voucher's (D-286)."""
     coded = row.get("final_output") or row.get("ai_output")
     if not coded:
         return None
@@ -117,6 +119,8 @@ def _recheck(
         coding = InvoiceCoding.model_validate(coded)
     except ValueError:
         return None
+    if approved and coding.company:
+        coding.company_how = companies.PICKED
     _, report = finalise_coding(coding, reference, settings, kept_extraction(row), store=store,
                                 exclude_invoice_id=row["id"], received=_received_on(row))  # fmt: skip
     return [{"severity": i.severity, "code": i.code, "message": i.message, "line_number": i.line_number}

@@ -16,6 +16,10 @@ With several, an invoice's company is the first of these that gives one answer (
 (e) else none: the invoice is held for a person (``COMPANY_UNKNOWN``, "Pick the company"), who picks it in the
     company box on the review screen.
 
+The coding keeps how its company was decided (``InvoiceCoding.company_how``, D-286): a person's pick (``PICKED``) is
+kept whatever the rules say; a company AP Coder decided is decided again at every check, as the facts it rests on
+change (a PO loaded, the supplier's history, the lines recoded). A company kept before its source was is AP Coder's.
+
 A company gets the Canadian tax checks (GST/HST, PST, QST) only when its country is CA and its currency CAD
 (``canadian``): report 9's country is not reliable (blank, or a USD company of CA), so every other company is checked
 like a US one: every check but the Canadian taxes, a warning that its tax was not checked (``US_TAX_NOT_CHECKED``), and
@@ -67,10 +71,20 @@ class Company:
     country: str = ""
 
 
+# How an invoice's company was decided (``Decision.how``, kept with the coding as ``company_how``): a person's pick, or
+# one of AP Coder's rules, said on the review screen's Company box (``SOURCES``).
+PICKED, BY_PO, BY_NAME, BY_HISTORY, BY_UNITS = "picked", "po", "name", "history", "business unit"
+SOURCES = {PICKED: "Picked by a person", BY_PO: "Decided by AP Coder from its PO and supplier",
+           BY_NAME: "Decided by AP Coder from a name on the page",
+           BY_HISTORY: "Decided by AP Coder from the supplier's history",
+           BY_UNITS: "Decided by AP Coder from the business units of its lines"}  # fmt: skip
+
+
 @dataclass
 class Decision:
-    """An invoice's company: ``company`` ("" none), how it was decided (``how``: "picked", "po", "name", "history",
-    "business unit"), and why in plain words (``said``); undecided, the companies it could be (``could_be``)."""
+    """An invoice's company: ``company`` ("" none), how it was decided (``how``: ``PICKED``, ``BY_PO``, ``BY_NAME``,
+    ``BY_HISTORY``, ``BY_UNITS``), and why in plain words (``said``); undecided, the companies it could be
+    (``could_be``)."""
 
     company: str = ""
     how: str = ""
@@ -281,15 +295,14 @@ def _named(text: str, names: dict[str, str], supplier: str) -> set[str]:
 
 def decide(store: Store, coding: InvoiceCoding, text: str = "") -> Decision:
     """The invoice's company (module docstring: (a) to (e)); ``text``: the page as read. With one company: none. A
-    company the coding has already is kept: said as decided when the rules give it too, else as picked."""
+    company a person picked (``coding.company_how``) is kept; any other is decided again (D-286)."""
     table = companies(store)
     if len(table) < 2:
         return Decision()
-    found = _decided(store, coding, text, table)
     has = company_code(coding.company)
-    if has and found.company != has:
-        return Decision(has, "picked", "picked on the review screen")
-    return found
+    if has and coding.company_how == PICKED:
+        return Decision(has, PICKED, "picked on the review screen")
+    return _decided(store, coding, text, table)
 
 
 def _decided(store: Store, coding: InvoiceCoding, text: str, table: dict[str, Company]) -> Decision:
@@ -303,24 +316,24 @@ def _decided(store: Store, coding: InvoiceCoding, text: str, table: dict[str, Co
         mine = [o for o in store.orders_numbered(number) if of_supplier(o, vendor, supplier)]
         found = {company_code(o["order_company"]) for o in mine if o.get("order_company")}
         if len(found) == 1:
-            return Decision(found.pop(), "po", f"the company of PO {coding.po_number.strip()}")
+            return Decision(found.pop(), BY_PO, f"the company of PO {coding.po_number.strip()}")
         could |= found
     named = _named(text, name_variations(store), vendor) if text else set()
     if len(named) == 1:
         code = named.pop()
         name = table[code].name if code in table else code
-        return Decision(code, "name", f"{name} is named on the invoice")
+        return Decision(code, BY_NAME, f"{name} is named on the invoice")
     could |= named
     billed = store.supplier_companies(vendor, supplier)
     if len(billed) == 1:
-        return Decision(next(iter(billed)), "history", "the only company this supplier has billed")
+        return Decision(next(iter(billed)), BY_HISTORY, "the only company this supplier has billed")
     could |= billed
     pairs = store.account_pairs()
     units = {li.predicted_cost_center.strip() for li in coding.line_items if li.predicted_cost_center.strip()}
     if pairs is not None and units:
         owners = {pairs.company_of(unit) for unit in units}
         if "" not in owners and len(owners) == 1:
-            return Decision(owners.pop(), "business unit", "the company of the business units its lines are coded to")
+            return Decision(owners.pop(), BY_UNITS, "the company of the business units its lines are coded to")
         could |= owners - {""}
     return Decision(could_be=sorted(could))
 
@@ -334,7 +347,8 @@ def early(store: Any, vendor_name: Any, gst_number: Any = "", po_number: Any = "
     from types import SimpleNamespace
 
     read = SimpleNamespace(vendor_name=str(vendor_name), gst_hst_registration_number=str(gst_number or ""),
-                           po_number=str(po_number or ""), company="", line_items=[])  # fmt: skip
+                           po_number=str(po_number or ""), company="", company_how="",
+                           line_items=[])  # fmt: skip
     return decide(store, read, text).company  # type: ignore[arg-type]
 
 
