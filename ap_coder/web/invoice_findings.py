@@ -127,7 +127,8 @@ FIELD_FLAGS: dict[str, tuple[str, str | None]] = {
 
 # The checks shown under the field they are about (their own words), besides FIELD_FLAGS' notes: {code: field}.
 CODE_FIELDS = {
-    "COMPANY_UNKNOWN": "company", "COMPANY_NOT_IN_PILOT": "company", "DUPLICATE_OTHER_COMPANY": "company",
+    "COMPANY_UNKNOWN": "company", "COMPANY_NOT_IN_PILOT": "company", "COMPANY_NOT_IN_REPORT": "company",
+    "DUPLICATE_OTHER_COMPANY": "company",
     "DUPLICATE_INVOICE_OTHER_COMPANY": "company",
     "MISSING_VENDOR": "vendor_name", "VENDOR_NOT_IN_MASTER": "vendor_name", "VENDOR_ADDED_HERE": "vendor_name",
     "VENDOR_ON_HOLD": "vendor_name", "VENDOR_CHANGED_FROM_HELD": "vendor_name", "JDE_NO_AN8": "vendor_name",

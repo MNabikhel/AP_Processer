@@ -10,7 +10,7 @@ import datetime as dt
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 from ..coding.tax import OUTSIDE_CANADA, PROVINCES, regime_on
@@ -78,6 +78,11 @@ PO_CHARGES = {
     CHARGES_HOLD: "Hold the voucher for a person to match by hand",
     CHARGES_GL: "Add each as its own G/L line, with its tax, on this account",
 }
+# What an invoice on a purchase order is matched to in JD Edwards (D-281): its PO lines (2-way, Receipt Line left blank:
+# the pilot tester's), its quantity received not checked, as JD Edwards' exports give 0 received on a line nothing was
+# received on through it; or the receipts (3-way), the quantity billed held against what was received.
+MATCH_PO_LINES, MATCH_RECEIPTS = "po_lines", "receipts"
+PO_MATCH_TO = {MATCH_PO_LINES: "PO lines (2-way)", MATCH_RECEIPTS: "Receipts (3-way)"}
 # Seconds more than a voucher's wait before a lost answer's "not there" is believed (``JdeSettings.resend_seconds``).
 RESEND_MARGIN = 60.0
 
@@ -217,6 +222,7 @@ class JdeSettings:
     # until the JD Edwards team confirms how Voucher Match is set up for them; and the base its tax is worked out on.
     po_subcontracts: bool = False
     retainage_tax: str = RETAINAGE_TAX_WHOLE
+    po_match_to: str = MATCH_PO_LINES  # 2-way or 3-way (D-281)
     domestic_currency: str = "CAD"
     currencies: list[str] = field(default_factory=lambda: ["CAD", "USD"])
     header_bu: str = ""
@@ -254,9 +260,13 @@ class JdeSettings:
     # With several companies (D-267): {company: "on" or "off"}, its Canadian tax checks turned on or off whatever
     # report 9 says (none: worked out, ``companies.canadian``).
     company_tax: dict[str, str] = field(default_factory=dict)
-    # JD Edwards' companies' currencies, {company: currency} (report 9: ``companies.companies``): read with the settings
-    # (``load``), never saved; a company's own is its vouchers' domestic currency (``domestic_of``).
+    # JD Edwards' companies' currencies, {company: currency, "" none given} (report 9: ``companies.companies``): read
+    # with the settings (``load``), never saved; a company's own is its vouchers' domestic currency (``domestic_of``).
     company_currencies: dict[str, str] = field(default_factory=dict)
+    # With several companies (D-301): {company: {"open_from", "open_to", "default_bu", "header_bu": its own,
+    # "bank_glba": {Pay from code: its VLGLBA}}}, only what is set; its vouchers take them, else the values above
+    # (``of_company``).
+    company_values: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_json(self) -> str:
         saved = asdict(self)
@@ -297,6 +307,7 @@ class JdeSettings:
             out.terms_codes = {}
         out.terms_codes = {str(k): str(v).strip().upper() for k, v in out.terms_codes.items()
                            if str(k).strip() and str(v).strip()}  # fmt: skip
+        out.company_values = clean_company_values(out.company_values)
         if not isinstance(out.company_tax, dict):
             out.company_tax = {}
         out.company_tax = {str(k).strip(): str(v) for k, v in out.company_tax.items() if str(v) in ("on", "off")}
@@ -321,6 +332,8 @@ class JdeSettings:
             out.po_charges = CHARGES_HOLD
         if out.retainage_tax not in RETAINAGE_TAXES:
             out.retainage_tax = RETAINAGE_TAX_WHOLE
+        if out.po_match_to not in PO_MATCH_TO:
+            out.po_match_to = MATCH_PO_LINES
         out.open_from, out.open_to = (str(_date(d) or "") for d in (out.open_from, out.open_to))
         if out.closed_period not in CLOSED_PERIODS:
             out.closed_period = CLOSED_MOVE
@@ -356,6 +369,11 @@ class JdeSettings:
         return self.po_charge_account.strip() if self.po_charges == CHARGES_GL else ""
 
     @property
+    def several_companies(self) -> bool:
+        """Report 9 lists two or more companies (``companies.several``): each voucher is keyed under its invoice's."""
+        return len(self.company_currencies) > 1
+
+    @property
     def company_code(self) -> str:
         """VLCO: five characters, zero-padded ("1" → "00001")."""
         text = self.company.strip()
@@ -368,16 +386,76 @@ def company_of(final: Mapping[str, Any], settings: JdeSettings) -> str:
     return company_code(final.get("company")) or settings.company_code
 
 
+COMPANY_OWN = ("open_from", "open_to", "default_bu", "header_bu")  # a company's own values (and its bank accounts)
+SHARED = "_shared"  # what settings and a company's own made from them keep worked out once (``jde_accounts._gl_index``)
+
+
+def clean_company_values(given: Any) -> dict[str, dict[str, Any]]:
+    """``JdeSettings.company_values`` as saved, read: each company by its code (zero-padded), the dates as dates, only
+    what is set; a company with nothing of its own left out."""
+    out: dict[str, dict[str, Any]] = {}
+    for code, values in (given if isinstance(given, dict) else {}).items():
+        if not isinstance(values, dict) or not company_code(code):
+            continue
+        own = {name: str(values.get(name) or "").strip() for name in COMPANY_OWN}
+        own["open_from"], own["open_to"] = (str(_date(own[d]) or "") for d in ("open_from", "open_to"))
+        banks = values.get("bank_glba") if isinstance(values.get("bank_glba"), dict) else {}
+        kept: dict[str, Any] = {name: value for name, value in own.items() if value}
+        if mapped := {str(k).strip().upper(): str(v).strip() for k, v in banks.items() if str(k).strip()
+                      and str(v).strip()}:  # fmt: skip
+            kept["bank_glba"] = mapped
+        if kept:
+            out[company_code(code)] = kept
+    return out
+
+
+def of_company(settings: JdeSettings, company: Any) -> JdeSettings:
+    """The settings ``company``'s vouchers are keyed with (D-301): its own open period (both days, when either is
+    set), default and header business units and G/L bank accounts (a Pay from account it has none for: Settings'),
+    else Settings' single values. Settings themselves for a company with none of its own, so one company is keyed as
+    before."""
+    own = settings.company_values.get(company_code(company)) if settings.company_values else None
+    if not own:
+        return settings
+    changes: dict[str, Any] = {name: own.get(name, "") for name in ("open_from", "open_to")
+                               if own.get("open_from") or own.get("open_to")}  # fmt: skip
+    changes.update({name: own[name] for name in ("default_bu", "header_bu") if own.get(name)})
+    if own.get("bank_glba"):
+        changes["bank_glba"] = {**settings.bank_glba, **own["bank_glba"]}
+    out = replace(settings, **changes)
+    out.__dict__[SHARED] = settings.__dict__.setdefault(SHARED, {})  # (the account mapping's index made once)
+    return out
+
+
+def for_voucher(final: Mapping[str, Any], settings: JdeSettings) -> JdeSettings:
+    """The settings of the company a voucher is keyed under (``company_of``, ``of_company``)."""
+    return of_company(settings, company_of(final, settings))
+
+
+def uses_glba(settings: JdeSettings) -> bool:
+    """Whether VLGLBA is sent: a G/L bank account is mapped, in Settings or for a company (D-66, D-301)."""
+    return bool(settings.bank_glba) or any(own.get("bank_glba") for own in settings.company_values.values())
+
+
 def domestic_of(final: Mapping[str, Any], settings: JdeSettings) -> str:
     """The domestic currency of the company a voucher is keyed under: its own (report 9, D-267), else Settings'."""
     return (settings.company_currencies.get(company_of(final, settings)) or settings.domestic_currency).strip().upper()
 
 
 def load(store: Any) -> JdeSettings:
-    settings = JdeSettings.from_json(store.get_setting(SETTING_KEY))
-    from ..coding.companies import companies
+    from ..coding.companies import COMPANIES_SETTING
 
-    settings.company_currencies = {code: c.currency for code, c in companies(store).items() if c.currency}
+    return from_texts(store.get_setting(SETTING_KEY), store.get_setting(COMPANIES_SETTING))
+
+
+def from_texts(text: str | None, companies: str | None) -> JdeSettings:
+    """The settings saved as ``text``, with JD Edwards' companies of report 9 as loaded (``companies``, the text of
+    its setting): each one's currency. What a check kept for the very texts it read is worked out with (B-2075,
+    B-2697)."""
+    from ..coding.companies import loaded
+
+    settings = JdeSettings.from_json(text)
+    settings.company_currencies = {c.code: c.currency for c in loaded(companies or "")}
     return settings
 
 
@@ -424,6 +502,9 @@ def settings_problems(settings: JdeSettings) -> list[str]:
         out.append("Domestic currency must be a 3-letter code, e.g. CAD.")
     if settings.open_from and settings.open_to and settings.open_to < settings.open_from:
         out.append("The open period must end on or after its first day.")
+    for code, own in sorted(settings.company_values.items()):
+        if own.get("open_from") and own.get("open_to") and own["open_to"] < own["open_from"]:
+            out.append(f"Company {code}'s open period must end on or after its first day.")
     return out
 
 
@@ -435,7 +516,7 @@ def gl_date_of(
     first day when closed periods are moved (D-182, R5)."""
     day = on or dt.date.today()
     base = day if settings.gl_date == GL_DATE_EXPORT else (_date(final.get("invoice_date")) or day)
-    first = _date(settings.open_from)
+    first = _date(for_voucher(final, settings).open_from)  # (its company's open period, D-301)
     if first and base < first and settings.closed_period == CLOSED_MOVE:
         return first, base
     return base, None
@@ -476,3 +557,10 @@ def in_use(store: Any) -> bool:
         return bool(store.get_setting(SETTING_KEY)) or any(b["format"] == FORMAT for b in store.export_batches())
     except Exception:  # noqa: BLE001 - a setting that can't be read: no JD Edwards checks
         return False
+
+
+def receipts_checked(store: Any) -> bool:
+    """Whether an invoice's quantities are held against what its PO lines received (PO_NOT_RECEIVED, 3-way): without
+    JD Edwards in use whenever the purchase orders loaded give it, as before; with it only when Settings → JD Edwards
+    E1 matches to receipts (D-281)."""
+    return not in_use(store) or JdeSettings.from_json(store.get_setting(SETTING_KEY)).po_match_to == MATCH_RECEIPTS

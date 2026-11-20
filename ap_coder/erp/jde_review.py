@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import TYPE_CHECKING, Any
 
+from ..coding.po import po_label
 from .jde_formats import _date, _units
 from .jde_match import keyed_match
 from .jde_settings import (
@@ -205,8 +206,8 @@ def voucher_view(
     ``tax_area``, ``taxable`` and ``tax`` (None when the pay item carries no tax), ``not_ready`` (why the voucher is
     held back, each reason; empty when it can go) and ``keyed``, the one line that says it all ("Keyed on the pay
     item: …", or "Not ready to key: <the first reason>"). ``match``: the invoice's voucher match (D-264), for a
-    PO-matched voucher: its rows (``match``, ``jde_match.keyed_match``'s), and what holds it (``match_held``, in
-    ``not_ready`` too)."""
+    PO-matched voucher: its rows (``match``, ``jde_match.keyed_match``'s), their caption (``match_caption``: the order
+    they match, or the PO none of them is on), and what holds it (``match_held``, in ``not_ready`` too)."""
     final = output
     v = _prepare({"id": 0, "final_output": final}, settings, str(an8 or "").strip(), on)
     invoice_date = _date(final.get("invoice_date"))
@@ -271,6 +272,10 @@ def voucher_view(
     not_ready = _accounts_once(v) if v.problems else []
     keyed_rows = keyed_match(v, match, settings) if v.po_matched and match is not None else None
     rows_matched = keyed_rows.rows if keyed_rows is not None else []
+    first = next((m for m in rows_matched if m.on_po), None)  # (the order its rows match, else its PO: B-2674)
+    caption = (" ".join(p for p in ("order", first.order_number, first.order_type, first.order_company) if p) if first
+               else f"{po_label(str(final.get('po_number') or ''))}, no row on its lines "
+               "(each a G/L line of its own)")  # fmt: skip
     match_held = list(dict.fromkeys(keyed_rows.held)) if keyed_rows is not None else []
     not_ready += [why for why in match_held if why not in not_ready]
     if not_ready:
@@ -288,7 +293,7 @@ def voucher_view(
             "settings_url": SETTINGS_URL, "terms_sent": bool(code), "terms_code": code,
             "terms_note": terms_note, "gl_date": day, "tax_code": v.tax_code, "tax_area": v.tax_area,
             "taxable": None if taxable is None else taxable / 100, "tax": None if tax is None else tax / 100,
-            "not_ready": not_ready, "keyed": keyed, "match_held": match_held,
+            "not_ready": not_ready, "keyed": keyed, "match_held": match_held, "match_caption": caption,
             "match": [{**vars(m), "quantity_text": "—" if m.quantity is None
                        else f"{m.quantity:,.4f}".rstrip("0").rstrip("."),
                        "amount_text": money(round(m.amount * 100)),

@@ -161,7 +161,7 @@ def _groups(field: str, by_source: dict[str, list[Reading]]) -> list[_Group]:
             weight = 1.0 if rank == 0 else 0.35
             if rank == 0:
                 g.top.add(source)
-            g.readings.append((source, Reading(r.field, r.value, r.raw, r.boxes, r.score * weight, r.method)))
+            g.readings.append((source, Reading(r.field, r.value, r.raw, r.boxes, r.score * weight, r.method, r.label)))
     return sorted(groups.values(), key=lambda g: -g.strength())
 
 
@@ -681,7 +681,7 @@ def _field_result(fz: _Fusion, f: str) -> FieldResult:
         field=f, value=fz.values.get(f, g.value), confidence=conf, status=status, boxes=list(best.boxes),
         sources={s: str(max((r for src, r in g.readings if src == s), key=lambda r: r.score).raw) for s in sources}
         | {f"other:{grp.value}": ", ".join(sorted({s for s, _ in grp.readings})) for grp in fz.all_groups[f][1:3]},
-        reasons=reasons, evidence=evidence,
+        reasons=reasons, evidence=evidence, label=next((r.label for _, r in g.readings if r.label), ""),
     )  # fmt: skip
 
 

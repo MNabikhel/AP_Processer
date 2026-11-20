@@ -141,6 +141,7 @@ def jde_context(store: Store, query: Any = None) -> dict[str, Any]:
         "remarks": jde_settings.REMARKS,
         "po_charges": jde_settings.PO_CHARGES,
         "retainage_taxes": jde_settings.RETAINAGE_TAXES,
+        "po_match_to": jde_settings.PO_MATCH_TO,
         "currencies": ", ".join(js.currencies),
         "extras": ", ".join(f"{k}={v}" for k, v in js.po_extra_columns.items()),
         "bank_rows": bank_rows(store, js),
@@ -159,6 +160,7 @@ def jde_context(store: Store, query: Any = None) -> dict[str, Any]:
         ],
         "tax_codes": TAX_CODES,
         "company_rows": company_rows(store, js),
+        "company_values": company_values(store, js),
         "an8_rows": [{"vendor": names.get(k, k), "an8": a} for k, a in js.an8_overrides.items()],
         # The payment terms table (D-91): the examples, pre-filled and not in use, until the pilot tester saves it.
         "terms_examples": not js.terms_codes,
@@ -213,6 +215,46 @@ def company_rows(store: Store, js: jde_settings.JdeSettings) -> list[dict[str, s
                      "worked_out": f"{'checked' if checked else 'not checked'} ({why})",
                      "choice": js.company_tax.get(code, companies.AUTO)})  # fmt: skip
     return rows
+
+
+def company_values(store: Store, js: jde_settings.JdeSettings) -> list[dict[str, Any]]:
+    """With several of JD Edwards' companies (D-301): each with its own open period, default and header business units
+    and, for each bank account in use, its G/L bank account (VLGLBA), then any code mapped that is no longer one, as
+    kept ("" where it takes Settings' value); [] with one."""
+    table = companies.companies(store)
+    if len(table) < 2:
+        return []
+    accounts = bank_rows(store, jde_settings.JdeSettings())  # (each bank account in use, none mapped)
+    rows = []
+    for code, c in table.items():
+        own = js.company_values.get(code, {})
+        mapped = {k.upper(): v for k, v in (own.get("bank_glba") or {}).items()}
+        banks = [{"code": a["code"], "glba": mapped.pop(a["code"].upper(), "")} for a in accounts]
+        banks += [{"code": k, "glba": v} for k, v in mapped.items()]
+        rows.append({"code": code, "name": c.name, **{name: own.get(name, "") for name in jde_settings.COMPANY_OWN},
+                     "banks": banks})  # fmt: skip
+    return rows
+
+
+def _company_values(form: Any) -> dict[str, dict[str, Any]] | str:
+    """The companies' own values posted (``company_values``' table), as ``JdeSettings.company_values`` keeps them; the
+    problem in words when a date or a business unit can't be one."""
+    given: dict[str, dict[str, Any]] = {}
+    columns = {name: form.getlist(f"cv_{name}") for name in jde_settings.COMPANY_OWN}
+    for i, code in enumerate(str(c).strip() for c in form.getlist("cv_company")):
+        own = {name: str(values[i] if i < len(values) else "").strip() for name, values in columns.items()}
+        for name, said in (("open_from", "first day"), ("open_to", "last day")):
+            try:
+                own[name] = dt.date.fromisoformat(own[name]).isoformat() if own[name] else ""
+            except ValueError:
+                return f"Give company {code}'s open period's {said} as a date (YYYY-MM-DD), or leave it blank."
+        if any(len(own[name]) > 12 for name in ("default_bu", "header_bu")):
+            return f"Company {code}'s business units are 12 characters at most."
+        given[code] = own
+    for company, bank, glba in zip(form.getlist("cv_glba_company"), form.getlist("cv_glba_code"),
+                                   form.getlist("cv_glba"), strict=False):  # fmt: skip
+        given.setdefault(str(company).strip(), {}).setdefault("bank_glba", {})[str(bank).strip()] = str(glba).strip()
+    return jde_settings.clean_company_values(given)
 
 
 def api_context(store: Store) -> dict[str, Any]:
@@ -298,6 +340,10 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
         if text("retainage_tax") not in jde_settings.RETAINAGE_TAXES:
             return refuse("Choose what Voucher Match works a subcontract row's tax out on.")
         new.retainage_tax = text("retainage_tax")
+    if "po_match_to" in form:  # 2-way or 3-way (D-281)
+        if text("po_match_to") not in jde_settings.PO_MATCH_TO:
+            return refuse("Choose what an invoice on a purchase order is matched to.")
+        new.po_match_to = text("po_match_to")
     if "remarks" in form:  # (D-210)
         if text("remarks") not in jde_settings.REMARKS:
             return refuse("Choose what the remarks carry.")
@@ -332,6 +378,11 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
         new.bank_glba = {str(c).strip().upper(): str(values[i] if i < len(values) else "").strip()
                          for i, c in enumerate(codes)
                          if str(c).strip() and str(values[i] if i < len(values) else "").strip()}  # fmt: skip
+    if form.getlist("cv_company"):  # each company's own (D-301); a form without the table keeps them
+        own = _company_values(form)
+        if isinstance(own, str):
+            return refuse(own)
+        new.company_values = own
     problems = jde_settings.settings_problems(new)
     if problems:
         return refuse(" ".join(problems))

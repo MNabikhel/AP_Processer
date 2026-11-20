@@ -34,7 +34,7 @@ from ..capture.layout import PDF_LOCK, CannotRead
 from ..capture.workflow import AUTONOMOUS_REVIEWER, WAITING_FOR_PAGE_READER, autonomy_decision, capture_invoice
 from ..coding import banks, companies, posting_edits
 from ..coding.claim import claim_findings
-from ..coding.po import match_invoice, po_findings, voucher_match
+from ..coding.po import kept_match, match_invoice, po_findings, voucher_match
 from ..coding.remark import fill_remarks
 from ..coding.rules import apply as apply_rules
 from ..coding.tax import PLACE_OF_SUPPLY, SUPPLY_OURS, SUPPLY_SITE, build_gl_distribution, supply_source
@@ -44,7 +44,7 @@ from ..coding.vendors import vendor_findings
 from ..core.config import Settings
 from ..core.memory import compare_patterns, compare_with_history, format_examples, select_examples, vendor_key
 from ..core.reference_data import ReferenceData, short_name
-from ..core.schema import COMPANY_TAX, PROGRESS_BILLING, InvoiceCoding, decided
+from ..core.schema import COMPANY_TAX, PROGRESS_BILLING, VOUCHER_MATCH, InvoiceCoding, decided
 from ..core.store.imports import ClaimLost
 from ..core.store.joined import CLAIM
 from ..core.store.reports import anywhere_in
@@ -222,8 +222,9 @@ def duplicates_known(store: Store, others: list[int], invoice_id: int | None) ->
 
 def _company_checks(store: Store | None, coding: InvoiceCoding, extraction: ExtractionResult | None,
                     js: Any) -> tuple[list[tuple[str, str, str]], bool, companies.Decision | None]:  # fmt: skip
-    """Which of JD Edwards' companies it is ours under, with several (D-267): decided (``coding.company``) before the
-    checks that read it (its PO, the duplicates, its voucher); none decided holds it for a person. A company not
+    """Which of JD Edwards' companies it is ours under, with several (D-267): decided (``coding.company``, and how:
+    ``company_how``) before the checks that read it (its PO, the duplicates, its voucher), again at each check unless
+    a person picked it (D-286); none decided holds it for a person. A company not
     checked for Canadian tax (a US one) has every check but those, and a warning that its tax was not checked. With
     fewer than two, a voucher is keyed under Settings' company (``js``: JD Edwards in use), or one the coding kept from
     when several were known: asked of the pilot too (B-2683). Returns (what is said, whether the Canadian tax checks
@@ -235,10 +236,11 @@ def _company_checks(store: Store | None, coding: InvoiceCoding, extraction: Extr
                    if store is not None and js is not None else None)  # fmt: skip
         return ([outside] if outside is not None else []), True, None
     decision = companies.decide(store, coding, extraction.content if extraction is not None else "")
-    coding.company = companies.company_code(coding.company or decision.company)
+    coding.company, coding.company_how = decision.company, decision.how
     if not coding.company.strip():
         return [companies.unknown_finding(decision, store)], True, decision
-    outside = companies.pilot_finding(store, coding.company)  # (D-272: held, whoever approves it)
+    # (D-272: held, whoever approves it; else not in report 9: only approved anyway, B-2693)
+    outside = companies.pilot_finding(store, coding.company) or companies.report_finding(store, coding.company)
     if outside is not None:
         said.append(outside)
     canadian_tax, why = companies.canadian(store, coding.company)
@@ -361,7 +363,8 @@ def _erp_findings(coding: InvoiceCoding, output: dict[str, Any], js: Any, store:
     """(what JD Edwards' batch would hold back of the voucher ``output``, ``jde_review.voucher_findings``; with
     PO-matched vouchers, the invoice's PO match, None without one): what holds its voucher match rows back from the
     keying sheet too (``jde_review.match_findings``, B-2667), its PO match made once for the PO checks as well. None
-    and nothing to say without JD Edwards in use (``js`` None)."""
+    and nothing to say without JD Edwards in use (``js`` None). The voucher match's rows go in ``output``
+    (``schema.VOUCHER_MATCH``): approved, it is what its keying sheet and Z-files key (D-284)."""
     if js is None or store is None:
         return [], None
     from ..erp import jde_accounts, jde_review
@@ -372,7 +375,10 @@ def _erp_findings(coding: InvoiceCoding, output: dict[str, Any], js: Any, store:
     if not (js.po_matched and quoted):
         return found, None
     match = match_invoice(coding, store, exclude_invoice_id)  # (its voucher match rows, as the sheet keys them)
-    return found + jde_review.match_findings(output, js, an8, voucher_match(match, quoted, js.charge_account)), match
+    matched = voucher_match(match, quoted, js.charge_account)
+    if (kept := kept_match(matched)) is not None:
+        output[VOUCHER_MATCH] = kept
+    return found + jde_review.match_findings(output, js, an8, matched), match
 
 
 def _say_on(lines: dict[int, Any], said: str | dict[int, str]) -> None:

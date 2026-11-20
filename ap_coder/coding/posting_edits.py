@@ -8,9 +8,11 @@ Edwards E1 → Accounts AP posts to), so a line coded to one keeps what JD Edwar
 Where it comes from (``fill``), a person's own always first (the review screen shows the boxes for such a line only):
 
 * the subledger and its type: the PO line the invoice line bills (the purchase orders' Subledger and Sub Type
-  columns), else the supplier's past coding of that account (the account ledger's Subledger and Sub Type: its
-  commonest, ``supplier_prior.AccountUse.subledger``);
-* the units: the invoice line's quantity, else the units the supplier's past lines to the account all had.
+  columns), else the supplier's past coding of that account (the account ledger's Subledger and Sub Type, and the
+  lines approved here, a typed one counting as a correction does, B-2830: its commonest,
+  ``supplier_prior.AccountUse.subledger``);
+* the units: the invoice line's quantity, else the units the supplier's past lines to the account all had (the units
+  a person typed here for it, when there are, all the same).
 
 A line whose account asks for neither keeps none (what is not shown is never sent). ``findings`` says what is still
 missing, an error each (``JDE_SUBLEDGER_NEEDED``, ``JDE_UNITS_NEEDED``): JD Edwards would refuse the line.

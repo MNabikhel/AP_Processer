@@ -281,14 +281,15 @@ def second_reason(detail: dict[str, Any]) -> str:
     return stored or "over the approval limit"
 
 
-def approved_over(detail: dict[str, Any]) -> list[dict[str, Any]]:
+def approved_over(detail: dict[str, Any], severity: str = "error") -> list[dict[str, Any]]:
     """The errors an approval went ahead over ("Approve anyway", D-75), each with its title in plain words, its line
-    and the reason typed: [{"code", "title", "line", "reason"}]."""
+    and the reason typed: [{"code", "title", "line", "reason"}]. ``severity`` "warning": the warnings a second approval
+    went ahead over, new since the first (B-2695)."""
     from ..ops.help import help_for
 
     out = []
     for issue in detail.get("open_issues") or []:
-        if issue.get("severity") != "error":
+        if issue.get("severity") != severity:
             continue
         code = str(issue.get("code") or "")
         found = help_for(code)
@@ -392,6 +393,8 @@ def _chart_text(d: dict[str, Any]) -> str:
             said.append(f"{verb}: {', '.join(parts)}")
     if d.get("by_hand"):
         said.append(f"kept as changed by hand: {', '.join(d['by_hand'][:8])}{' …' if len(d['by_hand']) > 8 else ''}")
+    if d.get("anyway"):  # (loaded though it looked cut short, B-2832)
+        said.append(f"loaded anyway: {d['anyway']}")
     return "; ".join(said)
 
 
@@ -512,8 +515,14 @@ def _queue_text(action: str, d: dict[str, Any]) -> str | None:
         return f"{d.get('manager') or '?'} for {', '.join(d.get('cost_centers') or [])}"
     if action == "note":
         return str(d.get("text") or "")
-    if action == "final_approved":
-        return f"approved after {d.get('first_approver') or '?'} ({second_reason(d)})"  # the stored reason (B-1024)
+    if action == "final_approved":  # the stored reason (B-1024); the warnings new since the first, approved anyway
+        said = f"approved after {d.get('first_approver') or '?'} ({second_reason(d)})"
+        over = approved_over(d, "warning")
+        if over:
+            many = "a warning" if len(over) == 1 else f"{len(over)} warnings"
+            said += (f" · approved anyway over {many} new since the first approval "
+                     f"({', '.join(o['title'] for o in over)}): “{over[0]['reason']}”")  # fmt: skip
+        return said
     if action in ("sent_back", "reopened"):
         layout = f" · vendor's layout {d['layout']}" if d.get("layout") else ""  # what it taught, taken back (D-71)
         if "rejected" in d:  # a rejected invoice back in the queue: the rejection undone

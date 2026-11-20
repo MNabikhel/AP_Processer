@@ -29,6 +29,7 @@ import pandas as pd
 from ap_coder.capture.normalize import find_amounts, parse_amount, parse_date
 from ap_coder.capture.types import Box
 from ap_coder.coding import banks
+from ap_coder.coding.companies import PICKED
 from ap_coder.coding.line_tax import fill_exempt, parse_code
 from ap_coder.coding.money import LARGEST
 from ap_coder.coding.remark import typed as typed_remark
@@ -196,6 +197,9 @@ class Draft:
     # The currency the reviewer picked the Pay from account for ("" while it is the default, which follows the
     # invoice's currency and vendor: D-66).
     pay_from_for: str = ""
+    # How the company in the Company box was decided (D-286): "picked" once a person picks one (the box's hidden
+    # ``company_how``, set as it is changed), kept; else "" or AP Coder's rule, decided again at each check.
+    company_how: str = ""
 
     @classmethod
     def stored(cls, start: dict[str, Any], reader_at: str = "", approved: bool = False) -> Draft:
@@ -226,7 +230,8 @@ class Draft:
         )
         pay_from_for = (header["currency"] or "CAD") if approved and header.get("pay_from_account") else ""
         return cls(header=header, lines=lines, taxes=taxes, reader_at=reader_at, from_vendor=from_vendor,
-                   pay_from_for=pay_from_for)  # fmt: skip
+                   pay_from_for=pay_from_for,
+                   company_how=str(start.get("company_how") or "") if header.get("company") else "")  # fmt: skip
 
     @classmethod
     def from_form(cls, form: Any, base: Draft, pairs: Any = None) -> Draft:
@@ -285,18 +290,25 @@ class Draft:
         pay_from_for = (
             str(form.get("pay_from_for") or "") if form.get("pay_from_for") is not None else base.pay_from_for
         )
+        # A company picked (D-286): as the box's hidden field says; a form without it, one other than the screen's
+        company = header.get("company", "").strip()
+        if form.get("company_how") is not None:
+            company_how = PICKED if str(form.get("company_how")) == PICKED else ""
+        else:
+            company_how = PICKED if company != base.header.get("company", "").strip() else base.company_how
         return cls(header=header, lines=lines, taxes=taxes, taught=parse_taught(form.get("taught")),
                    override=str(form.get("override") or ""),
                    override_reason=" ".join(str(form.get("override_reason") or "").split())[:300],
                    reader_at=str(form.get("reader_at") or base.reader_at),
                    mail_lang=str(form.get("mail_lang") or ""), absent=absent, from_vendor=from_vendor,
-                   pay_from_for=pay_from_for.strip().upper()[:3])  # fmt: skip
+                   pay_from_for=pay_from_for.strip().upper()[:3],
+                   company_how=company_how if company else "")  # fmt: skip
 
     def to_dict(self) -> dict[str, Any]:
         return {"header": self.header, "lines": self.lines, "taxes": self.taxes, "taught": self.taught,
                 "reader_at": self.reader_at, "absent": self.absent, "from_vendor": self.from_vendor,
                 "pay_from_for": self.pay_from_for, "override": self.override,
-                "override_reason": self.override_reason}  # fmt: skip
+                "override_reason": self.override_reason, "company_how": self.company_how}  # fmt: skip
 
 
 def parse_from_vendor(raw: Any) -> dict[str, Any]:
