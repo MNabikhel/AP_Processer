@@ -1358,6 +1358,7 @@ def test_in_a_browser_a_refused_export_reloads_and_the_count_follows_the_ticks(b
     page.evaluate("() => { const b = document.getElementById('export-go'); b.disabled = false; b.click(); }")
     wait_until(page, lambda: "create" in page.posts)
     assert "create" in page.posts
+    settle(page)  # refused: the button says Export again (it said "Exporting…" until the answer came, B-2855)
     page.locator("input.export-pick:not(:disabled)").first.check()
     assert page.inner_text("#export-go").split("\n")[-1].strip() == "Export 1 invoice"
     # another tab exports them meanwhile

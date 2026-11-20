@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import time
 from dataclasses import replace
 
 import pytest
@@ -779,7 +780,9 @@ def _agence(store):
 
 
 def _held_open(browser, invoice_id, route, retry_ms=None, clock=False):
-    """The review screen with its vendor list's requests answered by ``route(route, n)`` (n: from 1)."""
+    """The review screen with its vendor list's requests answered by ``route(route, n)`` (n: from 1). ``clock``: the
+    page's time is Playwright's, moved on with ``page.clock``; "paused": it moves on only so, never while the test
+    works (B-2854)."""
     chromium, base = browser
     page = chromium.new_page(viewport=LAPTOP)
     errors: list[str] = []
@@ -790,6 +793,8 @@ def _held_open(browser, invoice_id, route, retry_ms=None, clock=False):
         page.add_init_script(f"window.AP_VENDORS_RETRY_MS = {retry_ms}")
     if clock:
         page.clock.install()
+    if clock == "paused":
+        page.clock.pause_at(time.time() + 5)  # (a moment ahead: the time can't go back)
     page.goto(f"{base}/review/{invoice_id}")
     page.wait_for_selector(".iv-sheet:not(.loading)")
     wait_until(page, lambda: page.asked)
@@ -963,7 +968,9 @@ def test_in_a_browser_a_vendor_list_that_takes_too_long_is_given_up_and_asked_fo
     """A busy company server: the fetch is given up after 30 seconds, as a failure (asked for again 5 s on)."""
     inv, other = _agence(store)
     held = []
-    page, errors = _held_open(browser, inv["id"], lambda r, n: held.append(r), clock=True)
+    # the page's time stands still but for run_for: the test's own steps never count in the list's 30 s (on a slow
+    # runner they took more than the 1 s the 29 below leaves, and the list was given up before it looked: B-2854)
+    page, errors = _held_open(browser, inv["id"], lambda r, n: held.append(r), clock="paused")
     match = page.locator(SAID)
     vendor = page.locator("#vendor-name")
     vendor.fill(other["name"])
