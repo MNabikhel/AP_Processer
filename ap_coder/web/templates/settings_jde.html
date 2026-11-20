@@ -425,14 +425,14 @@
       <select name="us_tax">{% for value, label in us_tax.modes.items() %}<option value="{{ value }}"{% if us_tax.choice == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
     <div class="table-wrap">
       <table class="apc-table st-edit" id="us-tax-companies">
-        <thead><tr><th>Company</th><th>Name</th><th>Not checked for Canadian tax</th><th>Its tax</th></tr></thead>
+        <thead><tr><th>Company</th><th>Name</th><th>Its tax</th><th>Not checked for Canadian tax</th></tr></thead>
         <tbody>
           {% for c in us_tax.rows %}
-          <tr><td><input type="hidden" name="us_company" value="{{ c.code }}">{{ c.code }}</td><td>{{ c.name }}</td><td>{{ c.why }}</td>
+          <tr><td><input type="hidden" name="us_company" value="{{ c.code }}">{{ c.code }}</td><td>{{ c.name }}</td>
             <td><select name="us_company_tax" aria-label="How the tax of {{ c.name }} is keyed">
               <option value=""{% if not c.choice %} selected{% endif %}>As for every US company</option>
               {% for value, label in us_tax.modes.items() %}<option value="{{ value }}"{% if c.choice == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
-            </select></td></tr>
+            </select></td><td>{{ c.why }}</td></tr>
           {% endfor %}
         </tbody>
       </table>

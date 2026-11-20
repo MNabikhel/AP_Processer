@@ -6,6 +6,8 @@ from __future__ import annotations
 import html
 import re
 
+import pytest
+
 from ap_coder.bench import jde_company, jde_group
 from ap_coder.bench import jde_exports as made
 from ap_coder.coding import companies
@@ -326,3 +328,42 @@ def test_the_us_sales_and_use_tax_card_keeps_how_each_us_companys_tax_is_keyed(c
         answer = client.post("/settings/jde/us-tax", data={**form, **change}, headers=PAGE)
         assert answer.status_code == 400 and said in answer.json()["error"], answer.text
     assert jde_settings.load(store).use_tax_rates == {"WA-SPOKANE": 9.1, "MT-BLGS": 0.0}  # (nothing refused kept)
+
+
+@pytest.mark.parametrize("width", [1366, 390])
+def test_in_a_browser_the_us_sales_and_use_tax_card_is_filled_in_and_saved(chromium, store, width):
+    """D-312 in a browser, on a laptop and a phone: the US sales and use tax card is on Settings → JD Edwards E1 with
+    every box on screen (nothing past the page's right edge), its choices made and rates typed as a person does, and
+    saved with its own button, the page saying so."""
+    import json
+
+    from ap_coder.erp import jde_settings
+    from ap_coder.web.app import create_app
+    from ap_coder.web.core import SHOW_JDE
+    from tests.browser import browser_on, wait_until
+    from tests.webclient import web_settings
+
+    store.set_setting(SHOW_JDE, "1")
+    store.set_setting(companies.COMPANIES_SETTING, json.dumps({c[0]: {"name": c[1], "currency": c[2], "country": c[3]}
+                                                               for c in jde_group.GROUP}))  # fmt: skip
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
+        page = browser.new_page(viewport={"width": width, "height": 800})
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/settings/jde")
+        card = page.locator("#us-tax")
+        card.scroll_into_view_if_needed()
+        assert card.is_visible() and "Held for a person to confirm it (as before)" in card.inner_text()
+        card.locator('select[name="us_tax"]').select_option("keyed")
+        card.locator('select[aria-label="How the tax of Maple Ridge Caribbean Ltd. is keyed"]').select_option("held")
+        card.locator('textarea[name="use_tax_rates"]').fill("WA-SPOKANE = 9.1")
+        for box in card.locator("select, input:not([type=hidden]), textarea, button").all():
+            box.scroll_into_view_if_needed()
+            right = page.evaluate("b => b.getBoundingClientRect().right", box.element_handle())
+            assert right <= width + 1, box.evaluate("b => b.outerHTML")[:120]
+        card.locator("button[type=submit]").click()
+        wait_until(page, lambda: jde_settings.load(store).us_tax == "keyed")
+        page.wait_for_selector("text=US sales and use tax saved.")
+        js = jde_settings.load(store)
+        assert (js.company_us_tax, js.use_tax_rates) == ({"00410": "held"}, {"WA-SPOKANE": 9.1})
+        assert page.evaluate("document.documentElement.scrollWidth") <= width + 1 and errors == []
