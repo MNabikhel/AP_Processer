@@ -784,6 +784,27 @@ class InvoicesMixin:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def second_approver_refused(self, invoice_id: int, approver: str, login: str = "") -> str | None:
+        """Why ``approver`` (``login``) may not give this invoice its second approval (``final_approve``), or None:
+        the first approver, their computer login or account, or an account they added or reset lately. Asked first,
+        before what the invoice says now, so the first approver is told that (B-2726)."""
+        inv = self.get_invoice(invoice_id)
+        if inv is None:
+            return None
+        first = next(iter(self.events(invoice_id, ["approved"], limit=1)), None)  # never lost behind 1000 (B-1497)
+        first_login = ((first or {}).get("detail") or {}).get("login") or ""
+        if same_approver(inv["reviewer"], first_login, approver, login):
+            if account_of(first_login) is not None and account_of(login) is not None:
+                return "the second approval must come from another account than the first"
+            if (approver or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold():
+                return "the second approval must come from someone other than the first approver"
+            return "the second approval must come from another computer login than the first"
+        first_user = ((first or {}).get("detail") or {}).get("user_id")
+        if first_user is not None and account_of(login) is not None and self.vouched_for(first_user, account_of(login)):
+            return (f"the second approval can't come from an account the first approver added or reset the password "
+                    f"of in the last {VOUCH_DAYS} days")  # fmt: skip
+        return None
+
     def final_approve(self, invoice_id: int, approver: str, login: str = "", *, shown: str | None,
                       over: list[dict[str, Any]] | None = None) -> None:  # fmt: skip
         """The second approval: by someone other than the first approver (another name and, when the
@@ -795,18 +816,9 @@ class InvoicesMixin:
         inv = self.get_invoice(invoice_id)
         if inv is None or inv["status"] != PENDING:
             raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
-        first = next(iter(self.events(invoice_id, ["approved"], limit=1)), None)  # never lost behind 1000 (B-1497)
-        first_login = ((first or {}).get("detail") or {}).get("login") or ""
-        if same_approver(inv["reviewer"], first_login, approver, login):
-            if account_of(first_login) is not None and account_of(login) is not None:
-                raise PermissionError("the second approval must come from another account than the first")
-            if (approver or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold():
-                raise PermissionError("the second approval must come from someone other than the first approver")
-            raise PermissionError("the second approval must come from another computer login than the first")
-        first_user = ((first or {}).get("detail") or {}).get("user_id")
-        if first_user is not None and account_of(login) is not None and self.vouched_for(first_user, account_of(login)):
-            raise PermissionError(f"the second approval can't come from an account the first approver added or reset "
-                                  f"the password of in the last {VOUCH_DAYS} days")  # fmt: skip
+        if (refused := self.second_approver_refused(invoice_id, approver, login)) is not None:
+            raise PermissionError(refused)
+        first = next(iter(self.events(invoice_id, ["approved"], limit=1)), None)  # (its reason, kept below)
         with self._conn() as conn:
             begin_write(conn)  # checked and approved in one go: no new first approval in between
             latest = conn.execute(
