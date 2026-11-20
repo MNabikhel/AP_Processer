@@ -377,14 +377,14 @@ def _erp_findings(coding: InvoiceCoding, output: dict[str, Any], js: Any, store:
     from ..erp import jde_accounts, jde_review
 
     an8 = jde_accounts.resolve_an8(output, store.vendor_ids(), js)
-    found = jde_review.voucher_findings(output, js, an8)
     quoted = coding.po_number.strip()
     if not (js.po_matched and quoted):
-        return found, None
+        return jde_review.voucher_findings(output, js, an8), None
     match = match_invoice(coding, store, exclude_invoice_id)  # (its voucher match rows, as the sheet keys them)
     matched = voucher_match(match, quoted, js.charge_account)
-    if (kept := kept_match(matched)) is not None:
+    if (kept := kept_match(matched)) is not None:  # (kept first: the order it names is what VLPO sends, B-2951)
         output[VOUCHER_MATCH] = kept
+    found = jde_review.voucher_findings(output, js, an8)
     return found + jde_review.match_findings(output, js, an8, matched), match
 
 

@@ -547,6 +547,16 @@ def files_held(v: _Voucher) -> str:
             "team confirms how F0411Z1T does): key it from the keying sheet")  # fmt: skip
 
 
+def _matched_order(final: dict[str, Any]) -> str:
+    """The number of the order a PO-matched voucher's kept voucher match names (``schema.VOUCHER_MATCH``, D-284), as
+    VLPO sends it (``jde_zfiles._order_of``); "" when none is kept."""
+    from ..coding.po import kept_voucher_match
+
+    kept = kept_voucher_match(final)
+    row = next((r for r in kept.rows if r.on_po), None) if kept is not None else None
+    return row.order_number.strip() if row is not None else ""
+
+
 def _check_header(v: _Voucher, final: dict[str, Any], settings: JdeSettings, an8: str,
                   on: dt.date | None = None) -> str:  # fmt: skip
     """The supplier number, invoice number, PO number, dates and currency; the PO number."""
@@ -561,9 +571,10 @@ def _check_header(v: _Voucher, final: dict[str, Any], settings: JdeSettings, an8
     elif len(number) > 25:
         add(f"invoice number {number!r} is longer than 25 characters (VLVINV)", "JDE_INVOICE_NUMBER_LONG")
     po = str(final.get("po_number") or "").strip()
-    # A PO-matched voucher is matched to E1's order by its number: one longer than VLPO holds can't be. As a reference
-    # only, it is left out of VLPO and kept in AP Coder (``po_not_sent``, D-87).
-    if po and len(po) > PO_WIDTH and settings.po_matched:
+    # A PO-matched voucher is matched to E1's order by its number: one longer than VLPO holds can't be, unless it
+    # matched an order (its voucher match kept), whose number VLPO sends (B-2921, B-2951). As a reference only, it is
+    # left out of VLPO and kept in AP Coder (``po_not_sent``, D-87).
+    if po and len(po) > PO_WIDTH and settings.po_matched and len(_matched_order(final) or po) > PO_WIDTH:
         add(f"PO number {po!r} is longer than 8 characters (VLPO)", "JDE_PO_LONG")
     invoice_date = _date(final.get("invoice_date"))
     if invoice_date is None:

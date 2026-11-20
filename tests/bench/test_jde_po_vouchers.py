@@ -90,7 +90,8 @@ def test_the_z_files_name_the_order_and_its_lines_as_the_keying_sheet_does_whate
     while the keying sheet keys the order it is matched to (41101): DOCO is JD Edwards' order number, and "PO-41101"
     names none. Every case of the set, its PO typed with a prefix, a "#" or spaces, now goes with the matched order's
     number, type and company, each row on the PO line the sheet keys; one typed longer than VLPO's 8 characters
-    ("PO# 41105") is held by both, to be typed as JD Edwards has it (JDE_PO_LONG)."""
+    ("PO# 41105") is held by both, to be typed as JD Edwards has it (JDE_PO_LONG), no voucher match being kept with
+    it (approved on the review screen, one is: B-2951)."""
     from ap_coder.erp import jde, jde_zfiles
 
     made = jde_po_vouchers.cases(TRUTH)
@@ -622,3 +623,43 @@ def test_a_po_matched_billing_that_retains_a_holdback_is_held_from_the_batch_fil
     assert [(r[6], r[7]) for r in rows] == [(45000, 4500)] and check[3].endswith("= 42,750.00: balanced")
     jde_settings.save(store, jde_po_vouchers.pilot_settings(jde_settings.load(store)))  # (subcontract billings off)
     assert jde.validate([inv], jde_settings.load(store), store.vendor_ids())[invoice_id] == [why]
+
+
+def test_a_po_typed_longer_than_vlpo_that_matched_an_order_goes_with_the_orders_number(
+    chart_company, chart_company_client, tmp_path
+):
+    """B-2951: a PO typed longer than VLPO's 8 characters ("PO# 41105") was held back (JDE_PO_LONG) even when it
+    matched an order (41105), though the batch files send the matched order's number in VLPO (B-2921) and the keying
+    sheet keys it. Matched, the order's number is what must fit: approved on the review screen, it is keyed and sent
+    as 41105; a long PO that matches no order is still held, to be typed as JD Edwards has it."""
+    from ap_coder.core.schema import VOUCHER_MATCH
+    from ap_coder.erp import jde, jde_zfiles
+    from tests.review_page import ReviewPage
+
+    store = chart_company.store
+    load_pos(store, jde_po_vouchers.po_files(jde_po_vouchers.cases(chart_company.truth)))
+    jde_settings.save(store, settings_of(PILOT, jde_settings.load(store)))
+    case = next(c for c in jde_po_vouchers.cases(chart_company.truth) if c.po == 41105)
+    found = {}
+    for n, typed in enumerate(("PO# 41105", "PO# 99999")):
+        final = {**case.coding(), "po_number": typed, "gst_hst_registration_number": "814275533RT0001",
+                 "invoice_number": f"{case.number}-{n}"}  # fmt: skip
+        invoice_id = store.add_invoice(chart_company.folder / f"{typed}.pdf", final, {"requires_review": True})
+        page = ReviewPage(chart_company_client, invoice_id)
+        for n, li in enumerate(case.coding()["line_items"], 1):
+            page.set_account(n, f"{li['predicted_cost_center']}.{li['predicted_gl_code']}")
+        found[typed] = (page.check()["allow"], set(page.findings), invoice_id, page)
+    allow, codes, invoice_id, page = found["PO# 41105"]
+    assert allow and "JDE_PO_LONG" not in codes, codes
+    assert "redirect" in page.approve()
+    inv = store.get_invoice(invoice_id)
+    assert inv["final_output"][VOUCHER_MATCH]["rows"][0]["order_number"] == "41105"
+    js = jde_settings.load(store)
+    assert jde.validate([inv], js, store.vendor_ids()) == {}
+    matches = jde_keying.po_matches(store, [inv], js.charge_account)
+    (head,) = _csv(jde_zfiles.export_batch([inv], js, store.vendor_ids(), po_matches=matches)[jde_zfiles.HEADER_FILE])
+    assert head["VLPO"] == "41105"
+    ready, held = jde_keying.vouchers([inv], js, store.vendor_ids(), po_matches=matches)
+    assert held == [] and {m.order_number for m in ready[0].matches if m.on_po} == {"41105"}
+    allow, codes, _, _ = found["PO# 99999"]
+    assert not allow and "JDE_PO_LONG" in codes

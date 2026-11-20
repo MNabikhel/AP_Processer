@@ -330,7 +330,9 @@ and the clerk does not change what is printed: the voucher goes out with VLPO, V
 PO is kept in AP Coder (the invoice, its exports and reports), and VLRMK reads `AP Coder #<id> PO <number>`
 when that fits in its 30 characters. The review screen warns: "JD Edwards' PO field holds 8 characters: this
 PO number is kept in AP Coder and not sent". With *PO-matched vouchers* on, the PO is E1's order number the
-voucher is matched to, so one longer than 8 still holds the invoice back (D-87).
+voucher is matched to, so one longer than 8 still holds the invoice back (D-87), unless it matched an order ("PO#
+41105" for order 41105): VLPO then sends the order's number, as the keying sheet keys it, and that is what must fit
+(B-2921, B-2951).
 
 ## Checks before export (`jde.validate`)
 
