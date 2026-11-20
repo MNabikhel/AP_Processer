@@ -643,7 +643,7 @@ class PurchasingMixin:
         its own) of each row of its kept voucher match, in order} of each of ``ids`` approved (or approved once,
         waiting for a second approver) with one (D-284): what the PO's billing counts its lines on first when lines
         alike are shared out (``po.PoBilling``, D-320). Read only then, of those invoices: most POs have no lines
-        alike, and a kept match is ten times the size of what a PO's billing reads of an invoice."""
+        alike, and read with every invoice a kept match doubled the time a PO's invoices take to read."""
         if not ids:
             return {}
         with self._conn() as conn:

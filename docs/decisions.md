@@ -7206,9 +7206,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     checked for room against what was ordered, less every invoice before it: what JD Edwards has open has it off
     already once the POs are loaded again (D-280); two lines it fits as well are not guessed between.
   - **Read only where it tells:** the kept rows are read (`Store.kept_voucher_lines`) only when lines alike are shared
-    out, and only of the invoices with a line alike: a kept match is about ten times what a PO's billing reads of an
-    invoice (900 approved invoices on one PO: 23 ms a read, 46 ms with every kept match), and most POs have no lines
-    alike.
+    out, and only of the invoices with a line alike: read with every invoice (`Store.po_invoices`), the kept matches
+    doubled a PO's read (900 approved invoices of 8 lines: 23 ms, 46 ms), and most POs have no lines alike.
   - *Not chosen:* kept rows on a PO without lines alike (each line has the one PO line it resembles, the one kept
     unless the PO's lines changed); a keying sheet checking a voucher's rows against what the other vouchers' kept
     rows match on its PO line in other batches (whether JD Edwards' open quantity at the last load has them is not
