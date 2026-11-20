@@ -259,7 +259,7 @@ def test_a_failed_photo_is_replaced_when_it_is_read_after_all(tmp_path, offline_
     store, pipeline = offline_pipeline
     photo = _jpeg(tmp_path / "scan.jpg")
     keep = photo.read_bytes()
-    monkeypatch.setattr(intake, "to_pdf", lambda path: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(intake, "to_pdf", lambda path, noted=None: (_ for _ in ()).throw(OSError("disk full")))
     failed = pipeline.process(photo)
     assert not failed.ok and store.find_by_hash(photo, include_failed=True)["status"] == "failed"
     monkeypatch.undo()

@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import datetime as dt
+import functools
 import hashlib
 import json
 import logging
@@ -843,6 +844,18 @@ class InvoicePipeline:
             said = [{**f, "note": note, "tax": tax} for f, note, tax in zip(files, notes, taxes, strict=True)]
             claim_findings(result.report, said, coding)
 
+    def _note_reading(self, sha256: str | None, path: Path, seen: os.stat_result | None = None) -> None:
+        """A file AP Coder writes in the invoices folder while it reads the one in line (the PDF made from a picture,
+        pages turned upright: ``seen``, as written, before it takes its name; a file renamed to the kind it is): noted
+        as read with the content of the one in line (``sha256``, as the import queue read it), so until its invoice is
+        stored (``_note_own_file``) a pick-up neither lists it nor puts it in line as a new file, to be read twice
+        (B-2978)."""
+        if self.store is None or not sha256:
+            return
+        with contextlib.suppress(OSError):  # gone meanwhile: nothing to list
+            seen = seen or path.stat()
+            self.store.note_files([(str(path.parent.resolve() / path.name), seen.st_size, seen.st_mtime_ns, sha256)])
+
     def _note_own_file(self, path: Path) -> None:
         """The file stored is one AP Coder wrote in the invoices folder itself (the PDF made from a picture, a file
         renamed to the kind it is, pages turned upright): kept as read by the pick-up, which read the file as it
@@ -857,10 +870,12 @@ class InvoicePipeline:
         """Read the invoice (``result.extraction``), code it (``result.coding``, AP's fixed rules applied) and check
         it (``result.output``, ``result.report``). ``captured["local"]``: the capture (with its supplier key and
         profile) when the local readers read it (the chat model's coding is read against the page afterwards)."""
-        path = result.source
+        came_in, noted = result.source, functools.partial(self._note_reading, result.sha256)  # (as the queue read it)
         # A photo or a scanned picture coming in is made a PDF first; one stored as a picture by an older version
         # (read again by the page reader) stays where the database has it.
-        path = result.source = _as_pdf(path, result, convert=invoice_id is None)
+        path = result.source = _as_pdf(came_in, result, convert=invoice_id is None, noted=noted)
+        if path != came_in:  # (renamed to the kind it is)
+            noted(path)
         _check_pdf(path)
         t0 = time.perf_counter()
         layout = None
@@ -871,7 +886,7 @@ class InvoicePipeline:
             # Azure's words, once it read the invoice and while it is on, for a page OCR can't read (D-245).
             layout = build_layout(path, di_raw=azure_check.kept_reading(self.store, path, result.sha256))
             if invoice_id is None and any(page.turn for page in layout.pages):
-                path = result.source = _upright(path, layout, result)
+                path = result.source = _upright(path, layout, result, noted=noted)
             result.extraction = local_extraction(path, layout)
         else:
             result.extraction = self.extractor.extract(path)
@@ -1090,16 +1105,17 @@ class InvoicePipeline:
         return [r for r in results if r is not None]
 
 
-def _as_pdf(path: Path, result: PipelineResult, convert: bool = True) -> Path:
+def _as_pdf(path: Path, result: PipelineResult, convert: bool = True, noted: Any = None) -> Path:
     """The PDF to read. A file coming in (``convert``) named as another kind is renamed to what it is
     (``intake.as_its_kind``), and a picture (JPEG, PNG, HEIC, TIFF, BMP, WEBP, GIF) is made into one, the picture
-    kept in ``originals/`` (``intake.to_pdf``); a PDF made from a picture before says which (``result.original``)."""
+    kept in ``originals/`` (``intake.to_pdf``, ``noted`` told of it); a PDF made from a picture before says which
+    (``result.original``)."""
     from ..intake import pictures as intake
 
     if convert and path.suffix.lower() not in TEXT_EXTENSIONS:  # a PDF named .jpg, a PNG named .pdf: what it is
         path = result.source = intake.as_its_kind(path)
     if intake.is_image(path) and convert:
-        converted = intake.to_pdf(path)
+        converted = intake.to_pdf(path, noted=noted)
         result.original = {"file": path.name, "kept": str(converted.original), "sha256": converted.sha256,
                            "pages": converted.pages}  # fmt: skip
         log.info("%s: made into %s (the picture is kept in %s)", path.name, converted.pdf.name, converted.original)
@@ -1113,14 +1129,14 @@ def _as_pdf(path: Path, result: PipelineResult, convert: bool = True) -> Path:
     return path
 
 
-def _upright(path: Path, layout: Any, result: PipelineResult) -> Path:
+def _upright(path: Path, layout: Any, result: PipelineResult, noted: Any = None) -> Path:
     """A PDF with pages scanned sideways or upside down, shown upright (``intake.turn_upright``): the words OCR read
     on the upright pages are where the review screen shows them. Left as it is when it can't be written."""
     from ..intake import pictures as intake
 
     turns = {page.number: page.turn for page in layout.pages if page.turn}
     try:
-        turned = intake.turn_upright(path, turns)
+        turned = intake.turn_upright(path, turns, noted=noted)
     except Exception as exc:  # a locked or damaged file: read all the same, shown as it was scanned
         log.warning("%s: pages scanned turned not set upright (%s)", path.name, exc)
         return path
