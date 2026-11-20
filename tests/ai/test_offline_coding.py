@@ -166,7 +166,8 @@ def test_a_line_whose_quantity_ocr_lost_bills_its_amount_at_its_unit_price(refer
     from ap_coder.capture.types import VERIFIED, CaptureResult, FieldResult, LineReading
 
     head = {"vendor_name": "Prairie Sky Supply", "invoice_number": "CN-50277", "invoice_date": "2026-10-20",
-            "currency": "CAD", "subtotal": -262.0, "gst_amount": -13.1, "tax_total": -13.1, "grand_total": -275.1}  # fmt: skip
+            "currency": "CAD", "subtotal": -262.0, "gst_amount": -13.1, "tax_total": -13.1,
+            "grand_total": -275.1}  # fmt: skip
     capture = CaptureResult(
         fields={k: FieldResult(k, v, 0.95, VERIFIED) for k, v in head.items()},
         line_items=[LineReading("Return - copy paper, case of 10", None, 52.4, -209.6),
