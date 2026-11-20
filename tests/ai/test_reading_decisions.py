@@ -356,6 +356,25 @@ def test_the_freight_of_a_totals_table_of_one_row_is_a_jd_edwards_line_of_its_ow
     assert (view["taxable"], view["tax"], view["not_ready"]) == (688.5, 34.43, [])
 
 
+def test_the_freight_of_a_totals_table_of_one_row_keeps_its_printed_label(tmp_path, reference):
+    """B-2831: the freight of a totals table of one row (B-2639) was a line "Charges not in the line table": its label,
+    "Freight Amount", is over it, not beside it, so the text never gave it. The table reader's label is the line's
+    description, and so the JD Edwards line's remark."""
+    from ap_coder.erp import jde_keying, jde_prototype, jde_settings
+    from tests.erp.test_jde_gl_mode import coded
+    from tests.pdfs import one_row_totals
+
+    pipe, _store = _offline(tmp_path, reference)
+    out = dict(pipe.process(one_row_totals(tmp_path)).output)
+    assert [(li["description"], li["amount"]) for li in out["line_items"]][2] == ("Freight Amount", 32.0)
+    out.pop("gl_distribution", None)
+    out["line_items"] = [{**li, "predicted_gl_code": "6420.2210", "predicted_cost_center": "0312005561"}
+                         for li in out["line_items"]]  # fmt: skip
+    js = jde_prototype.prototype_settings(jde_settings.JdeSettings(company="00210"))
+    (v,), _ = jde_keying.vouchers([coded(out)], js, lambda final: "40417")
+    assert v.lines[2].remark == "Freight Amount"
+
+
 def test_the_address_under_the_companys_own_name_unlabelled_is_where_it_is_supplied(tmp_path):
     """B-2720: the customer's block at the top with no label (an envelope's window: the company's own name over its
     address in Ontario), the supplier only in the remit-to at the foot: no bill-to was read, so the place of supply
