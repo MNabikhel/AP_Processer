@@ -231,6 +231,21 @@ def test_the_sender_is_offered_whatever_its_remit_to_says_to_the_attention_of(gr
     assert "Bill To" not in page and companies.group_suppliers(group, page, unread) == [SENDER]
 
 
+def test_a_company_of_the_group_picked_with_its_supplier_number_decides_the_company_billed(group, reference,
+                                                                                          ground_truth):  # fmt: skip
+    """B-2794: a company of the group with two supplier numbers under its name is picked (or named by its GST/HST
+    number) as "MAPLE RIDGE CONSTRUCTORS LTD #4410900": its own name was compared with the number on it, so rule (b)
+    did not leave it out, and an intercompany invoice naming it and the company billed was held to pick the company.
+    The supplier's name is compared without its number, as without one."""
+    _suppliers_of_the_group(group)
+    group.import_vendor_master([{"vendor_name": "MAPLE RIDGE CONSTRUCTORS LTD", "erp_id": "4410950"}], by_erp_id=True)
+    page = INTERCOMPANY.split("Description")[0]  # the letterhead and the bill-to
+    for picked in ("MAPLE RIDGE CONSTRUCTORS LTD #4410900", "MAPLE RIDGE CONSTRUCTORS LTD #4410950"):
+        output, codes, report = _check(group, reference, _coding(ground_truth, vendor_name=picked), page)
+        assert output["company"] == "00210" and report.checks["company"]["how"] == "name", picked
+        assert "COMPANY_UNKNOWN" not in codes
+
+
 def test_a_short_name_decides_only_printed_as_a_word_of_its_own_in_capitals(group, reference, ground_truth):
     """B-2690: a name of three letters or fewer in Settings → Review ("Art = 230", "MRB = 310") was read in any word
     of the page, whatever its case: "Art supplies" or "art" in a description decided the invoice was 00230's. Such a

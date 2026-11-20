@@ -51,6 +51,7 @@ from ..core.schema import (
     TaxLine,
     province_named,
 )
+from ..core.store.vendor_master import without_number
 from .extraction import ExtractionResult
 from .inference import CHAT_SUGGESTED, MODEL_SUGGESTED, CodingResult
 from .suggest import by_pairs, candidates, why_left
@@ -777,7 +778,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     charges = None if progress else capture.fields.get("other_charges")  # (a progress billing's: its holdback)
     freight = _amount(values, "other_charges") if charges is not None and charges.status in (VERIFIED, LIKELY) else 0.0
     # (the company's own names but the supplier's: a company of the group billing another, its letterhead its own)
-    supplier_province, ship_to_province = provinces(text, layout, our_name_keys(store) - {vendor_key(vendor)})
+    own = vendor_key(without_number(vendor))  # (its supplier number off, as one of a name's is picked: B-2794)
+    supplier_province, ship_to_province = provinces(text, layout, our_name_keys(store) - {own})
     invoice_on = _iso_or_empty(values.get("invoice_date"))
     # The province a tax line names when its rate does not say: where it is delivered as best known (the vendor's
     # province is never stored as the ship-to, D-61).

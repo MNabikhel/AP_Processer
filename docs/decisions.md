@@ -6965,7 +6965,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     keying batch's Not ready sheet (B-2148): that sheet lists what a batch holds that its own checks hold back at
     download.
 - **D-298** · **An invoice one company of the group sends another: its supplier is offered with one click, never
-  read** (B-2790, B-2792, B-2793; D-262 the company's own names, D-267 report 9's join them).
+  read** (B-2790, B-2792 to B-2794; D-262 the company's own names, D-267 report 9's join them).
   - **The trade-off:** report 9's names stay the company's own, never read as the supplier: the bill-to of every
     outside invoice prints one, and every company of the group is in the vendor master too, so a name read there
     would make the customer the supplier, with its history, terms and bank account. An intercompany invoice (the
@@ -6983,7 +6983,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     "Customer Name", "Billing / Shipping / Delivery Address" (B-2792), and the six lines under it, up to a remit-to
     (whose "Attn: Accounts Receivable" is the supplier's, B-2793) or the line items' headings. Picked, the company is
     decided as before: rule (b) leaves the supplier's own name out, so the company billed, printed in the bill-to,
-    decides.
+    decides; a supplier picked with its number ("MAPLE RIDGE CONSTRUCTORS LTD #4410900", one of two of a name) is
+    compared without it (`vendor_master.without_number`, B-2794), there and where its letterhead's address is told
+    from the bill-to's (`offline_coder.code_from_capture`).
   - **Settings → Review** lists report 9's names under "Your company's names", read-only, said where they come from
     and that they are never read as a supplier.
   - *Not chosen:* reading a company of the group as the supplier when it is printed outside the bill-to (the rule

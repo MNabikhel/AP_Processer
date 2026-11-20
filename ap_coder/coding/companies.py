@@ -290,6 +290,14 @@ def _at(page: _Page, key: str, ends: bool = True) -> list[tuple[int, int]]:
     return found
 
 
+def _own_key(name: str) -> str:
+    """A supplier's name as compared with the company's own names and report 9's: its vendor key, without the
+    supplier number it may be picked with ("MAPLE RIDGE CONSTRUCTORS LTD #4410900", B-2794)."""
+    from ..core.store.vendor_master import without_number
+
+    return vendor_key(without_number(str(name or "")))
+
+
 def _named(text: str, names: dict[str, str], supplier: str) -> set[str]:
     """The companies whose names (``names``: {vendor key: company}) are printed in ``text``, the supplier's own left
     out, and a name printed only inside the supplier's ("fraser bend" in "Fraser Bend Aggregates Ltd.", B-2680, run
@@ -312,7 +320,7 @@ def group_suppliers(store: Any, text: str, coding: InvoiceCoding) -> list[tuple[
     billed, by mistake: B-2792); never the company the invoice is for (``coding.company``), one in its bill-to or
     ship-to, or the supplier in the box (its name, and a name only inside it); [] with fewer than two companies."""
     table = companies(store)
-    supplier = vendor_key(coding.vendor_name)
+    supplier = _own_key(coding.vendor_name)
     if len(table) < 2 or not text.strip() or (supplier and supplier not in map(vendor_key, own_names(store))):
         return []
     from ..ai.offline_coder import customer_block
@@ -357,7 +365,7 @@ def _decided(store: Store, coding: InvoiceCoding, text: str, table: dict[str, Co
         if len(found) == 1:
             return Decision(found.pop(), BY_PO, f"the company of PO {coding.po_number.strip()}")
         could |= found
-    named = _named(text, name_variations(store), vendor) if text else set()
+    named = _named(text, name_variations(store), _own_key(coding.vendor_name)) if text else set()
     if len(named) == 1:
         code = named.pop()
         name = table[code].name if code in table else code

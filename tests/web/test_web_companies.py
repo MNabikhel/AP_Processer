@@ -256,6 +256,22 @@ def test_an_outside_suppliers_invoice_labelled_bill_to_with_a_hyphen_never_offer
     assert "of the group" not in answer["header"]["help"].get("vendor_name", {}).get("text", "")
 
 
+def test_a_company_of_the_group_named_with_its_supplier_number_is_the_supplier_not_the_customer(client, store):
+    """B-2794 as read: a company of the group with two supplier numbers under its name is named by its GST/HST number
+    with its number ("MAPLE RIDGE CONSTRUCTORS LTD #4410900", D-219). Compared with the company's own names with that
+    number on it, it was taken for the customer: the invoice was held to pick its company, and with no bill-to label
+    its own letterhead address was taken for the bill-to (BC, not the company billed's AB)."""
+    load_sample_setup(store)
+    _card(client, jde_group.companies_xlsx())
+    store.import_vendor_master([{"vendor_name": SIBLING.name, "erp_id": str(SIBLING.number), "gst": SIBLING.tax_id},
+                                {"vendor_name": SIBLING.name, "erp_id": "4410950"}, KELSO], by_erp_id=True)  # fmt: skip
+    for number, bill in (("IC-2613", "Bill To:"), ("IC-2614", "")):
+        read = store.get_invoice(_invoice(store, "Maple Ridge Constructors Ltd.", "Maple Ridge Holdings Ltd.", number,
+                                          SIBLING.tax_id, bill=bill))["ai_output"]  # fmt: skip
+        assert read["vendor_name"] == f"{SIBLING.name} #{SIBLING.number}", bill
+        assert (read["company"], read["ship_to_province"]) == ("00210", "AB"), bill
+
+
 @pytest.fixture
 def browser(chromium, store):
     """The dashboard on ``store`` served on this computer and a Chromium to open it: (browser, base URL)."""
