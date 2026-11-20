@@ -67,7 +67,7 @@ CATEGORIES = (
     ("two_companies", 8, "a supplier billing two companies: the one named on the invoice"),
     ("undecided", 4, "a supplier billing two companies, neither named, no PO: a person picks"),
     ("intercompany", 2, "a company of the group billing another"),
-    ("us", 14, "a US company in the pilot: USD, no Canadian tax"),
+    ("us", 14, "a US company in the pilot: USD, its state's, county's and city's sales tax (none from Montana)"),
     ("usd_ca", 4, "a USD company whose address says CA"),
     ("outside_pilot", 8, "a company outside the pilot"),
     ("dup_erp", 6, "already in JD Edwards under the same company"),
@@ -86,6 +86,10 @@ NEVER_CLEAN = ("COMPANY_UNKNOWN", "COMPANY_NOT_IN_PILOT", "US_TAX_NOT_CHECKED", 
                "DUPLICATE_INVOICE", "DUPLICATE_OTHER_COMPANY", "SEVERAL_INVOICES", "JDE_SUBLEDGER_NEEDED",
                "JDE_UNITS_NEEDED", "PO_AMBIGUOUS", "PO_UNKNOWN", "PO_VENDOR_MISMATCH")  # fmt: skip
 CANADIAN = ("00210", "00220", "00230")
+# A Washington supplier's sales tax (made up): the state's, the county's and the city's, each on a row of its own, or
+# printed as one; a Montana supplier charges none.
+WA_SALES_TAX = (("STATE", Decimal("0.065")), ("COUNTY", Decimal("0.005")), ("CITY", Decimal("0.02")))
+US_TAX_CODES = ("STATE", "COUNTY", "CITY", "SALES")  # (read as one tax of type OTHER)
 CENT = Decimal("0.01")
 DAY_LAYOUTS = ("classic_left", "vendor_right", "header_grid", "boxed_fields", "totals_left", "table_footer")
 DATE_STYLES = ("iso", "mon_d_y", "month_d_y", "d_mon_y", "dd-mon-yyyy", "yyyy/mm/dd")
@@ -134,6 +138,7 @@ class DayInvoice:
     parts: list[DayInvoice] = field(default_factory=list)  # the invoices a "several" file holds
     copy_of: str = ""  # sent again: the invoice of the day it is a scan of
     file: str = ""
+    sales_tax: tuple[tuple[str, Decimal], ...] = ()  # a US supplier's sales tax: (code, rate), a row each
 
     @property
     def credit(self) -> bool:
@@ -150,6 +155,9 @@ class DayInvoice:
 
     @property
     def taxes(self) -> list[C.Tax]:
+        if self.sales_tax:  # (on every line, the freight too; rows of their own fill no one field, as printed)
+            field = "tax_total" if len(self.sales_tax) == 1 else ""
+            return [C.Tax(code, field, rate, C.money(self.subtotal * rate)) for code, rate in self.sales_tax]
         return C.compute_taxes(self.province, self.subtotal) if self.province else []
 
     @property
@@ -357,6 +365,8 @@ class Planner:
             )
         else:
             invoice.must, invoice.must_not = ("US_TAX_NOT_CHECKED",), quiet
+        if category == "us" and s.province == "WA":
+            invoice.sales_tax = WA_SALES_TAX if k % 2 == 0 else (("SALES", sum(r for _c, r in WA_SALES_TAX)),)
         return invoice
 
     def duplicate(self, category: str, k: int) -> DayInvoice:
@@ -1038,7 +1048,7 @@ def _money(value: Any) -> Decimal:
 def _taxes(amounts: dict[str, float]) -> dict[str, float]:
     out: dict[str, float] = {}
     for code, amount in amounts.items():
-        key = "GST/HST" if code in ("GST", "HST") else code
+        key = "GST/HST" if code in ("GST", "HST") else "OTHER" if code in US_TAX_CODES else code
         out[key] = round(out.get(key, 0.0) + amount, 2)
     return {k: v for k, v in out.items() if v}
 
