@@ -218,6 +218,13 @@ def _plain_words(text: str) -> str:
     return " ".join(re.sub(r"[^0-9a-z]+", " ", str(text).casefold()).split())
 
 
+def _printed_name(name: str, text: str) -> bool:
+    """``name`` is printed in ``text`` as whole words, never inside another word ("Ace" in "replacement"); the words of
+    a name of several may run together, as a scan reads them ("BIRCH ELECTRICLTD.")."""
+    words = _plain_words(name).split()
+    return bool(words) and re.search(rf"\b{' ?'.join(map(re.escape, words))}\b", _plain_words(text)) is not None
+
+
 _CENTS = re.compile(r"\d[.,]\d{2}(?!\d)")
 _CURRENCY = re.compile(r"[$€£]|(?<![a-z])(?:cad|cdn|usd|eur|gbp)(?![a-z])", re.I)
 _CURRENCY_BEFORE = re.compile(r"(?:[$€£]|(?<![a-z])(?:cad|cdn|usd|eur|gbp)) ?\Z", re.I)  # ("CAD 150", "CA$150")
@@ -293,7 +300,7 @@ def _supplier(item: dict[str, Any], text: str, store: Any, out: dict[str, Any]) 
             return f"no one supplier in the supplier list has GST/HST number {item.get('gst_hst')}"
         name = str(one["display_name"])
         numbered = with_number(one) if store.vendors_sharing(name) else ""  # (one of the suppliers of its name)
-    elif not name or _plain_words(name) not in _plain_words(text):
+    elif not _printed_name(name, text):
         return f"{name or 'the supplier'} is not printed on the page"
     else:
         found = store.find_vendor(name)

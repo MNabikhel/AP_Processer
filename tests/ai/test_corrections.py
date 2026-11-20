@@ -423,3 +423,26 @@ def test_corrections_never_replace_a_proposal_read_again_or_checked_while_the_mo
         assert now["ai_output"]["invoice_number"] == "AZ-READING"
     else:
         assert corrections.STEERING in _codes(store, iid) and now["ai_output"] == inv["ai_output"]
+
+
+def test_a_supplier_is_named_on_the_page_only_by_its_whole_words(store):  # noqa: F811
+    """B-2803: a supplier's name counted as printed on the page when it was only part of another word: "Ace" in
+    "replacement", "Birch Electric Ltd" in "Whitebirch Electric Ltd". The words of a name of several may run
+    together, as a scan reads them."""
+    store.import_vendor_master([{"vendor_name": "ACE", "erp_id": "5001"},
+                                {"vendor_name": "Birch Electric Ltd", "erp_id": "5002"}], by_erp_id=True)  # fmt: skip
+
+    def named(name, page):
+        out, said, refused = corrections.apply_items({"vendor_name": "Unknown Supplies"},
+                                                     [_fix("supplier", label=name)], page, store=store, setup=None,
+                                                     supplier_wanted=True)  # fmt: skip
+        return out["vendor_name"], refused
+
+    for name, page in (("Ace", "Invoice 4410\nFilter replacement kit 2 50.00 100.00"),
+                       ("Birch Electric Ltd", "Whitebirch Electric Ltd\nInvoice 4410")):  # fmt: skip
+        found, refused = named(name, page)
+        assert found == "Unknown Supplies" and "is not printed on the page" in refused[0], (name, refused)
+    birch = "Birch Electric Ltd"
+    for name, page, listed in (("Ace", "ACE\nInvoice 4410", "ACE"), (birch, "BIRCH ELECTRICLTD.\nInvoice 4410", birch),
+                               (birch, "Birch-Electric Ltd, 4 Main St", birch)):  # fmt: skip
+        assert named(name, page) == (listed, []), (name, page)
