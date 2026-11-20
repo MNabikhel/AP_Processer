@@ -5,7 +5,15 @@ from email.message import EmailMessage
 from pathlib import Path
 from unittest.mock import patch
 
-from ap_coder.intake.mailbox import MAX_FORWARD_DEPTH, emails_in, read_eml, safe_name, unpack, unpack_folder
+from ap_coder.intake.mailbox import (
+    CUT_OFF_SECONDS,
+    MAX_FORWARD_DEPTH,
+    emails_in,
+    read_eml,
+    safe_name,
+    unpack,
+    unpack_folder,
+)
 
 
 def _email(subject="Invoice INV-1"):
@@ -127,7 +135,8 @@ def test_an_email_that_cannot_be_read_is_filed_away_and_the_others_unpacked(tmp_
     (tmp_path / "a deep.eml").write_bytes(nested_email(1000))
     (tmp_path / "b good.eml").write_bytes(_email().as_bytes())
     (tmp_path / "c huge.eml").write_bytes(b"x" * 3_000_000)
-    later = time.time() + 60
+    _stamped_just_after_the_clock(tmp_path)  # as Windows' coarser clock can give them (B-2997)
+    later = time.time() + 10 * CUT_OFF_SECONDS  # a pick-up well after an unreadable email's wait (B-2997)
     with patch("ap_coder.intake.mailbox.MAX_EMAIL_BYTES", 2_000_000):  # a smaller limit than the real one, for the test
         deep, good, huge = unpack_folder(tmp_path, now=later)
     assert deep.error.startswith("could not be read") and "forwarded inside each other" in deep.error
@@ -136,10 +145,21 @@ def test_an_email_that_cannot_be_read_is_filed_away_and_the_others_unpacked(tmp_
     assert emails_in(tmp_path) == [] and unpack_folder(tmp_path, now=later) == []  # nothing left to fail again
 
 
+def _stamped_just_after_the_clock(folder):
+    """Each file's time a few milliseconds after ``time.time()``, as Windows' coarser clock (Python 3.12) gives a file
+    just written: a pick-up "a minute later" by the clock is then a little under a minute after it (B-2997)."""
+    import os
+
+    ahead = time.time() + 0.02
+    for path in folder.iterdir():
+        os.utime(path, (ahead, ahead))
+
+
 def test_any_other_error_in_one_email_is_filed_away_too(tmp_path):
     (tmp_path / "odd.eml").write_bytes(_email().as_bytes())
+    _stamped_just_after_the_clock(tmp_path)
     with patch("ap_coder.intake.mailbox.read_eml", side_effect=LookupError("unknown encoding")):
-        (odd,) = unpack_folder(tmp_path, now=time.time() + 60)
+        (odd,) = unpack_folder(tmp_path, now=time.time() + 10 * CUT_OFF_SECONDS)
     assert odd.error == "could not be read: it is damaged (LookupError)"
     assert (tmp_path / "emails" / "could not read" / "odd.eml").exists()
 

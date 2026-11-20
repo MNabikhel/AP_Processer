@@ -85,7 +85,7 @@ def test_a_damaged_msg_is_filed_away_with_the_reason(tmp_path, damage):
     with pytest.raises(MsgError):
         read_msg(bytes(raw)) if damage != "loop" else _read_all(bytes(raw))
     (tmp_path / "odd.msg").write_bytes(bytes(raw))
-    (result,) = unpack_folder(tmp_path, now=time.time() + 60)
+    (result,) = unpack_folder(tmp_path, now=time.time() + 600)  # well after an unreadable email's wait (B-2997)
     assert (
         result.error.startswith("could not be read") and (tmp_path / "emails" / "could not read" / "odd.msg").exists()
     )
