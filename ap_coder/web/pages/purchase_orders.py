@@ -103,7 +103,7 @@ def po_detail(store: Store, p: dict[str, Any]) -> dict[str, Any] | None:
         return None
     billing = po_mod.po_billing(store, p["po_key"], full)
     invoices = billing.rows
-    matched: dict[Any, int | None] = {}
+    matched: dict[Any, tuple[int, ...]] = {}
     billed = billing.billed(full, invoices, matched=matched)
     billed_amount = billing.billed(full, invoices, amounts=True, matched=matched)
     # (a line billed by amount with what the ERP has open on it: against that, the invoices not exported yet, D-280)

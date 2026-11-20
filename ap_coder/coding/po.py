@@ -8,6 +8,7 @@ compare what is billed with what was ordered (and received):
 * PO_CLOSED (warning): the PO is closed
 * PO_VENDOR_MISMATCH (warning): the PO was raised for another vendor
 * PO_LINE_NOT_ON_PO (warning): an invoice line matches nothing on the PO
+* PO_LINE_AMBIGUOUS (warning): an invoice line could bill several PO lines alike, none is guessed (D-282)
 * PO_PRICE_OVER (warning): unit price above the PO price beyond the tolerance
 * PO_QTY_OVER (warning): billed so far (this and earlier invoices) exceeds the quantity ordered
 * PO_NOT_RECEIVED (warning): billed so far exceeds the quantity received (3-way match)
@@ -34,7 +35,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from ..core.caches import MB, Bounded, size_of
 from ..core.chart import code_of, join_account, split_account
@@ -378,12 +379,21 @@ def _amount_over(m: LineMatch) -> float | None:
 
 
 def po_lines_billed(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str, Any]],
-                    matched: dict[Any, int | None] | None = None) -> list[int | None]:  # fmt: skip
+                    matched: dict[Any, tuple[int, ...]] | None = None) -> list[int | None]:  # fmt: skip
     """The PO line_number each invoice line bills, by position (None: matches nothing). Each invoice line takes
-    the PO line it most resembles (a matching unit price counts in favour); several invoice lines may bill the
-    same PO line. By position, so an invoice that repeats a line number (page 2 starting again at 1) still pairs
-    every line. ``matched`` keeps each (description, unit price)'s PO line across calls for the same ``po_lines``:
-    the invoices billing a PO repeat its lines (a PO billed by thousands of invoices, D-199)."""
+    the PO line it most resembles (a matching unit price counts in favour), the first of lines alike; several invoice
+    lines may bill the same PO line. By position, so an invoice that repeats a line number (page 2 starting again at
+    1) still pairs every line. ``matched``: as ``po_line_choices``'. Month-end's accruals pair so (``billed_on``); an
+    invoice's match and its PO's billing share lines alike out instead (``share_out``, D-282)."""
+    return [found[0] if found else None for found in po_line_choices(invoice_lines, po_lines, matched)]
+
+
+def po_line_choices(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str, Any]],
+                    matched: dict[Any, tuple[int, ...]] | None = None) -> list[tuple[int, ...]]:  # fmt: skip
+    """The PO lines each invoice line most resembles, by position (``_po_candidates``: a matching unit price counts
+    in favour): one; none; or several alike (the same description and price), which ``share_out`` tells apart.
+    ``matched`` keeps each (description, unit price)'s across calls for the same ``po_lines``: the invoices billing a
+    PO repeat its lines (a PO billed by thousands of invoices, D-199)."""
     out = []
     for li in invoice_lines:
         description, price = li.get("description", ""), li.get("unit_price")
@@ -394,7 +404,7 @@ def po_lines_billed(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str
                 continue
         except TypeError:  # (a description or price that can't be a key: worked out each time)
             key = None
-        found = _po_line(description, po_lines, lambda _, pl, price=price: _same_price(
+        found = _po_candidates(description, po_lines, lambda _, pl, price=price: _same_price(
             float(price or 0), float(pl.get("unit_price") or 0)))  # fmt: skip
         if key is not None:
             matched[key] = found  # type: ignore[index]
@@ -402,17 +412,127 @@ def po_lines_billed(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str
     return out
 
 
-def _po_line(description: Any, po_lines: list[dict[str, Any]], same_price: Callable[[int, dict], bool]) -> int | None:
-    """The line_number of the PO line a line of ``description`` most resembles, its price the same as the PO line's
-    (``same_price(n, po_line)``, n its position) counting in its favour; None: none resembles it enough."""
-    best, best_score = None, 0.0
+class Alike(NamedTuple):
+    """An invoice line that could bill any of several PO lines alike (the same description and price) and that nothing
+    tells apart (``share_out``): their line_numbers; ``room``, whether each has room left for it (else none has)."""
+
+    lines: tuple[int, ...]
+    room: bool
+
+
+def share_out(po_lines: list[dict[str, Any]], invoices: list[tuple[list[dict[str, Any]], bool]],
+              matched: dict[Any, tuple[int, ...]] | None = None) -> list[list[int | Alike | None]]:  # fmt: skip
+    """The PO line each line of ``invoices`` bills ([(its lines, whether it is exported)], in invoice order), by
+    position: the one it most resembles (``po_line_choices``); of PO lines alike, the one its own coding or words point
+    to (``_pointed``), else the one with room left for it (``_has_room``) after the invoices before it and its own lines
+    before took theirs; ``Alike`` when that tells none (several could each take it, or none can): none is guessed
+    (D-264, D-282), and it bills none of them. None: it matches nothing."""
+    return _shared(po_lines, invoices, [po_line_choices(lines, po_lines, matched) for lines, _ in invoices])
+
+
+def _shared(po_lines: list[dict[str, Any]], invoices: list[tuple[list[dict[str, Any]], bool]],
+            choices: list[list[tuple[int, ...]]]) -> list[list[int | Alike | None]]:  # fmt: skip
+    """``share_out`` of ``invoices`` whose lines' ``po_line_choices`` are ``choices``. What is taken of a line's room
+    counts the invoices not exported yet where the ERP gave what it has open on the line (it has counted the exported
+    ones, D-280), every invoice where it gave none."""
+    if all(len(found) <= 1 for mine in choices for found in mine):  # (no lines alike: no room to count)
+        return [[found[0] if found else None for found in mine] for mine in choices]
+    by_number = {int(pl["line_number"]): pl for pl in po_lines}
+    taken: dict[int, float] = {}
+    out: list[list[int | Alike | None]] = []
+    for (lines, exported), mine in zip(invoices, choices, strict=True):
+        shared: list[int | Alike | None] = []
+        for li, found in zip(lines, mine, strict=True):
+            n = found[0] if len(found) == 1 else _told(li, found, by_number, taken) if found else None
+            if isinstance(n, int) and not (exported and _by_open(by_number[n])):
+                taken[n] = taken.get(n, 0.0) + _taking(li, by_number[n])
+            shared.append(n)
+        out.append(shared)
+    return out
+
+
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+def _told(li: dict[str, Any], alike: tuple[int, ...], by_number: dict[int, dict[str, Any]],
+          taken: dict[int, float]) -> int | Alike:  # fmt: skip
+    """Which of the PO lines ``alike`` an invoice line bills (``share_out``): the one it points to, else the one of
+    those with room left for it; ``Alike`` when that tells none."""
+    pointed = _pointed(li, alike, by_number)
+    if len(pointed) == 1:
+        return pointed[0]
+    fits = tuple(n for n in pointed if _has_room(li, by_number[n], taken.get(n, 0.0)))
+    return fits[0] if len(fits) == 1 else Alike(fits, True) if fits else Alike(pointed, False)
+
+
+def _pointed(li: dict[str, Any], alike: tuple[int, ...], by_number: dict[int, dict[str, Any]]) -> tuple[int, ...]:
+    """Of PO lines alike, those an invoice line points to most: its coding the PO line's (the business unit, the
+    object, the subledger), the PO line's business unit or subledger (a job's number) among its words; all of them
+    when nothing tells them apart (D-282)."""
+    coded = [str(li.get(k) or "").strip().upper() for k in ("predicted_cost_center", "predicted_gl_code", "subledger")]
+    words = set(_WORD.findall(str(li.get("description") or "").lower()))
+
+    def told(pl: dict[str, Any]) -> int:
+        own = [str(pl.get(k) or "").strip().upper() for k in ("cost_center", "gl_code", "subledger")]
+        same = sum(1 for mine, its in zip(coded, own, strict=True) if mine and mine == its)
+        return same + sum(1 for its in (own[0], own[2]) if len(its) >= 3 and its.lower() in words)
+
+    scores = [told(by_number[n]) for n in alike]
+    best = max(scores)
+    return tuple(n for n, score in zip(alike, scores, strict=True) if score == best) if best else alike
+
+
+def _by_open(pl: dict[str, Any]) -> bool:
+    """Whether a PO line's room is what the ERP had open on it (its open amount or quantity), not what was ordered."""
+    return pl.get("open_amount" if pl.get("amount_only") else "open_quantity") is not None
+
+
+def _taking(li: dict[str, Any], pl: dict[str, Any]) -> float:
+    """What an invoice line takes of a PO line's room: its amount on one billed by amount, else the quantity it
+    matches (a line printed with none: ``unprinted_quantity``)."""
+    if pl.get("amount_only"):
+        return float(li.get("amount") or 0)
+    if not billed_quantity(li) and not is_charge(str(li.get("description") or "")) and pl.get("unit_price"):
+        return unprinted_quantity(float(li.get("amount") or 0), float(pl["unit_price"]))[0]
+    return matched_quantity(li)
+
+
+def _has_room(li: dict[str, Any], pl: dict[str, Any], taken: float) -> bool:
+    """Whether a PO line, ``taken`` of it already, has room left for an invoice line: what was ordered (or what the
+    ERP has open on it), 2% and a cent more on a line billed by amount; a credit, as much billed on it to give back."""
+    need = _taking(li, pl)
+    if need < 0:
+        return taken + need >= -1e-6
+    if pl.get("amount_only"):
+        room = pl["amount"] if pl.get("open_amount") is None else pl["open_amount"]
+        return taken + need <= room * (1 + TOTAL_TOLERANCE) + 0.01
+    room = pl["quantity"] if pl.get("open_quantity") is None else pl["open_quantity"]
+    return taken + need <= room + 1e-6
+
+
+def _po_candidates(description: Any, po_lines: list[dict[str, Any]],
+                   same_price: Callable[[int, dict], bool]) -> tuple[int, ...]:  # fmt: skip
+    """The line_numbers of the PO lines a line of ``description`` most resembles, its price the same as a PO line's
+    (``same_price(n, po_line)``, n its position) counting in its favour: one, or several resembling it as much (alike:
+    the same description and price), in the PO's order; none: none resembles it enough."""
+    best: list[dict[str, Any]] = []
+    best_score = 0.0
     for n, pl in enumerate(po_lines):
         score = _alike(description, pl.get("description", ""))
         if same_price(n, pl):
             score += SAME_PRICE
         if score > best_score:
-            best, best_score = pl, score
-    return int(best["line_number"]) if best is not None and best_score >= MATCH_THRESHOLD else None
+            best, best_score = [pl], score
+        elif best and score == best_score:
+            best.append(pl)
+    return tuple(int(pl["line_number"]) for pl in best) if best_score >= MATCH_THRESHOLD else ()
+
+
+def _po_line(description: Any, po_lines: list[dict[str, Any]], same_price: Callable[[int, dict], bool]) -> int | None:
+    """The line_number of the first PO line a line of ``description`` most resembles (``_po_candidates``); None: none
+    resembles it enough."""
+    found = _po_candidates(description, po_lines, same_price)
+    return found[0] if found else None
 
 
 @dataclass
@@ -450,6 +570,9 @@ class LineMatch:
     # A goods line printed with no quantity on a PO line with a unit cost (D-283): "amount", its quantity matched is its
     # amount at that cost; "one", 1, as its amount is no whole number of it; "": the quantity printed (or a charge's 1).
     quantity_from: str = ""
+    # The PO lines alike (the same description and price) it could bill, none told (D-282), as JD Edwards names them
+    # ("1.000"): it bills none of them (``po_line`` None).
+    alike: tuple[str, ...] = ()
 
 
 @dataclass
@@ -561,7 +684,7 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     others = [o for o in live.rows if o["id"] != exclude_invoice_id]
     result.other_invoices = others
     result.billed_before = sum(float(o["coding"].get("subtotal") or 0) for o in others)
-    matched: dict[Any, int | None] = {}
+    matched: dict[Any, tuple[int, ...]] = {}
     billed_before = live.billed(po, others, matched=matched)
     billed_before_amount = live.billed(po, others, amounts=True, matched=matched)
     # What the ERP has open has counted the invoices exported to it (D-139): a line billed by amount is checked
@@ -576,41 +699,21 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     billed_now: dict[int, float] = {}
     billed_now_amount: dict[int, float] = {}
     this_invoice: dict[int, float] = {}  # this invoice's net amount on each PO line
-    for li, po_line in zip(items, po_lines_billed(items, po_lines), strict=True):
+    for li, po_line in zip(items, live.share_with(po, items, exclude_invoice_id, exported, matched), strict=True):
         m = LineMatch(li["line_number"], li["description"], billed_quantity(li), float(li["unit_price"]))
         m.amount = float(li["amount"] or 0)
         m.matched_quantity = matched_quantity(li)
         result.lines.append(m)
-        pl = by_line.get(po_line) if po_line is not None else None
-        if pl is None:
-            m.problems.append("not_on_po")
-            result.findings.append(
-                (WARNING, "PO_LINE_NOT_ON_PO", f"no line on {po_label(number)} matches “{_short(m.description)}”",
-                 m.invoice_line)
-            )  # fmt: skip
+        if not isinstance(po_line, int):
+            _off_po(m, po_line, by_line, result)
             continue
-        m.po_line, m.po_description = pl["line_number"], pl["description"]
-        m.po_quantity, m.po_unit_price = pl["quantity"], pl["unit_price"]
-        m.received = pl["received_quantity"] if received else None
+        pl = by_line[po_line]
+        _from_po_line(m, li, pl, cost_centers, received)
         m.billed_before = billed_before.get(pl["line_number"], 0.0)
         m.billed_before_amount = billed_before_amount.get(pl["line_number"], 0.0)
-        m.po_amount, m.amount_only = pl["amount"], bool(pl.get("amount_only"))
-        m.po_gl, m.po_cc = pl.get("gl_code") or "", (pl.get("cost_center") or "") if cost_centers else ""
-        m.po_erp_line, m.po_uom, m.po_open_quantity = (
-            pl.get("erp_line") or "",
-            pl.get("uom") or "",
-            pl.get("open_quantity"),
-        )
-        m.po_account = join_account(pl.get("cost_center"), pl.get("gl_code"))
-        m.po_tax = (pl.get("tax_flag") or "", pl.get("tax_code") or "", pl.get("tax_area") or "")
-        m.po_subledger = (pl.get("subledger") or "", pl.get("subledger_type") or "")
-        if m.amount_only:  # a PO line with no quantity (JD Edwards' order details give amounts only): matched by amount
-            m.matched_quantity = billed_quantity(li) or None
-        elif not billed_quantity(li) and not is_charge(m.description) and pl["unit_price"]:  # (none printed, D-283)
-            m.matched_quantity, m.quantity_from = unprinted_quantity(m.amount, pl["unit_price"])
         if m.amount_only and pl["open_amount"] is not None:  # against what the ERP has open (D-280)
             m.po_open_amount, m.billed_before_amount = pl["open_amount"], not_exported.get(m.po_line, 0.0)
-        this_invoice[m.po_line] = this_invoice.get(m.po_line, 0.0) + m.amount
+        this_invoice[pl["line_number"]] = this_invoice.get(pl["line_number"], 0.0) + m.amount
         if m.amount_only:
             _amount_findings(m, li, result, billed_now_amount, counted=not (exported and m.po_open_amount is not None))
         else:
@@ -643,6 +746,50 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
              + (" ordered and received" if three_way else " ordered"), None)
         )  # fmt: skip
     return result
+
+
+def _off_po(m: LineMatch, alike: Alike | None, by_line: dict[int, dict[str, Any]], result: PoMatch) -> None:
+    """An invoice line billing no PO line: it matches none (PO_LINE_NOT_ON_PO), or could bill several alike and none is
+    told (``alike``: PO_LINE_AMBIGUOUS, the lines named, D-282)."""
+    label = po_label(result.po_number)
+    if alike is None:
+        m.problems.append("not_on_po")
+        result.findings.append(
+            (WARNING, "PO_LINE_NOT_ON_PO", f"no line on {label} matches “{_short(m.description)}”", m.invoice_line)
+        )
+        return
+    lines = [by_line[n] for n in alike.lines]
+    m.problems.append("alike")
+    m.alike = tuple(pl.get("erp_line") or str(pl["line_number"]) for pl in lines)
+    named = [f"line {name}" + (f" ({account})" if (account := join_account(pl.get("cost_center"), pl.get("gl_code")))
+                               else "") for name, pl in zip(m.alike, lines, strict=True)]  # fmt: skip
+    room = "each has room for it" if alike.room else "none has room left for it"
+    by_hand = ", or match it in JD Edwards by hand" if (result.po or {}).get("order_type") else ""
+    result.findings.append(
+        (WARNING, "PO_LINE_AMBIGUOUS",
+         f"line {m.invoice_line} “{_short(m.description)}” could bill {label} {', '.join(named[:-1])} or {named[-1]}: "
+         f"they have the same description and price, and {room}, so none is guessed. Code the line to the business "
+         f"unit or account of the one it bills{by_hand}", m.invoice_line)
+    )  # fmt: skip
+
+
+def _from_po_line(m: LineMatch, li: dict[str, Any], pl: dict[str, Any], cost_centers: bool, received: bool) -> None:
+    """``m``, the match of invoice line ``li``, filled from the PO line it bills: what was ordered (and, 3-way,
+    ``received``), its coding (its cost center only with a cost center list, B-534), and what JD Edwards' voucher match
+    names of it (D-264); the quantity it matches."""
+    m.po_line, m.po_description = pl["line_number"], pl["description"]
+    m.po_quantity, m.po_unit_price = pl["quantity"], pl["unit_price"]
+    m.received = pl["received_quantity"] if received else None
+    m.po_amount, m.amount_only = pl["amount"], bool(pl.get("amount_only"))
+    m.po_gl, m.po_cc = pl.get("gl_code") or "", (pl.get("cost_center") or "") if cost_centers else ""
+    m.po_erp_line, m.po_uom, m.po_open_quantity = pl.get("erp_line") or "", pl.get("uom") or "", pl.get("open_quantity")
+    m.po_account = join_account(pl.get("cost_center"), pl.get("gl_code"))
+    m.po_tax = (pl.get("tax_flag") or "", pl.get("tax_code") or "", pl.get("tax_area") or "")
+    m.po_subledger = (pl.get("subledger") or "", pl.get("subledger_type") or "")
+    if m.amount_only:  # a PO line with no quantity (JD Edwards' order details give amounts only): matched by amount
+        m.matched_quantity = billed_quantity(li) or None
+    elif not billed_quantity(li) and not is_charge(m.description) and pl["unit_price"]:  # (none printed, D-283)
+        m.matched_quantity, m.quantity_from = unprinted_quantity(m.amount, pl["unit_price"])
 
 
 def _receipts_checked(store: Store) -> bool:
@@ -882,7 +1029,12 @@ def voucher_match(match: PoMatch | None, number: str, charge_account: str = "") 
         out.said.append(out.held[-1])  # (PO_CURRENCY_DIFFERS)
     po = match.po
     for m in match.lines:
-        if m.po_line is None and charge_account and is_extra_charge(m.description):
+        if m.alike:  # (several PO lines alike, none told: D-282)
+            out.held.append(f"line {m.invoice_line} “{_short(m.description)}” could bill {label} line "
+                            f"{' or line '.join(m.alike)} (none is guessed): code the line to the business unit or "
+                            "account of the one it bills, or match it in JD Edwards by hand")  # fmt: skip
+            out.said.append(out.held[-1])  # (PO_LINE_AMBIGUOUS)
+        elif m.po_line is None and charge_account and is_extra_charge(m.description):
             out.rows.append(MatchRow(m.invoice_line, m.description, "", "", "", "", None, "", m.amount, charge_account,
                                      None, on_po=False))  # fmt: skip
         elif m.po_line is None:
@@ -905,11 +1057,12 @@ def voucher_match(match: PoMatch | None, number: str, charge_account: str = "") 
 
 def billed_by_line(
     po: dict[str, Any], invoices: list[dict[str, Any]], positive_only: bool = False, amounts: bool = False,
-    matched: dict[Any, int | None] | None = None,
+    matched: dict[Any, tuple[int, ...]] | None = None,
 ) -> dict[int, float]:  # fmt: skip
     """Quantity (or with ``amounts``, net amount) billed so far on each PO line by ``invoices``
-    (``Store.po_invoices`` rows); credits subtract unless ``positive_only``. ``matched``: each line's PO line kept
-    (``po_lines_billed``), to give again to another call for the same PO."""
+    (``Store.po_invoices`` rows), each line on the PO line ``po_lines_billed`` pairs it with; credits subtract unless
+    ``positive_only``. ``matched``: each line's PO lines kept (``po_line_choices``), to give again to another call for
+    the same PO. With lines alike on a PO its billing shares them out instead (``PoBilling.shares``, D-282)."""
     billed: dict[int, float] = {}
     matched = {} if matched is None else matched
     for inv in invoices:
@@ -927,47 +1080,112 @@ class PoBilling:
     """A PO's invoices in review or approved (``rows``: ``Store.po_invoices``' rows, in order) and, once kept
     (``po_billing``), what each bills on the PO's lines (``_billed``): kept rows are every caller's, read them, don't
     change them. A PO read at each ask has instead its lines' matches kept (``_matched``: (where it is kept, the PO's
-    lines as matched, this ask's own copy of them))."""
+    lines as matched, this ask's own copy of them)). ``alike``: whether a line of theirs could bill several PO lines
+    alike (kept: as worked out then; else not known yet), then shared out among them all in order (``shares``)."""
 
     def __init__(self, rows: list[dict[str, Any]], billed: dict[int, Any] | None = None,
-                 matched: tuple[Any, Any, dict[Any, int | None]] | None = None) -> None:  # fmt: skip
-        self.rows, self._billed, self._matched = rows, billed, matched
+                 matched: tuple[Any, Any, dict[Any, tuple[int, ...]]] | None = None,
+                 alike: bool = True) -> None:  # fmt: skip
+        self.rows, self._billed, self._matched, self._alike = rows, billed, matched, alike
+        self._shares: dict[int, list[int | Alike | None]] | None = None
 
     def billed(self, po: dict[str, Any], invoices: list[dict[str, Any]], amounts: bool = False,
-               matched: dict[Any, int | None] | None = None) -> dict[int, float]:  # fmt: skip
+               matched: dict[Any, tuple[int, ...]] | None = None) -> dict[int, float]:  # fmt: skip
         """``billed_by_line(po, invoices, amounts=amounts, matched=matched)`` for ``invoices``, some of ``rows``: from
         what each bills as kept, added up in the same order (the same sums to the last digit); as before when not kept,
-        or when one's lines could not be worked out so (it fails where it did)."""
+        or when one's lines could not be worked out so (it fails where it did). With lines alike on the PO, each line
+        where it was shared out among all of ``rows`` (``shares``), whichever of them are added up."""
+        shares = self.shares(po, matched)
+        if shares:
+            return _added(invoices, shares, amounts)
         kept = self._billed
         if self._matched is not None:  # (each line matched at most once in the process while the PO's lines stay)
-            where, lines, known = self._matched
+            known = self._matched[2]
             before = len(known)
             try:
                 return billed_by_line(po, invoices, amounts=amounts, matched=known)
             finally:
-                if len(known) != before:  # (this ask's own copy, kept again and measured as it grew)
-                    with _KEPT_LOCK:
-                        _MATCHED[where] = (lines, known)
+                self._kept_again(before)
         if kept is None or any(kept[o["id"]] is None for o in invoices):
             return billed_by_line(po, invoices, amounts=amounts, matched=matched)
         billed: dict[int, float] = {}
         get = billed.get
         for o in invoices:
             for po_line, quantity, amount in kept[o["id"]]:
+                po_line = po_line[0] if type(po_line) is tuple else po_line  # (the first alike, as billed_by_line)
                 billed[po_line] = get(po_line, 0.0) + (amount if amounts else quantity)
         return billed
 
+    def _kept_again(self, before: int) -> None:
+        """This ask's own copy of the PO's lines' matches (``_matched``), kept again and measured once it grew from
+        ``before``."""
+        if self._matched is not None and len(self._matched[2]) != before:
+            where, lines, known = self._matched
+            with _KEPT_LOCK:
+                _MATCHED[where] = (lines, known)
 
-def _billed(row: dict[str, Any], po_lines: list[dict[str, Any]], matched: dict[Any, int | None]) -> Any:
+    def shares(self, po: dict[str, Any], matched: dict[Any, tuple[int, ...]] | None = None,
+               ) -> dict[int, list[int | Alike | None]]:  # fmt: skip
+        """Each of ``rows``' lines' PO line by invoice id, shared out among them all in order (``share_out``), when a
+        line of theirs could bill several PO lines alike (D-282); empty when none could (each bills the one it most
+        resembles: ``billed`` adds them up as before), or when one's lines can't be read so (worked out as before,
+        failing where it did)."""
+        if self._shares is None:
+            self._shares = {}
+            if self._alike:
+                known = self._matched[2] if self._matched is not None else {} if matched is None else matched
+                before = len(known)
+                try:
+                    lines_of = [(row["coding"].get("line_items") or [], row["export_batch"] is not None)
+                                for row in self.rows]  # fmt: skip
+                    choices = [po_line_choices(lines, po["lines"], known) for lines, _ in lines_of]
+                except (AttributeError, TypeError, ValueError):
+                    return self._shares
+                finally:
+                    self._kept_again(before)
+                if any(len(found) > 1 for mine in choices for found in mine):
+                    shared = _shared(po["lines"], lines_of, choices)
+                    self._shares = {row["id"]: mine for row, mine in zip(self.rows, shared, strict=True)}
+        return self._shares
+
+    def share_with(self, po: dict[str, Any], lines: list[dict[str, Any]], invoice_id: int | None, exported: bool,
+                   matched: dict[Any, tuple[int, ...]] | None = None) -> list[int | Alike | None]:  # fmt: skip
+        """Each of ``lines``' PO line (an invoice's: ``invoice_id``, None when not stored yet; ``exported``), shared out
+        after the PO's invoices before it in order (``share_out``): all of ``rows`` but itself when it is none of them
+        yet."""
+        mine = po_line_choices(lines, po["lines"], matched)
+        if all(len(found) <= 1 for found in mine):
+            return [found[0] if found else None for found in mine]
+        known = self._matched[2] if self._matched is not None else {} if matched is None else matched
+        before = [(row["coding"].get("line_items") or [], row["export_batch"] is not None) for row in self.rows
+                  if invoice_id is None or row["id"] < invoice_id]  # fmt: skip
+        choices = [po_line_choices(earlier, po["lines"], known) for earlier, _ in before]
+        return _shared(po["lines"], [*before, (lines, exported)], [*choices, mine])[-1]
+
+
+def _added(invoices: list[dict[str, Any]], shares: dict[int, list[int | Alike | None]],
+           amounts: bool) -> dict[int, float]:  # fmt: skip
+    """What ``invoices`` bill on each PO line, each of their lines where it was shared out (``PoBilling.shares``)."""
+    billed: dict[int, float] = {}
+    for o in invoices:
+        for li, po_line in zip(o["coding"].get("line_items") or [], shares[o["id"]], strict=True):
+            if isinstance(po_line, int):
+                billed[po_line] = billed.get(po_line, 0.0) + (float(li.get("amount") or 0) if amounts
+                                                              else billed_quantity(li))  # fmt: skip
+    return billed
+
+
+def _billed(row: dict[str, Any], po_lines: list[dict[str, Any]], matched: dict[Any, tuple[int, ...]]) -> Any:
     """What an invoice (``Store.po_invoices``' row) bills on the PO lines its lines match, its lines in order: (the PO
-    line, the quantity, the amount) of each, as ``billed_by_line`` adds them up; None when they can't be worked out so
+    line, the quantity, the amount) of each, as ``billed_by_line`` adds them up, the PO line the lines alike (a tuple)
+    of one that could bill several (``PoBilling.shares`` then shares them out); None when they can't be worked out so
     (a coding not an object, lines not lines, a quantity not a number): ``PoBilling.billed`` then works out the
     invoices with it as before, failing where it did."""
     try:
         lines = row["coding"].get("line_items") or []
-        return tuple((po_line, billed_quantity(li), float(li.get("amount") or 0))
-                     for li, po_line in zip(lines, po_lines_billed(lines, po_lines, matched), strict=True)
-                     if po_line is not None)  # fmt: skip
+        return tuple((found[0] if len(found) == 1 else found, billed_quantity(li), float(li.get("amount") or 0))
+                     for li, found in zip(lines, po_line_choices(lines, po_lines, matched), strict=True)
+                     if found)  # fmt: skip
     except Exception:  # (whatever it was, it is met again where it was met: in billed_by_line)
         return None
 
@@ -987,6 +1205,7 @@ class _KeptPo:
     billed: dict[int, Any]
     texts: dict[str, str] = field(default_factory=dict)
     size: int = 0
+    alike: bool = False  # a line of theirs could bill several PO lines alike (``_billed``'s tuple): shared out
 
 
 def _kept_size(kept: Any) -> int:
@@ -1053,7 +1272,7 @@ def po_billing(store: Store, key: str, po: dict[str, Any]) -> PoBilling:
         if changes.stamp != kept.stamp:  # (only other invoices changed since: these kept as of now)
             with _KEPT_LOCK:
                 _KEPT[where] = replace(kept, stamp=changes.stamp)
-        return PoBilling(kept.rows, kept.billed)
+        return PoBilling(kept.rows, kept.billed, alike=kept.alike)
     rows_of = {row["id"]: row for row in kept.rows} if kept is not None else {}
     vendors: dict[int, Any] = {}
     rows: list[dict[str, Any]] = []
@@ -1071,14 +1290,15 @@ def po_billing(store: Store, key: str, po: dict[str, Any]) -> PoBilling:
     texts = dict(kept.texts) if kept is not None and len(read) < len(changes.quoting) else {}
     _share_texts((row for _, row in read.values()), texts)
     same = kept is not None and lines == kept.lines
-    matched: dict[Any, int | None] = {}
+    matched: dict[Any, tuple[int, ...]] = {}
     billed = {row["id"]: kept.billed[row["id"]] if same and row["id"] not in read  # type: ignore[union-attr]
               else _billed(row, po["lines"], matched) for row in rows}  # fmt: skip
-    entry = _KeptPo(changes.stamp, lines, vendors, rows, billed, texts)
+    alike = any(type(e[0]) is tuple for kept_lines in billed.values() if kept_lines for e in kept_lines)
+    entry = _KeptPo(changes.stamp, lines, vendors, rows, billed, texts, alike=alike)
     entry = replace(entry, size=size_of(entry))
     with _KEPT_LOCK:
         _KEPT[where] = entry
-    return PoBilling(rows, billed)
+    return PoBilling(rows, billed, alike=alike)
 
 
 def positive_lines(invoices: Iterable[dict[str, Any]]) -> list[tuple[Any, float, float]]:

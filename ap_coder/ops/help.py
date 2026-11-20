@@ -510,6 +510,14 @@ CHECKS: dict[str, CheckHelp] = {
         "Nothing on the purchase order resembles this invoice line.",
         "Confirm the charge was agreed (e.g. extra freight or a rush fee) before approving.",
     ),
+    "PO_LINE_AMBIGUOUS": CheckHelp(
+        PO, "Which PO line?",
+        "The purchase order has several lines this invoice line could bill, with the same description and price (the "
+        "same item for two jobs, say), and nothing tells which: not the line's business unit or account, nor which "
+        "has room left for it. None is guessed.",
+        "Code the line to the business unit or account of the PO line it bills, then check again, or match it in the "
+        "ERP by hand.",
+    ),
     "PO_PRICE_OVER": CheckHelp(
         PO, "Price above the PO",
         "The unit price is higher than the price on the purchase order (beyond 2% or 50 cents).",

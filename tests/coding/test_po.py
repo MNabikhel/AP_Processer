@@ -1017,8 +1017,8 @@ def test_a_po_read_at_each_ask_matches_its_invoices_lines_once_while_its_lines_s
     cache holds 8,192); each worker its own. The answers are a fresh read's each time."""
     first, second = workers
     monkeypatch.setattr(po_mod, "PO_KEPT_FROM", 10**6)
-    calls, real = [], po_mod._po_line
-    monkeypatch.setattr(po_mod, "_po_line", lambda *args: calls.append(1) or real(*args))
+    calls, real = [], po_mod._po_candidates
+    monkeypatch.setattr(po_mod, "_po_candidates", lambda *args: calls.append(1) or real(*args))
     coding = InvoiceCoding.model_validate(_gt(NW))
     own = len(coding.line_items)
 
@@ -1306,3 +1306,101 @@ def test_a_two_way_match_never_says_a_po_line_was_not_received(tmp_path):
     assert [line["flag"][0] for line in po_detail(store, listed)["lines"][:2]] == ["Not received"] * 2
     store.set_setting(jde_settings.SHOW_SETTING, "0")  # no JD Edwards: the quantity received checked, as before
     assert {f[1] for f in match_invoice(_freight_invoice(), store, billing).findings} == {"PO_NOT_RECEIVED"}
+
+
+STEEL = "Northern Rebar Supply Ltd."
+
+
+def _rebar_po(store, open_first=100.0, line_one="1100"):
+    """PO 4512 of the made-up JD Edwards company: REBAR 15M twice, the same price, for two jobs (business units 1100
+    and 1200, ``line_one`` the first's), ``open_first`` of the first line's 100 open."""
+    store.import_purchase_orders([
+        {"po_number": "4512", "vendor_name": STEEL, "supplier_number": "71120", "order_type": "OP",
+         "order_company": "00210", "line_number": n, "erp_line": f"{n}.000", "description": "REBAR 15M",
+         "quantity": 100.0, "unit_price": 12.5, "amount": 1250.0, "open_quantity": opened, "uom": "EA",
+         "gl_code": "5010", "cost_center": bu, "status": "open", "currency": "CAD"}
+        for n, bu, opened in ((1, line_one, open_first), (2, "1200", 100.0))])  # fmt: skip
+
+
+def _rebar(quantity=100, cost_center="", description="REBAR 15M", number="NR-1"):
+    amount = round(quantity * 12.5, 2)
+    return InvoiceCoding.model_validate({
+        "vendor_name": STEEL, "invoice_number": number, "invoice_date": "2026-10-02", "po_number": "4512",
+        "currency": "CAD", "subtotal": amount, "tax_total": 0.0, "grand_total": amount, "confidence_score": 0.9,
+        "line_items": [{"line_number": 1, "description": description, "quantity": quantity, "unit_price": 12.5,
+                        "amount": amount, "predicted_gl_code": "5010",
+                        "predicted_cost_center": cost_center}]})  # fmt: skip
+
+
+def test_two_po_lines_alike_are_shared_out_by_what_tells_them_apart_and_never_guessed(tmp_path):
+    """B-2670 (D-282): two lines of a PO with the same description and price (REBAR 15M for two jobs, each on its
+    own account) were matched by the first always: an invoice billing the second job's 100 was over the first line
+    (PO_QTY_OVER), keyed on the first job's account, while the second line stayed open. An invoice line now takes
+    the line its own coding or words point to (the job's business unit), else the one with room left for it after
+    the invoices before it not exported yet and its own lines before it; between lines that could each take it, none
+    is guessed: PO_LINE_AMBIGUOUS names them, and its voucher match is held."""
+    store = Store(tmp_path / "ap.db")
+    _rebar_po(store)
+    alone = match_invoice(_rebar(), store)  # nothing tells the two lines apart, both open: not guessed
+    assert alone.lines[0].po_line is None and [f[1:] for f in alone.findings] == [(
+        "PO_LINE_AMBIGUOUS", "line 1 “REBAR 15M” could bill PO 4512 line 1.000 (1100.5010) or line 2.000 "
+        "(1200.5010): they have the same description and price, and each has room for it, so none is guessed. Code "
+        "the line to the business unit or account of the one it bills, or match it in JD Edwards by hand",
+        1)]  # fmt: skip
+    shown = po_section(store, _rebar(), 0, alone)["rows"][0]  # (the review screen's PO match)
+    assert (shown["po_line"], shown["pills"]) == ("1.000 or 2.000", [("Which PO line?", "warn")])
+    held = po_mod.voucher_match(alone, "4512")
+    assert held.rows == [] and held.held == held.said == [
+        "line 1 “REBAR 15M” could bill PO 4512 line 1.000 or line 2.000 (none is guessed): code the line to the "
+        "business unit or account of the one it bills, or match it in JD Edwards by hand"]  # fmt: skip
+    # Told apart by the line's business unit, or a job's number in its words
+    for told in (_rebar(cost_center="1200"), _rebar(description="REBAR 15M - job 1200")):
+        match = match_invoice(told, store)
+        assert match.lines[0].po_line == 2 and [f[1] for f in match.findings] == ["PO_MATCHED"], match.findings
+        assert [(r.line, r.account) for r in po_mod.voucher_match(match, "4512").rows] == [("2.000", "1200.5010")]
+    # The first job's 100 on an invoice before it: the next 100 go on the line with room left, and an invoice's own
+    # lines before take room too
+    first = store.add_invoice(tmp_path / "a.pdf", _rebar(cost_center="1100").model_dump(), {})
+    match = match_invoice(_rebar(number="NR-2"), store)
+    assert match.lines[0].po_line == 2 and [f[1] for f in match.findings] == ["PO_MATCHED"], match.findings
+    assert match_invoice(_rebar(cost_center="1100"), store, first).lines[0].po_line == 1  # (itself: not before it)
+    two = _rebar(number="NR-3")
+    two.line_items.append(two.line_items[0].model_copy(update={"line_number": 2}))
+    match = match_invoice(two, store)
+    assert [m.po_line for m in match.lines] == [2, None]
+    assert match.findings[0][1:3] == ("PO_LINE_AMBIGUOUS", (
+        "line 2 “REBAR 15M” could bill PO 4512 line 1.000 (1100.5010) or line 2.000 (1200.5010): they have the same "
+        "description and price, and none has room left for it, so none is guessed. Code the line to the business "
+        "unit or account of the one it bills, or match it in JD Edwards by hand"))  # fmt: skip
+    # Keyed in JD Edwards (60 of the first job's), the PO loaded again: what JD Edwards has open counts it
+    store.approve_invoice(first, _rebar(60, cost_center="1100").model_dump(), "Pat Tester")
+    store.create_export_batch([first], "jde_keying", actor="Pat Tester")
+    _rebar_po(store, open_first=40.0)
+    assert match_invoice(_rebar(60, number="NR-4"), store).lines[0].po_line == 2
+    assert match_invoice(_rebar(40, number="NR-4"), store).lines[0].po_line is None  # (40 fits either)
+    # The Purchase orders page counts each invoice where it bills
+    store.add_invoice(tmp_path / "b.pdf", _rebar(60, number="NR-5").model_dump(), {})
+    (listed,) = store.purchase_orders()
+    assert [line["billed"] for line in po_detail(store, listed)["lines"]] == ["60", "60"]
+
+
+def test_lines_alike_are_shared_out_alike_whether_a_pos_invoices_are_kept_or_read_afresh(workers, tmp_path):
+    """D-282 with D-202: what each invoice on a PO with lines alike bills, shared out among them in order, is the same
+    from the invoices kept in the process (a PO of PO_KEPT_FROM invoices or more) as from a fresh read: the match,
+    its checks and the Purchase orders page."""
+    first, _ = workers
+    with first.running() as store:
+        _rebar_po(store)
+        for n, (quantity, cost_center) in enumerate(((60, "1100"), (60, ""), (30, ""), (50, "1200"), (40, "")), 1):
+            store.add_invoice(tmp_path / f"{n}.pdf", _rebar(quantity, cost_center, number=f"NR-{n}").model_dump(), {})
+        (order,) = store.orders_numbered(po_key("4512"))
+        listed = next(p for p in store.purchase_orders() if p["po_number"] == "4512")
+        for coding, exclude in ((_rebar(40, number="NR-9"), None), (_rebar(30, number="NR-3"), 3),
+                                (_rebar(40, number="NR-5"), 5)):  # fmt: skip
+            got = match_invoice(coding, store, exclude)
+            assert repr(got) == repr(match_invoice(coding, _Afresh(store), exclude))
+        assert (str(store.path), order["po_key"]) in first.kept
+        assert [m.po_line for m in got.lines] == [1]  # (the last: 40 left on the first job's line alone)
+        assert match_invoice(_rebar(30, number="NR-3"), store, 3).findings[0][1] == "PO_LINE_AMBIGUOUS"  # (30: both)
+        assert po_detail(store, listed) == po_detail(_Afresh(store), listed)
+        assert [line["billed"] for line in po_detail(store, listed)["lines"]] == ["100", "110"]

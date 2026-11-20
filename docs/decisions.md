@@ -6755,3 +6755,27 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - *Not chosen:* a quantity with decimals (7.69 bags): a quantity printed nowhere is no measure, and a whole number
     within the price tolerance is what a person would type; the quantity in the PO checks (PO_QTY_OVER is about the
     quantity printed, none here).
+- **D-282** · **PO lines alike (the same description and price) are shared out among a PO's invoices in invoice
+  order: the line the invoice line points to, else the one with room left; never guessed between lines that could
+  each take it** (`coding/po.py` `share_out`, `PoBilling.shares` and `share_with`, PO_LINE_AMBIGUOUS; B-2670).
+  - **Why:** a PO for two jobs orders the same item twice, each line on its job's account (REBAR 15M, 100 at 12.50 on
+    business unit 1100 and on 1200). Each invoice line took the PO line it most resembles, the first of a tie: every
+    invoice billed the first job's line, over it from the second, its Voucher Match row on the first job's account.
+  - **What:** an invoice line resembling several PO lines as much takes (1) the one its own coding points to most:
+    its business unit, object or subledger the PO line's, or the PO line's business unit or subledger (a job number,
+    3 characters or more) among its words; else (2) of those, the only one with room left for it: what was ordered,
+    or what JD Edwards has open on the line (then the invoices exported are counted in it already, D-280), less what
+    the PO's invoices before it (by id) and its own lines before took; the quantity it matches (D-283) or, on a line
+    billed by amount, its amount (2% and a cent more); a credit, a line with as much billed to give back. Else none:
+    PO_LINE_AMBIGUOUS (a warning, never touchless) names the lines and their accounts and says whether each has room
+    or none has, the line bills none of them (left to expense, the PO page), its voucher match is held with why
+    (D-264), and the review screen's PO match says "Which PO line?". A line coded to the business unit of the one it
+    bills is told the next time it is checked.
+  - **Where it holds:** an invoice's match (`match_invoice`), what the PO's other invoices bill on each line, and the
+    Purchase orders page, all from one sharing out of the PO's invoices in order; a kept PO (D-202) shares them out
+    from its rows when a line of theirs is alike (its kept lines say so), else is added up as before, to the last
+    digit; without lines alike nothing changes.
+  - *Not chosen / left:* the PO line's second description (JD Edwards' Description 2) and the ship-to as evidence:
+    neither is kept (a schema change, for when the pilot's grid shows they tell jobs apart); the business unit's name
+    from the chart. Month-end's received-not-billed accruals pair a line with the first alike (`billed_on`, by
+    description, D-194). A kept PO with lines alike reads its invoices' lines at each ask (0.2 to 0.3 s at 3,000).
