@@ -285,6 +285,40 @@ def test_how_the_company_was_decided_is_kept_and_ap_coders_own_is_decided_again_
     assert "company" not in output and "company_how" not in output and "COMPANY_UNKNOWN" in codes
 
 
+def test_a_company_not_in_report_9_is_an_error_approved_only_anyway_unless_the_pilot_names_it(
+        group, reference, ground_truth):  # fmt: skip
+    """B-2693: a company the coding names that report 9 does not list (a PO's company, a business unit's, one kept from
+    an earlier load) was only the warning that its tax is not checked: approved by a person who saw it, its voucher
+    went to JD Edwards under a company JD Edwards may not have. It is an error that only Approve anyway with a reason
+    passes, unless the pilot names that company (D-272)."""
+    import dataclasses
+
+    from ap_coder.coding.validation import Issue
+    from ap_coder.web.invoice_findings import is_hard
+
+    picked = _coding(ground_truth, company="00999", company_how="picked")
+    output, codes, _report = _check(group, reference, picked)
+    assert output["company"] == "00999" and codes["COMPANY_NOT_IN_REPORT"].severity == "error"
+    assert codes["COMPANY_NOT_IN_REPORT"].message == (
+        "Company 00999 isn't in the companies report (JD Edwards files, card 9): pick the company this invoice is "
+        "for, or approve anyway saying why")  # fmt: skip
+    assert not is_hard(Issue("error", "COMPANY_NOT_IN_REPORT", ""))
+    line = {"po_number": "PO-88213", "vendor_name": "Northwind IT Solutions Inc.", "order_type": "OP",
+            "order_company": "00999", "line_number": 1, "description": "Laptop", "quantity": 3, "unit_price": 1450.0,
+            "amount": 4350.0, "status": "open"}  # fmt: skip
+    group.import_purchase_orders([line])
+    output, codes, _report = _check(group, reference, _coding(ground_truth))
+    assert output["company_how"] == "po" and "COMPANY_NOT_IN_REPORT" in codes
+    # named in the pilot: allowed (D-272); a pilot without it holds it as it always did, said once
+    chart = group.chart_settings()
+    group.save_chart_settings(dataclasses.replace(chart, pilot=("00210", "00999")))
+    _output, codes, _report = _check(group, reference, _coding(ground_truth))
+    assert "COMPANY_NOT_IN_REPORT" not in codes and "COMPANY_NOT_IN_PILOT" not in codes
+    group.save_chart_settings(dataclasses.replace(chart, pilot=("00210",)))
+    _output, codes, _report = _check(group, reference, _coding(ground_truth))
+    assert "COMPANY_NOT_IN_PILOT" in codes and "COMPANY_NOT_IN_REPORT" not in codes
+
+
 # --- A US company ------------------------------------------------------------------------------------------------
 
 

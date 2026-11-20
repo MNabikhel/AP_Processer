@@ -113,6 +113,28 @@ def test_the_company_box_says_how_its_company_was_decided_and_only_a_persons_pic
     assert Draft.from_form({"company": "00230", "company_how": ""}, Draft.stored(final)).company_how == ""
 
 
+def test_a_name_written_for_a_company_the_companies_report_does_not_list_is_not_saved(client, store):
+    """B-2694: a variation of Settings → Review's "Your company's names" written "name = company" with the company
+    mistyped ("Cascade Line = 330", meant 00320) was saved and decided invoices for a company JD Edwards may not have.
+    With report 9 loaded, the names are checked on save, and each line naming a company it does not list is said (one
+    the pilot names may stay, D-272)."""
+    import dataclasses
+
+    _card(client, jde_group.companies_xlsx())
+    typed = "Maple Ridge Holdings Ltd.\nCascade Line = 330\nFraser Bend = 230\nYard 9 ="
+    refused = client.post("/settings/review", data={"our_names": typed}, headers=PAGE)
+    assert refused.status_code == 400 and store.our_names() == []
+    assert html.unescape(refused.json()["error"]) == (
+        "Not saved: “Cascade Line = 330”, “Yard 9 =” name no company of the companies report (JD Edwards files, card "
+        "9). Write each name, = and the number of one of its companies, e.g. Maple Ridge Holdings Ltd. = 00210.")  # fmt: skip
+    assert follow(client, client.post("/settings/review", data={"our_names": typed.replace("330", "320")
+                                                                .replace("\nYard 9 =", "")}, headers=PAGE))  # fmt: skip
+    assert companies.name_variations(store)["cascade line"] == "00320"
+    store.save_chart_settings(dataclasses.replace(store.chart_settings(), pilot=("00210", "00330")))
+    assert follow(client, client.post("/settings/review", data={"our_names": "Cascade Line = 330"}, headers=PAGE))
+    assert store.our_names() == ["Cascade Line = 330"]
+
+
 def test_settings_turn_a_companys_canadian_tax_checks_on_or_off_and_say_how_they_were_worked_out(client, store):
     from ap_coder.erp import jde_settings
     from ap_coder.web.core import SHOW_JDE

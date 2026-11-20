@@ -174,6 +174,15 @@ def name_variations(store: Any) -> dict[str, str]:
     return out
 
 
+def unknown_variations(store: Any, text: str) -> list[str]:
+    """The lines of "Your company's names" (``text``, as typed) written "name = company" whose company report 9 does
+    not list, nor the pilot (D-272), each as typed: none without report 9 loaded (B-2694)."""
+    table = companies(store)
+    pilot = store.chart_settings().pilot if table else ()
+    return [line.strip() for line in text.splitlines() if "=" in line and line.rpartition("=")[0].strip()
+            and company_code(line.rpartition("=")[2]) not in (*table, *pilot)]  # fmt: skip
+
+
 def own_names(store: Any) -> list[str]:
     """The company's own names: Settings → Review's (without their "= company") and report 9's, never a supplier."""
     names = [line.rpartition("=")[0].strip() if "=" in line else line.strip()
@@ -397,6 +406,17 @@ def pilot_finding(store: Any, company: str, settings_company: bool = False) -> t
     return (ERROR, "COMPANY_NOT_IN_PILOT", f"Company {named} is not in the pilot (Settings → JD Edwards E1 → "
             f"Accounts AP posts to: {', '.join(pilot)}), so this invoice can't be approved here: {fix}, or have "
             "someone who may change the settings add it to the pilot")  # fmt: skip
+
+
+def report_finding(store: Any, company: str) -> tuple[str, str, str] | None:
+    """``COMPANY_NOT_IN_REPORT``: with report 9 loaded (several companies), a company the coding names that it does not
+    list (a PO's, a business unit's, one kept from an earlier load): an error only Approve anyway with a reason passes;
+    None for one it lists, or one the pilot names (D-272: the pilot may name a company report 9 does not have)."""
+    code = company_code(company)
+    if not code or code in companies(store) or code in store.chart_settings().pilot:
+        return None
+    return (ERROR, "COMPANY_NOT_IN_REPORT", f"Company {code} isn't in the companies report (JD Edwards files, card 9): "
+            "pick the company this invoice is for, or approve anyway saying why")  # fmt: skip
 
 
 def us_tax_finding(company: str, why: str) -> tuple[str, str, str]:

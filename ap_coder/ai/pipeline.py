@@ -239,7 +239,8 @@ def _company_checks(store: Store | None, coding: InvoiceCoding, extraction: Extr
     coding.company, coding.company_how = decision.company, decision.how
     if not coding.company.strip():
         return [companies.unknown_finding(decision, store)], True, decision
-    outside = companies.pilot_finding(store, coding.company)  # (D-272: held, whoever approves it)
+    # (D-272: held, whoever approves it; else not in report 9: only approved anyway, B-2693)
+    outside = companies.pilot_finding(store, coding.company) or companies.report_finding(store, coding.company)
     if outside is not None:
         said.append(outside)
     canadian_tax, why = companies.canadian(store, coding.company)
