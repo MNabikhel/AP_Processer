@@ -53,6 +53,8 @@ from .summary import MEMO_WAIT, fetch_rows
 # A lesson as the stamp names it (``_feedback_stamp``): the newest one's, and the one kept as the newest before.
 _LESSON_TEXT = ("created_at || '|' || COALESCE(vendor_key, '') || '|' || COALESCE(description, '') || '|' || "
                 "COALESCE(final_gl, '')")  # fmt: skip
+# The database the stamps were read on: its ``summary_id``, another after a restore (in whichever process it ran)
+_DATABASE = "(SELECT value FROM settings WHERE key = 'summary_id')"
 # The learning memory's order: reviewer decisions first, then imported history, each newest first (a big history import
 # never pushes the decisions out).
 _ORDER = " ORDER BY outcome = 'history', id DESC"
@@ -100,17 +102,18 @@ def _vendor_stamp(conn: Any, key: str) -> tuple[Any, ...]:
     """``_feedback_stamp`` of one vendor's lessons (their count read from the vendor's index)."""
     return tuple(conn.execute(
         f"SELECT COUNT(*), MAX(id), (SELECT {_LESSON_TEXT} FROM feedback WHERE vendor_key = ?1 ORDER BY id DESC "
-        "LIMIT 1) FROM feedback WHERE vendor_key = ?1", (key,)
+        f"LIMIT 1), {_DATABASE} FROM feedback WHERE vendor_key = ?1", (key,)
     ).fetchone())  # fmt: skip
 
 
 def _feedback_stamp(conn: Any) -> tuple[Any, ...]:
     """What tells whether the lessons kept are still the ones in the database (``feedback_rows``, ``metrics``): the
-    highest id, their count as the summary keeps it (``feedback_counts``, D-110: not counted again each time) and the
-    newest lesson itself."""
+    highest id, their count as the summary keeps it (``feedback_counts``, D-110: not counted again each time), the
+    newest lesson itself and the database (``_DATABASE``: a backup restored by another process, and as many lessons
+    forgotten after it as before, give the other three again, B-2996)."""
     return tuple(conn.execute(
         f"SELECT (SELECT MAX(id) FROM feedback), (SELECT TOTAL(n) FROM feedback_counts), (SELECT {_LESSON_TEXT} FROM "
-        "feedback ORDER BY id DESC LIMIT 1)"
+        f"feedback ORDER BY id DESC LIMIT 1), {_DATABASE}"
     ).fetchone())  # fmt: skip
 
 
@@ -136,9 +139,9 @@ def _with_added(conn: Any, kept: tuple[tuple[Any, ...], list[dict[str, Any]]], s
     it all again gives, reading only those (``id >`` the newest kept). None when anything but adding happened since
     (a lesson forgotten, a database restored), or when more were added than the memory holds: then it is read again.
     Lessons are changed in place only by an upgrade, which drops what is kept (``_forget_learning``)."""
-    (last, count, newest), rows = kept
+    (last, count, newest, database), rows = kept
     added_n = stamp[1] - count  # the count kept by the summary: lower than the rows added when any was removed
-    if last is None or stamp[0] is None or not 0 < added_n <= limit:
+    if last is None or stamp[0] is None or stamp[3] != database or not 0 < added_n <= limit:
         return None
     still = conn.execute(f"SELECT {_LESSON_TEXT} FROM feedback WHERE id = ?", (last,)).fetchone()
     if still is None or still[0] != newest:  # the newest kept is gone, or is another one (a database restored)
@@ -176,10 +179,10 @@ def _moved(conn: Any, key: str, kept: tuple[Any, ...], had: int, stamp: tuple[An
     drop as it gained. None when anything else happened: one of its lessons removed (or moved to another vendor),
     history of it imported, the memory's last moved back (lessons forgotten), a database restored; then they are read
     again."""
-    count, newest, text, last, history = kept
-    count_now, _, _, last_now, history_now = stamp
+    count, newest, text, database, last, history = kept
+    count_now, _, _, database_now, last_now, history_now = stamp
     gained = count_now - count
-    if newest is None or gained < 0 or (history_now, -last_now) > (history, -last):
+    if newest is None or gained < 0 or database_now != database or (history_now, -last_now) > (history, -last):
         return None
     still = conn.execute(f"SELECT {_LESSON_TEXT} FROM feedback WHERE id = ?", (newest,)).fetchone()
     if still is None or still[0] != text:  # its newest kept is gone, or is another one (a database restored)
@@ -455,8 +458,8 @@ class LearningMixin:
             stamp = json.loads(row[0])
             if stamp[:2] != [_past_lines_version(), FEEDBACK_READ]:
                 return None
-            count, newest, text, last, history = stamp[2:]
-            return (count, newest, text, last, bool(history)), PastLines.decoded(json.loads(row[1]))
+            count, newest, text, database, last, history = stamp[2:]
+            return (count, newest, text, database, last, bool(history)), PastLines.decoded(json.loads(row[1]))
         except (ValueError, TypeError, KeyError, IndexError):
             return None
 

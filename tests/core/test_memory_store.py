@@ -786,6 +786,47 @@ def test_a_vendors_older_lessons_are_read_again_when_more_than_the_memorys_last_
     same("carried")
 
 
+# The company server's other process: the backup restored there, and the invoice meant reopened.
+_RESTORE_AND_REOPEN = """import sys
+from pathlib import Path
+from ap_coder.core.store import Store
+store = Store(Path(sys.argv[1]))
+store.restore_state(Path(sys.argv[2]))
+store.reopen(int(sys.argv[3]), "ap.clerk")
+"""
+
+
+def test_lessons_kept_in_one_process_are_never_taken_for_those_another_restored(tmp_path, ground_truth):
+    """B-2996: on the company server, a vendor's invoice reopened by mistake (its lessons withdrawn), the backup
+    restored in another process to undo it and the invoice meant reopened there: the count of the lessons, the highest
+    id and the newest lesson were those this process kept, so it went on with the lessons of the invoice reopened since
+    and without those the restore put back (the whole memory and the vendor's lessons; the lessons added later only
+    joined them), until a restart."""
+    import subprocess
+    import sys
+
+    store = Store(tmp_path / "data" / "ap.db")
+    vendor = ground_truth["vendor_name"]
+    ids = []
+    for n, gl in enumerate(("5000", "6000", "7000")):
+        final = copy.deepcopy(ground_truth)
+        final["invoice_number"] = f"INV-{n}"
+        for line in final["line_items"]:
+            line["predicted_gl_code"] = gl
+        ids.append(store.add_invoice(tmp_path / f"{n}.pdf", final, {"requires_review": True}))
+        store.approve_invoice(ids[-1], final, reviewer="ap.clerk")
+    backup = store.backup_now("manual")
+    store.reopen(ids[0], "ap.clerk")
+    kept = {"6000", "7000"}
+    assert {r["final_gl"] for r in store.feedback_rows()} == set(store.vendor_lessons(vendor).accounts) == kept
+    done = subprocess.run([sys.executable, "-c", _RESTORE_AND_REOPEN, str(store.path), str(backup), str(ids[1])],
+                          capture_output=True, text=True)  # fmt: skip
+    assert done.returncode == 0, done.stderr
+    for each in (store, Store(store.path)):
+        assert {r["final_gl"] for r in each.feedback_rows()} == {"5000", "7000"}
+        assert set(each.vendor_lessons(vendor).accounts) == {"5000", "7000"}
+
+
 def test_a_vendors_lessons_are_counted_once_a_page_while_nothing_changes(tmp_path, monkeypatch):
     # A check asked for the stamp of the vendor's lessons three or four times (the history check, the accounts and
     # cost centers used for it, its older lessons past the memory), each counting all of them: 8 ms each for the
