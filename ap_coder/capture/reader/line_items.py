@@ -384,6 +384,8 @@ _TAX_AMOUNT_HEAD = re.compile(
 
 # The heading of a column that prints what is taken off each line ("Discount", "Disc. %", "Rabais", "Remise").
 _DISCOUNT_HEAD = re.compile(r"^(?:disc(?:ount|\.)?|rabais|remise|escompte)(?:\s*(?:%|\$|amt\.?|amount))?\s*:?$")
+# A discount's words: in a table's headings (a discount or percent column) or a line's ("Volume discount", B-2895).
+_DISCOUNT_WORDS = re.compile(r"\b(?:disc(?:ount)?|rabais|remise|escompte|rebate|allowance|ristourne)\b|%")
 
 _NO_TAX_CELL = re.compile(
     r"^(?:[-–—]+|n\s*/\s*a|nil|none|aucune?)$"
@@ -850,6 +852,9 @@ def _lines_under(head_row: list[Line], cols: dict[str, Box], ordered: list[list[
     money: list[bool] = []
     last: tuple[LineReading, float] | None = None  # the line item last read on this page, and its bottom
     above = _wrapped_above(ordered, picked, cols)
+    # The lines whose quantity cell read as nothing in a table with no discount or percent column (B-2892, B-2894)
+    unread: list[int] = []
+    plain_table = "quantity" in cols and not _DISCOUNT_WORDS.search(plain(" ".join(s.text for s in head_row)))
     hanging: list[Line] = []  # the lines of the description of the next row, printed above its amount
     for k, segs in enumerate(ordered):
         if k in above:
@@ -880,15 +885,16 @@ def _lines_under(head_row: list[Line], cols: dict[str, Box], ordered: list[list[
         flags = _tax_code_cells(segs, amt_seg, cols, tax_column)
         desc = _row_description(segs, flags, amt_seg, cols, number_column)
         qty = price = None
+        price_seg: Line | None = None
         if "quantity" in cols:
             q = next((f for s, f in nums if f and abs(s.box.cx - cols["quantity"].cx) < 0.05), None)
             qty = q[0][0] if q else None
         if "unit_price" in cols:
             u = next(
-                (f for s, f in nums if f and s is not amt_seg and abs(s.box.cx - cols["unit_price"].cx) < 0.07),
+                ((s, f) for s, f in nums if f and s is not amt_seg and abs(s.box.cx - cols["unit_price"].cx) < 0.07),
                 None,
             )
-            price = u[-1][0] if u else None
+            price_seg, price = (u[0], u[1][-1][0]) if u else (None, None)
         net = _after_discount(qty, price, read.discounts.get(k), amount)
         price = price if net is None else net
         # The quantity or the price not read under its heading (OCR lost a heading, or a digit): the two numbers
@@ -904,11 +910,23 @@ def _lines_under(head_row: list[Line], cols: dict[str, Box], ordered: list[list[
         row_box = union_all([s.box for s in [*hanging, *segs]])
         hanging = []
         score = 0.8 if (qty is None or price is None or abs(qty * price - amount) <= 0.011) else 0.5
+        if (plain_table and qty is None and price and not read.discounts.get(k)
+                and not _DISCOUNT_WORDS.search(plain(f"{desc} {price_seg.text if price_seg else ''}"))):  # fmt: skip
+            unread.append(len(items))
         items.append(LineReading(desc.strip(), qty, price, amount, [row_box] if row_box else [], score,
                                  tax_flags=" ".join(" ".join(s.text.split()) for s in flags),
                                  taxes_read=taxes[k]))  # fmt: skip
         money.append(as_money)
         last = (items[-1], max(seg.box.y1 for seg in segs))
+    # A quantity a scan's OCR lost (a short "-4", B-2892): the amount at the unit price, when that is a whole number of
+    # them, 2 or more, on a line the same way as the table's (a line taking off from an invoice is no goods, B-2895).
+    # A price that is not the line's own (a list price before a discount, a percent) is never divided (B-2894).
+    total = sum(li.amount or 0.0 for li in items)
+    for n in unread:
+        li = items[n]
+        count = round(li.amount / li.unit_price) if li.amount and li.unit_price else 0
+        if abs(count) >= 2 and (li.amount > 0) == (total > 0) and abs(count * li.unit_price - li.amount) <= 0.011:
+            li.quantity = float(count)
     return items, money
 
 

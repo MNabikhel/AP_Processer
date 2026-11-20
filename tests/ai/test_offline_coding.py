@@ -183,25 +183,80 @@ def test_words_or_a_date_after_a_comma_are_no_postal_code_cut_short():
     assert spatial_addresses(layout)[0] == "SK"
 
 
+def _cell(text, x, y):
+    return (text, x, x + 0.008 * len(text), y)
+
+
+def _amount(text, y):
+    return (text, 0.90 - 0.008 * len(text), 0.90, y)
+
+
+def _heads(*names):
+    """A line table's headings: Description, then each name at its column, the last the amount's (fractions across)."""
+    at = {"Qty": 0.45, "Unit Price": 0.55, "Price": 0.55, "Disc %": 0.68, "Discount": 0.68}
+    return [("Description", 0.10, 0.20, 0.20), *((n, at[n], at[n] + 0.008 * len(n), 0.20) for n in names),
+            ("Amount", 0.85, 0.90, 0.20)]  # fmt: skip
+
+
+def _coded_table(reference, heads, rows):
+    """A table's words (``heads``, then each row: description, quantity, price, a discount, amount, "" where none
+    is printed) read by the rule reader, coded with no chat model: ([(quantity, unit price, amount)], the lines
+    with a LINE_MATH warning)."""
+    from ap_coder.ai.offline_coder import code_from_capture
+    from ap_coder.capture.reader import read_line_items
+    from ap_coder.capture.types import VERIFIED, CaptureResult, FieldResult
+    from ap_coder.coding.validation import validate_coding
+    from tests.capture.test_reader_line_items import _layout, _words
+
+    cells = list(heads)
+    for n, (desc, qty, price, disc, amount) in enumerate(rows):
+        y = 0.24 + 0.02 * n
+        cells += [_cell(desc, 0.10, y), _amount(amount, y)]
+        cells += [_cell(t, x, y) for t, x in ((qty, 0.46), (price, 0.56), (disc, 0.69)) if t]
+    subtotal = round(sum(float(r[4]) for r in rows), 2)
+    head = {"vendor_name": "Prairie Sky Supply", "invoice_number": "PS-50277", "invoice_date": "2026-10-20",
+            "currency": "CAD", "subtotal": subtotal, "gst_amount": round(subtotal * 0.05, 2),
+            "tax_total": round(subtotal * 0.05, 2), "grand_total": round(subtotal * 1.05, 2)}  # fmt: skip
+    capture = CaptureResult(fields={k: FieldResult(k, v, 0.95, VERIFIED) for k, v in head.items()},
+                            line_items=read_line_items(_layout(_words(*cells))))  # fmt: skip
+    text = "Prairie Sky Supply\nCalgary, AB T2A 2N6\nBill to:\nEdmonton, AB T5J 0N3\n"
+    coding = code_from_capture(capture, reference, [], text=text).coding
+    warned = [i.line_number for i in validate_coding(coding, reference).issues if i.code == "LINE_MATH"]
+    return [(li.quantity, li.unit_price, li.amount) for li in coding.line_items], warned
+
+
 def test_a_line_whose_quantity_ocr_lost_bills_its_amount_at_its_unit_price(reference):
     """B-2892: a scan's OCR loses a short quantity ("-4" of a credit for 4 cases at 52.40): the line was coded as 1 at
     52.40 for -209.60, so Voucher Match keyed 1 case of the 4 returned. With its unit price read, the quantity is its
-    amount at that price when that is a whole number of them; else 1, as before."""
-    from ap_coder.ai.offline_coder import code_from_capture
-    from ap_coder.capture.types import VERIFIED, CaptureResult, FieldResult, LineReading
+    amount at that price when that is a whole number of them, 2 or more; else 1, as before."""
+    heads = _heads("Qty", "Unit Price")
+    credit = [("Return - copy paper, case of 10", "", "52.40", "", "-209.60"),
+              ("Return - toner, part box", "", "35.00", "", "-52.40")]  # fmt: skip
+    assert _coded_table(reference, heads, credit) == ([(-4, 52.4, -209.6), (1, 35.0, -52.4)], [2])
+    goods = [("Copy paper, case of 10", "", "52.40", "", "209.60"), ("Toner cartridge", "1", "89.00", "", "89.00")]
+    assert _coded_table(reference, heads, goods) == ([(4, 52.4, 209.6), (1, 89.0, 89.0)], [])
 
-    head = {"vendor_name": "Prairie Sky Supply", "invoice_number": "CN-50277", "invoice_date": "2026-10-20",
-            "currency": "CAD", "subtotal": -262.0, "gst_amount": -13.1, "tax_total": -13.1,
-            "grand_total": -275.1}  # fmt: skip
-    capture = CaptureResult(
-        fields={k: FieldResult(k, v, 0.95, VERIFIED) for k, v in head.items()},
-        line_items=[LineReading("Return - copy paper, case of 10", None, 52.4, -209.6),
-                    LineReading("Return - toner, part box", None, 35.0, -52.4)],
-    )  # fmt: skip
-    text = "Prairie Sky Supply\nCalgary, AB T2A 2N6\nCREDIT NOTE\nBill to:\nEdmonton, AB T5J 0N3\n"
-    coding = code_from_capture(capture, reference, [], text=text).coding
-    assert [(li.quantity, li.unit_price, li.amount) for li in coding.line_items] == [(-4, 52.4, -209.6),
-                                                                                    (1, 35.0, -52.4)]  # fmt: skip
+
+def test_no_quantity_is_worked_out_in_a_table_with_a_discount_column(reference):
+    """B-2894: B-2892 worked a quantity OCR lost out of a discount table's price, the list price: 10 chairs at 25.00
+    less 10% (225.00) were coded as 9, and 5 pairs of boots at 80.00 less 80.00 (320.00) as 4, the LINE_MATH warning
+    that sent each to a person gone. In a table with a discount column, the line stays 1 at the list price, warned."""
+    rows = [("Office chair", "", "25.00", "10%", "225.00"), ("Desk lamp", "1", "75.00", "", "75.00")]
+    assert _coded_table(reference, _heads("Qty", "Unit Price", "Disc %"), rows) == (
+        [(1, 25.0, 225.0), (1, 75.0, 75.0)], [1])  # fmt: skip
+    rows = [("Safety boots, pair", "", "80.00", "80.00", "320.00"), ("Hard hat", "2", "15.00", "", "30.00")]
+    assert _coded_table(reference, _heads("Qty", "Price", "Discount"), rows) == (
+        [(1, 80.0, 320.0), (2, 15.0, 30.0)], [1])  # fmt: skip
+
+
+def test_no_quantity_is_worked_out_of_a_discount_lines_percent_or_price(reference):
+    """B-2895: a discount line printing its percent in the price column ("Volume discount | 10% | -30.00") was coded
+    as -3 at 10.00, and one printing 10.00 there as -3 too, unwarned. A price printed as a percent, or a line that
+    takes off from an invoice (the other way from its lines), gets no quantity worked out: 1, warned, as before."""
+    heads = _heads("Qty", "Unit Price")
+    for price in ("10%", "10.00"):
+        rows = [("Network switch", "2", "150.00", "", "300.00"), ("Volume discount", "", price, "", "-30.00")]
+        assert _coded_table(reference, heads, rows) == ([(2, 150.0, 300.0), (1, 10.0, -30.0)], [2]), price
 
 
 def test_the_rate_table_is_read_again_once_the_rate_file_changes(tmp_path, monkeypatch):
