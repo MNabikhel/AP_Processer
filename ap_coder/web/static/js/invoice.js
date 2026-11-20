@@ -77,10 +77,18 @@ function applySections(answer, posted = null) {
     const open = [...el.querySelectorAll("details")].map((d) => d.open); // what the reviewer opened stays open
     // A box or choice of this section in use (ticked with the keyboard) keeps the focus once it is drawn again.
     const active = el.contains(document.activeElement) && document.activeElement.name ? document.activeElement : null;
+    // A choice of this section made since its check was sent ("Approve anyway" ticked meanwhile) is kept: drawn as it
+    // was sent, it would be lost, and the round it asked for would send it as before (B-2987).
+    const chosen = posted ? [...el.querySelectorAll("input[type=checkbox][name], input[type=radio][name]")]
+      .filter((x) => !x.disabled && x.checked !== posted.getAll(x.name).includes(x.value)) : [];
     el.innerHTML = html; // drawn by the server, every text escaped
     el.querySelectorAll("details").forEach((d, i) => {
       if (i < open.length) d.open = open[i];
     });
+    for (const was of chosen) {
+      const now = [...el.querySelectorAll(`input[name="${CSS.escape(was.name)}"]`)].find((x) => x.type === was.type && x.value === was.value);
+      if (now) now.checked = was.checked;
+    }
     if (active) {
       const same = [...el.querySelectorAll("[name]")].find((x) => x.name === active.name && x.value === active.value);
       same?.focus({ preventScroll: true });
