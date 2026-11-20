@@ -7,8 +7,9 @@ is missing or unsure while a supplier list is loaded) is asked one more question
 wrong, and the values corrected (a charge left out of the lines such as freight, a line's amount, a tax, the subtotal
 or the total, the supplier). The corrections are applied (``apply_items``, ``checked``) only when
 
-* every amount in them is printed on the page (the words the PDF's text or OCR gave, and the page reader's
-  transcription: ``page_text``): the model can't invent a number;
+* every amount in them is printed on the page as money (the words the PDF's text or OCR gave, and the page reader's
+  transcription: ``page_text``; with its cents or a currency sign, never the digits of a phone, invoice or GST/HST
+  number or a date: ``_printed_money``): the model can't invent a number;
 * with all of them applied the invoice's own checks pass: the lines add up to the subtotal, each tax is its rate on
   the lines it is on, subtotal and taxes are the total (``taxmath.math_check``), and ``validate_coding`` finds no
   totals error and no error the invoice did not have;
@@ -217,6 +218,43 @@ def _plain_words(text: str) -> str:
     return " ".join(re.sub(r"[^0-9a-z]+", " ", str(text).casefold()).split())
 
 
+_CENTS = re.compile(r"\d[.,]\d{2}(?!\d)")
+_CURRENCY = re.compile(r"[$€£]|(?<![a-z])(?:cad|cdn|usd|eur|gbp)(?![a-z])", re.I)
+_CURRENCY_BEFORE = re.compile(r"(?:[$€£]|(?<![a-z])(?:cad|cdn|usd|eur|gbp)) ?\Z", re.I)  # ("CAD 150", "CA$150")
+_CURRENCY_AFTER = re.compile(r" ?(?:[$€£]|(?:cad|cdn|usd|eur|gbp)(?![a-z]))(?! ?\.?\d)", re.I)  # (not the next one's)
+_NEXT_ONES_SIGN = re.compile(r"\s*[$€£]\s*\Z")  # (the "$" find_amounts gives "75.00" in "75.00 $150.00")
+_JOINED_BEFORE = re.compile(r"(?:[\d#]|\w[-/.])\Z")  # a digit or "#" right before, or a letter or digit and "-" "/" "."
+_LETTER_BEFORE = re.compile(r"[^\W\d]\Z")  # (a scan's "Total1,207.50" has its cents; "RT0001" is no amount)
+_JOINED_AFTER = re.compile(r"[\w%]| %|[-/.]\d")  # a letter, digit or "%" right after, or a "-", "/" or "." and a digit
+
+
+def _printed_money(text: str) -> list[float]:
+    """Each amount ``text`` prints as money (without its sign): with its cents ("150.00", "1 234,56", "(50.00)") or a
+    currency sign or code right beside it ("$150", "150 CAD"). Never the digits of an identifier, a number run into
+    letters or other digits ("(604) 555-0150", "INV-000450", "2026-11-02", "V6B 1A1", "RT0001"), nor a rate ("5.00%"):
+    a phone, invoice, PO or GST/HST number, a date or a street number is no amount printed."""
+    from ..core.parsing import find_amounts
+
+    found = []
+    for value, start, end in find_amounts(text):
+        if (sign := _NEXT_ONES_SIGN.search(text, start, end)) and re.match(r"\s*\.?\d", text[end : end + 3]):
+            end = sign.start()
+        shown = text[start:end]
+        start, end = start + len(shown) - len(shown.lstrip()), end - len(shown) + len(shown.rstrip())
+        cents = _CENTS.search(text, start, end)
+        before = _CURRENCY.match(text, start) or _CURRENCY_BEFORE.search(text, max(0, start - 4), start)
+        after = _CURRENCY_AFTER.match(text, end)
+        lead = start + (text[start : start + 1] in "-−–")  # (a minus run into a word is its hyphen: "INV-450.00")
+        if not before and (_JOINED_BEFORE.search(text, max(0, lead - 2), lead)
+                           or not cents and _LETTER_BEFORE.search(text, max(0, start - 1), start)):  # fmt: skip
+            continue  # (run into its currency, "CAD150.00", "722.93CAD", it is money)
+        if not after and _JOINED_AFTER.match(text, end):
+            continue
+        if cents or before or after or _CURRENCY.search(text, start, end):
+            found.append(abs(value))
+    return found
+
+
 def _rate(given: Any, amount: float, base: float, lines: int, out: dict[str, Any], setup: Any) -> float | None:
     """The tax's rate: the one given (a rate printed), else a rate in force on the invoice's date that makes the
     amount of ``base`` (GST under an HST label is the GST's 5%: D-262); None when none does."""
@@ -275,13 +313,12 @@ def apply_items(output: dict[str, Any], items: list[dict[str, Any]], text: str, 
     from ..capture.instructions import found_in
     from ..capture.normalize import parse_amount
     from ..coding.money import add_up
-    from ..core.parsing import find_amounts
     from ..core.reference_data import UNASSIGNED
 
     out = copy.deepcopy({k: v for k, v in output.items() if k != "gl_distribution"})
     lines: list[dict[str, Any]] = out.setdefault("line_items", [])
     taxes: list[dict[str, Any]] = out.setdefault("tax_lines", [])
-    printed = [abs(v) for v, _, _ in find_amounts(text)]
+    printed = _printed_money(text)
     old_base = {t.get("tax_type"): add_up(li["amount"] for li in lines
                                           if t.get("tax_type") in (li.get("taxes_applied") or []))
                 for t in taxes}  # fmt: skip

@@ -311,3 +311,32 @@ def test_a_supplier_corrected_has_its_company_decided_again_for_the_supplier_it_
     assert inv["ai_output"]["vendor_name"] == ONE_ROW_SUPPLIER and inv["ai_output"]["company"] == "00210"
     assert inv["validation"]["checks"]["company"]["how"] == "history"
     assert "company 00210 (was 00230)" in _codes(store, iid)["VERIFIER_CORRECTED"]["message"]
+
+
+# The made-up short invoice of the adversarial review: its 150.00 of freight left out, so its posting is 150.00 short.
+SHORT_PAGE = ("Tel (604) 555-0150   Fax 604-555-0450\nInvoice INV-000450   Date 2026-11-02   PO 4500123\n"
+              "GST/HST No. 123456789 RT0001   Suite 250, 100 Main St, Vancouver BC V6B 1A1\n"
+              "Rebar 15M 10 100.00 1,000.00\nSubtotal 1,000.00\nGST 5% 57.50\nTotal due 1,207.50")  # fmt: skip
+
+
+def _short(**more):
+    line = {"line_number": 1, "description": "Rebar 15M", "quantity": 10.0, "unit_price": 100.0, "amount": 1000.0,
+            "taxes_applied": ["GST"]}  # fmt: skip
+    return {"line_items": [line], "tax_lines": [{"tax_type": "GST", "rate": 0.05, "taxable_amount": 1000.0,
+                                                 "tax_amount": 57.5}],
+            "subtotal": 1000.0, "tax_total": 57.5, "grand_total": 1207.5, **more}  # fmt: skip
+
+
+def test_an_amount_is_printed_only_as_money_never_as_digits_of_a_phone_number_a_date_or_an_invoice_number():
+    """B-2800: any run of digits on the page counted as the amount printed: the freight the model worked out (150.00)
+    was taken as printed because the phone number ends in 0150, and so were the invoice, PO and GST/HST numbers, the
+    date's year and the street number. An amount is printed only as money: with its cents or a currency sign."""
+    for made_up in ("150.00", "450.00", "2026", "4500123", "123456789", "250", "5.00"):
+        _, said, refused = corrections.apply_items(_short(), [_fix("charge", made_up, "Freight")], SHORT_PAGE,
+                                                   store=None, setup=None, supplier_wanted=False)  # fmt: skip
+        assert said == [] and refused and "is not printed on the page" in refused[0], (made_up, said, refused)
+    for printed in ("Freight 150.00", "Freight $150", "Freight 150 CAD", "Freight (150.00)"):
+        page = SHORT_PAGE.replace("Subtotal", f"{printed}\nSubtotal")
+        _, said, refused = corrections.apply_items(_short(), [_fix("charge", "150.00", "Freight")], page,
+                                                   store=None, setup=None, supplier_wanted=False)  # fmt: skip
+        assert said and said[0] == "added Freight 150.00 as line 2" and not refused, (printed, refused)
