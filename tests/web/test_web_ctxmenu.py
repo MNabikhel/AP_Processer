@@ -339,7 +339,7 @@ def test_in_a_browser_duplicate_insert_copy_from_above_and_clear_a_lines_account
     description = _lines(page).first.locator("textarea[name=line_description]").input_value()
     _menu(page, _lines(page).first.locator("[data-del-row]"))
     _item(page, "duplicate").click()
-    settle(page)  # (its check redraws the grid, and a menu opened meanwhile: B-2644)
+    settle(page)  # its check answered and drawn before the next menu (B-2644; the menu closing itself was B-2850)
     assert _lines(page).count() == n + 1
     assert _lines(page).nth(1).locator("textarea[name=line_description]").input_value() == description
     numbers = page.eval_on_selector_all("[data-grid=lines] [name=line_number]", "s => s.map(x => x.value)")
