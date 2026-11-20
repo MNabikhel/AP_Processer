@@ -1500,3 +1500,22 @@ def test_a_keying_sheet_made_again_after_the_pos_are_loaded_again_keeps_the_rows
     bags, setup, freight = one_row_po_lines()
     _jde_pos(store, [replace(bags, vouchered=Decimal(100), closed=True), setup, freight])
     assert sheet() == first
+
+
+def test_a_canadian_companys_po_matched_voucher_charged_another_tax_says_why_it_is_held(tmp_path):
+    """B-2673: a Canadian company's PO-matched invoice charged a tax that is none of the GST, HST, PST and QST (a tax
+    line of type OTHER: a foreign sales tax, a levy read as a tax) was held by the gross check, "the amounts matched
+    (688.50) and the tax JD Edwards works out on them (34.43) add up to 722.93, not the gross 727.93: check the lines
+    and the taxes against the invoice", though both were right: that tax is on no row and JD Edwards works out none of
+    it. It is held for that, said."""
+    store = po_store(tmp_path)
+    inv = po_invoice()
+    final = inv["final_output"]
+    final["tax_lines"].append(tl("OTHER", "", 0.0, 688.5, 5.0))
+    final.update(tax_total=39.43, grand_total=727.93)
+    ready, held = jde_keying.vouchers([inv], settings(po_matched=True), promo_lookup, on=ON_DAY,
+                                      po_matches=jde_keying.po_matches(store, [inv]))  # fmt: skip
+    assert ready == [] and held[0].why == [
+        "the invoice charges 5.00 of a tax that is none of the GST, HST, PST and QST (a tax line of type OTHER): JD "
+        "Edwards works out none of it on a voucher match and it is on no row. Correct the tax line if it is one of "
+        "them, or key the voucher by hand"]  # fmt: skip

@@ -683,3 +683,30 @@ def test_a_po_matched_invoice_shows_each_lines_po_line_and_what_jd_edwards_gets(
     assert "Not ready to key" in page
     held = page[page.index("data-jde-held") :]
     assert "Line 2 “Artwork proof” matches no line of PO 40917 (none is guessed)" in held[: held.index("</ul>")]
+
+
+def test_the_voucher_match_of_charges_all_off_the_po_is_captioned_with_its_po(tmp_path):
+    """B-2674: the review screen's voucher block captions a PO-matched voucher's rows with the order of its first row
+    on the PO; a voucher whose every row is "Not on the PO" (an invoice of freight and a fuel surcharge alone, each
+    keyed on the account chosen for charges, D-265) had a caption of nothing: "Voucher match: order". It names the PO
+    and says none of its rows is on it."""
+    from ap_coder.coding import po
+    from ap_coder.erp import jde_review
+    from ap_coder.web.core import templates
+    from tests.erp.test_jde_keying import _coding_of, po_invoice, po_store
+
+    store = po_store(tmp_path)
+    inv = po_invoice()
+    final = inv["final_output"]
+    final["line_items"] = [{**final["line_items"][2], "line_number": 1, "description": "Fuel surcharge",
+                            "unit_price": 6.84, "amount": 6.84}]  # fmt: skip
+    final.update(subtotal=6.84, tax_lines=[{"tax_type": "GST", "province": "", "rate": 0.05, "taxable_amount": 6.84,
+                                            "tax_amount": 0.34}], tax_total=0.34, grand_total=7.18)  # fmt: skip
+    js = jde_settings.JdeSettings(po_matched=True, po_charges=jde_settings.CHARGES_GL,
+                                  po_charge_account="0021061010.7410.4107")  # fmt: skip
+    matched = po.voucher_match(po.match_invoice(_coding_of(inv), store, 8), "40917", js.charge_account)
+    view = jde_review.voucher_view(final, js, "4471001", match=matched)
+    assert [m["on_po"] for m in view["match"]] == [False]
+    block = str(templates.env.get_template("_invoice_live.html").module.jde({"jde": view}, 8))
+    caption = re.search(r"<caption[^>]*>(.*?)</caption>", block, re.S).group(1)
+    assert caption == "Voucher match: PO 40917, no row on its lines (each a G/L line of its own)"

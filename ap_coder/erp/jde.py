@@ -402,8 +402,7 @@ def dry_run(
     """Exactly what a batch of these invoices would load, row by row, and why any invoice is held back, without
     making a batch. {"blocking": [...], "vouchers": [...], "held": [...], "files": {file: rows}, "totals": {...}}.
     ``prepared``: the invoices' vouchers already prepared (``_vouchers``); ``rows``: {invoice: ``voucher_rows``}
-    already made with the same batch, rates, date and ``site`` (the batch's code, ``batch_site``); ``po_matches``: the
-    PO-matched vouchers' voucher matches (``jde_keying.po_matches``, D-284)."""
+    already made with the same batch, rates, date, ``site`` (``batch_site``) and ``po_matches`` (D-284)."""
     blocking = settings_problems(settings)
     if prepared is None:
         prepared = _vouchers(invoices, settings, vendor_lookup, on)

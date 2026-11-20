@@ -1483,7 +1483,8 @@ def test_the_z_files_of_a_po_matched_voucher_name_its_pos_order_type_company_and
     (head,) = files[jde_zfiles.HEADER_FILE]
     assert (head["VLPO"], head["VLPDCT"], head["VLPKCO"]) == ("40917", "OS", "00210")
     assert [(m["DOCO"], m["DCTO"], m["KCOO"], m["LNID"]) for m in files[jde_zfiles.MATCH_FILE]] == [
-        ("40917", "OS", "00210", "12.000"), ("40917", "OS", "00210", "13.000"), ("40917", "OS", "00210", "14.000")]
+        ("40917", "OS", "00210", "12.000"), ("40917", "OS", "00210", "13.000"),
+        ("40917", "OS", "00210", "14.000")]  # fmt: skip
     # Without the purchase orders loaded: Settings' order type and company, and the invoice's line numbers, as before
     rows = jde_zfiles.voucher_rows({"id": 9, "final_output": final}, "4471001", jde_settings.JdeSettings(
         amount_mode=jde_settings.AMOUNT_GROSS, po_matched=True))  # fmt: skip
