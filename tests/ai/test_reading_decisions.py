@@ -351,6 +351,23 @@ def test_the_suppliers_letterhead_or_remit_to_level_with_bill_to_still_names_the
         assert "MISSING_VENDOR" not in {i.code for i in result.report.issues}
 
 
+def test_a_form_of_bare_labels_never_makes_the_customer_the_supplier(tmp_path, reference):
+    """B-2782: "Sold To" over "Address" and "Customer No." (or "Bill To" over "Facturer à"), no colons, the customer's
+    block in a column far to their right, the supplier's name only in its logo and not in the supplier list: the
+    customer, the company AP Coder works for, was the supplier ("likely", nothing to say it is the customer). As
+    before B-2781: no supplier, for a person to fill."""
+    from tests.pdfs import ONE_ROW_CUSTOMER, customer_beside_label
+
+    pipe, _store = _offline(tmp_path, reference)
+    values = (ONE_ROW_CUSTOMER, "200 Ridge Road SW", "Calgary AB T2P 1J9", "10045")
+    for name, labels in (("sold.pdf", ("Sold To", "Address", "", "Customer No.")),
+                         ("bill.pdf", ("Bill To", "Facturer à", "", "Account No."))):  # fmt: skip
+        result = pipe.process(customer_beside_label(tmp_path, name, list(zip(labels, values, strict=True))))
+        assert result.output["vendor_name"] != ONE_ROW_CUSTOMER, name
+        assert result.capture.fields["vendor_name"].status == "missing", name
+        assert "MISSING_VENDOR" in {i.code for i in result.report.issues}
+
+
 def test_the_freight_of_a_totals_table_of_one_row_is_a_jd_edwards_line_of_its_own(tmp_path, reference):
     """B-2639: the freight of "Line-Item Total | Freight Amount | ... | Amount Due:" over one row of amounts was not
     read, so it was on no line and JD Edwards would get 656.50 taxed. It is a line of its own, taxed with the goods:

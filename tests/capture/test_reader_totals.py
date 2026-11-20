@@ -411,3 +411,32 @@ def test_the_customers_block_beside_its_label_is_read_down_the_page_to_its_end()
     reading.join(10)
     assert got, "the customer's block beside its label was never done"
     assert got[0] is not None and got[0].x0 < 0.42 and got[0].y1 > 0.18
+
+
+_STREET, _CITY = "200 Ridge Road SW", "Calgary AB T2P 1J9"
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        ("Customer:", "", ""),  # B-2642's own
+        ("Bill To", "Facturer à", ""),  # a bilingual label, stacked
+        ("BILL TO", "FACTURER À", ""),
+        ("Customer:", "Account No. 10045", ""),
+        ("Sold To", "Cust. ID 10045", ""),
+        ("Customer:", "Contact", "Phone"),
+        ("Customer", "Sales Rep", ""),
+        ("Sold To", "Address", "", "Customer No."),  # a form of bare labels, each level with its value
+        ("Bill To", "Facturer à", "", "Account No."),
+    ],
+)
+def test_labels_under_a_bare_bill_to_label_keep_the_customers_block_beside_it(tmp_path, labels):
+    """B-2782: B-2781 took the customer's block beside a bare bill-to label (B-2642) only when nothing but headings
+    was under the label: a label AP Coder reads no field of ("Facturer à" under "Bill To", "Address", "Account No.
+    10045", "Contact", "Sales Rep") was taken for the customer's own block under it, and the customer's name across
+    the page was read as the supplier again. Only a name or an address under the label is its block."""
+    from tests.pdfs import ONE_ROW_CUSTOMER, customer_beside_label
+
+    rows = list(zip(labels, (ONE_ROW_CUSTOMER, _STREET, _CITY, "10045"), strict=False))
+    cands = read_fields(build_layout(customer_beside_label(tmp_path, "form.pdf", rows)))["vendor_name"]
+    assert ONE_ROW_CUSTOMER not in [r.value for r in cands]
