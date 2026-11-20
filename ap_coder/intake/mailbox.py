@@ -61,6 +61,8 @@ CUT_OFF = "the end of the email (missing: it was cut off, or still being copied,
 OUTLOOK_FORMATTING = "(Outlook's formatting, winmail.dat)"  # it holds the attachments when nothing else came
 _NO_INVOICE_TYPES = {"text/plain", "text/html", "text/calendar", "application/ics"}
 _NO_INVOICE_SUFFIXES = {".txt", ".htm", ".html", ".ics"}
+_FOOTER = re.compile(r"att\d+", re.IGNORECASE)  # Exchange's ATT00001.htm / .txt: the email's text after an attachment
+_INVOICE_NUMBER = re.compile(r"(?<![a-z])inv[\s_#.-]*\d", re.IGNORECASE)  # a name such as "INV-4471", "inv_4471"
 _TNEF_TYPES = {"application/ms-tnef", "application/vnd.ms-tnef"}
 _SIGNATURE_TYPES = {"application/pkcs7-signature", "application/x-pkcs7-signature", "application/pgp-signature",
                     "application/pgp-keys", "text/vcard", "text/x-vcard"}  # fmt: skip
@@ -186,7 +188,7 @@ def _keep(mail: Mail, name: str, content_type: str, content: bytes, inline: bool
         return
     suffix = _kind(name, content_type, content)
     if not suffix:
-        mail.skipped.append(f"{label} {_not_read(name, content_type)}")
+        mail.skipped.append(f"{label} {_not_read(name, content_type, content)}")
         return
     if suffix == ".pdf" and not content.lstrip()[:1024].startswith(b"%PDF") and b"%PDF" not in content[:1024]:
         mail.skipped.append(f"{label} (named as a PDF but is not one)")
@@ -202,17 +204,32 @@ def _keep(mail: Mail, name: str, content_type: str, content: bytes, inline: bool
     mail.found.append((safe, content))
 
 
-def _not_read(name: str, content_type: str) -> str:
+def _not_read(name: str, content_type: str, content: bytes = b"") -> str:
     """Why an attachment that is not a PDF, a picture or a spreadsheet is left out. Exchange's ATT00001.htm (a
-    footer), a text or HTML copy of the email, a calendar invite and winmail.dat hold no invoice of their own (an
-    HTML file named as an invoice may be one); anything else (a zip, a Word or XML file ...) may."""
+    footer), a calendar invite and winmail.dat hold no invoice of their own, nor does a text or HTML file whose name
+    and words name none; one named as an invoice, by an invoice number ("INV-4471.html") or whose words name an
+    invoice may be one (B-2977), as may anything else (a zip, a Word or XML file ...)."""
     ext = Path(name).suffix.lower()
     if content_type in _TNEF_TYPES or name.lower() == "winmail.dat":
         return OUTLOOK_FORMATTING
     plain = ext in _NO_INVOICE_SUFFIXES or (not ext and content_type in _NO_INVOICE_TYPES)
-    if plain and not triage.mentions_invoice(Path(name).stem):
+    if plain and not _may_be_invoice(name, content_type, content):
         return NO_INVOICE
     return "(not a PDF or image)"
+
+
+def _may_be_invoice(name: str, content_type: str, content: bytes) -> bool:
+    """An HTML or text attachment that may be an invoice: named as one or by an invoice number, or its words naming an
+    invoice; never Exchange's footer (ATT00001.htm) or a calendar invite."""
+    stem, ext = Path(name).stem, Path(name).suffix.lower()
+    calendar = ext == ".ics" or content_type in ("text/calendar", "application/ics")
+    if calendar or _FOOTER.fullmatch(stem):
+        return False
+    if triage.mentions_invoice(stem) or _INVOICE_NUMBER.search(stem):
+        return True
+    words = content[: triage.MAX_TEXT * 10].decode("utf-8", "replace")
+    html = content_type == "text/html" or ext in (".htm", ".html")
+    return triage.mentions_invoice((html_to_text(words) if html else words)[: triage.MAX_TEXT])
 
 
 def _email_kind(name: str, content_type: str) -> str:
