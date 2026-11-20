@@ -75,6 +75,17 @@ def test_a_number_that_is_another_suppliers_offers_that_supplier_with_one_click(
     assert "gst_hst_registration_number" in answer["header"]["flags"]  # and the difference is flagged
 
 
+def test_the_supplier_its_number_names_is_offered_under_the_vendor_box_as_the_screen_opens(listed):
+    """B-2791: the one-click offer of the supplier a GST/HST number names (D-219) was worked out but never shown: the
+    vendor box had no place for a note with a one-click fix, so the screen drew none, and the check's answer filled
+    none (its script fills a field's own)."""
+    invoice_id = add_clean(listed, vendor_name=OTHER)  # the invoice prints Northwind's number
+    page = client_for(listed).get(f"/review/{invoice_id}").text
+    vendor = page.split('data-field="vendor_name"', 1)[1].split("</details>", 1)[0]
+    note = vendor.split("data-help", 1)[1].split("</span></span>", 1)[0]
+    assert f'data-help-use="{NORTHWIND}">Use {NORTHWIND}</button>' in vendor and NUMBER in html.unescape(note)
+
+
 def test_picking_a_supplier_fills_an_empty_number_and_never_one_read_or_typed(listed):
     client = client_for(listed)
     blank = add_clean(listed, vendor_name=OTHER, gst_hst_registration_number="")

@@ -158,6 +158,7 @@
                  placeholder="{{ 'Start typing to pick from the vendor list' | words }}" aria-describedby="vendor-match" title="{{ draft.header["vendor_name"] }}">
           <div class="inv-vendor-match small" id="vendor-match" data-vendor-match aria-live="polite"{% if live.an8 is not none %} data-an8="{{ live.an8 }}"{% endif %}></div>
           <span class="inv-flag small" data-flag{% if "vendor_name" not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("vendor_name", "") }}</span></span>
+          {{ help_slot("vendor_name") }}
           {% if edit %}
           <details class="pop inv-vendor-add" data-vendor-add>
             <summary class="btn sm ghost"><span class="ms" aria-hidden="true">person_add</span>{{ "Add new vendor…" | words }}</summary>
