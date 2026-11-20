@@ -423,7 +423,10 @@ def settle_header(store: Store, draft: Draft, read: dict[str, Any] | None = None
     if not draft.pay_from_for or not header.get("pay_from_account"):
         draft.pay_from_for = ""
         accounts = store.bank_accounts()
-        last = store.last_pay_from(key) if accounts else ""
+        # the vendor's last account, under the vendor the approval files it as (``vendor_key_for``: a name AP
+        # corrected, D-119, is the vendor it was corrected to), as processing and bulk approval look it up (B-2969)
+        name, number = header.get("vendor_name"), header.get("gst_hst_registration_number")
+        last = store.last_pay_from(store.vendor_key_for(name, number)) if accounts else ""
         chosen = banks.opening_choice({"currency": currency}, False, accounts, last)
         if chosen != (header.get("pay_from_account") or ""):
             header["pay_from_account"] = changed["pay_from_account"] = chosen

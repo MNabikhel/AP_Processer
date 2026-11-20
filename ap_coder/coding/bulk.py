@@ -491,7 +491,8 @@ def queue_facts(row: Any) -> dict[str, Any]:
     doc = row["final_output"] or row["ai_output"] or {}
     lines = doc.get("line_items")
     pay = [str(doc.get("pay_from_account") or ""), bool(row["final_output"]), str(doc.get("currency") or "CAD"),
-           vendor_key(doc.get("vendor_name") or row["vendor_name"] or "")]  # fmt: skip
+           # the vendor it is filed under (``Store.vendor_key_for``), whose last account it opens with (B-2970)
+           row["vendor_key"] or vendor_key(doc.get("vendor_name") or row["vendor_name"] or "")]  # fmt: skip
     stamp = str(validation.get(CHECKS_STAMP_KEY) or "") if isinstance(row["validation"], dict) else None
     return {**facts, "q_stamp": stamp,
             "q_found": _pairs(issues), "r_stamp": str(recheck.get("stamp") or ""),

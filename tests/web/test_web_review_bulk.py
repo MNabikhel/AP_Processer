@@ -622,3 +622,40 @@ def test_a_gl_account_taken_out_while_the_job_runs_leaves_the_invoices_coded_to_
     gone = "GL account 6800 is not in your GL accounts: pick one from the list"
     assert ended["skipped"] == [[i, gone] for i in ids[1:]]
     assert [store.get_invoice(i)["status"] for i in ids[1:]] == [REVIEW, REVIEW]
+
+
+def test_bulk_approval_and_the_screen_take_the_last_account_of_the_vendor_a_corrected_name_is(store):
+    """B-2969: AP corrected "Nortwind Traders" to "Northwind Traders" (a vendor not on the list, D-119) and paid it
+    from CAD-B. Another invoice read "Nortwind Traders": bulk approval looked its last account up under the corrected
+    name, as the approval files it, and paid it from CAD-B, while its review screen looked under the name as read and
+    opened with the default, CAD-A."""
+    store.save_bank_accounts([_bank("CAD-A", True), _bank("CAD-B")])
+    first = add_clean(store, vendor_name="Nortwind Traders", invoice_number="N-1", invoice_date="2025-03-02")
+    rest = add_clean(store, vendor_name="Nortwind Traders", invoice_number="N-2", pay_from_account="CAD-A")
+    store.approve_invoice(first, {**store.get_invoice(first)["ai_output"], "vendor_name": "Northwind Traders",
+                                  "pay_from_account": "CAD-B"}, "Bob")  # fmt: skip
+    assert store.remember_vendor_alias("Nortwind Traders", "Northwind Traders", invoice_id=first)
+    shown = _opens_with(client_for(store), rest)
+    assert bulk.bulk_approve(store, store.reference_data(), web_settings(), [rest], "Pat")["approved"] == [rest]
+    assert shown == [store.get_invoice(rest)["final_output"]["pay_from_account"]] == ["CAD-B"]
+
+
+def test_the_queue_asks_the_pay_from_rule_of_the_vendor_the_invoice_is_filed_under(store):
+    """B-2970: of two vendors by one name (B-1021), the queue's Ready and its bulk offer looked the vendor's last
+    account up under the name, not under the vendor the screen and the approval find by its GST/HST number: with two
+    CAD accounts and no default, the Limited's invoice, its own last one paid from CAD-B, was left as "Pick the bank
+    account" though its screen opens with CAD-B; the Inc.'s last account counted for it instead."""
+    from ap_coder.coding.vendors import master_columns, master_rows
+
+    inc, ltd = "994310787RT0001", "561646050RT0003"
+    records = [{"Name": "Great Lakes Mechanical Inc.", "AN8": "40110", "GST/HST Number": inc},
+               {"Name": "Great Lakes Mechanical Limited", "AN8": "40120", "GST/HST Number": ltd}]  # fmt: skip
+    store.import_vendor_master(master_rows(records, master_columns(list(records[0]))))
+    store.save_bank_accounts([_bank("CAD-A"), _bank("CAD-B")])
+    earlier = add_clean(store, vendor_name="Great Lakes Mechanical Limited", gst_hst_registration_number=ltd,
+                        invoice_number="E-1", invoice_date="2025-03-02")  # fmt: skip
+    store.approve_invoice(earlier, {**store.get_invoice(earlier)["ai_output"], "pay_from_account": "CAD-B"}, "Bob")
+    inv = add_clean(store, vendor_name="Great Lakes Mechanical Limited", gst_hst_registration_number=ltd,
+                    invoice_number="L-9")  # fmt: skip
+    assert inv not in review.attention(store, store.reference_data(), store.list_invoices(REVIEW))
+    assert inv not in bulk.sort_for_bulk(store)[1]
