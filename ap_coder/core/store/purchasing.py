@@ -195,6 +195,15 @@ class PurchasingMixin:
                 conn.execute("DELETE FROM purchase_orders")
             existing = {r["po_key"] for r in conn.execute("SELECT po_key FROM purchase_orders")}
             replaced: set[str] = set()
+            # The orders kept by their number alone that this file's may replace (B-2665), read at once: one query,
+            # not one per order (a sync of thousands of POs, B-2724).
+            numbers = {po_key(o["row"]["po_number"]) for k, o in orders.items() if k != po_key(o["row"]["po_number"])}
+            numbers &= existing  # (a number-only order's key is its number: none loaded, nothing to ask)
+            kept_by_number = {
+                r["po_key"]: r for r in conn.execute(
+                    "SELECT po_key, vendor_key, supplier_number FROM purchase_orders WHERE order_type = '' AND "
+                    f"order_company = '' AND {_in_list('po_key')}", (json.dumps(sorted(numbers)),))
+            } if numbers else {}  # fmt: skip
             for key, order in orders.items():
                 head = order["row"]
                 status = "closed" if all(r.get("status") == "closed" for r in order["lines"]) else OPEN
@@ -205,7 +214,8 @@ class PurchasingMixin:
                     for f in ("currency", "order_type", "order_company", "supplier_number"))  # fmt: skip
                 name = head.get("vendor_name") or named.get(supplier) or ""
                 numbered = po_key(head["po_number"])
-                if key != numbered and self._replaces_numbered(conn, numbered, vendor_key(name), supplier):
+                kept = kept_by_number.pop(numbered, None)
+                if kept is not None and self._replaces_numbered(conn, kept, vendor_key(name), supplier):
                     replaced.add(key)  # (the order kept by its number alone, now with its company and type: B-2665)
                 conn.execute(
                     """INSERT INTO purchase_orders (po_key, po_number, vendor_name, vendor_key, status, updated_at,
@@ -251,15 +261,13 @@ class PurchasingMixin:
         return counts
 
     @staticmethod
-    def _replaces_numbered(conn: Any, number: str, vendor: str, supplier: Any) -> bool:
+    def _replaces_numbered(conn: Any, kept: Any, vendor: str, supplier: Any) -> bool:
         """Whether an order of a file naming its company or type (``keys.order_key``; ``vendor``: its vendor key,
         ``supplier``: its supplier number) is the one kept by its number alone (loaded from a file that named neither,
         D-267), of its supplier or of none: then that one is deleted, its lines too, and this one takes its place
-        (B-2665), not a second order of the number beside it."""
-        kept = conn.execute("SELECT vendor_key, supplier_number FROM purchase_orders WHERE po_key = ? AND "
-                            "order_type = '' AND order_company = ''", (number,)).fetchone()  # fmt: skip
-        if kept is None:
-            return False
+        (B-2665), not a second order of the number beside it. ``kept``: that order's row (po_key, vendor_key,
+        supplier_number), read with the others of the file at once."""
+        number = kept["po_key"]
         theirs, number_of = kept["vendor_key"] or "", str(kept["supplier_number"] or "").lstrip("0")
         supplier = str(supplier or "").lstrip("0")
         if (theirs or number_of) and not ((vendor and theirs == vendor) or (supplier and number_of == supplier)):
