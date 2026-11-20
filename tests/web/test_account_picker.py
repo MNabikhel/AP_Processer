@@ -454,3 +454,17 @@ def test_an_edit_whose_check_a_refused_approval_called_off_is_checked_and_kept(b
     assert page.query_selector('[data-grid="lines"] [data-row]:nth-child(1).is-fix')
     assert (store.invoice_draft(invoice_id, "") or {"lines": [{}]})["lines"][0].get("predicted_gl_code") == "9999.9999"
     assert store.get_invoice(invoice_id)["status"] == REVIEW and not errors
+
+
+def test_alt_enter_in_a_lines_account_box_inserts_a_line_below(browser, chart_company):
+    """B-2989: Alt+Enter ("Insert a line below", the line menu's key) in a line's Account box, where the screen opens,
+    opened the account list instead: the box's list took it for Enter, and the line's keys never saw it."""
+    page, errors = _review(browser, chart_company, "four_lines")
+    page.focus(FIRST)
+    page.keyboard.press("Alt+Enter")
+    numbers = page.eval_on_selector_all(
+        '[data-grid="lines"] [data-row] [data-line-no]', "els => els.map((e) => e.textContent)"
+    )
+    assert numbers == ["1", "5", "2", "3", "4"] and not page.query_selector(LIST)
+    settle(page)
+    assert not errors
