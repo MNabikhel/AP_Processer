@@ -7,7 +7,7 @@ import json
 import math
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -609,9 +609,12 @@ class InvoicesMixin:
         bulk: bool = False,
         open_issues: list[dict[str, Any]] | None = None,
         login: str = "",
+        filled: Mapping[int, tuple[str, str, float | None]] | None = None,
     ) -> dict[str, int]:
         """Store the reviewer's final version and record one feedback row per line. ``open_issues``: the
-        errors and warnings still showing when the reviewer approved (kept in the audit trail). Only an invoice
+        errors and warnings still showing when the reviewer approved (kept in the audit trail). ``filled``: {line
+        number: (subledger, type, units)} AP Coder filled in under the lines on the review screen
+        (``posting_edits.filled_in``): approved as they are, nobody typed them (B-2935). Only an invoice
         in the review queue can be approved. An approval by AP Coder on its own (``AUTONOMOUS_REVIEWER``)
         records no feedback: nobody checked its coding, so it is no lesson and no measure of accuracy."""
         inv = self._approvable(invoice_id)
@@ -629,7 +632,7 @@ class InvoicesMixin:
         vendor_name = final_output.get("vendor_name", "")
         key = self.vendor_key_for(vendor_name, final_output.get("gst_hst_registration_number"))  # B-1021
         now = _now()
-        lines = self._line_feedback(invoice_id, inv, final_output, key, reviewer, now, bulk)
+        lines = self._line_feedback(invoice_id, inv, final_output, key, reviewer, now, bulk, filled)
         counts = lines.counts
         edits = _approval_edits(ai, final_output, lines)
         with self._conn() as conn:
