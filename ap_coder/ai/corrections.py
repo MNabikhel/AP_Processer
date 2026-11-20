@@ -555,7 +555,8 @@ def correct(settings: Any, store: Any, inv: dict[str, Any], coder: Any, images: 
             names: dict[str, str] | None = None) -> dict[str, Any] | None:  # fmt: skip
     """Ask the AI reviewer to correct an invoice with a problem, and apply what the page and the math confirm. What
     was asked and what came of it ({"problems", "applied", "refused", "message", "rounds", ...}); None when nothing
-    was asked (no problem, a person's coding on it, text addressed to software on it, no page text). Never raises."""
+    was asked (no problem, a person's coding on it, parked, open or drafted: never applied then, text addressed to
+    software on it, no page text). Never raises."""
     try:
         return _correct(settings, store, inv, coder, images, rounds, seconds_left, identity, model, names)
     except Exception as exc:  # noqa: BLE001 - the corrections are an extra: the review goes on
@@ -566,9 +567,14 @@ def correct(settings: Any, store: Any, inv: dict[str, Any], coder: Any, images: 
 def _correct(settings: Any, store: Any, inv: dict[str, Any], coder: Any, images: list[Any], rounds: int,
              seconds_left: Callable[[], float], identity: Any, model: str,
              names: dict[str, str] | None) -> dict[str, Any] | None:  # fmt: skip
+    from ..capture.workflow import has_draft
+    from ..core.store import REVIEW
+
     iid = int(inv["id"])
     output = inv.get("ai_output") or {}
     if inv.get("final_output") or inv.get("reviewer") or inv.get("edits"):  # a person's coding: theirs to correct
+        return None
+    if inv.get("status") != REVIEW or store.open_by(iid) or has_draft(store, iid):  # (``replace_proposal`` refuses)
         return None
     capture = _capture(store, iid)
     wrong = [] if addressed_to_software(inv, capture) else problems(store, inv, output, capture)

@@ -446,3 +446,18 @@ def test_a_supplier_is_named_on_the_page_only_by_its_whole_words(store):  # noqa
     for name, page, listed in (("Ace", "ACE\nInvoice 4410", "ACE"), (birch, "BIRCH ELECTRICLTD.\nInvoice 4410", birch),
                                (birch, "Birch-Electric Ltd, 4 Main St", birch)):  # fmt: skip
         assert named(name, page) == (listed, []), (name, page)
+
+
+@pytest.mark.parametrize("how", ["parked", "a draft", "open"])
+def test_an_invoice_parked_drafted_or_open_is_never_asked_for_corrections(store, tmp_path, monkeypatch, how):  # noqa: F811
+    """B-2804: the chat model was asked for corrections, with the pages and for each of its rounds, of an invoice a
+    person had parked, kept a draft of or had open on the server's review screen: they could never be applied to it."""
+    iid = _misread(store, tmp_path, monkeypatch)
+    if how == "parked":
+        store.park_invoice(iid, "Pat", "waiting for the buyer")
+    elif how == "a draft":
+        store.save_invoice_draft(iid, "", {"header": {"grand_total": "722.93"}})
+    else:
+        store.keep_open(iid, "pat", "Pat Doe", 120, 45)
+    asked = _answered(monkeypatch, (FREIGHT, HST, TOTAL))
+    assert _correct(store, store.get_invoice(iid)) is None and asked == []
