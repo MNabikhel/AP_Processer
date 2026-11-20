@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from ..ai.extraction import TEXT_EXTENSIONS
+from ..core.keys import company_code
 from ..core.memory import AUTONOMOUS_REVIEWER  # noqa: F401  (its name here too)
 from ..core.schema import as_read
 from ..core.ui import FIELD_WORDS
@@ -493,12 +494,14 @@ def checks_today(store: Any, invoice_id: int, output: dict[str, Any], settings: 
 
 def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str, Any],
                     invoice_id: int | None = None, settings: Any = None) -> dict[str, Any] | None:  # fmt: skip
-    """The coding to approve without a person now, of an invoice touchless processing passed earlier but held back
-    (for the Azure check, the AI reviewer); None when it may no longer be: the switch is still on, its supplier still
-    touchless (not suspended or kept supervised by an AP lead meanwhile) and its total still within the touchless and
-    approval limits. With ``invoice_id``: the invoice as stored now is also ``still_untouched``, and its checks done
-    again now (``checks_today``) find nothing a person must see: no error, no warning, nothing that always goes to a
-    person and no review flag (B-951); ``output`` is approved under the company they decided (D-286: B-2926)."""
+    """The coding to approve without a person now (``output``, as it was checked and reviewed), of an invoice
+    touchless processing passed earlier but held back (for the Azure check, the AI reviewer); None when it may no
+    longer be: the switch is still on, its supplier still touchless (not suspended or kept supervised by an AP lead
+    meanwhile) and its total still within the touchless and approval limits. With ``invoice_id``: the invoice as
+    stored now is also ``still_untouched``, and its checks done again now (``checks_today``) find nothing a person
+    must see: no error, no warning, nothing that always goes to a person and no review flag (B-951), and decide the
+    company ``output`` was worked out under: decided again otherwise (D-286), its PO match, taxes and place of supply
+    are another company's, so a person looks, said why in its notes (B-2926, B-2930, D-321)."""
     if store is None or not store.touchless_enabled():
         return None
     report = None
@@ -512,8 +515,15 @@ def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str,
             return None
         if any(needs_a_person(i.severity, i.code) for i in report.issues):
             return None
-        if decided := report.checks.get("company"):
-            output = {**output, "company": decided["company"], "company_how": decided["how"]}
+        decided = report.checks.get("company")
+        was = company_code(output.get("company"))
+        if decided and company_code(decided["company"]) != was:
+            why = (f"not approved without a person: its company was decided again while it waited ({was or 'none'}, "
+                   f"now {decided['company']}), so its coding is checked under it by a person")  # fmt: skip
+            notes = ((store.get_invoice(invoice_id) or {}).get("meta") or {}).get("capture") or {}
+            store.update_after_check(invoice_id, None, None, (), {"capture": {**notes, "reason": why}})
+            log.info("invoice %s: %s", invoice_id, why)
+            return None
     key, _ = supplier_for(store, output)
     if not key:
         return None

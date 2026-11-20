@@ -7185,7 +7185,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     PO-matched voucher's sales tax is to be matched; and whether the US companies want use tax accrued on every
     invoice charging none (an out-of-state supplier) or only on some.
 - **D-321** · **What the second approver is told is new since the first approval: what the first approver's screen
-  neither showed nor settled** (D-286, B-2695; B-2929).
+  neither showed nor settled; what AP Coder approves after a check that held it: the coding that check reviewed**
+  (D-286, B-2695; B-2926, B-2929, B-2930).
   - The second approval's check runs the approved coding's checks again (`review.second_check`) and compares each
     warning, by its code and line, with what the first approval kept (its `open_issues`: the errors and warnings
     showing as it was approved, those approved anyway among them). Its wording, or an error approved over that is a
@@ -7197,3 +7198,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     before is checked the same way.
   - *Left as it is:* a company's Canadian tax checks turned on since the first approval give its other tax warnings
     as new; a missing GST/HST or QST number among them is not said again.
+  - **Approved without a person after a check that held it** (the AI reviewer, the Azure check: B-2926, B-2930):
+    the coding approved is the one reviewed and checked, as it is kept. Its company decided again otherwise while
+    it waited (D-286: a name line, a PO list, JD Edwards' companies loaded), its PO match, taxes and place of supply
+    were worked out for another company, so it is not approved without a person, its notes saying why
+    (`still_touchless`). Approving the coding worked out again under the new company was not chosen: nobody, the
+    reviewer included, would have looked at that coding.

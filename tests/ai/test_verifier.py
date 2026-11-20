@@ -444,12 +444,13 @@ def test_the_guards_below_are_not_vacuous_the_reviewer_agreeing_approves_a_coded
 
 
 @pytest.mark.parametrize("meanwhile", ["named", "companies loaded"])
-def test_the_reviewer_agreeing_approves_under_the_company_its_checks_decided(store, touchless, monkeypatch, meanwhile):  # noqa: F811
-    """B-2926: held for the AI reviewer under the company its supplier's history gave, then its company was decided
-    otherwise while it waited (a Settings → Review name line saying whose the bill-to printed is), or JD Edwards'
-    companies loaded (it had none): the reviewer agreeing approved it without a person under the company it was
-    processed with (or none, later held at the batch), though the checks it passed decided another. It is approved
-    under the company its checks decided."""
+def test_the_reviewer_agreeing_leaves_one_whose_company_changed_for_a_person(store, touchless, monkeypatch, meanwhile):  # noqa: F811
+    """B-2926, B-2930: held for the AI reviewer under the company its supplier's history gave, then its company was
+    decided otherwise while it waited (a Settings → Review name line saying whose the bill-to printed is), or JD
+    Edwards' companies loaded (it had none): the reviewer agreeing approved it without a person under the company it
+    was processed with (or none, later held at the batch), though the checks it passed decided another; then under the
+    one decided, with its PO match and taxes worked out under the other. Its coding is another company's than its
+    checks decide: it is left for a person, said why."""
     from tests.ai.test_azure_check import _companies_loaded
 
     store.import_erp_vouchers([{"key": "00210-PV-700101-001", "vendor_name": "Harbourview Professional Services LLP",
@@ -466,10 +467,11 @@ def test_the_reviewer_agreeing_approves_under_the_company_its_checks_decided(sto
     else:
         _companies_loaded(store)
     done = verifier.verify_one(_settings(), store, coder=FakeCoder(_answer()))
-    assert done.status == verifier.AGREED and done.approved
-    final = store.get_invoice(iid)["final_output"]
-    assert (final["company"], final["company_how"]) == (("00220", "name") if meanwhile == "named" else
-                                                        ("00210", "history"))  # fmt: skip
+    assert done.status == verifier.AGREED and not done.approved
+    inv = store.get_invoice(iid)
+    assert inv["status"] == REVIEW and not inv["final_output"]
+    was, now = ("00210", "00220") if meanwhile == "named" else ("none", "00210")
+    assert f"its company was decided again while it waited ({was}, now {now})" in inv["meta"]["capture"]["reason"]
 
 
 def test_a_review_another_reader_took_over_is_not_folded_in(store, touchless, monkeypatch):  # noqa: F811
