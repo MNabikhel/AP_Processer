@@ -467,28 +467,33 @@ def read_chart(source: str | Path | bytes, anyway: bool = False, sheet: str = ""
 
 
 TEXT_FILES = (".csv", ".txt", ".tsv")  # a chart saved as text, streamed from disk by the command line (D-267, D-272)
-SNIFF = 1 << 20  # of a text file, the bytes its encoding is told by
+SNIFF = 1 << 20  # of a text file, the first bytes UTF-16 is told by, and the bytes looked at a time for UTF-8
 
 
 def text_encoding(path: str | Path) -> str:
-    """How a text file is encoded, by its first bytes: UTF-8 or UTF-16 (Windows' "Unicode text", ReportsNow's) with
-    or without its byte-order mark; text that is neither UTF-8 nor UTF-16 is read as Windows' own (cp1252)."""
+    """How a text file is encoded: UTF-16 (Windows' "Unicode text", ReportsNow's) or UTF-8 by its byte-order mark, or
+    UTF-16 without one by its first bytes; else UTF-8 when the whole file is, looked at a block at a time (B-2763: by
+    its first megabyte alone, Windows' own text whose first accent came later was read as UTF-8 and refused there),
+    and text that is not is read as Windows' own (cp1252)."""
     with open(path, "rb") as file:
         head = file.read(SNIFF)
-    if head.startswith(codecs.BOM_UTF8):
-        return "utf-8-sig"
-    if head.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
-        return "utf-16"
-    odd, even = head[1::2], head[0::2]
-    if odd and odd.count(0) > len(odd) // 2:  # (letters of one byte each followed by a nought: UTF-16, low byte first)
-        return "utf-16-le"
-    if even and even.count(0) > len(even) // 2:
-        return "utf-16-be"
-    try:
-        head.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        if exc.start < len(head) - 4:  # (not merely a character cut at the end of the bytes looked at)
-            return "cp1252"
+        if head.startswith(codecs.BOM_UTF8):
+            return "utf-8-sig"
+        if head.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+            return "utf-16"
+        odd, even = head[1::2], head[0::2]
+        if odd and odd.count(0) > len(odd) // 2:  # (letters of one byte each followed by a nought: UTF-16, low first)
+            return "utf-16-le"
+        if even and even.count(0) > len(even) // 2:
+            return "utf-16-be"
+        utf8 = codecs.getincrementaldecoder("utf-8")()
+        block = head
+        while block:
+            try:
+                utf8.decode(block)  # (a character cut at the block's end is kept for the next)
+            except UnicodeDecodeError:
+                return "cp1252"
+            block = file.read(SNIFF)
     return "utf-8"
 
 

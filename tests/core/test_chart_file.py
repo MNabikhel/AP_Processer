@@ -493,3 +493,17 @@ def test_a_comma_file_is_read_as_before_and_text_that_is_neither_utf_is_read_as_
     assert chart_file.text_encoding(path) == "cp1252"
     read, rows = chart_file.stream_chart_text(path)
     assert [r.description for r in rows] == ['Café, "the" lounge'] and read.parsed == 1
+
+
+@pytest.mark.parametrize("encoding", ["cp1252", "utf-8"])
+def test_text_whose_first_accent_comes_after_its_first_megabyte_is_read_in_its_own_encoding(tmp_path, encoding):
+    """B-2763: a chart saved as Windows' own text (cp1252, D-272) whose first megabyte was plain English (the first
+    companies' accounts) was told UTF-8 by that megabyte alone, and refused at its first accent, a Quebec company's
+    description far into the load. The whole file tells it, a block at a time; UTF-8 accented after it stays UTF-8."""
+    rows = [("00210", "  0731066120", f"{1000 + n}", "", "Head office general expense", "6", "") for n in range(20_000)]
+    rows.append(("00220", "  0731066130", "5100", "", "Matériaux coût", "6", ""))
+    path = _tab_file(tmp_path / "chart.txt", rows, encoding)
+    assert path.read_bytes().index(b"Mat") > chart_file.SNIFF
+    assert chart_file.text_encoding(path) == encoding
+    read, given = _streamed(path)
+    assert (read.parsed, read.skipped) == (20_001, {}) and given[-1].description == "Matériaux coût"
