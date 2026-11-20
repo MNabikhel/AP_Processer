@@ -419,6 +419,32 @@ def test_a_journal_saved_again_through_excel_is_refused_in_plain_words(tmp_path,
     assert code == 0 and out.splitlines()[-1].startswith("Loaded R09321.csv")
 
 
+@pytest.mark.parametrize("held", ["a company outside the pilot", "closed"])
+def test_a_journal_of_business_units_shorter_than_those_offered_is_not_taken_as_saved_through_excel(tmp_path, held):
+    """B-2745: a line whose business unit is shorter than every one of the chart's, with no subsidiary, is taken as
+    cut short by Excel; the chart's were those offered alone, so with the pilot's jobs longer than another company's
+    business units (or the short ones closed), a file as JD Edwards wrote it was refused. Every business unit of the
+    chart counts."""
+    from ap_coder.core.chart import BuRow, ChartRow
+
+    units = [(co, bu) for co, bus in (("00100", range(1001, 1006)), ("00200", range(20000001, 20000006)))
+             for bu in map(str, bus)]  # fmt: skip
+    store = Store(tmp_path / "ap.db")
+    store.import_business_units([BuRow(bu, f"Job {bu}", co, "JB", "N" if held == "closed" and co == "00100" else "")
+                                 for co, bu in units])  # fmt: skip
+    store.import_chart([ChartRow(bu, obj, "", said, 7, "", "", co) for co, bu in units
+                        for obj, said in (("5100", "Labour"), ("2110", "AP trade"))])  # fmt: skip
+    if held != "closed":
+        store.save_chart_settings(replace(store.chart_settings(), pilot=("00200",)))
+    head = ("Document Number,Doc Type,Doc Co,G/L Date,Line Number,Account Number,Amount,Remark,Supplier Number,"
+            "Supplier Name\n")  # fmt: skip
+    lines = [f"{500 + n},PV,{co},2026-03-0{n + 1},{line},{bu}.{obj},{amount},labour,4001,Acme Supply\n"
+             for n, (co, bu) in enumerate((("00100", "1001"), ("00200", "20000001")))
+             for line, obj, amount in ((1, "5100", "100.00"), (2, "2110", "-100.00"))]  # fmt: skip
+    seen = journal_cmd.look(store, (head + "".join(lines)).encode(), "gl.csv", trade="2110")
+    assert seen.state == journal_cmd.READY, seen.problem
+
+
 def _gl_lines(tmp_path, truth, name):
     """The vouchers' G/L lines as the build sheet's query exports them, saved as CSV (D-266): no payable lines."""
     from ap_coder.erp import journal as jr

@@ -439,6 +439,15 @@ class ChartMixin:
                                "chart_accounts").fetchone()  # fmt: skip
         return int(row[0]), int(row[1])
 
+    def chart_codes(self) -> tuple[set[str], set[str]]:
+        """(every business unit of the chart and of the business units report, every object of the chart), offered
+        or not: what tells a file's account strings Excel cut short (``journal.cut_by_excel``, B-2745)."""
+        with self._conn() as conn:
+            units = {r[0] for r in conn.execute("SELECT DISTINCT bu FROM chart_accounts UNION SELECT code FROM "
+                                                "business_units")}  # fmt: skip
+            objects = {r[0] for r in conn.execute("SELECT DISTINCT object FROM chart_accounts WHERE object != ''")}
+        return units, objects
+
     def chart_edit_counts(self) -> dict[str, int]:
         """{posting edit code: the chart's accounts with it}, counted once a change of the chart (D-272: what the
         Accounts AP posts to card lists as not yet decided)."""
