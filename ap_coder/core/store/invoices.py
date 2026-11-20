@@ -51,10 +51,11 @@ from .summary import LISTED_COLUMNS, QUEUE_ORDER, QUEUES, fetch_rows
 from .users import VOUCH_DAYS, account_of, same_approver
 
 # The events that change where an invoice stands or its stored coding (``coding_revision``, D-184): approving it
-# stores its coding, the others move it in or out of the review queue (managers.py logs the manager's three).
+# stores its coding, the AI reviewer's corrections its proposal (B-2805: a screen open on a laptop is told), the others
+# move it in or out of the review queue (managers.py logs the manager's three).
 REVISION_ACTIONS = (
     "approved", "final_approved", "sent_back", "reopened", "parked", "unparked", "rejected", "deleted",
-    "sent_to_manager", "manager_confirmed", "manager_sent_back", "manager_request_withdrawn",
+    "sent_to_manager", "manager_confirmed", "manager_sent_back", "manager_request_withdrawn", "verifier_corrected",
 )  # fmt: skip
 _REVISION_IN = "(" + ", ".join("?" * len(REVISION_ACTIONS)) + ")"
 

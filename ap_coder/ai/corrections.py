@@ -17,10 +17,13 @@ or the total, the supplier). The corrections are applied (``apply_items``, ``che
 * nothing in them quotes text addressed to software (D-259); an invoice with such text is not asked at all.
 
 Otherwise nothing changes: the review goes on as before, and its warnings say what it read. When they pass, they are
-applied to the invoice only while nobody has worked on it (``Store.replace_proposal``): each field they changed is
-marked as the AI reviewer's (its source, and a reason that starts ``CORRECTED_BY``), and VERIFIER_CORRECTED says what
-was corrected and why. That finding always sends the invoice to a person (``supplier.ALWAYS_A_PERSON``): never
-touchless, never bulk-approved because of an AI correction. The review that follows is of the corrected invoice.
+applied to the invoice only while nobody has worked on it (``Store.replace_proposal``: not parked, open or drafted, and
+its proposal still the one asked about, ``proposal_version``): each field they changed is marked as the AI reviewer's
+(its source, and a reason that starts ``CORRECTED_BY``), and VERIFIER_CORRECTED says what was corrected and why. That
+finding always sends the invoice to a person (``supplier.ALWAYS_A_PERSON``): never touchless, never bulk-approved
+because of an AI correction. They are a revision of the invoice (``verifier_corrected``): a review screen open on it
+(a laptop keeps nothing of who has it open) is out of date, says so, and saves nothing over them. The review that
+follows is of the corrected invoice.
 
 The question is asked in the reviewer's thread, between the page reader's invoices (never while it reads), at most
 ``rounds`` times (Settings → Reading) and within half of the reviewer's minutes, so the review has the rest; a round
@@ -544,8 +547,8 @@ def _store(store: Any, inv: dict[str, Any], output: dict[str, Any], report: Any,
     if capture is not None:
         mark(capture, inv.get("ai_output") or {}, output)
     note = {"applied": said, "problem": problem, "model": model, "at": dt.datetime.now().isoformat(timespec="seconds")}
-    updated = store.replace_proposal(iid, output, report, capture, {"verifier_corrections": note}, expect=identity,
-                                     unless_in_use=True, by=NAME,
+    updated = store.replace_proposal(iid, output, report, capture, {"verifier_corrections": note}, NAME,
+                                     expect=identity, unless_in_use=True, by=NAME, action="verifier_corrected",
                                      version=proposal_version(inv.get("ai_output"), inv.get("validation")))  # fmt: skip
     return message if updated else ""
 

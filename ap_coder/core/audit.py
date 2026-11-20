@@ -59,6 +59,7 @@ ACTIONS = {
     "vendor_added": ("add_business", "info", "Vendor added"),
     "vendors_deleted": ("delete", "warn", "Vendors deleted"),
     "verified": ("fact_check", "info", "AI reviewer checked it"),
+    "verifier_corrected": ("auto_fix_high", "info", "AI reviewer corrected it"),
     "azure_checked": ("fact_check", "info", "Azure check done"),
     "azure_check_disagrees": ("gpp_maybe", "warn", "Azure check disagrees"),
     "lesson_explained": ("lightbulb", "info", "Lesson explained"),

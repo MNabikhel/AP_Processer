@@ -461,3 +461,27 @@ def test_an_invoice_parked_drafted_or_open_is_never_asked_for_corrections(store,
         store.keep_open(iid, "pat", "Pat Doe", 120, 45)
     asked = _answered(monkeypatch, (FREIGHT, HST, TOTAL))
     assert _correct(store, store.get_invoice(iid)) is None and asked == []
+
+
+def test_on_a_laptop_corrections_made_while_an_invoice_is_open_put_its_screen_out_of_date(store, tmp_path, monkeypatch):  # noqa: F811
+    """B-2805: on a laptop nothing is kept of who has an invoice open (D-184), so the AI reviewer's corrections went
+    in under the open review screen, which was never told: it went on showing the values read before, and its check
+    or approval of them saved them over the corrections without a word. The corrections are a revision of the
+    invoice: the screen says so, read-only, and its check and approval are refused."""
+    from tests.web.test_web_invoice import form_of
+    from tests.web.test_web_invoice_together import _open, _poll
+    from tests.webclient import PAGE, client_for
+
+    monkeypatch.delenv("AP_SERVER_MODE", raising=False)
+    iid = _misread(store, tmp_path, monkeypatch)
+    laptop = client_for(store)
+    screen, shown = _open(laptop, iid), form_of(store, iid)
+    _answered(monkeypatch, (FREIGHT, HST, TOTAL))
+    assert _correct(store, store.get_invoice(iid))["applied"]  # (no draft yet, and nothing kept of who has it open)
+    stale = _poll(laptop, iid, screen)["stale"]
+    assert stale["text"].startswith("Corrected by AI reviewer today at ") and "read-only" in stale["sub"], stale
+    for action in ("check", "approve"):
+        answer = laptop.post(f"/review/{iid}/{action}", data={**shown, **screen}, headers=PAGE)
+        assert answer.status_code == 409 and answer.json()["stale"]["text"] == stale["text"], (action, answer.text)
+    inv = store.get_invoice(iid)
+    assert inv["status"] == REVIEW and inv["ai_output"]["grand_total"] == 722.93 and not store.invoice_drafts()
