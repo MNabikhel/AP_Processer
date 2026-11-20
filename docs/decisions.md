@@ -7187,8 +7187,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
 - **D-320** · **An approved invoice bills the PO lines its kept Voucher Match rows key: when PO lines alike are
   shared out, those count first, on those lines, and are never shared out again; the other invoices are shared out
   over the room they leave, in invoice order** (`coding/po.py` `PoBilling.shares` and `share_with`, `_shared`,
-  `_keyed_lines`; `Store.kept_voucher_lines`; B-2912, B-2913, B-2914). This amends D-282 (shared out by invoice order
-  alone) and D-284 (the kept rows were the keying sheet's and the Z-files' alone).
+  `_keyed_lines`; `Store.approved_matches`; B-2912, B-2913, B-2914, B-2915). This amends D-282 (shared out by invoice
+  order alone) and D-284 (the kept rows were the keying sheet's and the Z-files' alone).
   - **Why:** D-282 shared lines alike out again at each ask over every invoice in review or approved, by id, and
     D-284 keyed an approved invoice's kept rows: the two disagreed once an earlier invoice dropped out or came back.
     An 80 before it rejected, an approved 50 kept on job 1200's line of 50 was shared out again as billing neither
@@ -7199,13 +7199,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **What:** an invoice approved (or approved once, waiting for a second approver) with a voucher match kept bills
     the PO line each of its rows keys, by position (a row for each of its lines, as kept); its own match (its review
     screen, the second approval) is those lines too. The PO's billing, the other invoices' checks (PO_QTY_OVER, what
-    was billed before, what is left to expense) and the Purchase orders page count them first; the invoices in review,
-    and those approved with no match kept (approved before matches were kept, or held), are shared out after them in
-    id order as D-282 says, over the room left; so is a keying sheet's match made afresh. A reopened invoice is in
-    review again: shared out, its match made again at its next approval. An exported invoice with no match kept is
+    was billed before, what is left to expense) and the Purchase orders page count them first for an invoice in
+    review, which is shared out over the room left after them and the invoices before it in id order, as D-282 says.
+    One approved with no match kept (approved before matches were kept, or held) is shared out after the invoices
+    before it and the kept matches approved before it alone, in the order of the approvals (their "approved" events):
+    a later invoice approved over its PO_QTY_OVER never takes its line, it is over itself (B-2915). So is a keying
+    sheet's match made afresh. A reopened invoice is in review again: shared out, its match made again at its next
+    approval. An exported invoice with no match kept is
     checked for room against what was ordered, less every invoice before it: what JD Edwards has open has it off
     already once the POs are loaded again (D-280); two lines it fits as well are not guessed between.
-  - **Read only where it tells:** the kept rows are read (`Store.kept_voucher_lines`) only when lines alike are shared
+  - **Read only where it tells:** the kept rows are read (`Store.approved_matches`) only when lines alike are shared
     out, and only of the invoices with a line alike: read with every invoice (`Store.po_invoices`), the kept matches
     doubled a PO's read (900 approved invoices of 8 lines: 23 ms, 46 ms), and most POs have no lines alike.
   - *Not chosen:* kept rows on a PO without lines alike (each line has the one PO line it resembles, the one kept
