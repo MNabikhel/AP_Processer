@@ -5,11 +5,12 @@
 its tests that are not slow (the fast tier's). Refresh it when the parts of a CI run grow uneven (D-233). Several
 reports (a folder at a time, a CI part each) add up: the files they measured get these times, the others keep theirs
 (a file that is gone leaves). ``--slow-over 2``: each test of the default run that took over 2 seconds goes on
-tests/slow_tests.txt first, as its rule says.
+tests/slow_tests.txt first, as its rule says. A test marked slow in its own file counts as slow (``marked_slow``).
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -60,6 +61,31 @@ def put_on_the_slow_list(tests: set[str], listed: Path = SLOW_FILE) -> None:
     listed.write_text("\n".join([*said, *sorted(kept | tests)]) + "\n", encoding="utf-8")
 
 
+def _slow_mark(node: ast.expr) -> bool:
+    """``pytest.mark.slow`` (or a list holding it)."""
+    if isinstance(node, (ast.List, ast.Tuple)):
+        return any(_slow_mark(item) for item in node.elts)
+    return ast.unparse(node) == "pytest.mark.slow"
+
+
+def marked_slow(root: Path = ROOT) -> set[str]:
+    """The tests marked slow in their own file (``@pytest.mark.slow``, or ``pytestmark`` for the whole module), by id:
+    slow as those of tests/slow_tests.txt, though a ``--junitxml`` report doesn't say so."""
+    found = set()
+    for path in sorted((root / "tests").rglob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        name = path.relative_to(root).as_posix()
+        whole = any(isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "pytestmark" for t in node.targets)
+                    and _slow_mark(node.value) for node in tree.body)  # fmt: skip
+        tests = [([], node) for node in tree.body]
+        tests += [([node.name], item) for node in tree.body if isinstance(node, ast.ClassDef) for item in node.body]
+        for inside, node in tests:
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("test"):
+                if whole or any(_slow_mark(d) for d in node.decorator_list):
+                    found.add("::".join([name, *inside, node.name]))
+    return found
+
+
 def refresh(
     reports: list[Path],
     slow: set[str],
@@ -94,7 +120,7 @@ if __name__ == "__main__":
         "--slow-over", type=float, metavar="SECONDS", help="put default-run tests over it on the slow list"
     )
     args = parser.parse_args()
-    new, measured = refresh(args.reports, set(_SLOW), args.slow_over)
+    new, measured = refresh(args.reports, set(_SLOW) | marked_slow(), args.slow_over)
     print(f"{len(new)} tests put on {SLOW_FILE.name}" + "".join(f"\n  {test}" for test in sorted(new)))
     print(f"{len(measured)} files, {sum(t[0] for t in measured.values()) / 60:.1f} minutes "
           f"({sum(t[1] for t in measured.values()) / 60:.1f} without the slow tests): {TIMES_FILE}")  # fmt: skip

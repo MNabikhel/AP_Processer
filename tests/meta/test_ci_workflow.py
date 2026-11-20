@@ -406,6 +406,14 @@ def test_the_times_are_refreshed_from_several_reports_and_a_test_over_two_second
     assert measured == {"tests/a/test_kept.py": [4.0, 1.0], "tests/a/test_new.py": [20.0, 1.0]}
     assert json.loads(kept.read_text(encoding="utf-8")) == measured
     assert times.refresh([report], slow | new, None, tmp_path, kept, listed) == (set(), measured)  # (nothing more)
+    # a test marked slow in its own file is slow too, though the report doesn't say so
+    marked = "import pytest\n\n\n@pytest.mark.slow\ndef test_long():\n    pass\n\n\ndef test_short():\n    pass\n\n\n"
+    marked += "class TestGroup:\n    @pytest.mark.slow\n    def test_inside(self):\n        pass\n"
+    (tmp_path / "tests" / "a" / "test_kept.py").write_text(marked, encoding="utf-8")
+    (tmp_path / "tests" / "a" / "test_new.py").write_text("import pytest\n\npytestmark = pytest.mark.slow\n\n\n"
+                                                          "def test_any():\n    pass\n", encoding="utf-8")  # fmt: skip
+    assert times.marked_slow(tmp_path) == {"tests/a/test_kept.py::test_long", "tests/a/test_kept.py::TestGroup::"
+                                           "test_inside", "tests/a/test_new.py::test_any"}  # fmt: skip
 
 
 def test_an_older_versions_test_file_left_in_tests_is_not_run(tmp_path):
