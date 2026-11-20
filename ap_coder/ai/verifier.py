@@ -814,7 +814,7 @@ def _fold_in(store: Any, inv: dict[str, Any], result: dict[str, Any], *, expect:
     if folded and held and untouched and result.get("status") == AGREED and output and trusted and not corrected:
         # Read again first: another check may still hold it, or a person may have approved it with corrections and
         # reopened it while the reviewer looked.
-        if still_touchless(store, capture, output, invoice_id=iid):
+        if (output := still_touchless(store, capture, output, invoice_id=iid)) is not None:
             try:
                 store.approve_invoice(iid, output, AUTONOMOUS_REVIEWER, login="ap-coder")
                 return True
