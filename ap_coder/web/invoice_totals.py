@@ -19,6 +19,7 @@ from ap_coder.coding.tax import (
     EXPENSE_TO_LINE,
     OUTSIDE_CANADA,
     PROVINCE_NAMES,
+    PROVINCES,
     currency_places,
     place_of_supply,
     province_label,
@@ -60,18 +61,20 @@ def due_text(coding: dict[str, Any], default_days: int, vendor_terms: str = "") 
 
 
 def summary(coding: InvoiceCoding, report: Any, errors: list[Any], warnings: list[Any], default_days: int,
-            vendor_terms: str, setup: Any = None) -> dict[str, Any]:  # fmt: skip
-    """The invoice at a glance: supplier, number, dates, status, confidence and the amount."""
-    supply = place_of_supply(coding, setup)
-    if not supply and coding.ship_to_province == OUTSIDE_CANADA:  # as Place of supply says it (supply_line, B-441)
-        supply = OUTSIDE_CANADA
+            vendor_terms: str, setup: Any = None, canadian: bool = True) -> dict[str, Any]:  # fmt: skip
+    """The invoice at a glance: supplier, number, dates, status, confidence and the amount. ``canadian``: False for a
+    company not checked for Canadian tax (a US one, D-267): the ship-to printed only, never a province worked out
+    (B-2871)."""
+    supply = place_of_supply(coding, setup) if canadian else ""
+    if not supply and coding.ship_to_province in (OUTSIDE_CANADA, *([] if canadian else PROVINCES)):
+        supply = coding.ship_to_province  # as Place of supply says it (supply_line, B-441)
     credit = coding.grand_total < 0
     meta = [
         (f"{'Credit note' if credit else 'Invoice'} {coding.invoice_number}", "Invoice number"),
         (f"Issued {coding.invoice_date}" if coding.invoice_date else "", "Invoice date"),
         (due_text(coding.to_output(), default_days, vendor_terms) if coding.grand_total > 0 else
          "Nothing to pay: a credit" if credit else "", "Payment due"),
-        (province_label(supply), "Place of supply"),
+        (province_label(supply) if supply or canadian else "", "Place of supply"),
         (f"GST/HST {coding.gst_hst_registration_number}" if coding.gst_hst_registration_number else "",
          "Supplier's GST/HST number"),
     ]  # fmt: skip
@@ -138,8 +141,9 @@ def stored_summary(inv: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any]:
 # --- The Tax check ------------------------------------------------------------------------------------------------
 
 
-def tax_check(coding: InvoiceCoding, reference: ReferenceData) -> list[dict[str, Any]]:
-    """Each tax line's rate against the official rate, its arithmetic, and the account it posts to."""
+def tax_check(coding: InvoiceCoding, reference: ReferenceData, canadian: bool = True) -> list[dict[str, Any]]:
+    """Each tax line's rate against the official rate, its arithmetic, and the account it posts to. ``canadian``:
+    False for a company not checked for Canadian tax (D-267): its rate is not held against Canada's (B-2873)."""
     try:
         on = dt.date.fromisoformat(coding.invoice_date)
     except ValueError:
@@ -153,8 +157,10 @@ def tax_check(coding: InvoiceCoding, reference: ReferenceData) -> list[dict[str,
         gl = treat.gl_code if treat.needs_gl else "expense lines"
         rows.append({
             "tax": TAX_LABELS.get(t.tax_type, t.tax_type), "province": t.province,
-            "rate_ok": official is not None and abs(official - t.rate) < 1e-6, "rate": f"{t.rate * 100:.3f}%",
-            "official": "not levied" if official is None else f"{official * 100:.3f}%",
+            "rate_ok": (official is not None and abs(official - t.rate) < 1e-6) if canadian else None,
+            "rate": f"{t.rate * 100:.3f}%",
+            "official": ("not checked" if not canadian else "not levied" if official is None
+                         else f"{official * 100:.3f}%"),
             # As TAX_CALC_MISMATCH and the Tax check above it: a unit either way, in the currency's units (B-1908)
             "math_ok": tax_right(t.tax_amount, tax_line_ways(coding, t, places), places),
             "amount": signed(t.tax_amount), "posts_to": gl or "⚠ not mapped",

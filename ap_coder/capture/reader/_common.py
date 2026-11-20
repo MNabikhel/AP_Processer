@@ -62,7 +62,8 @@ _PRETAX_HEAD = re.compile(rf"^(?:net(?:\s*(?:amount|total))?|(?:{_AMOUNT_WORD}\s
 _TAXED_HEAD = re.compile(rf"^(?:(?:{_AMOUNT_WORD}\s*)?{_WITH_TAX_WORDS}|gross(?:\s*(?:amount|total))?)\s*:?$")
 
 # A state and ZIP code after a city, a comma or at the start of a line ("Seattle, WA 98101", "Boise ID 83702", "WA
-# 98101"); not after a label: "Order ID 77812", "Store IN 46204" are a label's numbers, not Idaho or Indiana.
+# 98101"); not after a label: "Order ID 77812", "Store IN 46204", "Cust. ID 10045" (B-2785) are a label's numbers,
+# not Idaho or Indiana.
 _ID_LABEL_WORDS = (
     "order|vendor|supplier|store|job|ticket|customer|cust|client|account|acct|member|employee|tax|ref|reference|batch|"
     "lot|work|purchase|transaction|tracking|user|invoice|inv|document|doc|file|case|project|contract|site|location|"
@@ -70,7 +71,7 @@ _ID_LABEL_WORDS = (
 )
 
 _US_ADDRESS = re.compile(
-    r"(?:^\s*|,\s*|(?<![A-Za-z])(?!(?i:" + _ID_LABEL_WORDS + r")\s)[A-Za-z][A-Za-z.'-]*\s+)"
+    r"(?:^\s*|,\s*|(?<![A-Za-z])(?!(?i:" + _ID_LABEL_WORDS + r")[.:#]?\s)[A-Za-z][A-Za-z.'-]*\s+)"
     r"(?:A[LKZR]|C[AOT]|D[CE]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])"
     r"\s+\d{5}(?:-\d{4})?\b"
     # A state spelled out after its city's comma: "Buffalo, New York 14202", "Cupertino, California 95014".

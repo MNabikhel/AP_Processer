@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 import math
+import re
 from typing import Any
 
 from fastapi import File, Form, Request, UploadFile
@@ -161,6 +162,7 @@ def jde_context(store: Store, query: Any = None) -> dict[str, Any]:
         "tax_codes": TAX_CODES,
         "company_rows": company_rows(store, js),
         "company_values": company_values(store, js),
+        "us_tax": us_tax_context(store, js),
         "an8_rows": [{"vendor": names.get(k, k), "an8": a} for k, a in js.an8_overrides.items()],
         # The payment terms table (D-91): the examples, pre-filled and not in use, until the pilot tester saves it.
         "terms_examples": not js.terms_codes,
@@ -215,6 +217,21 @@ def company_rows(store: Store, js: jde_settings.JdeSettings) -> list[dict[str, s
                      "worked_out": f"{'checked' if checked else 'not checked'} ({why})",
                      "choice": js.company_tax.get(code, companies.AUTO)})  # fmt: skip
     return rows
+
+
+def us_tax_context(store: Store, js: jde_settings.JdeSettings) -> dict[str, Any]:
+    """The US sales and use tax card (D-312): how every US company's tax is keyed, each company not checked for
+    Canadian tax with why and its own choice ("" as for every one), the sales and use tax codes and the use tax rates
+    as typed ("AREA = rate", a line each); no ``rows`` with one company or none of them US."""
+    table = companies.companies(store)
+    rows = []
+    for code, c in table.items() if len(table) > 1 else ():
+        checked, why = companies.canadian(store, code)
+        if not checked:
+            rows.append({"code": code, "name": c.name, "why": why, "choice": js.company_us_tax.get(code, "")})
+    rates = "\n".join(f"{area} = {rate:g}" for area, rate in sorted(js.use_tax_rates.items()))
+    return {"rows": rows, "modes": jde_settings.US_TAX, "choice": js.us_tax, "sales_code": js.sales_tax_code,
+            "use_code": js.use_tax_code, "rates": rates}  # fmt: skip
 
 
 def company_values(store: Store, js: jde_settings.JdeSettings) -> list[dict[str, Any]]:
@@ -501,6 +518,56 @@ def _save_tax_map(request: Request, form: Any) -> JSONResponse:
         new.company_tax = {code: choice for code, choice in chosen.items() if choice in (companies.ON, companies.OFF)}
     changed = jde_settings.save(store, new, actor=reviewer())
     return done(request, URL + "#tax-map", "Tax areas saved." if changed else "Nothing changed.")
+
+
+@router.post("/settings/jde/us-tax")
+async def save_us_tax(request: Request) -> JSONResponse:
+    """The US sales and use tax card (D-312): how a US company's tax is keyed, for every one and each its own; the
+    sales and use tax explanation codes (one or two letters or digits, none of the Canadian taxes' codes, not the
+    same); the use tax rates, "tax area = rate" a line (a percent under 100)."""
+    form = await posted_form(request)
+    return await run_in_threadpool(_save_us_tax, request, form)
+
+
+_RATE_LINE = re.compile(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*[=:]?\s*(\d{1,2}(?:[.,]\d{1,4})?)\s*%?\s*")
+
+
+@one_connection
+def _save_us_tax(request: Request, form: Any) -> JSONResponse:
+    store = get_store(request)
+    new = copy(jde_settings.load(store))
+    chosen = str(form.get("us_tax") or "").strip()
+    if chosen not in jde_settings.US_TAX:
+        return refuse("Choose how a US company's tax is keyed.")
+    own = dict(zip([str(c).strip() for c in form.getlist("us_company")],
+                   [str(c).strip() for c in form.getlist("us_company_tax")], strict=False))  # fmt: skip
+    if any(choice not in ("", *jde_settings.US_TAX) for choice in own.values()):
+        return refuse("Choose how each company's tax is keyed.")
+    codes = {}
+    for name, what in (("sales_tax_code", "sales tax"), ("use_tax_code", "use tax")):
+        code = str(form.get(name) or "").strip().upper()
+        if not re.fullmatch(r"[A-Z0-9]{1,2}", code) or code in TAX_CODES:
+            return refuse(f"Give the {what} explanation code as JD Edwards has it: one or two letters or digits, not "
+                          "V, C, B or E (the Canadian taxes' codes).")  # fmt: skip
+        codes[name] = code
+    if codes["sales_tax_code"] == codes["use_tax_code"]:
+        return refuse("The sales tax and the use tax codes must differ.")
+    rates: dict[str, float] = {}
+    for line in str(form.get("use_tax_rates") or "").splitlines():
+        if not line.strip():
+            continue
+        found = _RATE_LINE.fullmatch(line)
+        if not found:
+            return refuse(f"“{line.strip()}” is no tax area and rate: write one a line, the tax area then its rate "
+                          "in percent, e.g. WA-SPOKANE = 9.1.")  # fmt: skip
+        if len(found.group(1)) > 10:
+            return refuse(f"Tax area {found.group(1).upper()} is longer than JD Edwards' 10 characters (VLTXA1).")
+        rates[found.group(1).upper()] = float(found.group(2).replace(",", "."))
+    new.us_tax, new.sales_tax_code, new.use_tax_code = chosen, codes["sales_tax_code"], codes["use_tax_code"]
+    new.company_us_tax = {companies.company_code(c): v for c, v in own.items() if v and companies.company_code(c)}
+    new.use_tax_rates = jde_settings.clean_rates(rates)
+    changed = jde_settings.save(store, new, actor=reviewer())
+    return done(request, URL + "#us-tax", "US sales and use tax saved." if changed else "Nothing changed.")
 
 
 @router.post("/settings/jde/terms")

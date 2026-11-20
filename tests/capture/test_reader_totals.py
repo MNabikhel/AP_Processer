@@ -200,6 +200,85 @@ def test_vat_at_two_rates_with_no_total_of_it_is_their_sum(tmp_path):
     assert _amounts(tmp_path / "two.pdf", cells) == {"subtotal": 473.0, "tax_total": 56.87, "grand_total": 529.87}
 
 
+@pytest.mark.parametrize("labels", [
+    ("WA State Sales Tax 6.5%", "Spokane County Sales Tax 0.5%", "City of Spokane Sales Tax 1.5%",
+     "Transit District Tax 0.6%"),
+    ("State Tax 6.5%", "County Tax 0.5%", "City Tax 1.5%", "Transit Tax 0.6%"),
+])  # fmt: skip
+@pytest.mark.parametrize("rows", [3, 4])
+def test_a_us_state_county_and_city_sales_tax_with_no_total_of_them_is_their_sum(tmp_path, labels, rows):
+    """B-2870: a US invoice's state, county and city sales tax, each on a row of its own and no total tax printed: only
+    two amounts were ever summed, so one of the three was read as the whole tax (subtotal + tax not the total), or
+    none was."""
+    taxes = ("81.25", "6.25", "18.75", "7.50")[:rows]
+    total = 1250 + sum(float(t) for t in taxes)
+    cells = [(60, 60, "Cascade Bearing & Drive Inc"), (60, 74, "401 Industrial Way, Spokane, WA 99202"),
+             (330, 300, "Subtotal"), (490, 300, "1,250.00"),
+             *[(330, 315 + 15 * n, labels[n]) for n in range(rows)],
+             *[(490, 315 + 15 * n, taxes[n]) for n in range(rows)],
+             (330, 315 + 15 * rows, "Total Due (USD)"), (490, 315 + 15 * rows, f"${total:,.2f}")]  # fmt: skip
+    assert _amounts(tmp_path / "us.pdf", cells) == {"subtotal": 1250.0, "tax_total": round(total - 1250, 2),
+                                                    "grand_total": total}  # fmt: skip
+
+
+_CANADIAN_HEAD = [(60, 60, "Northern Supply Ltd."), (60, 74, "200 Ridge Road SW, Calgary AB T2P 1J9"),
+                  (400, 60, "INVOICE"), (400, 74, "Invoice No: NS-1001"), (400, 88, "Invoice Date: 2026-05-04"),
+                  (60, 120, "GST/HST No. 123456782RT0001")]  # fmt: skip
+
+
+def _lines(rows: list[tuple[str, ...]]) -> list[tuple]:
+    """A line table from y 180: a description and an amount, or a description, quantity, rate and amount."""
+    wide = len(rows[0]) == 4
+    head = [(60, 164, "Description"), (490, 164, "Amount")] + ([(330, 164, "Qty"), (400, 164, "Rate")] if wide else [])
+    cells = []
+    for n, row in enumerate(rows):
+        xs = (60, 330, 400, 490) if wide else (60, 490)
+        cells += [(x, 180 + 14 * n, text) for x, text in zip(xs, row, strict=True)]
+    return head + cells
+
+
+def _totals(rows: list[tuple[str, str]]) -> list[tuple]:
+    return [cell for n, (label, value) in enumerate(rows) for cell in ((330, 320 + 15 * n, label),
+                                                                       (490, 320 + 15 * n, value))]  # fmt: skip
+
+
+@pytest.mark.parametrize(("lines", "totals", "tax"), [
+    ([("US state tax return preparation, 2025", "1,500.00")], [("Subtotal", "1,500.00"), ("GST 5%", "75.00"),
+                                                               ("Total", "1,575.00")], 75.0),
+    ([("Professional fees", "1,000.00"), ("City of Vancouver tax certificate", "57.00")],
+     [("Subtotal", "1,057.00"), ("GST 5%", "50.00"), ("PST 7%", "70.00"), ("Total", "1,177.00")], 120.0),
+    ([("Legal services re purchase of 12 Elm St", "1,200.00"), ("Town of Oakville tax certificate", "75.00")],
+     [("Subtotal", "1,275.00"), ("HST 13%", "156.00"), ("Total", "1,431.00")], 156.0),
+    ([("County tax search", "45.00"), ("Title search", "30.00")], [("Subtotal", "75.00"), ("GST 5%", "3.75"),
+                                                                    ("Total", "78.75")], 3.75),
+    ([("Local tax services", "300.00"), ("State tax filing review", "200.00"), ("City tax consulting", "100.00")],
+     [("Subtotal", "600.00"), ("GST 5%", "30.00"), ("Total", "630.00")], 30.0),
+    ([("County tax services", "300.00"), ("City tax services", "200.00"), ("Local tax services", "100.00")],
+     [("Subtotal", "600.00"), ("HST 13%", "78.00"), ("Total", "678.00")], 78.0),
+    ([("T1 personal return 2025", "1", "650.00", "650.00"), ("US state tax return (Arizona)", "1", "450.00", "450.00"),
+      ("Bookkeeping", "4", "100.00", "400.00")], [("Subtotal", "1,500.00"), ("GST 5%", "75.00"),
+                                                  ("Total", "1,575.00")], 75.0),
+    ([("Legal fees: purchase of 1234 Main St", "1", "1,200.00", "1,200.00"),
+      ("City of Surrey tax certificate", "1", "57.00", "57.00"), ("Land title search", "2", "11.00", "22.00")],
+     [("Subtotal", "1,279.00"), ("GST 5%", "63.95"), ("PST 7%", "84.00"), ("Total", "1,426.95")], 147.95),
+    ([("Legal fees re sale of 55 King St", "1", "1,500.00", "1,500.00"),
+      ("Town of Milton tax certificate", "1", "75.00", "75.00"), ("Courier", "1", "25.00", "25.00")],
+     [("Subtotal", "1,600.00"), ("HST 13%", "208.00"), ("Total", "1,808.00")], 208.0),
+])  # fmt: skip
+def test_a_line_items_words_about_a_tax_are_never_its_tax_total(tmp_path, lines, totals, tax):
+    """B-2874: the US state, county and city sales tax labels of B-2870 were labels wherever a line started with
+    them, so a Canadian invoice's line items ("US state tax return preparation, 2025", "City of Vancouver tax
+    certificate", "County tax search", "Local tax services") were its tax total (the year, the line's amount or its
+    quantity), and the line table ended at them: TOTAL_MISMATCH on clean GST/HST invoices. Such a row is read as a tax
+    only in the totals block, under the subtotal, its amount alone on its row."""
+    read = analyze(_pdf(tmp_path / "ca.pdf", _CANADIAN_HEAD + _lines(lines) + _totals(totals)))
+    f = read.fields
+    subtotal, total = (float(dict(totals)[k].replace(",", "")) for k in ("Subtotal", "Total"))
+    assert (f["subtotal"].value, f["tax_total"].value, f["grand_total"].value) == (subtotal, tax, total)
+    assert f["tax_total"].status != "check" and f["subtotal"].status != "check"
+    assert [li.description for li in read.line_items] == [line[0] for line in lines]  # (no line cut off at it)
+
+
 def test_a_discount_and_freight_between_two_subtotals_are_read_and_the_subtotal_is_not_verified(tmp_path):
     # Factur-X "Rabatte" sample: "Zwischensumme 202,76", "abzgl. Sondernachlass 10% von 147,30 -14,73", "zzgl.
     # Versandkosten 5,80 7", "Rechnungssumme Netto 193,83". The totals add up with either subtotal; 193,83 was verified.
@@ -327,3 +406,154 @@ def test_the_customers_name_beside_its_label_across_the_page_is_never_the_suppli
 
     cands = read_fields(build_layout(one_row_totals(tmp_path, supplier=False, customer="beside")))["vendor_name"]
     assert ONE_ROW_CUSTOMER not in [r.value for r in cands]
+
+
+@pytest.mark.parametrize(
+    ("label", "heading", "top", "named", "ship_to"),
+    [
+        ("BILL TO:", "", False, True, False),  # its letterhead level with the label
+        ("Bill To", "Remit Payment To", False, False, False),  # its name only in its logo
+        ("Bill To", "Remit To", True, True, False),
+        ("Sold To", "Vendor", True, True, False),
+        ("Customer", "Pay To", True, True, False),
+        ("Bill To", "From", True, False, False),
+        ("Customer", "Supplier", True, True, False),
+        ("Bill To", "Remit To", True, True, True),  # "Bill To | Ship To | Remit To"
+    ],
+)
+def test_the_suppliers_block_level_with_a_bare_bill_to_label_is_never_the_customers(
+    tmp_path, label, heading, top, named, ship_to
+):
+    """B-2781: B-2642 took the line level with a bare bill-to label, anywhere to its right, for the customer's block,
+    though the customer's block was under the label: the supplier's own block beside it (its letterhead, "Remit To",
+    "Vendor", "Pay To"...) was read as the customer's, its name dropped and its GST/HST number "may be the
+    customer's". Only the customer's block is the customer's: under the label, or beside it when nothing is under."""
+    from ap_coder.capture.types import BILL_TO_READING
+    from tests.pdfs import ONE_ROW_CUSTOMER, ONE_ROW_GST, ONE_ROW_SUPPLIER, supplier_beside_bill_to
+
+    path = supplier_beside_bill_to(tmp_path, "beside.pdf", label, heading, top=top, named=named, ship_to=ship_to)
+    got = read_fields(build_layout(path))
+    numbers = [(r.value, r.method) for r in got["gst_hst_registration_number"]]
+    assert numbers and all(v == ONE_ROW_GST and BILL_TO_READING not in m for v, m in numbers)
+    names = [str(r.value).rstrip(".") for r in got["vendor_name"]]  # "Inc" as read in a remit-to
+    assert ONE_ROW_CUSTOMER.rstrip(".") not in names
+    assert names[:1] == ([ONE_ROW_SUPPLIER.rstrip(".")] if top or named else [])
+
+
+def test_the_customers_block_beside_its_label_ends_at_the_next_column_and_its_last_line(tmp_path):
+    """B-2781: the customer's block beside "Customer:" (B-2642) was a fixed area 0.42 of the page wide and 0.12 tall
+    from the name: the supplier's remit-to in the next column, and its GST/HST number printed under the customer's
+    address, were read as the customer's. The block ends at the next column and before a number or label."""
+    from ap_coder.capture.reader.patterns import _bill_to_regions
+    from ap_coder.capture.types import BILL_TO_READING
+
+    path = _pdf(tmp_path / "beside.pdf", [
+        (400, 50, "INVOICE", 14), (400, 70, "Invoice #: 118204"), (400, 84, "Invoice Date: 2026-09-14"),
+        (36, 120, "Customer:"), (260, 120, "Maple Ridge Holdings Ltd."), (260, 134, "200 Ridge Road SW"),
+        (260, 158, "GST/HST No. 123456782 RT0001"), (440, 120, "Remit To"), (440, 134, "Northline Supply Ltd."),
+        (440, 148, "PO Box 2210 Stn M"), (440, 162, "Calgary AB T2P 2M4"),
+        (50, 260, "Description"), (500, 260, "Amount"), (50, 276, "Widgets"), (500, 276, "100.00"),
+        (400, 340, "Subtotal"), (500, 340, "100.00"), (400, 354, "GST 5%"), (500, 354, "5.00"), (400, 368, "Total"),
+        (500, 368, "105.00"),
+    ])  # fmt: skip
+    layout = build_layout(path)
+    got = read_fields(layout)
+    assert [r.method for r in got["gst_hst_registration_number"]] and not any(
+        BILL_TO_READING in r.method for r in got["gst_hst_registration_number"]
+    )
+    names = [r.value for r in got["vendor_name"]]
+    assert "Maple Ridge Holdings Ltd." not in names and names[:1] == ["Northline Supply Ltd."]
+    in_bill_to = {ln.text for ln in layout.lines() for r in _bill_to_regions(layout)
+                  if r.page == ln.box.page and r.x0 <= ln.box.cx <= r.x1 and r.y0 <= ln.box.cy <= r.y1}  # fmt: skip
+    assert {"Maple Ridge Holdings Ltd.", "200 Ridge Road SW"} <= in_bill_to
+
+
+def test_the_customers_block_beside_its_label_is_read_down_the_page_to_its_end():
+    """B-2781: the customer's block beside "Customer:" is read a line at a time down the page. Two lines under the
+    name, under a point tall and overlapping (a hidden text layer in tiny type), were each the line under the other:
+    the reading never ended and the invoice was never read."""
+    import threading
+
+    from ap_coder.capture.reader.patterns import _block_beside
+    from ap_coder.capture.types import Box, Line
+
+    def line(text, x0, y0, x1, y1):
+        return Line([], Box(0, x0, y0, x1, y1), text)
+
+    label = line("Customer:", 0.06, 0.15, 0.14, 0.165)
+    lines = [label, line("Maple Ridge Holdings Ltd.", 0.42, 0.15, 0.7, 0.165),
+             line("200 Ridge Road SW", 0.42, 0.18, 0.6, 0.1805),
+             line("Calgary AB", 0.45, 0.1803, 0.62, 0.1808)]  # fmt: skip
+    got = []
+    reading = threading.Thread(target=lambda: got.append(_block_beside(lines, label)), daemon=True)
+    reading.start()
+    reading.join(10)
+    assert got, "the customer's block beside its label was never done"
+    assert got[0] is not None and got[0].x0 < 0.42 and got[0].y1 > 0.18
+
+
+_STREET, _CITY = "200 Ridge Road SW", "Calgary AB T2P 1J9"
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        ("Customer:", "", ""),  # B-2642's own
+        ("Bill To", "Facturer à", ""),  # a bilingual label, stacked
+        ("BILL TO", "FACTURER À", ""),
+        ("Customer:", "Account No. 10045", ""),
+        ("Sold To", "Cust. ID 10045", ""),
+        ("Customer:", "Contact", "Phone"),
+        ("Customer", "Sales Rep", ""),
+        ("Sold To", "Address", "", "Customer No."),  # a form of bare labels, each level with its value
+        ("Bill To", "Facturer à", "", "Account No."),
+    ],
+)
+def test_labels_under_a_bare_bill_to_label_keep_the_customers_block_beside_it(tmp_path, labels):
+    """B-2782: B-2781 took the customer's block beside a bare bill-to label (B-2642) only when nothing but headings
+    was under the label: a label AP Coder reads no field of ("Facturer à" under "Bill To", "Address", "Account No.
+    10045", "Contact", "Sales Rep") was taken for the customer's own block under it, and the customer's name across
+    the page was read as the supplier again. Only a name or an address under the label is its block."""
+    from tests.pdfs import ONE_ROW_CUSTOMER, customer_beside_label
+
+    rows = list(zip(labels, (ONE_ROW_CUSTOMER, _STREET, _CITY, "10045"), strict=False))
+    cands = read_fields(build_layout(customer_beside_label(tmp_path, "form.pdf", rows)))["vendor_name"]
+    assert ONE_ROW_CUSTOMER not in [r.value for r in cands]
+
+
+@pytest.mark.parametrize("label", ["Facturer à :", "FACTURER À", "Livrer à :"])
+def test_a_french_bill_to_label_in_the_infinitive_is_the_customers_block(tmp_path, label):
+    """B-2783: "Facturé à" and "Livré à" were bill-to labels, "Facturer à" and "Livrer à" (as the benchmark's own
+    French invoices print them) were not: the customer's name under them, the supplier's only in its logo, was read
+    as the supplier."""
+    from tests.pdfs import ONE_ROW_CUSTOMER
+
+    path = _pdf(tmp_path / "fr.pdf", [
+        (400, 50, "FACTURE", 14), (400, 70, "No de facture : 118204"), (400, 84, "Date : 2026-09-14"),
+        (50, 130, label), (50, 144, ONE_ROW_CUSTOMER), (50, 158, _STREET), (50, 172, _CITY),
+        (50, 260, "Description"), (500, 260, "Montant"), (50, 276, "Articles"), (500, 276, "100,00"),
+        (400, 340, "Sous-total"), (500, 340, "100,00"), (400, 354, "TPS 5 %"), (500, 354, "5,00"), (400, 368, "Total"),
+        (500, 368, "105,00"), (50, 400, "TPS/TVH : 123456782 RT0001"),
+    ])  # fmt: skip
+    assert ONE_ROW_CUSTOMER not in [r.value for r in read_fields(build_layout(path))["vendor_name"]]
+
+
+_LABELS = ["Billing Address", "SHIPPING ADDRESS:", "Adresse de facturation", "Adresse de livraison :", "Bill-To:",
+           "BILL-TO", "Ship-To:", "Sold-To"]  # fmt: skip
+
+
+@pytest.mark.parametrize("label", _LABELS)
+def test_a_billing_or_shipping_address_label_or_a_hyphenated_bill_to_is_the_customers_block(tmp_path, label):
+    """B-2784: "Billing Address", "Shipping Address", "Adresse de facturation" and "Bill-To" (a hyphen for the space)
+    were no bill-to labels: the customer's name under them, the supplier's only in its logo, was read as the
+    supplier."""
+    from tests.pdfs import ONE_ROW_CUSTOMER
+
+    path = _pdf(tmp_path / "label.pdf", [
+        (400, 50, "INVOICE", 14), (400, 70, "Invoice #: 118204"), (400, 84, "Invoice Date: 2026-09-14"),
+        (50, 130, label), (50, 144, ONE_ROW_CUSTOMER), (50, 158, _STREET), (50, 172, _CITY),
+        (50, 260, "Description"), (500, 260, "Amount"), (50, 276, "Widgets"), (500, 276, "100.00"),
+        (400, 340, "Subtotal"), (500, 340, "100.00"), (400, 354, "GST 5%"), (500, 354, "5.00"), (400, 368, "Total"),
+        (500, 368, "105.00"), (50, 400, "GST/HST No. 123456782 RT0001"),
+    ])  # fmt: skip
+    assert ONE_ROW_CUSTOMER not in [r.value for r in read_fields(build_layout(path))["vendor_name"]]

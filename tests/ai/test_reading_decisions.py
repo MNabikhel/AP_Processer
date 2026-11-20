@@ -333,6 +333,62 @@ def test_the_companys_own_name_is_never_the_supplier(tmp_path, reference):
     assert result.output["vendor_name"] == ONE_ROW_SUPPLIER
 
 
+def test_the_suppliers_letterhead_or_remit_to_level_with_bill_to_still_names_the_supplier(tmp_path, reference):
+    """B-2781: the supplier's letterhead level with "BILL TO:", or its "Remit Payment To" beside "Bill To" (its name
+    only in its logo), was read as the customer's block (B-2642): no supplier (MISSING_VENDOR), though the vendor
+    master lists it by name and GST/HST number, and the number only "may be the customer's"."""
+    from tests.pdfs import ONE_ROW_GST, ONE_ROW_SUPPLIER, supplier_beside_bill_to
+
+    pipe, store = _offline(tmp_path, reference)
+    _listed(store, (ONE_ROW_SUPPLIER, "4471001", ONE_ROW_GST), ("Foothills Print Co.", "4471002", "100000009RT0001"))
+    for name, label, heading, named in (("letterhead.pdf", "BILL TO:", "", True),
+                                        ("remit.pdf", "Bill To", "Remit Payment To", False)):  # fmt: skip
+        result = pipe.process(supplier_beside_bill_to(tmp_path, name, label, heading, top=False, named=named))
+        fields = result.capture.fields
+        assert result.output["vendor_name"] == ONE_ROW_SUPPLIER, name
+        assert fields["vendor_name"].status in ("likely", "verified")
+        assert fields["gst_hst_registration_number"].status == "verified"
+        assert "MISSING_VENDOR" not in {i.code for i in result.report.issues}
+
+
+def test_a_form_of_bare_labels_never_makes_the_customer_the_supplier(tmp_path, reference):
+    """B-2782: "Sold To" over "Address" and "Customer No." (or "Bill To" over "Facturer à"), no colons, the customer's
+    block in a column far to their right, the supplier's name only in its logo and not in the supplier list: the
+    customer, the company AP Coder works for, was the supplier ("likely", nothing to say it is the customer). As
+    before B-2781: no supplier, for a person to fill."""
+    from tests.pdfs import ONE_ROW_CUSTOMER, customer_beside_label
+
+    pipe, _store = _offline(tmp_path, reference)
+    values = (ONE_ROW_CUSTOMER, "200 Ridge Road SW", "Calgary AB T2P 1J9", "10045")
+    for name, labels in (("sold.pdf", ("Sold To", "Address", "", "Customer No.")),
+                         ("bill.pdf", ("Bill To", "Facturer à", "", "Account No."))):  # fmt: skip
+        result = pipe.process(customer_beside_label(tmp_path, name, list(zip(labels, values, strict=True))))
+        assert result.output["vendor_name"] != ONE_ROW_CUSTOMER, name
+        assert result.capture.fields["vendor_name"].status == "missing", name
+        assert "MISSING_VENDOR" in {i.code for i in result.report.issues}
+
+
+def test_a_customer_id_in_the_customers_block_keeps_the_place_of_supply(tmp_path, reference):
+    """B-2785: "Cust. ID 10045" under the customer's name was read as a US address (Idaho and its ZIP code): an Ontario
+    supplier's GST and PST on a supply to Regina were checked as a supply outside Canada, four warnings for nothing
+    (HST not charged, the tax for another province, the tax regime twice)."""
+    from tests.pdfs import text_pdf
+
+    pipe, _store = _offline(tmp_path, reference)
+    result = pipe.process(text_pdf(tmp_path / "id.pdf", [
+        (50, 50, "Great Lakes Mechanical Inc.", 14), (50, 68, "645 King St W, Toronto, ON M5V 2T6"),
+        (50, 82, "GST/HST No. 123456782 RT0001"), (400, 50, "INVOICE", 14), (400, 70, "Invoice #: 118204"),
+        (400, 84, "Invoice Date: 2026-09-14"), (50, 130, "Sold To:"), (50, 144, "Kestrel Foods Ltd."),
+        (50, 158, "Cust. ID 10045"), (50, 172, "5609 Industrial Pkwy"), (50, 186, "Regina, SK S4P 3Y2"),
+        (50, 260, "Description"), (500, 260, "Amount"), (50, 276, "Service call"), (500, 276, "100.00"),
+        (400, 340, "Subtotal"), (500, 340, "100.00"), (400, 354, "GST 5%"), (500, 354, "5.00"), (400, 368, "PST 6%"),
+        (500, 368, "6.00"), (400, 382, "Total"), (500, 382, "111.00"),
+    ]))  # fmt: skip
+    assert result.output["ship_to_province"] == "SK"
+    codes = {i.code for i in result.report.issues}
+    assert not codes & {"HST_NOT_CHARGED", "TAX_PROVINCE_DIFFERS", "TAX_REGIME_MISMATCH"}, codes
+
+
 def test_the_freight_of_a_totals_table_of_one_row_is_a_jd_edwards_line_of_its_own(tmp_path, reference):
     """B-2639: the freight of "Line-Item Total | Freight Amount | ... | Amount Due:" over one row of amounts was not
     read, so it was on no line and JD Edwards would get 656.50 taxed. It is a line of its own, taxed with the goods:

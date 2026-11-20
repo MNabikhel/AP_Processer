@@ -42,6 +42,7 @@ from .jde_voucher import (
     _vouchers,
     sent_due,
     terms_code,
+    us_keyed,
 )
 
 if TYPE_CHECKING:
@@ -176,6 +177,10 @@ def voucher_rows(
         prefix = ("VLACR", "VLCTXA", "VLCTXN", "VLCTAM") if v.foreign else ("VLAG", "VLATXA", "VLATXN", "VLSTAM")
         if settings.amount_mode in (AMOUNT_GROSS, AMOUNT_GL):  # with the tax on G/L lines, E1 takes no tax amount
             out[prefix[0]] = _amount(gross, settings, v.decimals)
+        elif (v.tax_code if code is None else code) == use and atxa:  # use tax (D-312): taxable, JD Edwards' tax
+            out.update({prefix[1]: _amount(atxa, settings, v.decimals),
+                        prefix[2]: _amount(gross - atxa, settings, v.decimals),
+                        prefix[3]: _amount(0, settings, v.decimals)})  # fmt: skip
         elif (v.tax_code if code is None else code) in ("E", "", exempt) or not stam:
             out.update({prefix[1]: _amount(0, settings, v.decimals), prefix[2]: _amount(gross, settings, v.decimals),
                         prefix[3]: _amount(0, settings, v.decimals)})  # fmt: skip
@@ -187,6 +192,7 @@ def voucher_rows(
 
     extras = dict(settings.po_extra_columns) if settings.po_matched else {}
     exempt = settings.exempt_code.strip().upper()
+    use = settings.use_tax_code.strip().upper() if us_keyed(final, settings) else None  # (a US company's, D-312)
     # Each distribution line's own explanation code (D-64): a line marked exempt or zero-rated, on an invoice whose
     # code handles tax, is the exempt code when nothing of the tax is put on it; the others keep the invoice's.
     items = final.get("line_items") or []
@@ -328,7 +334,7 @@ def _claimed_shares(v: _Voucher) -> list[int] | None:
     """Each distribution line's claimable share of the recoverable taxes E1 posts, as the GL distribution has them
     (``tax.tax_shares``, half of a meals line's share: D-90), in the currency's units; None when the invoice's lines
     can't be read back or don't match the distribution lines (then the pay items split the tax themselves)."""
-    from ..coding.tax import half_down, is_meals, tax_shares
+    from ..coding.tax import half_down, invoice_tips, is_meals, tax_shares
     from ..core.schema import InvoiceCoding
     from .exports import entry_lines
 
@@ -344,11 +350,12 @@ def _claimed_shares(v: _Voucher) -> list[int] | None:
         return None
     meals_codes = {str(e.get("gl_code") or "").strip() for e in v.entries if e.get("meals_tax")}
     places = v.decimals
+    tips = invoice_tips(coding, meals_codes)  # a meals line is on it: the tips the distribution has (D-310)
     per_line = [0] * len(items)
     for tl in coding.tax_lines:
         if tl.tax_type not in v.recoverable_types or abs(tl.tax_amount) < 0.005:
             continue
-        for idx, share in tax_shares(coding.line_items, tl, places, coding.tax_lines):
+        for idx, share in tax_shares(coding.line_items, tl, places, coding.tax_lines, tips):
             meal = is_meals(coding.line_items[idx].predicted_gl_code, meals_codes)
             per_line[idx] += _units(half_down(share, places) if meal else share, v.decimals)
     shares = [per_line[i] if i is not None else 0 for i in lines]

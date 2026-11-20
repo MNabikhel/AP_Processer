@@ -38,6 +38,7 @@ from .jde_voucher import (
     sent_due,
     terms_code,
     terms_unmapped,
+    us_keyed,
 )
 
 if TYPE_CHECKING:
@@ -180,7 +181,10 @@ def area_mismatch(v: _Voucher, settings: JdeSettings) -> str:
 
 def pay_item_tax(v: _Voucher, settings: JdeSettings) -> tuple[int | None, int | None]:
     """(the tax amount, the taxable amount) on the voucher's pay item, in cents, as ``voucher_rows`` sends them;
-    (None, None) when it carries no tax: the tax coded to G/L lines, the exempt code or none, or no tax charged."""
+    (None, None) when it carries no tax: the tax coded to G/L lines, the exempt code or none, or no tax charged. A
+    US company's use tax (D-312): the taxable amount alone, JD Edwards working the use tax out from the tax area."""
+    if v.atxa and v.tax_code == settings.use_tax_code.strip().upper() and us_keyed(v.final, settings):
+        return None, v.atxa
     if settings.tax_on_gl or v.tax_code in ("", "E", settings.exempt_code.strip().upper()) or not v.stam:
         return None, None
     return v.stam, v.atxa

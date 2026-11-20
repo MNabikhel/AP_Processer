@@ -38,6 +38,7 @@ from ..chart import (
     ChartRow,
     ChartSettings,
     code_of,
+    split_code,
 )
 from ..keys import company_code
 from . import dialect
@@ -450,6 +451,32 @@ class ChartMixin:
                                "chart_accounts").fetchone()  # fmt: skip
         return int(row[0]), int(row[1])
 
+    def chart_codes(self) -> tuple[set[str], set[str]]:
+        """(every business unit of the chart and of the business units report, every object of the chart), offered
+        or not: what tells a file's account strings Excel cut short (``journal.cut_by_excel``, B-2745)."""
+        with self._conn() as conn:
+            units = {r[0] for r in conn.execute("SELECT DISTINCT bu FROM chart_accounts UNION SELECT code FROM "
+                                                "business_units")}  # fmt: skip
+            objects = {r[0] for r in conn.execute("SELECT DISTINCT object FROM chart_accounts WHERE object != ''")}
+        return units, objects
+
+    def chart_codes_kept(self, companies: Iterable[str], units: Iterable[str], codes: Iterable[str]) -> set[str]:
+        """Of the GL codes ``codes``, those the GL accounts keep of the chart loaded now when a file of ``companies``
+        (its rows without a company on ``units``) replaces their accounts, the others' kept (D-267): those of the
+        other accounts that may be posted to on business units not closed, as ``_lists`` lists them (B-2746)."""
+        codes = set(codes)
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT DISTINCT object, subsidiary FROM chart_accounts WHERE {_in_list('object')} AND "
+                f"{_in_list('posting_edit')} AND bu NOT IN (SELECT code FROM business_units WHERE status NOT IN "
+                f"({', '.join('?' * len(ACTIVE))})) AND NOT ({_in_list('company')} OR (company = '' AND "
+                f"{_in_list('bu')}))",
+                (json.dumps(sorted({split_code(code)[0] for code in codes})),
+                 json.dumps(list(_settings(conn).postable_codes)), *ACTIVE, json.dumps(sorted(companies)),
+                 json.dumps(sorted(units))),
+            ).fetchall()  # fmt: skip
+        return {code_of(obj, sub) for obj, sub in rows} & codes
+
     def chart_edit_counts(self) -> dict[str, int]:
         """{posting edit code: the chart's accounts with it}, counted once a change of the chart (D-272: what the
         Accounts AP posts to card lists as not yet decided)."""
@@ -463,9 +490,15 @@ class ChartMixin:
         return dict(self.summary_memo("chart_edit_counts", count, topic="", asked=self.chart_version()))
 
     def chart_lists(self) -> tuple[dict[str, tuple[str, str]], dict[str, str]]:
-        """The GL accounts and cost centers the chart gives (``chart.account_lists``), worked out by SQLite."""
-        with self._conn() as conn:
-            return _lists(conn)
+        """The GL accounts and cost centers the chart gives (``chart.account_lists``), worked out by SQLite once a
+        change of the chart (``chart_version``: GL accounts and Cost centers count them at each view, B-2748). Shared:
+        read them, don't change them."""
+
+        def lists() -> tuple[dict[str, tuple[str, str]], dict[str, str]]:
+            with self._conn() as conn:
+                return _lists(conn)
+
+        return self.summary_memo("chart_lists", lists, topic="", asked=self.chart_version())
 
     def business_units(self) -> list[BuRow]:
         """Every business unit of the business unit master as imported."""

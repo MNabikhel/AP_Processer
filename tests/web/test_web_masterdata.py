@@ -1100,6 +1100,29 @@ def test_with_a_chart_loaded_gl_accounts_say_where_they_come_from_and_replace_wa
     assert "Load GL accounts</button>" in form
 
 
+def test_gl_accounts_and_cost_centers_work_the_charts_lists_out_once_a_change_of_the_chart(
+    chart_company_client, chart_company, monkeypatch
+):
+    """B-2748: each view of GL accounts or Cost centers worked out the whole chart's two lists again (a GROUP BY of
+    every account that may be posted to: 1 s a million accounts) to count those the chart gives. They are kept
+    until the chart changes."""
+    from ap_coder.core.store import chart as chart_store
+
+    client, store = chart_company_client, chart_company.store
+    worked: list[int] = []
+    real = chart_store._lists
+    monkeypatch.setattr(chart_store, "_lists", lambda conn, settings=None: worked.append(1) or real(conn, settings))
+    cc = len(store.list_accounts("cost_centers"))
+    for tab in ("gl", "cc", "gl", "cc"):
+        assert client.get(f"/accounts?tab={tab}").status_code == 200
+    assert len(worked) == 1
+    unit = store.list_accounts("cost_centers")[0]["code"]
+    store.edit_business_unit(unit, status="N")  # (closed by hand: it leaves the cost centers)
+    worked.clear()
+    page = re.sub(r"\s+", " ", client.get("/accounts?tab=cc").text)
+    assert f"These {cc - 1:,} cost centers come from the" in page and len(worked) == 1
+
+
 def test_no_bank_accounts_yet_says_what_this_person_can_do(store):
     """B-2458: with no bank account, the Bank accounts tab said "Import them above, or type them in the grid below"
     to a Clerk, who can do neither (and to an Approver, who has no import). Each role is told what it can do."""

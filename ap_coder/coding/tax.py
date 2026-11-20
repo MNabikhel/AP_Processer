@@ -409,12 +409,13 @@ def _tax_line_rate(check: _TaxCheck, tl: Any) -> None:
 
 
 def _gst_under_hst(check: _TaxCheck) -> float | None:
-    """The GST rate, when every HST charged is at it on a supply where HST is not levied: the GST printed under the
-    HST's name (an Alberta supplier's "HST Tax" at 5%), all of it claimable as GST (B-2640). None otherwise."""
+    """The GST rate, when every HST charged is at it on a supply where HST is not levied and no GST is charged beside
+    it: the GST printed under the HST's name (an Alberta supplier's "HST Tax" at 5%), all of it claimable as GST
+    (B-2640). None otherwise: GST and HST both charged is the GST charged twice (B-2780)."""
     rates, prov = check.setup.rates, check.prov
     gst = rates.rate_for("GST", prov, check.on) if prov else None
     hst = [tl for tl in check.tax_lines if tl.tax_type == "HST" and not nil(tl.tax_amount)]
-    if not gst or not hst or rates.rate_for("HST", prov, check.on) is not None:
+    if not gst or not hst or "GST" in check.charged or rates.rate_for("HST", prov, check.on) is not None:
         return None
     return gst if all(abs(tl.rate - gst) <= 0.0005 for tl in hst) else None
 
@@ -541,9 +542,10 @@ def _regime_of_the_place_of_supply(check: _TaxCheck) -> None:
         )
         check.foreign = 0.0
     elif not charged:
+        abroad = coding.supplier_province == OUTSIDE_CANADA
         check.add(WARNING, "NO_TAX_CHARGED", f"no sales tax charged on a supply in {name}; "
                   + ("every line is marked exempt, zero-rated or out of scope: confirm it" if all_stated
-                     else _nothing_charged(prov, expected_types)))  # fmt: skip
+                     else _nothing_charged(prov, expected_types, abroad)))  # fmt: skip
     for extra in sorted(charged - expected_types):
         if check.two_provinces and extra in ("GST", "HST"):
             continue
@@ -560,11 +562,14 @@ def _regime_of_the_place_of_supply(check: _TaxCheck) -> None:
             _hst_where_it_applies(check, expected_types, name)
 
 
-def _nothing_charged(prov: str, expected_types: set[str]) -> str:
+def _nothing_charged(prov: str, expected_types: set[str], abroad: bool = False) -> str:
     """What to confirm when an invoice charges no tax at all, and what is still due (B-1520): the provincial tax of a
-    PST province is self-assessed on the taxable lines whoever the vendor is (the self-assessment report counts it)."""
-    text = ("confirm it is exempt or zero-rated, or that the vendor is not registered for GST/HST (a small supplier, "
-            "no GST/HST number printed: no GST/HST is due)")  # fmt: skip
+    PST province is self-assessed on the taxable lines whoever the vendor is (the self-assessment report counts it).
+    ``abroad``: a supplier outside Canada, whose GST/HST not charged is paid at the border or self-assessed (B-2875)."""
+    why = ("a supplier outside Canada not registered for GST/HST charges none: the GST/HST is paid at the border on "
+           "goods (the customs entry), and self-assessed on services when it is due" if abroad
+           else "a small supplier, no GST/HST number printed: no GST/HST is due")  # fmt: skip
+    text = f"confirm it is exempt or zero-rated, or that the vendor is not registered for GST/HST ({why})"
     for provincial in [t for t in ("PST", "QST") if t in expected_types]:
         pname = tax_name(provincial, prov)
         if provincial == "QST":
@@ -710,7 +715,8 @@ def _tax_accounts(check: _TaxCheck, known_gl_codes: set[str] | None, erp_posts: 
     for tax_type in sorted(check.posted & set(MEALS_RESTRICTED)):
         if setup.treatment(tax_type).treatment != RECOVERABLE:
             continue
-        for number in meals_unsure(check.coding.line_items, tax_type, setup.meals_gl_codes):
+        tips = invoice_tips(check.coding, setup.meals_gl_codes)
+        for number in meals_unsure(check.coding.line_items, tax_type, setup.meals_gl_codes, tips):
             check.add(WARNING, "MEALS_TAX_LINES",
                       f"meals line: the {tax_name(tax_type, check.prov)} is spread over lines not marked with it, so "
                       "the half not claimable is a guess. Confirm which lines carry the tax (each line's tax code)",
@@ -838,13 +844,14 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
             "amount": half_up(li.amount),
         }
     tax_entries = []
+    tips = invoice_tips(coding, setup.meals_gl_codes)
     for position, tl in enumerate(coding.tax_lines):
         if nil(tl.tax_amount):
             continue
         t = setup.treatment(tl.tax_type)
         label = f"{tl.tax_type}{' ' + tl.province if tl.province else ''} {tl.rate * 100:.6g}%"  # QST 9.975%
         if t.treatment == EXPENSE_TO_LINE and coding.line_items:
-            for idx, share in tax_shares(coding.line_items, tl, places, coding.tax_lines):  # a tip takes none (B-2169)
+            for idx, share in tax_shares(coding.line_items, tl, places, coding.tax_lines, tips):  # a tip: none (B-2169)
                 e = entries[idx]
                 e["non_recoverable_tax"] = half_up(e["non_recoverable_tax"] + share)
                 e["amount"] = half_up(e["amount"] + share)
@@ -852,7 +859,7 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
         moved = 0.0
         parts: list[tuple[dict[str, Any], float]] = []
         if t.treatment == RECOVERABLE and tl.tax_type in MEALS_RESTRICTED and setup.meals_gl_codes:
-            for idx, part in meals_parts(coding.line_items, tl, setup.meals_gl_codes, places, coding.tax_lines):
+            for idx, part in meals_parts(coding.line_items, tl, setup.meals_gl_codes, places, coding.tax_lines, tips):
                 e = entries[idx]
                 e["non_recoverable_tax"] = half_up(e["non_recoverable_tax"] + part)
                 e["amount"] = half_up(e["amount"] + part)
@@ -891,8 +898,22 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
 # them (Quebec's QST Act does the same for the QST input tax refunds). PST is never recoverable: nothing to halve.
 MEALS_RESTRICTED = ("GST", "HST", "QST")
 MEALS_NOTE = "Meals: 50% of the {taxes} is claimable. Billed to a client or a staff event? Use the other account."
-# A tip or gratuity line: a voluntary tip is not taxed, so none of the tax printed is on it.
+# A tip or gratuity line: a voluntary tip is not taxed, so none of the tax printed is on it. Its words alone don't make
+# one ("Excel tips workshop", "Pipette tips for lab", "Tip fee at landfill"): the invoice it is on does (``tip_lines``).
 _TIP = re.compile(r"\b(tips?|gratuit(?:y|ies|[ée]s?)|pourboires?|thank\s*you|merci)\b", re.I)
+# An invoice that takes tips, as its supplier's name or one of its lines says: a meal, a stay, a ride or a personal
+# service. Not a driver, a delivery, hair, nails or a room alone: a supplies invoice says those too.
+_TAKES_TIPS = re.compile(
+    r"(?i)\b(?:restaurants?|resto|bistro|brasserie|caf[ée]s?|d[îi]ners?|grill|pubs?|taverne?s?|eatery|pizzeria"
+    r"|steakhouse|sushi|pizzas?|burgers?|catering|caterer|traiteur|banquets?|buffet|breakfasts?|brunch|lunch(?:es|eon)?"
+    r"|dinners?|d[ée]jeuners?|suppers?|soupers?|meals?|repas|food|drinks?|boissons?|beers?|bi[èe]res?|wines?"
+    r"|cocktails?|appeti[sz]ers?|entr[ée]es?|desserts?|bar\s+tab|open\s+bar|large\s+party|party\s+of\s+\d+"
+    r"|h[ôo]tels?|motels?|inns?|auberges?|lodges?|resorts?|accommodations?|lodging|h[ée]bergement"
+    r"|room\s+(?:charge|rate|service)|\d+\s+nights?|housekeeping|bellhops?|bell\s*(?:man|men|staff)|valet|concierge"
+    r"|porters?|taxis?|uber|lyft|limo(?:usine)?s?|chauffeurs?|shuttles?|fares?|rides?|livreurs?|salons?|spas?"
+    r"|barber(?:shop)?s?|haircuts?|stylists?|coiffure|coiffeur|massages?|manicures?|pedicures?|tours?|guided"
+    r"|excursions?|instructors?|movers)\b"
+)
 
 
 def meals_note(province: str) -> str:
@@ -912,12 +933,14 @@ def half_down(amount: float, places: int = 2) -> float:
     return float((Decimal(str(amount)) / 2).quantize(unit, rounding=ROUND_DOWN))
 
 
-def tax_shares(lines: list[Any], tax_line: Any, places: int = 2, tax_lines: Any = ()) -> list[tuple[int, float]]:
-    """(line position, its share of ``tax_line``'s tax): spread over the lines that carry it, tip lines left out (a
-    voluntary tip is not taxed), in cents. A tax kept in the expense is added to the lines by these shares
-    (``build_gl_distribution``, B-2169), and the JD Edwards pay items take the same (B-867; a pay item per line, by
-    the same rule, B-1889). ``tax_lines``, the invoice's: a tax printed at two rates or for two provinces is spread
-    over the lines its rate was charged on, when their amounts tell which (``taxmath._lines_of_each_rate``, B-2482)."""
+def tax_shares(lines: list[Any], tax_line: Any, places: int = 2, tax_lines: Any = (),
+               tips: Any = ()) -> list[tuple[int, float]]:  # fmt: skip
+    """(line position, its share of ``tax_line``'s tax): spread over the lines that carry it, the tip lines (``tips``,
+    their positions: ``invoice_tips``) left out (a voluntary tip is not taxed), in cents. A tax kept in the expense is
+    added to the lines by these shares (``build_gl_distribution``, B-2169), and the JD Edwards pay items take the
+    same (B-867; a pay item per line, by the same rule, B-1889). ``tax_lines``, the invoice's: a tax printed at two
+    rates or for two provinces is spread over the lines its rate was charged on, when their amounts tell which
+    (``taxmath._lines_of_each_rate``, B-2482)."""
     items = list(enumerate(lines))
     tax_type = tax_line.tax_type
     # The lines whose tax code carries it; none marked: the lines not marked exempt, zero-rated or out of scope
@@ -930,7 +953,7 @@ def tax_shares(lines: list[Any], tax_line: Any, places: int = 2, tax_lines: Any 
     own = _lines_of_its_rate(lines, tax_line, tax_lines)
     if own is not None:
         targets = [(i, lines[i]) for i in own]
-    untipped = [(i, li) for i, li in targets if not is_tip(li)]
+    untipped = [(i, li) for i, li in targets if i not in tips]
     targets = untipped or targets
     shares = split(tax_line.tax_amount, [li.amount for _, li in targets], places)
     return [(idx, share) for (idx, _li), share in zip(targets, shares, strict=True)]
@@ -951,24 +974,82 @@ def _lines_of_its_rate(lines: list[Any], tax_line: Any, tax_lines: Any) -> list[
     return next((mine for taxes, mine in zip(groups, told, strict=True) if any(t is tax_line for t in taxes)), None)
 
 
-def is_tip(line: Any) -> bool:
-    return bool(_TIP.search(str(getattr(line, "description", "") or "")))
+def tip_lines(lines: list[Any], vendor: str = "", meals_gl_codes: Any = (), tax: float = 0.0) -> frozenset[int]:
+    """The positions of the tips among an invoice's ``lines`` (D-310): a line whose words say tip or gratuity
+    (``_TIP``), not a count of something at a price, on an invoice that takes tips (a line coded to a meals account,
+    or the supplier's name ``vendor`` or a line saying a meal, a stay, a ride or a personal service: ``_TAKES_TIPS``);
+    on another, only after the other lines of its bill and a whole 10 to 25% of them, before the tax printed on them
+    or with it (``_bill``: the invoice's lines and ``tax``, or on an expense claim its receipt's)."""
+    texts = [str(getattr(li, "description", "") or "") for li in lines]
+    worded = {i for i, text in enumerate(texts) if _TIP.search(text) and not _counted(lines[i])}
+    if not worded:
+        return frozenset()
+    if any(is_meals(getattr(li, "predicted_gl_code", ""), meals_gl_codes) for li in lines) or any(
+        _TAKES_TIPS.search(text) for text in (vendor, *texts)
+    ):
+        return frozenset(worded)
+    tips = set()
+    for i in worded:
+        bill, taxed = _bill(lines, texts, i, tax)
+        others = [k for k in bill if k not in worded]
+        before = add_up(lines[k].amount for k in others)
+        if others and i > others[-1] and _a_share(lines[i].amount, (in_cents(before), in_cents(before + taxed))):
+            tips.add(i)
+    return frozenset(tips)
+
+
+# A line of an expense claim: its receipt's merchant, then the line ("Cedarline Kitchen & Bar: Tip", D-216).
+_OF_RECEIPT = re.compile(r"[^:]+: ")
+
+
+def _bill(lines: list[Any], texts: list[str], i: int, tax: float) -> tuple[range, float]:
+    """The positions of the lines a tip at ``i`` would be on and the tax printed on them: on an expense claim, its
+    receipt's (the lines in a row named with its merchant, ``claim.claim_coding``) and the tax read on them
+    (``LineItem.taxes_read``); else every line of the invoice and ``tax``."""
+    named = _OF_RECEIPT.match(texts[i])
+    if named:
+        start, end = i, i + 1
+        while start and texts[start - 1].startswith(named.group()):
+            start -= 1
+        while end < len(texts) and texts[end].startswith(named.group()):
+            end += 1
+        if 1 < end - start < len(texts):
+            read = [v for k in range(start, end) for v in (getattr(lines[k], "taxes_read", None) or {}).values()]
+            return range(start, end), add_up(read)
+    return range(len(lines)), tax
+
+
+def invoice_tips(coding: Any, meals_gl_codes: Any = ()) -> frozenset[int]:
+    """``tip_lines`` of an invoice (``InvoiceCoding``): the same tips for its posting, its Tax check and its voucher."""
+    return tip_lines(coding.line_items, coding.vendor_name, meals_gl_codes, coding.tax_total)
+
+
+def _counted(line: Any) -> bool:
+    """Whether ``line`` is a count of something at a price (3 x 12.00), as a purchase may be and a tip never is."""
+    quantity = float(getattr(line, "quantity", 0) or 0)
+    return abs(quantity) > 1 and within(quantity * float(getattr(line, "unit_price", 0) or 0), line.amount, CENT)
+
+
+def _a_share(amount: float, bases: tuple[int, ...]) -> bool:
+    """Whether ``amount`` is a whole 10 to 25% of one of ``bases`` (in cents), to the cent: a tip on a bill."""
+    cents = in_cents(amount)
+    return any(base and abs(100 * cents - pct * base) <= 100 for base in bases for pct in range(10, 26))
 
 
 def meals_parts(lines: list[Any], tax_line: Any, meals_gl_codes: Any, places: int = 2,
-                tax_lines: Any = ()) -> list[tuple[int, float]]:  # fmt: skip
+                tax_lines: Any = (), tips: Any = ()) -> list[tuple[int, float]]:  # fmt: skip
     """(line position, the tax not claimable) of each meals line for one recoverable tax line: half of each meals
     line's share (``tax_shares``), rounded so the claim is never more than half, is not claimable."""
     if not any(is_meals(getattr(li, "predicted_gl_code", ""), meals_gl_codes) for li in lines):
         return []
     out = []
-    for idx, share in tax_shares(lines, tax_line, places, tax_lines):
+    for idx, share in tax_shares(lines, tax_line, places, tax_lines, tips):
         if is_meals(lines[idx].predicted_gl_code, meals_gl_codes) and not nil(share):
             out.append((idx, half_up(share - half_down(share, places))))
     return out
 
 
-def meals_unsure(lines: list[Any], tax_type: str, meals_gl_codes: Any) -> list[int]:
+def meals_unsure(lines: list[Any], tax_type: str, meals_gl_codes: Any, tips: Any = ()) -> list[int]:
     """The meals lines' numbers whose share of ``tax_type`` is a guess (B-868): no line is marked with that tax, so it
     is spread over every line not marked as carrying none, and other lines (not meals, not a tip) are among them. A
     zero-rated line left unmarked (groceries) would take part of the tax, and less of it would be expensed."""
@@ -976,7 +1057,7 @@ def meals_unsure(lines: list[Any], tax_type: str, meals_gl_codes: Any) -> list[i
         return []
     if any(tax_type in li.taxes_applied for li in lines):
         return []
-    open_lines = [li for li in lines if tax_state(li, tax_type) != NOT_DUE and not is_tip(li)]
+    open_lines = [li for i, li in enumerate(lines) if tax_state(li, tax_type) != NOT_DUE and i not in tips]
     meals = [li for li in open_lines if is_meals(li.predicted_gl_code, meals_gl_codes)]
     others = [li for li in open_lines if not is_meals(li.predicted_gl_code, meals_gl_codes)]
     return [li.line_number for li in meals] if meals and others else []

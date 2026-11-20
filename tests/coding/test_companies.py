@@ -157,6 +157,95 @@ def test_a_companys_name_inside_the_suppliers_own_never_decides(group, reference
     assert output["company"] == "00230"
 
 
+# An intercompany invoice: Maple Ridge Constructors Ltd. (00220, a supplier too) bills Maple Ridge Holdings Ltd. (00210)
+INTERCOMPANY = (
+    "Maple Ridge Constructors Ltd.\n1180 Marine Drive, Kamloops, BC V2C 1A4\nInvoice #: IC-2611\nBill To:\n"
+    "Maple Ridge Holdings Ltd.\n410 Elm Street, Edmonton, AB T5J 0N3\nDescription Qty Amount\n"
+    "Crane time for Fraser Bend Civil Ltd., job 2403 1 2,000.00\n"
+)
+SENDER = ("Maple Ridge Constructors Ltd.", "MAPLE RIDGE CONSTRUCTORS LTD")  # (report 9's name, the vendor list's)
+
+
+def _suppliers_of_the_group(store):
+    suppliers = (("MAPLE RIDGE CONSTRUCTORS LTD", "4410900"), ("MAPLE RIDGE HOLDINGS LTD", "4410901"),
+                 ("KELSO READY MIX LTD", "4410101"))  # fmt: skip
+    store.import_vendor_master([{"vendor_name": n, "erp_id": e} for n, e in suppliers], by_erp_id=True)
+
+
+def test_a_company_of_the_group_printed_as_the_sender_is_offered_to_pick_never_the_one_billed(group, ground_truth):
+    """B-2790 (D-298): report 9's names are never read as the supplier, so an intercompany invoice (Maple Ridge
+    Constructors Ltd., 00220, a supplier too, billing Maple Ridge Holdings Ltd.) was left with no supplier and no
+    company, nothing said of who sent it. A company of the group printed outside the page's bill-to and ship-to that
+    is a supplier in the vendor master is offered for a person to pick: never the company billed, the one decided, the
+    supplier chosen, or a company that is no supplier."""
+    _suppliers_of_the_group(group)
+    unread = _coding(ground_truth, vendor_name="")
+    assert companies.group_suppliers(group, INTERCOMPANY, unread) == [SENDER]
+    for coding in (_coding(ground_truth, vendor_name="", company="00220"),  # the company it is for
+                   _coding(ground_truth, vendor_name="MAPLE RIDGE CONSTRUCTORS LTD")):  # fmt: skip
+        assert companies.group_suppliers(group, INTERCOMPANY, coding) == []
+    # an outside supplier's invoice to a company of the group (a supplier too) and shipped to another
+    page = (
+        "Kelso Ready Mix Ltd.\n88 Industrial Way, Calgary, AB T2E 7H1\nBill to: Maple Ridge Constructors Ltd.\n"
+        "1180 Marine Drive, Kamloops, BC V2C 1A4\nShip To:\nMaple Ridge Holdings Ltd., Kelso Bridge yard\n"
+    )
+    assert companies.group_suppliers(group, page, unread) == []
+    group.set_setting(companies.COMPANIES_SETTING, '{"00220": {"name": "Maple Ridge Constructors Ltd."}}')
+    assert companies.group_suppliers(group, "Maple Ridge Constructors Ltd.\nBill to: Someone\n", unread) == []
+
+
+def test_a_company_billed_under_a_label_written_otherwise_or_a_supplier_in_the_box_is_never_offered(
+    group, ground_truth
+):
+    """B-2792: an outside supplier's invoice billed to one company of the group and shipped to another, its blocks
+    labelled "Bill-To:" and "Ship-To:" (or "BILL-TO", "SOLD-TO:", "Invoiced To:", "Customer Name:", "Billing
+    Address:"), offered both companies as its supplier, the outside supplier read in the vendor box all the same: the
+    labels took their words apart by spaces only, and a supplier in the box never stopped the offer. Offered only with
+    no supplier in the box, or one of the company's own names (the company billed, typed or picked by mistake)."""
+    _suppliers_of_the_group(group)
+    unread = _coding(ground_truth, vendor_name="")
+    for bill, ship in (("Bill-To:", "Ship-To:"), ("BILL-TO", "SHIP-TO"), ("SOLD-TO:", "Delivery Address:"),
+                       ("Invoiced To:", "Shipping Address:"), ("Customer Name:", "Ship - To"),
+                       ("Billing Address:", "Deliver-To:")):  # fmt: skip
+        page = (
+            f"Kelso Ready Mix Ltd.\n88 Industrial Way, Calgary, AB T2E 7H1\n{bill}\nMaple Ridge Holdings Ltd.\n"
+            f"410 Elm Street, Edmonton, AB T5J 0N3\n{ship}\nMaple Ridge Constructors Ltd., Kelso Bridge yard\n"
+        )
+        assert companies.group_suppliers(group, page, unread) == [], bill
+    kelso = _coding(ground_truth, vendor_name="Kelso Ready Mix Ltd.")
+    assert companies.group_suppliers(group, INTERCOMPANY, kelso) == []
+    billed = _coding(ground_truth, vendor_name="Maple Ridge Holdings Ltd.")  # the customer, in the box by mistake
+    assert companies.group_suppliers(group, INTERCOMPANY, billed) == [SENDER]
+
+
+def test_the_sender_is_offered_whatever_its_remit_to_says_to_the_attention_of(group, ground_truth):
+    """B-2793: an intercompany invoice whose remit-to reads "Please remit to: / Attn: Accounts Receivable / Maple Ridge
+    Constructors Ltd." offered nothing: the "Attn:" line opened a customer block inside the supplier's remit-to, and
+    the sender's name in it was taken for the customer's. An "Attn:" line opens one only outside a remit-to."""
+    _suppliers_of_the_group(group)
+    unread = _coding(ground_truth, vendor_name="")
+    remit = "Please remit to:\nAttn: Accounts Receivable\nMaple Ridge Constructors Ltd.\nPO Box 400, Kamloops, BC\n"
+    assert companies.group_suppliers(group, INTERCOMPANY + remit, unread) == [SENDER]
+    # the customer's own "Attn:" line, its name under it and no bill-to label: still the customer's
+    page = INTERCOMPANY.replace("Bill To:\n", "ATTN: Accounts Payable\n")
+    assert "Bill To" not in page and companies.group_suppliers(group, page, unread) == [SENDER]
+
+
+def test_a_company_of_the_group_picked_with_its_supplier_number_decides_the_company_billed(group, reference,
+                                                                                          ground_truth):  # fmt: skip
+    """B-2794: a company of the group with two supplier numbers under its name is picked (or named by its GST/HST
+    number) as "MAPLE RIDGE CONSTRUCTORS LTD #4410900": its own name was compared with the number on it, so rule (b)
+    did not leave it out, and an intercompany invoice naming it and the company billed was held to pick the company.
+    The supplier's name is compared without its number, as without one."""
+    _suppliers_of_the_group(group)
+    group.import_vendor_master([{"vendor_name": "MAPLE RIDGE CONSTRUCTORS LTD", "erp_id": "4410950"}], by_erp_id=True)
+    page = INTERCOMPANY.split("Description")[0]  # the letterhead and the bill-to
+    for picked in ("MAPLE RIDGE CONSTRUCTORS LTD #4410900", "MAPLE RIDGE CONSTRUCTORS LTD #4410950"):
+        output, codes, report = _check(group, reference, _coding(ground_truth, vendor_name=picked), page)
+        assert output["company"] == "00210" and report.checks["company"]["how"] == "name", picked
+        assert "COMPANY_UNKNOWN" not in codes
+
+
 def test_a_short_name_decides_only_printed_as_a_word_of_its_own_in_capitals(group, reference, ground_truth):
     """B-2690: a name of three letters or fewer in Settings → Review ("Art = 230", "MRB = 310") was read in any word
     of the page, whatever its case: "Art supplies" or "art" in a description decided the invoice was 00230's. Such a
@@ -362,3 +451,57 @@ def test_report_9s_country_and_currency_are_read_however_they_are_written(tmp_pa
                                                                          "country": "us"}}))  # fmt: skip
     assert companies.canadian(store, "00210") == (True, "CA and CAD")
     assert companies.companies(store)["00310"].country == "US"
+
+
+def test_a_us_companys_invoice_is_given_no_canadian_place_of_supply(group, reference, ground_truth):
+    """B-2871: a US company's invoice with no ship-to printed was kept with Settings → Review's province as where it
+    is delivered (``PLACE_OF_SUPPLY``): its stored header and the reports said Alberta for it."""
+    import dataclasses
+
+    from ap_coder.core.schema import PLACE_OF_SUPPLY
+
+    reference = dataclasses.replace(reference, tax=dataclasses.replace(reference.tax, our_province="AB"))
+    picked = {"ship_to_province": "", "company_how": "picked"}
+    us, _issues, _report = _check(group, reference, _coding(ground_truth, company="00310", **picked))
+    canadian, _issues, _report = _check(group, reference, _coding(ground_truth, company="00210", **picked))
+    assert PLACE_OF_SUPPLY not in us and canadian[PLACE_OF_SUPPLY] == "AB"
+
+
+def test_a_us_companys_tax_keyed_as_settings_say_is_said_in_place_of_not_checked(group, reference):
+    """D-312: with Settings → JD Edwards E1's US sales and use tax keying a US company's tax, its invoice no longer
+    says its tax is not checked (held for a person): the sales tax charged is said keyed (code S, its supplier's tax
+    area), and one charging none that use tax may be due (code U), its amount worked out only at a rate Settings give
+    the tax area. No tax area from the PO line or the supplier holds the voucher, said."""
+    from ap_coder.core.schema import COMPANY_TAX
+    from tests.webclient import gt
+
+    jde_settings.show(group)
+    jde_settings.save(group, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX, us_tax="keyed"))
+    us = {"company": "00310", "company_how": "picked"}
+    taxed = InvoiceCoding.model_validate(gt("cascade_US_SalesTax_INV-30981", **us))
+    lines = [{**li, "taxes_applied": []} for li in gt("cascade_US_SalesTax_INV-30981")["line_items"]]
+    untaxed = InvoiceCoding.model_validate(gt("cascade_US_SalesTax_INV-30981", tax_lines=[], tax_total=0.0,
+                                              grand_total=6860.0, line_items=lines, **us))  # fmt: skip
+    _output, issues, _report = _check(group, reference, taxed)
+    assert "US_TAX_NOT_CHECKED" not in issues and issues["JDE_TAX_AREA"].severity == "error"  # (no area: held)
+    group.import_vendor_info([{"vendor_name": "Cascade Cloudworks, Inc.", "erp_id": "4420299"}],
+                             [{"erp_id": "4420299", "tax_area": "WA-SPOKANE"}])  # fmt: skip
+    output, issues, _report = _check(group, reference, taxed)
+    assert output[COMPANY_TAX] == {"tax_area": "WA-SPOKANE", "from": "the supplier's default"}
+    assert "US_TAX_NOT_CHECKED" not in issues and "JDE_TAX_AREA" not in issues
+    assert (issues["US_SALES_TAX_KEYED"].severity, issues["US_SALES_TAX_KEYED"].message) == ("info", (
+        "The sales tax charged (710.01) is keyed as the voucher's tax: code S, tax area WA-SPOKANE (the supplier's "
+        "default); its rate is not checked here"))  # fmt: skip
+    _output, issues, _report = _check(group, reference, untaxed)
+    said = ("No sales tax charged: use tax may be due, at the rate of where it is delivered (the ship-to's). The "
+            "voucher is keyed with code U on tax area WA-SPOKANE (the supplier's default), for JD Edwards to work it "
+            "out and accrue it (no rate for tax area WA-SPOKANE in Settings → JD Edwards E1: no amount is worked out "
+            "here)")  # fmt: skip
+    assert (issues["US_USE_TAX"].severity, issues["US_USE_TAX"].message) == ("warning", said)
+    jde_settings.save(group, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX, us_tax="keyed",
+                                                      use_tax_rates={"WA-SPOKANE": 9.1}))  # fmt: skip
+    _output, issues, _report = _check(group, reference, untaxed)
+    assert issues["US_USE_TAX"].message.endswith(": 624.26 at 9.1%, its rate in Settings → JD Edwards E1")
+    jde_settings.save(group, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX))  # (held: as before)
+    _output, issues, _report = _check(group, reference, untaxed)
+    assert "US_TAX_NOT_CHECKED" in issues and not {"US_USE_TAX", "US_SALES_TAX_KEYED"} & set(issues)

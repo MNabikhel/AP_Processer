@@ -6,6 +6,8 @@ from __future__ import annotations
 import html
 import re
 
+import pytest
+
 from ap_coder.bench import jde_company, jde_group
 from ap_coder.bench import jde_exports as made
 from ap_coder.coding import companies
@@ -159,6 +161,170 @@ def test_the_company_box_says_how_its_company_was_decided_and_only_a_persons_pic
     assert Draft.from_form({"company": "00230", "company_how": ""}, Draft.stored(final)).company_how == ""
 
 
+SIBLING = jde_group.GroupSupplier(*next(r for r in jde_group.SUPPLIERS if r[0] == 4410900))  # 00220, a supplier too
+KELSO = {"vendor_name": "KELSO READY MIX LTD", "erp_id": "4410101"}
+
+
+def _invoice(store, sender: str, billed: str, number: str, gst: str = "", bill: str = "Bill To:",
+             ship: tuple[str, str] = ("", "")) -> int:  # fmt: skip
+    """A made-up invoice of ``sender`` to ``billed`` (under the label ``bill``; ``ship``: a ship-to's label and name
+    beside it), read and coded by the pipeline as one dropped in: its id."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from tests.pdfs import text_pdf
+    from tests.webclient import web_settings
+
+    items = [(50, 50, sender, 14), (50, 68, "1180 Marine Drive, Kamloops, BC V2C 1A4"), (400, 50, "INVOICE", 14),
+             (400, 70, f"Invoice #: {number}"), (400, 84, "Invoice Date: 2026-10-14"), (400, 98, "Terms: Net 30"),
+             (400, 112, f"GST/HST No. {gst}" if gst else ""), (50, 120, bill), (50, 134, billed),
+             (300, 120, ship[0]), (300, 134, ship[1]),
+             (50, 148, "410 Elm Street, Edmonton, AB T5J 0N3"), (50, 220, "Description"), (400, 220, "Qty"),
+             (500, 220, "Amount"), (50, 236, "Project management, October"), (400, 236, "1"), (500, 236, "2,000.00"),
+             (400, 300, "Subtotal"), (500, 300, "2,000.00"), (400, 314, "GST 5%"), (500, 314, "100.00"),
+             (400, 328, "Total"), (500, 328, "2,100.00")]  # fmt: skip
+    path = text_pdf(store.path.parent / f"{number}.pdf", [i for i in items if i[2]])
+    return InvoicePipeline(web_settings(), store.reference_data(), store=store).process(path).invoice_id
+
+
+def _vendor_box(client, invoice_id: int) -> str:
+    page = html.unescape(client.get(f"/review/{invoice_id}").text)
+    return page.split('data-field="vendor_name"', 1)[1].split("</details>", 1)[0]
+
+
+def test_an_intercompany_invoice_offers_the_company_of_the_group_that_sent_it_and_its_pick_decides_the_company(
+    client, store
+):
+    """B-2790 (D-298): with report 9 loaded, an invoice of one company of the group to another (Maple Ridge
+    Constructors Ltd., 00220, a supplier too, to Maple Ridge Holdings Ltd., 00210) lost its supplier when the vendor
+    master has no GST/HST number for it: its name, never read as the supplier, was said nowhere, and the invoice was
+    held with no supplier and no company. The vendor box offers it with one click, never filled; picked, the company
+    billed is decided. Its number in the vendor master names it as before, and an outside supplier's invoice to a
+    company of the group never offers that company."""
+    load_sample_setup(store)
+    _card(client, jde_group.companies_xlsx())
+    store.import_vendor_master([{"vendor_name": SIBLING.name, "erp_id": str(SIBLING.number)}, KELSO], by_erp_id=True)
+    invoice_id = _invoice(store, "Maple Ridge Constructors Ltd.", "Maple Ridge Holdings Ltd.", "IC-2611",
+                          SIBLING.tax_id)  # fmt: skip
+    box = _vendor_box(client, invoice_id)
+    assert 'name="vendor_name" value=""' in box  # offered, never put in
+    assert ("Maple Ridge Constructors Ltd. is a company of the group and a supplier: if it billed this invoice, pick "
+            "it.") in box  # fmt: skip
+    assert f'data-help-use="{SIBLING.name}">Use {SIBLING.name}</button>' in box
+    data = {**Draft.stored(store.get_invoice(invoice_id)["ai_output"]).header}
+    assert "MISSING_VENDOR" in html.unescape(client.post(f"/review/{invoice_id}/check", data=data,
+                                                         headers=PAGE).json()["sections"]["checks"])  # fmt: skip
+    picked = client.post(f"/review/{invoice_id}/check", data={**data, "vendor_name": SIBLING.name},
+                         headers=PAGE).json()  # fmt: skip
+    assert picked["header"]["values"]["company"] == "00210" and "vendor_name" not in picked["header"]["help"]
+    assert "Pick the company" not in html.unescape(picked["sections"]["checks"])
+    # its GST/HST number in the vendor master: the number names it, the company billed decided, nothing to offer
+    store.import_vendor_master([{"vendor_name": SIBLING.name, "erp_id": str(SIBLING.number), "gst": SIBLING.tax_id},
+                                KELSO], by_erp_id=True)  # fmt: skip
+    by_number = _invoice(store, "Maple Ridge Constructors Ltd.", "Maple Ridge Holdings Ltd.", "IC-2612",
+                         SIBLING.tax_id)  # fmt: skip
+    read = store.get_invoice(by_number)["ai_output"]
+    assert (read["vendor_name"], read["company"]) == (SIBLING.name, "00210")
+    assert "data-help-use" not in _vendor_box(client, by_number)
+    # an outside supplier's invoice to the company of the group that is a supplier too: never offered
+    outside = _invoice(store, "Kelso Ready Mix Ltd.", "Maple Ridge Constructors Ltd.", "KR-4410")
+    read = store.get_invoice(outside)["ai_output"]
+    assert (read["vendor_name"], read["company"]) == ("Kelso Ready Mix Ltd.", "00220")
+    assert "data-help-use" not in _vendor_box(client, outside)
+    cleared = {**Draft.stored(read).header, "vendor_name": ""}
+    answer = client.post(f"/review/{outside}/check", data=cleared, headers=PAGE).json()
+    assert answer["header"]["help"]["vendor_name"]["actions"] == [  # the page's own reading, never the company billed
+        {"label": "Use Kelso Ready Mix Ltd. from the page", "value": "Kelso Ready Mix Ltd."}
+    ]
+
+
+def test_an_outside_suppliers_invoice_labelled_bill_to_with_a_hyphen_never_offers_the_companies_it_names(client, store):
+    """B-2792 on the screen: an outside supplier's invoice, read with its supplier in the vendor box, billed to Maple
+    Ridge Holdings Ltd. under "Bill-To:" and shipped to Maple Ridge Constructors Ltd. under "Ship-To:" (two of the
+    group, no company decided, both suppliers too) offered both as its supplier under the vendor box: one click put
+    the customer in place of the supplier."""
+    load_sample_setup(store)
+    _card(client, jde_group.companies_xlsx())
+    holdings = {"vendor_name": "MAPLE RIDGE HOLDINGS LTD", "erp_id": "4410901"}
+    store.import_vendor_master([{"vendor_name": SIBLING.name, "erp_id": str(SIBLING.number)}, holdings, KELSO],
+                               by_erp_id=True)  # fmt: skip
+    outside = _invoice(store, "Kelso Ready Mix Ltd.", "Maple Ridge Holdings Ltd.", "KR-4411", bill="Bill-To:",
+                       ship=("Ship-To:", "Maple Ridge Constructors Ltd."))  # fmt: skip
+    read = store.get_invoice(outside)["ai_output"]
+    assert read["vendor_name"] == "Kelso Ready Mix Ltd." and not read.get("company")
+    assert "data-help-use" not in _vendor_box(client, outside)
+    cleared = {**Draft.stored(read).header, "vendor_name": ""}
+    answer = client.post(f"/review/{outside}/check", data=cleared, headers=PAGE).json()
+    assert "of the group" not in answer["header"]["help"].get("vendor_name", {}).get("text", "")
+
+
+def test_a_company_of_the_group_named_with_its_supplier_number_is_the_supplier_not_the_customer(client, store):
+    """B-2794 as read: a company of the group with two supplier numbers under its name is named by its GST/HST number
+    with its number ("MAPLE RIDGE CONSTRUCTORS LTD #4410900", D-219). Compared with the company's own names with that
+    number on it, it was taken for the customer: the invoice was held to pick its company, and with no bill-to label
+    its own letterhead address was taken for the bill-to (BC, not the company billed's AB)."""
+    load_sample_setup(store)
+    _card(client, jde_group.companies_xlsx())
+    store.import_vendor_master([{"vendor_name": SIBLING.name, "erp_id": str(SIBLING.number), "gst": SIBLING.tax_id},
+                                {"vendor_name": SIBLING.name, "erp_id": "4410950"}, KELSO], by_erp_id=True)  # fmt: skip
+    for number, bill in (("IC-2613", "Bill To:"), ("IC-2614", "")):
+        read = store.get_invoice(_invoice(store, "Maple Ridge Constructors Ltd.", "Maple Ridge Holdings Ltd.", number,
+                                          SIBLING.tax_id, bill=bill))["ai_output"]  # fmt: skip
+        assert read["vendor_name"] == f"{SIBLING.name} #{SIBLING.number}", bill
+        assert (read["company"], read["ship_to_province"]) == ("00210", "AB"), bill
+
+
+@pytest.fixture
+def browser(chromium, store):
+    """The dashboard on ``store`` served on this computer and a Chromium to open it: (browser, base URL)."""
+    from ap_coder.web.app import create_app
+    from tests.browser import browser_on
+    from tests.webclient import web_settings
+
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as opened:
+        yield opened
+
+
+def test_in_a_browser_the_company_of_the_group_offered_is_put_in_with_one_click_and_the_company_billed_follows(
+    browser, client, store
+):
+    """D-298 on the screen: the offer under the vendor box (B-2790; the box had no place for it, B-2791) puts the
+    supplier in with one click, and the screen, drawn again for the company the check then decides, keeps it."""
+    load_sample_setup(store)
+    _card(client, jde_group.companies_xlsx())
+    store.import_vendor_master([{"vendor_name": SIBLING.name, "erp_id": str(SIBLING.number)}, KELSO], by_erp_id=True)
+    invoice_id = _invoice(store, "Maple Ridge Constructors Ltd.", "Maple Ridge Holdings Ltd.", "IC-2611")
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": 1366, "height": 768})
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base}/review/{invoice_id}")
+    page.wait_for_selector(".iv-sheet:not(.loading)")
+    offer = page.locator("[data-field=vendor_name] > [data-help]")
+    offer.locator("[data-help-use]").wait_for()
+    assert "is a company of the group and a supplier: if it billed this invoice, pick it." in offer.inner_text()
+    assert page.locator("[form=inv][name=company]").input_value() == ""
+    offer.locator("[data-help-use]").click()
+    assert page.locator("#vendor-name").input_value() == SIBLING.name
+    page.wait_for_function("document.querySelector('[form=inv][name=company]').value === '00210'")
+    page.wait_for_selector(".iv-sheet:not(.loading)")
+    assert page.locator("#vendor-name").input_value() == SIBLING.name and not offer.is_visible()
+    assert "Maple Ridge Holdings Ltd. is named on the invoice" in page.locator("[data-company-source]").inner_text()
+    assert errors == []
+
+
+def test_settings_review_lists_the_companies_names_of_report_9_as_never_read_as_a_supplier(client, store):
+    """D-298: report 9's names are the company's own names too, never read as the supplier, but Settings → Review's
+    "Your company's names" showed only the ones typed there: a pilot tester could not see why a company of the group
+    was never read as its invoices' supplier. They are listed under the box, read-only, said where they come from."""
+    page = html.unescape(client.get("/settings/review").text)
+    assert "From JD Edwards' companies" not in page
+    _card(client, jde_group.companies_xlsx())
+    page = html.unescape(client.get("/settings/review").text)
+    listed = page.split("From JD Edwards' companies", 1)[1].split("</p>", 1)[0]
+    assert "00210 Maple Ridge Holdings Ltd." in listed and "00410 Maple Ridge Caribbean Ltd." in listed
+    assert 'name="our_names"' in page and "Maple Ridge Holdings" not in page.split('name="our_names"', 1)[1].split(
+        "</textarea>", 1)[0]  # fmt: skip
+
+
 def test_a_name_written_for_a_company_the_companies_report_does_not_list_is_not_saved(client, store):
     """B-2694: a variation of Settings → Review's "Your company's names" written "name = company" with the company
     mistyped ("Cascade Line = 330", meant 00320) was saved and decided invoices for a company JD Edwards may not have.
@@ -238,7 +404,33 @@ def test_a_chart_searched_as_typed_lists_a_business_units_accounts_with_nothing_
     assert [row[0] for row in found] == [f"{cf.HOME}.{code}" for code in ("5410", "5410.2210", "5410.7701", "5710")]
     assert found[1] == [f"{cf.HOME}.5410.2210", "Coffee and Refreshments", "Head Office General"]
     assert client.get(f"/review/accounts.json?unit={cf.CLOSED}").json()["list"] == []  # (closed: nothing offered)
-    assert client.get("/review/accounts.json?unit=").json()["list"] != []  # (no unit: the whole list, as before)
+    assert client.get("/review/accounts.json?unit=").json()["list"] == []  # (no unit: none, never the whole list)
+
+
+def test_a_chart_searched_as_typed_is_never_made_or_sent_whole_for_a_question_with_nothing_asked(
+    client, store, monkeypatch
+):
+    """B-2762: a chart too big to send (more than LIST_MOST accounts, a group's of millions: D-267) was still made
+    whole, sent and kept for ``GET /review/accounts.json`` with nothing typed and no business unit, by anyone who may
+    look at invoices (the Read-only role): at 3,500,000 accounts about 90 s of the server and over a gigabyte, kept
+    until the chart changed. No page asks for it so; it is answered with no account, what the page asks as before."""
+    from ap_coder.web.pages import invoice_lookups
+    from tests import chart_files as cf
+    from tests.core.test_chart import _chart, _units
+
+    load_sample_setup(store)
+    store.import_business_units(_units().rows)
+    store.import_chart(_chart().rows)
+    monkeypatch.setattr(invoice_lookups, "LIST_MOST", 5)
+    monkeypatch.setattr(invoice_lookups, "_account_list", lambda reference: pytest.fail("the whole list was made"))
+    for asked in ("", "?v=0123", "?unit=", "?q=", "?company=&q=&unit="):
+        answer = client.get(f"/review/accounts.json{asked}")
+        assert answer.json() == {"list": []} and answer.headers["cache-control"] == "no-store", asked
+    found = client.get("/review/accounts.json?q=coffee").json()["list"]
+    assert found == [[f"{cf.HOME}.5410.2210", "Coffee and Refreshments", "Head Office General"]]
+    assert [row[0] for row in client.get(f"/review/accounts.json?unit={cf.HOME}").json()["list"]][:1] == [
+        f"{cf.HOME}.5410"
+    ]
 
 
 def test_an_invoice_approved_before_report_9_is_sent_back_at_its_second_approval_to_be_given_its_company(
@@ -269,3 +461,116 @@ def test_an_invoice_approved_before_report_9_is_sent_back_at_its_second_approval
     assert store.get_invoice(page.id)["final_output"]["company"] == "00210"
     shown = html.unescape(_second_approval(store, client, monkeypatch, page))
     assert store.get_invoice(page.id)["status"] == APPROVED, shown[shown.find("Not done") :][:300]
+
+
+def test_a_us_companys_invoice_shows_no_canadian_place_of_supply(client, store):
+    """B-2871: the review screen's header said "Place of supply: Alberta" (Settings → Review's province) on a US
+    company's invoice shipped to Spokane, WA, or with no ship-to printed, though no Canadian tax is checked for it. A
+    company not checked for Canadian tax shows the ship-to printed (outside Canada), never a province worked out."""
+    load_sample_setup(store)
+    store.set_setting("our_province", "AB")
+    _card(client, jde_group.companies_xlsx())
+    us = {"company": "00310", "company_how": "picked", "currency": "USD"}
+    shown = {}
+    for ship_to in ("OUTSIDE_CANADA", ""):
+        invoice_id = add_clean(store, ship_to_province=ship_to, **us)
+        data = Draft.stored(store.get_invoice(invoice_id)["ai_output"]).header
+        answer = client.post(f"/review/{invoice_id}/check", data=data, headers=PAGE).json()
+        head = html.unescape(answer["sections"]["summary"]).split('class="rvw-head-meta"', 1)[1].split("</div>")[0]
+        shown[ship_to] = re.findall(r'title="Place of supply">([^<]*)<', head)
+    assert shown == {"OUTSIDE_CANADA": ["Outside Canada"], "": []}
+    canadian = add_clean(store, ship_to_province="", company="00210", company_how="picked")
+    data = Draft.stored(store.get_invoice(canadian)["ai_output"]).header
+    head = html.unescape(client.post(f"/review/{canadian}/check", data=data, headers=PAGE).json()["sections"][
+        "summary"])  # fmt: skip
+    assert 'title="Place of supply">Alberta<' in head  # (a Canadian company's: Settings' province, as before)
+
+
+def test_the_us_sales_and_use_tax_card_keeps_how_each_us_companys_tax_is_keyed(client, store):
+    """D-312: Settings → JD Edwards E1's US sales and use tax card, with several companies: each company not checked
+    for Canadian tax, its tax held for a person until the card keys it (for every one, or a company its own way); the
+    sales and use tax codes and the use tax rates, a tax area a line, kept and shown again; a code of the Canadian
+    taxes, the same code twice or a line that is no rate refused, said why."""
+    from ap_coder.erp import jde_settings
+    from ap_coder.web.core import SHOW_JDE
+
+    store.set_setting(SHOW_JDE, "1")
+    assert 'id="us-tax"' not in client.get("/settings/jde").text  # one company: no such card
+    _card(client, jde_group.companies_xlsx())
+    card = html.unescape(client.get("/settings/jde").text).split('id="us-tax"', 1)[1].split("</section>", 1)[0]
+    assert re.findall(r'name="us_company" value="(\d+)"', card) == ["00310", "00320", "00410"]  # (not the Canadian)
+    assert '<option value="held" selected>Held for a person to confirm it (as before)</option>' in card
+    form = {"us_tax": "keyed", "us_company": ["00310", "00320", "00410"], "us_company_tax": ["held", "", ""],
+            "sales_tax_code": "s", "use_tax_code": "U", "use_tax_rates": "WA-SPOKANE = 9.1\n\nmt-blgs 0%"}  # fmt: skip
+    assert "US sales and use tax saved." in follow(client, client.post("/settings/jde/us-tax", data=form,
+                                                                         headers=PAGE))  # fmt: skip
+    js = jde_settings.load(store)
+    assert (js.us_tax, js.company_us_tax, js.sales_tax_code, js.use_tax_code) == ("keyed", {"00310": "held"}, "S", "U")
+    assert js.use_tax_rates == {"WA-SPOKANE": 9.1, "MT-BLGS": 0.0}
+    card = html.unescape(client.get("/settings/jde").text).split('id="us-tax"', 1)[1].split("</section>", 1)[0]
+    assert "MT-BLGS = 0\nWA-SPOKANE = 9.1</textarea>" in card and '<option value="keyed" selected>' in card
+    for change, said in (
+        ({"sales_tax_code": "V"}, "not V, C, B or E (the Canadian taxes' codes)"),
+        ({"use_tax_code": "S"}, "The sales tax and the use tax codes must differ."),
+        ({"use_tax_rates": "WA-SPOKANE nine"}, "“WA-SPOKANE nine” is no tax area and rate"),
+        ({"use_tax_rates": "MT-BILLINGS 0"}, "Tax area MT-BILLINGS is longer than JD Edwards' 10"),
+    ):
+        answer = client.post("/settings/jde/us-tax", data={**form, **change}, headers=PAGE)
+        assert answer.status_code == 400 and said in answer.json()["error"], answer.text
+    assert jde_settings.load(store).use_tax_rates == {"WA-SPOKANE": 9.1, "MT-BLGS": 0.0}  # (nothing refused kept)
+
+
+@pytest.mark.parametrize("width", [1366, 390])
+def test_in_a_browser_the_us_sales_and_use_tax_card_is_filled_in_and_saved(chromium, store, width):
+    """D-312 in a browser, on a laptop and a phone: the US sales and use tax card is on Settings → JD Edwards E1 with
+    every box on screen (nothing past the page's right edge), its choices made and rates typed as a person does, and
+    saved with its own button, the page saying so."""
+    import json
+
+    from ap_coder.erp import jde_settings
+    from ap_coder.web.app import create_app
+    from ap_coder.web.core import SHOW_JDE
+    from tests.browser import browser_on, wait_until
+    from tests.webclient import web_settings
+
+    store.set_setting(SHOW_JDE, "1")
+    store.set_setting(companies.COMPANIES_SETTING, json.dumps({c[0]: {"name": c[1], "currency": c[2], "country": c[3]}
+                                                               for c in jde_group.GROUP}))  # fmt: skip
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
+        page = browser.new_page(viewport={"width": width, "height": 800})
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/settings/jde")
+        card = page.locator("#us-tax")
+        card.scroll_into_view_if_needed()
+        assert card.is_visible() and "Held for a person to confirm it (as before)" in card.inner_text()
+        card.locator('select[name="us_tax"]').select_option("keyed")
+        card.locator('select[aria-label="How the tax of Maple Ridge Caribbean Ltd. is keyed"]').select_option("held")
+        card.locator('textarea[name="use_tax_rates"]').fill("WA-SPOKANE = 9.1")
+        for box in card.locator("select, input:not([type=hidden]), textarea, button").all():
+            box.scroll_into_view_if_needed()
+            right = page.evaluate("b => b.getBoundingClientRect().right", box.element_handle())
+            assert right <= width + 1, box.evaluate("b => b.outerHTML")[:120]
+        card.locator("button[type=submit]").click()
+        wait_until(page, lambda: jde_settings.load(store).us_tax == "keyed")
+        page.wait_for_selector("text=US sales and use tax saved.")
+        js = jde_settings.load(store)
+        assert (js.company_us_tax, js.use_tax_rates) == ({"00410": "held"}, {"WA-SPOKANE": 9.1})
+        assert page.evaluate("document.documentElement.scrollWidth") <= width + 1 and errors == []
+
+
+def test_a_us_companys_sales_tax_rate_is_never_marked_wrong_by_canadas_rates(client, store):
+    """B-2873: the review screen's Rates and GL accounts marked a US company's sales tax rate wrong (✕), its official
+    rate "not levied": Canada's rate table, though the company is not checked for Canadian tax. Its rate is said not
+    checked, unmarked; a Canadian company's foreign tax is still marked as before."""
+    load_sample_setup(store)
+    _card(client, jde_group.companies_xlsx())
+    shown = {}
+    for company in ("00310", "00210"):
+        invoice_id = add_clean(store, "cascade_US_SalesTax_INV-30981", company=company, company_how="picked")
+        data = Draft.stored(store.get_invoice(invoice_id)["ai_output"]).header
+        answer = client.post(f"/review/{invoice_id}/check", data=data, headers=PAGE).json()
+        rates = html.unescape(answer["sections"]["taxcheck"]).split("Rates and GL accounts", 1)[1]
+        official = re.findall(r'<td class="r">(not [a-z]+)</td>', rates)
+        shown[company] = (re.findall(r'aria-label="(Right|Wrong)"', rates), official)
+    assert shown == {"00310": ([], ["not checked"]), "00210": (["Wrong"], ["not levied"])}

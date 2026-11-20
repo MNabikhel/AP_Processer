@@ -96,6 +96,10 @@ LABELS: dict[str, dict[str, list[str]]] = {
     "RST": {"en": ["RST", "PST", "MB RST"], "fr": ["TVD"]},
     "QST": {"en": ["QST", "Q.S.T."], "fr": ["TVQ", "T.V.Q."]},
     "SALES": {"en": ["Sales Tax", "Tax", "State Sales Tax"], "fr": ["Taxe de vente"]},
+    # A US state's, county's and city's sales tax, each on a row of its own (the pilot day's US suppliers, D-311).
+    "STATE": {"en": ["State Sales Tax", "State Tax"], "fr": ["State Sales Tax"]},
+    "COUNTY": {"en": ["County Sales Tax", "County Tax"], "fr": ["County Sales Tax"]},
+    "CITY": {"en": ["City Sales Tax", "City Tax", "Local Sales Tax"], "fr": ["City Sales Tax"]},
     "bn": {
         "en": [
             "GST/HST Reg. No.",

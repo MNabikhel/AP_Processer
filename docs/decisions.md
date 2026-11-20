@@ -6672,7 +6672,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     candidates, the Account box (its list, its search, a business unit's), a fixed coding rule (`account_problem`),
     the PO's coding used on the screen (flagged, not kept quietly), a person's typing, Approve and Approve anyway, bulk
     approval and the second approval's check again (D-257). None slipped but the box's search, which read the first
-    1,000 matches and kept those offered (B-2652): what may be posted to is now asked of SQLite with the words.
+    1,000 matches and kept those offered (B-2652): what may be posted to is now asked of SQLite with the words,
+    and every other rule of what is offered with it (B-2741).
   - **The pilot** (`pilot_companies`, the same card and `chart settings --pilot-companies`; empty: every company). An
     invoice of a company outside it is `COMPANY_NOT_IN_PILOT`: an error Approve anyway never covers, always a person,
     so no approval (single, bulk, touchless, second) passes it until someone who may change the settings adds the
@@ -6964,6 +6965,94 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - *Left as it is:* an invoice the batch check holds stays in Ready to export, listed with why, and is not put on a
     keying batch's Not ready sheet (B-2148): that sheet lists what a batch holds that its own checks hold back at
     download.
+- **D-290** · **A business unit whose posting edit code is K (its budget locked) takes postings, as blank and ACT
+  do** (`core/chart.py` `ACTIVE`; every path reads it: the chart in memory, the database's `IndexedPairs`, the cost
+  centers, `chart load`'s count of closed business units, the Business units table's note; B-2744).
+  - **Why:** report 2's Job Sts is F0006 MCPECC, the business unit's posting edit code (UDC H00/PE). In JD Edwards,
+    K lets transactions post to the business unit and locks only its original budget (changed by change orders);
+    Job Cost locks a job's budget by setting it to K, so a construction group's open jobs are many of them K. Read as
+    closed, each was never offered and a line coded to one was BU_INACTIVE, an error Approve anyway never covers,
+    where JD Edwards takes the voucher. The accounts' own K already took postings (`KNOWN_EDITS`, D-272).
+  - **What:** a business unit is closed when its status is anything but ACT, blank or K: N (no postings) and P (no
+    postings, the job may be purged) are, as any other. *Not chosen:* a setting of the business units' codes (as
+    Accounts AP posts to is the accounts'): JD Edwards says what K means, and a person who wants one job closed
+    changes its status by hand (D-221).
+  - **A database loaded before:** its GL accounts and cost centers were worked out with K closed, while the chart's
+    answers read the statuses as they are: a K job's accounts were offered and a line coded to one CC_UNKNOWN
+    (B-2750). Its lists are worked out again once when a business unit has a status that takes postings now and did
+    not then (`migrations._chart_active`, settings.chart_active: the statuses they were worked out with; 5 s at
+    3,370,000 accounts). No schema version of its own: an older AP Coder still opens the database.
+- **D-295** · **The AI reviewer's corrections, reviewed** (D-263, D-184; an adversarial review, 20 Nov 2026; B-2800 to
+  B-2806).
+  - **An amount printed on the page** is one printed as money: with its cents, or a currency sign or code right
+    beside it (`_printed_money`); never digits run into letters or other digits (a phone, invoice, PO or GST/HST
+    number, a date, a postal code), nor a rate; a receipt's tax flag after its cents ("4.50GP") and a French "$" after
+    it ("75 $ 150 $") are its own (B-2808). A whole-dollar amount printed bare ("Freight 150") is not taken: the
+    correction is refused and nothing changes, as for any amount not printed. A tax no line can carry is refused.
+  - **A supplier** is never the company's own: its name is compared with Settings' names and JD Edwards' companies'
+    as the supplier list has it, before a supplier number is added ("NAME #2004"). Its name printed on the page is
+    whole words; only a name of several words may have them run together, as a scan reads it.
+  - **Only the proposal asked about is replaced:** `replace_proposal`'s `version` (`proposal_version`: the coding and
+    its findings, not the queue's re-check beside them) as the reviewer read the invoice. Read again or a finding
+    folded in meanwhile (Azure's check, text addressed to software), nothing changes. An invoice parked, drafted or
+    open (on the server) is not asked at all.
+  - **The corrections are a revision of the invoice** (`verifier_corrected`, in `REVISION_ACTIONS` beside D-184's):
+    a laptop keeps nothing of who has an invoice open, so they may go in under an open review screen; it is then out
+    of date ("Corrected by AI reviewer today at …"), read-only, and its check and approval are refused. Chosen over
+    keeping who has it open on a laptop too: D-184's rule stays, and the corrections are not lost (a refused one is
+    never asked again).
+  - **Every change is said:** a tax put on lines that had none is named in VERIFIER_CORRECTED.
+  - *Left as it is:* a GST/HST number printed only in the bill-to block is not left out, as capture leaves it out
+    (`BILL_TO_REASON`): the own-name check stops the company itself; a customer that is also in the supplier list,
+    under no name of the company's, could still be named by its number.
+- **D-297** · **The master workbook's survey is bounded in time, not only in size: its tags paired as they are found,
+  a row of 8 MB at most, the rows ended with the sheet's data, each sheet read once and 1 GB of sheets in all**
+  (B-2760, B-2761; D-271's patterns, a lazy `(.*?)</row>`, searched to the end of the XML from each element never
+  closed: an upload of 1 KB held the server for hours).
+  - **How** (`chart_file._elements`): each start tag of a row, a cell, a value, a text or a shared string is paired
+    with the end tag after it, and no pattern runs past the next tag. An element never closed, or an end tag with
+    none open, is no workbook's XML: refused in plain words as a workbook that cannot be read, as openpyxl refuses
+    it. A block is cut before a row's start (a row closed in itself too: Excel's empty row given a height) and the
+    rows end with `</sheetData>` (merged cells or links after them never read); 8 MB with no row in it
+    (`ROW_MOST`; the chart's export: 7 KB a row) is refused. A cell past column 1,000 is never padded out to, a
+    reference past Excel's last column (XFD) is one past it however many letters it has, and ten rows at most go to
+    `pick`. Two sheets of one part are refused; the sheets surveyed may unzip to 1 GB in all (`SURVEYED_MOST`: the
+    made-up reports unzip to 9 times their size, a 50 MB upload to about 460 MB).
+  - *Measured* (a shared 4-core machine): the made-up company's year, 2.4 MB, 33,830 rows: 0.53 s before, 0.51 s
+    now, the same counts and first rows (also compared in blocks of 200 bytes to 8 MB, prefixed XML, gaps). Made-up
+    sheets well formed but no export's: empty rows 16 MB/s, rows of 990 empty cells 5 MB/s, so a part of 250 MB
+    about 50 s and 1 GB of them about 3 minutes, the worst left (in time the XML's length, and only for a person
+    with the setup permission).
+  - *Not chosen:* an XML reader (ElementTree's: an event in Python for each element, and its entities to guard); a
+    smaller bound in all (a real upload of 50 MB is near 500 MB).
+- **D-298** · **An invoice one company of the group sends another: its supplier is offered with one click, never
+  read** (B-2790, B-2792 to B-2794; D-262 the company's own names, D-267 report 9's join them).
+  - **The trade-off:** report 9's names stay the company's own, never read as the supplier: the bill-to of every
+    outside invoice prints one, and every company of the group is in the vendor master too, so a name read there
+    would make the customer the supplier, with its history, terms and bank account. An intercompany invoice (the
+    equipment company billing a project company) is named by its GST/HST number when the vendor master holds it
+    (D-262); without it (a US company has none), it is held with no supplier and no company decided, as before.
+  - **What a person sees:** under the empty vendor box (or one holding one of the company's own names, with no
+    company decided), "Maple Ridge Constructors Ltd. is a company of the group and a supplier: if it billed this
+    invoice, pick it.", and *Use MAPLE RIDGE CONSTRUCTORS LTD* (the vendor list's name): never filled. A supplier
+    in the box is never offered a replacement (B-2792). Offered (`companies.group_suppliers`, in
+    `invoice_fields.field_help` after the page's own readings) is each company of report 9 (or a name written
+    "name = company") printed on the page outside its bill-to and ship-to blocks, that is a supplier in use of the
+    vendor master; never the company decided, one in a bill-to or ship-to, or the supplier in the box. The blocks
+    are found on the page's text alone (`offline_coder.customer_block`): a "Bill to", "Ship to", "Sold to",
+    "Client" or "Attn" label's line, written with a hyphen or none too ("Bill-To", "SHIPTO"), or "Invoiced To",
+    "Customer Name", "Billing / Shipping / Delivery Address" (B-2792), and the six lines under it, up to a remit-to
+    (whose "Attn: Accounts Receivable" is the supplier's, B-2793) or the line items' headings. Picked, the company is
+    decided as before: rule (b) leaves the supplier's own name out, so the company billed, printed in the bill-to,
+    decides; a supplier picked with its number ("MAPLE RIDGE CONSTRUCTORS LTD #4410900", one of two of a name) is
+    compared without it (`vendor_master.without_number`, B-2794), there and where its letterhead's address is told
+    from the bill-to's (`offline_coder.code_from_capture`).
+  - **Settings → Review** lists report 9's names under "Your company's names", read-only, said where they come from
+    and that they are never read as a supplier.
+  - *Not chosen:* reading a company of the group as the supplier when it is printed outside the bill-to (the rule
+    reader's bill-to blocks miss a customer printed without a label, an envelope's window: B-2720, and a wrong
+    supplier passes where an empty one is held); taking report 9's names out of the own names when they are
+    suppliers (every one is).
 - **D-300** · **A chart refused as cut short can be loaded anyway from its card, by someone who may change the
   settings** (B-2832; D-272 had the page name the command line's `--anyway`).
   - **What is refused stays refused for anyone:** a file with no account, or none that may be posted to (it is no
@@ -7022,3 +7111,76 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Not changed:** VLDDJ is still sent only from what the invoice prints (B-924): a voucher of the supplier's own
     terms leaves its due date to JD Edwards. JD Edwards' blank code (its most used terms) is still not read: a row
     with no code is left out, and a supplier with no code has no terms.
+- **D-310** · **A tip is told by the invoice it is on, not by its words alone** (B-2860; the owner's to-do, after the
+  four word rules tried on 2026-11-12 and 13 each lost real tips).
+  - **The rule** (`coding/tax.py` `tip_lines`, `invoice_tips`): a line is a tip when its words say tip, gratuity,
+    pourboire, thank you or merci (`_TIP`, as before), it is not a count of something at a price (more than one, at
+    a unit price that makes its amount), and either the invoice takes tips: a line coded to a meals account (the GL
+    accounts marked meals, D-90), or the supplier's name or any line saying a meal, a stay, a ride or a personal
+    service (`_TAKES_TIPS`: restaurant, bistro, dinner, catering, hotel, "1 night", taxi, fare, salon, massage, tour,
+    instructor...); or, on an invoice that says neither, it is printed after the other lines and is a whole 10 to 25%
+    of them, to the cent, before the tax printed or with it (a terminal's 15% of 100.00 + 13.00 HST is 16.95). On an
+    expense claim (D-216) the lines are a tip's own receipt's (`_bill`: the lines in a row named "<merchant>: ...")
+    and the tax read on them (B-2861): the claim, one invoice of every receipt, keeps the tips each receipt found.
+  - **Why by the invoice:** a tip's own words are free ("Dinner tip for Mike", "Three-course dinner tip", "Cooking
+    class instructor tip"), so every rule on the words around a tip word lost some; a purchase named with a tip word
+    comes from a supplier that takes no tips ("Excel tips workshop" from a training centre, "Pipette tips for lab",
+    "Tip fee at landfill", "Thank you cards"). The supplier's usual account reaches the rule through the lines' codes
+    (the coding memory and the supplier's past coding code a restaurant's lines to the meals account), so the rule
+    needs no database: the posting, the Tax check, the meals warning (MEALS_TAX_LINES), the JD Edwards pay items
+    (`jde_zfiles._claimed_shares`), the PST owed on a voucher (`jde_voucher.pst_owed`) and a PO-matched voucher's
+    rows (`jde_match._line_shares`, B-2862) all take the same tips; a voucher's meals accounts are those its G/L
+    distribution halved (`jde_voucher.meals_accounts`). A share must be a whole percent and come after the lines, so a
+    purchase's amount rarely passes for one; a count at a price is never a tip, from any supplier ("Piping tips set",
+    3 x 12.00, from a restaurant supply).
+  - **Kept:** each of the 75 tips the word rules had to keep, and the owner's two (`tests/coding/test_meals.py`
+    `TIPS`), is a tip on an invoice with a meals line, from a bistro or with a dinner line, and as 18% or 15% of the
+    lines on any invoice; a tip printed after the tax (B-931) is untaxed as before. Words a supplies invoice says too
+    ("driver", "delivery", "hair", "nails", "room" alone) are not in `_TAKES_TIPS`.
+  - **Not caught:** a tip on an invoice that says nothing of its kind and is no whole share of it ("Tip 5.00" after
+    "Services 37.00": it takes its share of the tax, as any line), and a purchase named with a tip word on an invoice
+    that takes tips ("Tip trays for restaurant", "Thank you lunch" on the meals account: no share, as before).
+  - **Measured:** the reading benches, quick, on the commit before and after (`run`, `lines`, `coding`), are the same
+    to the line: none of their invoices has a line with a tip word.
+- **D-311** · **A US invoice is read and checked for what it is: its sales tax one tax (OTHER), the math checked, no
+  Canadian tax said of a company not checked for it** (D-267, D-285 to D-287; B-2870 to B-2873).
+  - **Read:** a US supplier's sales tax rows (a state's, a county's, a city's, a transit or special district's: "WA
+    State Sales Tax", "Spokane County Sales Tax", "City of Spokane Sales Tax", "State Tax 6.5%") are the tax total,
+    never a line, freight or a GST/HST/PST/QST; three or four rows with no total printed are added up as two always
+    were (`totals._rows_summed`), so subtotal + tax = total. The coding keeps them as one tax line of type OTHER (the
+    rate their sum's); freight is a line, taxed with the rest when the tax is on it.
+  - **Checked** (a company not checked for Canadian tax): every check but the Canadian tax ones, the totals and the tax
+    lines' sum included; no place of supply worked out for it (B-2871: shown, kept, mailed), nor its rate held
+    against Canada's (B-2873); nothing on the input tax credits or the Self-assessment report (B-2872);
+    `US_TAX_NOT_CHECKED` holds it for a person (`ALWAYS_A_PERSON`).
+  - **Its voucher:** a US company's USD invoice is domestic, a CAD one a foreign entry; the tax area of its PO line or
+    supplier, else held (`JDE_TAX_AREA`); the exempt code, the sales tax inside the G/L lines; PO-matched, the tax on a
+    G/L line of its own (Sales tax, Tax N). A US supplier billing a Canadian company is checked as any supplier outside
+    Canada (no GST/HST charged: `NO_TAX_CHARGED`, the PST to self-assess), its USD voucher a foreign entry.
+  - **The pilot day** (`bench/pilot_day.py`, D-275): the US suppliers in Washington charge the state's, county's and
+    city's sales tax (three rows, or one), the one in Montana none; scored as read and as keyed.
+  - *Read only in the totals block* (B-2874): a state's, county's or city's tax row is no label wherever a line starts
+    with it (a line item says "City of Vancouver tax certificate"); it is read under a subtotal, on no line item's
+    row, its amount alone on its row (`entry._us_tax_rows`). NO_TAX_CHARGED for a supplier outside Canada says its
+    GST/HST is paid at the border or self-assessed (B-2875).
+  - *Not done:* the rates of US sales tax are not checked (no table of them); the AI reviewer's instructions name
+    Canadian sales tax only.
+- **D-312** · **How a US company's tax is keyed on its voucher is a setting, held for a person until the JD Edwards
+  team confirms** (Settings → JD Edwards E1 → US sales and use tax; D-267, D-301, D-311).
+  - **Held for a person** (the default, as before): the tax charged stays in the expense lines with the exempt code;
+    `US_TAX_NOT_CHECKED`. **Keyed** (for every company not checked for Canadian tax, or a company its own way:
+    `JdeSettings.us_tax`, `company_us_tax`, applied by `of_company` as D-301's values): a sales tax charged is the pay
+    item's tax amount with the sales tax code (S), its taxable amount the tax line's, still inside the G/L lines
+    (`US_SALES_TAX_KEYED`, information); an invoice charging none says use tax may be due at the ship-to's rate and
+    goes with the use tax code (U), its whole amount taxable, the tax amount blank for JD Edwards to work out and
+    accrue (`US_USE_TAX`, a warning: a person). A rate given a tax area (`use_tax_rates`) only says the amount.
+  - **The tax area** is the PO line's (one area on the order's lines), else the supplier master's (`voucher_tax`);
+    neither, or keyed on a Canadian province's (a Canadian supplier's default): held, said (`JDE_TAX_AREA`). A
+    PO-matched voucher, and the tax coded to G/L accounts (D-93), are keyed as before whatever the setting
+    (`jde_voucher.us_keyed`).
+  - **To confirm with the JD Edwards team before choosing Keyed:** the explanation codes (S for a sales tax, U for a
+    use tax, or their own); the US tax areas (F4008) and which one a voucher takes (the supplier's, the PO line's, the
+    ship-to's); whether AP keys the sales tax on the voucher (code S, the tax amount) or leaves it in the expense (as
+    held does); whether R04110ZA works out a use tax from the area with the tax amount blank, or wants it sent; how a
+    PO-matched voucher's sales tax is to be matched; and whether the US companies want use tax accrued on every
+    invoice charging none (an out-of-state supplier) or only on some.

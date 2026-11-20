@@ -480,9 +480,29 @@ CHECKS: dict[str, CheckHelp] = {
         "The invoice is for a company that is not checked for Canadian tax: only a company whose country is CA and "
         "whose currency is CAD in JD Edwards' companies is (a US company, one in another country, or one whose "
         "country is blank or whose currency is USD is not), unless Settings → JD Edwards E1 says otherwise for it. "
-        "Every other check runs; its sales tax is not checked here, so it is never approved without a person.",
+        "Every other check runs; its sales tax is not checked here, so it is never approved without a person (unless "
+        "Settings → JD Edwards E1 → US sales and use tax keys its tax: then the two checks below say it instead).",
         "Check the tax charged is right for where the goods or services were delivered, and that the voucher's tax "
         "area (from the PO line, or the supplier's default) is the one to use.",
+    ),
+    "US_SALES_TAX_KEYED": CheckHelp(
+        TAX, "US sales tax keyed",
+        "The invoice is for a company not checked for Canadian tax, and Settings → JD Edwards E1 → US sales and use "
+        "tax keys its tax: the sales tax charged (the state's, county's and city's together) is the voucher's tax "
+        "amount, with the sales tax code (S), on the tax area of its PO line or else its supplier. It stays inside the "
+        "expense lines, as JD Edwards distributes a sales tax. Its rate is not checked here.",
+        "Nothing to do when the tax area is right for where it was delivered. A tax area neither the PO line nor the "
+        "supplier gives holds the voucher: type it in JD Edwards' supplier master or the PO, and load them again.",
+    ),
+    "US_USE_TAX": CheckHelp(
+        TAX, "Use tax may be due",
+        "The invoice is for a company not checked for Canadian tax and charges no sales tax (a supplier in a state "
+        "with none, or in another state): use tax may be due, at the rate of where it is delivered (the ship-to's). "
+        "With Settings → JD Edwards E1 → US sales and use tax keying the tax, the voucher goes with the use tax code "
+        "(U) on its tax area, for JD Edwards to work the use tax out and accrue it; with a rate given for that tax "
+        "area there, the amount is worked out here too.",
+        "Confirm the purchase owes use tax (not exempt, not resold) and that the tax area is the ship-to's; if the "
+        "supplier should have charged sales tax, ask it for a corrected invoice.",
     ),
     # --- Purchase orders ---------------------------------------------------------------------------------
     "PO_UNKNOWN": CheckHelp(
@@ -660,7 +680,14 @@ CHECKS: dict[str, CheckHelp] = {
         "No line items were read from the document.",
         "Add the lines by hand, or reject the file if it is not an invoice.",
     ),
-    "MISSING_VENDOR": CheckHelp(TOTALS, "No vendor", "The vendor name is empty.", "Type the vendor name."),
+    "MISSING_VENDOR": CheckHelp(
+        TOTALS, "No vendor",
+        "The vendor name is empty: none was read, or the name read is one of your company's own (Settings → Review, "
+        "and with JD Edwards' companies loaded, each company's name), which is never taken as the supplier.",
+        "Pick the vendor from the vendor list, as the page names it. An invoice one company of your group sends "
+        "another: the vendor box offers that company when it is a supplier in the vendor list; check the page and "
+        "pick it.",
+    ),
     "MISSING_INVOICE_NUMBER": CheckHelp(
         TOTALS, "No invoice number", "The invoice number is empty, so duplicates cannot be detected.",
         "Type the invoice number from the document. A utility bill or statement that prints none: type its account "
@@ -829,7 +856,9 @@ CHECKS: dict[str, CheckHelp] = {
     "NO_TAX_CHARGED": CheckHelp(
         TAX, "No tax charged",
         "No sales tax is charged on a Canadian supply. A vendor not registered for GST/HST (a small supplier, no "
-        "GST/HST number on the invoice) rightly charges none. The provincial tax of British Columbia, Saskatchewan and "
+        "GST/HST number on the invoice) rightly charges none; so does a supplier outside Canada not registered for it, "
+        "whose GST/HST is paid at the border on goods and self-assessed on services when it is due. The provincial "
+        "tax of British Columbia, Saskatchewan and "
         "Manitoba is still due on taxable lines whoever the vendor is: it is self-assessed, and the Self-assessment "
         "report counts those lines unless they are marked exempt.",
         "Confirm the items are exempt or zero-rated (e.g. basic groceries, some services) and mark them so, or that "

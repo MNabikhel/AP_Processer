@@ -14,6 +14,7 @@ from ..normalize import (
     find_gst_numbers,
     find_qst_numbers,
     infer_day_first,
+    looks_like_money,
     parse_dates,
 )
 from ..types import (
@@ -730,6 +731,7 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         # checks it (``UNMEASURED``): a Canadian supplier's "$" is Canadian dollars.
         cands["currency"] = [Reading("currency", "USD", "$", [], 0.8, "us-supplier" + UNMEASURED)]
     items = read_line_items(layout)
+    cands.setdefault("tax_total", []).extend(_us_tax_rows(cands, by_page, items, under))
     line_sum = round(sum(i.amount for i in items if i.amount is not None), 2) if items else None
     cands = _solved_totals(cands, line_sum, items)
     _tax_named_by_page(cands, plain(layout.text()))
@@ -737,6 +739,49 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         readings.sort(key=lambda r: -r.score) if field not in AMOUNT_FIELDS else None
         cands[field] = _dedupe(readings)
     return cands
+
+
+# A US state's, county's or city's sales tax on a row of its own (plain text): "Spokane County Sales Tax 0.5%", "City of
+# Spokane Sales Tax", "State Tax 6.5%", "Transit District Tax" (B-2870). No label wherever a line starts with it: a line
+# item says the same words ("City of Vancouver tax certificate", "Local tax services", B-2874).
+_US_TAX_ROW = re.compile(
+    r"(?:(?:city|county|town|village)\s+of\s+(?:[a-z.]+\s+){1,3}|(?:[a-z.]+\s+){0,2}(?:state|county|city|parish|borough"
+    r"|local)\s+|(?:transit|special)\s+(?:district\s+)?)(?:sales\s*(?:and\s*use\s*|&\s*use\s*)?)?tax\b"
+)
+_RATE = re.compile(r"\d{1,2}(?:[.,]\d{1,4})?\s*%")
+
+
+def _at(r: Reading) -> tuple[float, ...]:
+    """Where a reading's value is printed (its first box), or the reading itself when it has none."""
+    b = r.boxes[0] if r.boxes else None
+    return (b.page, round(b.x0, 4), round(b.y0, 4)) if b else (id(r),)
+
+
+def _us_tax_rows(cands: dict[str, list[Reading]], by_page: dict[int, list[Line]], items: list[LineReading],
+                 under: set[int]) -> list[Reading]:  # fmt: skip
+    """The tax total's readings of a US invoice's state, county and city sales tax rows (``_US_TAX_ROW``), for the
+    solver to add up (``totals._rows_summed``): only in the totals block, under a subtotal read and on no line item's
+    row, each at the left of one amount alone on its row (B-2870, B-2874); one a label read already ("WA State Sales
+    Tax") is not read twice."""
+    subtotals = [r.boxes[0] for r in cands.get("subtotal", []) if r.boxes]
+    rows = [b for item in items for b in item.boxes]
+    read = {_at(r) for r in cands.get("tax_total", []) if r.boxes}
+    out: list[Reading] = []
+    for page, lines in by_page.items():
+        top = min((b.cy for b in subtotals if b.page == page), default=None)
+        for line in lines if top is not None else ():
+            text, at = plain_with_offsets(line.text)
+            m = _US_TAX_ROW.match(text)
+            if not m or line.box.cy <= top or any(b.page == page and b.y0 <= line.box.cy <= b.y1 for b in rows):
+                continue
+            end = at[m.end()]
+            rest = _RATE.sub(" ", line.text[end:])  # (its rate is no amount: "State Tax @ 6.50%")
+            amounts = [ln for ln in _right_of(lines, line) if looks_like_money(_RATE.sub(" ", ln.text))]
+            if len(amounts) + looks_like_money(rest) != 1:
+                continue
+            hit = _LabelHit("tax_total", line, 0.85, end, line.text[:end])
+            out += [r for r in _labelled([hit], lines, page in under) if _at(r) not in read]
+    return out
 
 
 def _solved_totals(

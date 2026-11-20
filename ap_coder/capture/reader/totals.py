@@ -45,6 +45,23 @@ def _summed(readings: list[Reading], same_sign: bool = True) -> list[Reading]:
     return out[:3]
 
 
+def _rows_summed(readings: list[Reading]) -> list[Reading]:
+    """Three or four amounts of one kind one under the other, each on a row of its own, with no total of them printed:
+    a US invoice's state, county and city sales tax ("WA State Sales Tax 81.25", "Spokane County Sales Tax 6.25",
+    "City of Spokane Sales Tax 26.25", B-2870). The sum of each run of three or more, as more options to try."""
+    rows = sorted((r for r in readings if r.boxes and r.value), key=lambda r: (r.boxes[0].page, r.boxes[0].cy))
+    out = []
+    for start in range(len(rows)):
+        for end in range(start + 3, len(rows) + 1):
+            run = rows[start:end]
+            if len({r.boxes[0].page for r in run}) == 1 and len({r.value > 0 for r in run}) == 1 and all(
+                    b.boxes[0].cy - a.boxes[0].cy > 0.005 for a, b in zip(run, run[1:], strict=False)):  # fmt: skip
+                out.append(Reading(run[0].field, round(sum(r.value for r in run), 2), " + ".join(r.raw for r in run),
+                                   [b for r in run for b in r.boxes], 0.9 * min(r.score for r in run),
+                                   run[0].method + "+summed"))  # fmt: skip
+    return out
+
+
 MARGIN = 1e-9  # far above the rounding of a sum of a few scores, far below any difference of two of them
 _Combo = tuple[tuple[Reading | None, ...], list[Reading], float, float, tuple[tuple[str, int], ...]]
 
@@ -107,7 +124,7 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
     tax_options = {f: [*top[f], None] for f in _TAX_FIELDS}
     charge_options = [*top["other_charges"][:2], *_summed(top["other_charges"][:3], same_sign=False), None]
     # A sales tax that is no GST/HST/PST/QST ("WA Sales Tax 10.35%"): only its total is printed.
-    total_tax_options = [*top["tax_total"][:4], *_summed(top["tax_total"]), None]
+    total_tax_options = [*top["tax_total"][:4], *_summed(top["tax_total"]), *_rows_summed(top["tax_total"]), None]
     best = None
     any_tax = any(top[f] for f in (*_TAX_FIELDS, "tax_total"))
     balanced: set[float] = set()  # the subtotals some combination adds up with

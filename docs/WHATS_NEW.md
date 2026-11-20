@@ -16,7 +16,8 @@ kept).
   Total | ... | Amount Due" over one row of amounts: each amount is read under its label, an empty cell is nothing.
   The freight is a line of its own, taxed with the goods, as JD Edwards gets it.
 - **5% printed as "HST" where only GST is charged** (an Alberta supplier's invoice) is one warning that says it is
-  the GST under another name, claimable as GST: no longer an error to approve anyway.
+  the GST under another name, claimable as GST: no longer an error to approve anyway. GST and HST both charged
+  there is still an error: the GST charged twice.
 - **The GST/HST number names the supplier.** When the number printed is one supplier's in the supplier list and
   the page names none of the list's suppliers, that supplier is proposed; a name that is another supplier's is
   marked to check, with both names.

@@ -316,7 +316,9 @@ def finalise_coding(
     fill_remarks(coding, store, reference, wanted=reference.pairs is not None or remarks_typed)
     posting_edits.fill(coding, store, reference, exclude_invoice_id)  # an account's subledger or units (D-268)
     output = coding.to_output()
-    if not coding.ship_to_province:  # no ship-to printed: where it is delivered to us (tax.supply_source)
+    # No ship-to printed: where it is delivered to us (tax.supply_source); none for a company not checked for Canadian
+    # tax (a US one: no province of ours is where it is delivered, B-2871).
+    if not coding.ship_to_province and canadian_tax:
         place, source = supply_source(coding, reference.tax)
         # Stored beside the printed ship-to, never in it, so that recoding the lines moves it (worked out again
         # each time); never the vendor's province: it stays a guess.
@@ -324,6 +326,11 @@ def finalise_coding(
             output[PLACE_OF_SUPPLY] = place
     if not canadian_tax:  # a US company's voucher: its tax area from the PO line or the supplier (D-267)
         output[COMPANY_TAX] = companies.voucher_tax(store, coding)
+        from ..erp import jde_voucher
+
+        if js is not None and jde_voucher.us_keyed(output, js):  # its tax keyed as Settings say, not held (D-312)
+            company_said = [said for said in company_said if said[1] != "US_TAX_NOT_CHECKED"]
+            company_said += companies.us_keyed_findings(output, js)
     output.update(_progress_billing(extraction))
     output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
     # JD Edwards in use: what its batch would hold back, asked before approval (D-75).
