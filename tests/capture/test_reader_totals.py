@@ -200,6 +200,27 @@ def test_vat_at_two_rates_with_no_total_of_it_is_their_sum(tmp_path):
     assert _amounts(tmp_path / "two.pdf", cells) == {"subtotal": 473.0, "tax_total": 56.87, "grand_total": 529.87}
 
 
+@pytest.mark.parametrize("labels", [
+    ("WA State Sales Tax 6.5%", "Spokane County Sales Tax 0.5%", "City of Spokane Sales Tax 1.5%",
+     "Transit District Tax 0.6%"),
+    ("State Tax 6.5%", "County Tax 0.5%", "City Tax 1.5%", "Transit Tax 0.6%"),
+])  # fmt: skip
+@pytest.mark.parametrize("rows", [3, 4])
+def test_a_us_state_county_and_city_sales_tax_with_no_total_of_them_is_their_sum(tmp_path, labels, rows):
+    """B-2870: a US invoice's state, county and city sales tax, each on a row of its own and no total tax printed: only
+    two amounts were ever summed, so one of the three was read as the whole tax (subtotal + tax not the total), or
+    none was."""
+    taxes = ("81.25", "6.25", "18.75", "7.50")[:rows]
+    total = 1250 + sum(float(t) for t in taxes)
+    cells = [(60, 60, "Cascade Bearing & Drive Inc"), (60, 74, "401 Industrial Way, Spokane, WA 99202"),
+             (330, 300, "Subtotal"), (490, 300, "1,250.00"),
+             *[(330, 315 + 15 * n, labels[n]) for n in range(rows)],
+             *[(490, 315 + 15 * n, taxes[n]) for n in range(rows)],
+             (330, 315 + 15 * rows, "Total Due (USD)"), (490, 315 + 15 * rows, f"${total:,.2f}")]  # fmt: skip
+    assert _amounts(tmp_path / "us.pdf", cells) == {"subtotal": 1250.0, "tax_total": round(total - 1250, 2),
+                                                    "grand_total": total}  # fmt: skip
+
+
 def test_a_discount_and_freight_between_two_subtotals_are_read_and_the_subtotal_is_not_verified(tmp_path):
     # Factur-X "Rabatte" sample: "Zwischensumme 202,76", "abzgl. Sondernachlass 10% von 147,30 -14,73", "zzgl.
     # Versandkosten 5,80 7", "Rechnungssumme Netto 193,83". The totals add up with either subtotal; 193,83 was verified.
