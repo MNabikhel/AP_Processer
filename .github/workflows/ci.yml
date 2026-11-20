@@ -92,7 +92,8 @@ jobs:
           before = sorted(failed())
           lines = ["### The failed tests, run again", ""]
           if not before:
-              lines.append("No test is listed as failed: the step failed before or after its tests (see its log).")
+              lines.append("No test is listed as failed: the tests did not run to their end, or the step failed "
+                           "outside them (see its log).")
           elif len(before) > 20:
               lines.append(f"{len(before)} tests failed: too many to run again (see the step's log).")
           else:
@@ -201,7 +202,8 @@ jobs:
           before = sorted(failed())
           lines = ["### The failed tests, run again", ""]
           if not before:
-              lines.append("No test is listed as failed: the step failed before or after its tests (see its log).")
+              lines.append("No test is listed as failed: the tests did not run to their end, or the step failed "
+                           "outside them (see its log).")
           elif len(before) > 20:
               lines.append(f"{len(before)} tests failed: too many to run again (see the step's log).")
           else:
