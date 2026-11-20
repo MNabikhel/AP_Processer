@@ -268,9 +268,10 @@ def _ledger(entry: dict[str, Any], line: dict[str, Any] | None) -> tuple[str, st
 
 def po_matches(store: Any, invoices: list[dict[str, Any]], charge_account: str = "") -> dict[int, po_mod.VoucherMatch]:
     """{invoice: its voucher match} of the ``invoices`` that quote a PO: the one kept with it at its approval
-    (``po.kept_voucher_match``, D-284), else each line paired with its PO line as the purchase orders loaded have it
-    (``po.match_invoice``, the invoice's own lines left out of what was billed before); ``charge_account``: where a
-    charge the PO has no line for goes (``JdeSettings.charge_account``, D-265)."""
+    (``po.kept_voucher_match``, D-284; its PO lines' tax as loaded now, ``po.kept_as_loaded``), else each line paired
+    with its PO line as the purchase orders loaded have it (``po.match_invoice``, the invoice's own lines left out of
+    what was billed before); ``charge_account``: where a charge the PO has no line for goes (``JdeSettings.
+    charge_account``, D-265)."""
     from ..core.schema import InvoiceCoding
 
     out: dict[int, po_mod.VoucherMatch] = {}
@@ -278,7 +279,7 @@ def po_matches(store: Any, invoices: list[dict[str, Any]], charge_account: str =
         final = inv.get("final_output") or {}
         number = str(final.get("po_number") or "").strip()
         if number and (kept := po_mod.kept_voucher_match(final)) is not None:
-            out[int(inv.get("id") or 0)] = kept
+            out[int(inv.get("id") or 0)] = po_mod.kept_as_loaded(kept, store)
         elif number:
             coding = InvoiceCoding.model_validate({k: x for k, x in final.items() if k != "gl_distribution"})
             invoice_id = int(inv.get("id") or 0)
@@ -306,7 +307,8 @@ def _match_said(matched: po_mod.VoucherMatch | None, warnings: list[str], notes:
         key = (row.order_number, row.order_type, row.order_company, row.line)
         if row.no_quantity and (row.retainage or row.order_type.upper() == po_mod.SUBCONTRACT):
             continue  # (a subcontract's lump sum: matched by its amount alone, D-273)
-        count, cost = po_mod._qty(row.quantity or 0), f"{row.unit_cost or 0:,.2f}"
+        count, cost = po_mod._qty(row.quantity or 0), f"{row.unit_cost or 0:,.4f}"
+        cost = cost[:-2] + cost[-2:].rstrip("0")  # (to the cent, or the 4 decimals JD Edwards keeps: 0.045, B-2910)
         if row.quantity_from == "amount":  # a line printed with no quantity (D-283)
             notes.append(f"{where}: the invoice prints no quantity; Quantity Matched is {count}, its amount "
                          f"({row.amount:,.2f}) at the PO line's unit cost {cost}.")  # fmt: skip
