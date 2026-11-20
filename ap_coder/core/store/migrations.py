@@ -20,11 +20,13 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
+from ..chart import ACTIVE
 from ..keys import order_key, po_key
 from ..memory import AUTONOMOUS_REVIEWER, CODED, CORRECTED, VENDOR_KEY_RULES, vendor_key
 from ..reference_data import UNASSIGNED
 from . import dialect
 from ._base import SCHEMA_VERSION, _due, _forget_learning, _now
+from .chart import _count, _lists
 from .folder import add_register_keys, fill_seen_files
 from .old_readings import reading_as_d89
 from .register import add_jde_register, build_register_search
@@ -275,6 +277,30 @@ def _po_retainage(store: Any, conn: sqlite3.Connection) -> None:
     for one loaded before (none held back). No version of its own: an older AP Coder leaves it be."""
     if "retainage" not in dialect.columns(conn, "po_lines"):
         dialect.add_column(conn, "po_lines", "retainage", "REAL")
+
+
+# The business units' statuses that take postings (``chart.ACTIVE``) the GL accounts and cost centers were last worked
+# out with (settings.chart_active, JSON); a database without it had them worked out with ACT and blank alone (D-290).
+CHART_ACTIVE_KEY = "chart_active"
+ACTIVE_BEFORE = ("ACT", "")
+
+
+def _chart_active(store: Any, conn: sqlite3.Connection) -> None:
+    """The GL accounts and cost centers worked out again, once, when a business unit has a status that takes postings
+    now and did not when they were (B-2750: a job at K, budget locked, D-290): the chart's answers read the statuses
+    as they are, so its accounts were offered and a line coded to one was CC_UNKNOWN. Recorded as
+    settings.chart_active; no version of its own: an older AP Coder leaves the lists be."""
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (CHART_ACTIVE_KEY,)).fetchone()
+    now = json.dumps(list(ACTIVE))
+    if row is not None and row["value"] == now:
+        return
+    opened = sorted(set(ACTIVE) - set(json.loads(row["value"]) if row is not None else ACTIVE_BEFORE))
+    if opened and conn.execute(f"SELECT 1 FROM business_units WHERE {dialect.in_list('status')} LIMIT 1",
+                               (json.dumps(opened),)).fetchone() and _count(conn):  # fmt: skip
+        given = _lists(conn)
+        result = store._rebuild_account_lists(conn, given[0], given)
+        store._chart_changed(conn, "chart_accounts", {"rows": _count(conn), **result}, None)
+    _put_setting(conn, CHART_ACTIVE_KEY, now)
 
 
 def _chart_company(store: Any, conn: sqlite3.Connection) -> None:
@@ -574,6 +600,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (EVERY_TIME, _chart_company),
     (EVERY_TIME, _subledgers),
     (EVERY_TIME, _po_retainage),
+    (EVERY_TIME, _chart_active),
 )
 MIGRATIONS: dict[int, Step] = {number: step for number, step in STEPS if number is not EVERY_TIME}
 

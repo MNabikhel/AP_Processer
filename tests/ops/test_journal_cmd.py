@@ -284,6 +284,42 @@ def test_the_objects_given_are_the_ones_used(tmp_path, capsys, truth):
     assert store.journal_files()[0]["tax_lines"] == 0 and store.journal_files()[0]["coding_lines"] == 195 + 81
 
 
+def test_gl_lines_without_payable_lines_holding_a_voided_voucher_are_loaded(tmp_path, truth):
+    """B-2740: a voucher voided, its lines and the void's under one document, adds up to nothing in the build
+    sheet's G/L lines (no payable lines). The file is loaded all the same, and the void's lines cancel out."""
+    from ap_coder.erp import journal as jr
+
+    head = jde_exports._titles("gl_lines")
+    rows = [[cell[0] if isinstance(cell, tuple) else cell for cell in row]
+            for row in jde_exports._master_gl_lines(replace(truth, vouchers=truth.vouchers[:30]), 1)]  # fmt: skip
+    supplier = truth.supplier(truth.vouchers[0].supplier)
+    account = f"{truth.company.main_business_unit}.7410"
+    voided = (("2024-03-02", 975.25), ("2024-04-02", -975.25))  # the voucher, then its void
+    rows += [[9001, "PV", truth.company.number, date, n, account, "", amount, supplier.name, "VOIDED",
+              supplier.number, supplier.name, "", None, "CAD", None, None, None]
+             for n, (date, amount) in enumerate(voided, start=1)]  # fmt: skip
+    data = jr.sheet_csv([head, *rows])
+    store = _store(tmp_path)
+    state, said = journal_cmd.load(store, data, "2024.csv")
+    assert state == journal_cmd.DONE, said
+    assert not [line for line in store.journal_lines_for(str(supplier.number)) if line["remark"] == "VOIDED"]
+
+
+def test_gl_lines_without_payable_lines_keep_the_saved_payable_objects(tmp_path, capsys, truth):
+    """B-2749: the build sheet's G/L lines, their payable lines left out, have no line to say the payable objects by,
+    so none was worked out of them; loading them saved that none over the trade and intercompany payable objects the
+    Transaction Journal had given (2110, 2150): the control accounts were offered and coded to again, unwarned
+    (D-269). The saved payable objects stay; the tax object is the file's."""
+    assert _run(tmp_path, capsys, "import", _file(tmp_path, truth))[0] == 0
+    store = _store(tmp_path)
+    assert store.journal_objects() == {"trade": ("2110",), "intercompany": ("2150",), "tax": ("2420",)}
+    control = store.chart_settings().control
+    state, said = journal_cmd.load(store, _gl_lines(tmp_path, truth, "2024.csv").read_bytes(), "2024.csv")
+    assert state == journal_cmd.DONE, said
+    assert store.journal_objects() == {"trade": ("2110",), "intercompany": ("2150",), "tax": ("2420",)}
+    assert store.chart_settings().control == control
+
+
 def test_saved_objects_of_another_company_are_passed_over_for_the_files_own(tmp_path, capsys, truth):
     assert _run(tmp_path, capsys, "import", _file(tmp_path, truth))[0] == 0
     other = jde_exports.journal_csv(truth).replace(b".2110,", b".2188,").replace(b"00210", b"00530")
@@ -396,6 +432,32 @@ def test_a_journal_saved_again_through_excel_is_refused_in_plain_words(tmp_path,
         assert words.lower() in out.lower() and _store(tmp_path).journal_files() == []
     code, out, _ = _run(tmp_path, capsys, "import", _file(tmp_path, truth))
     assert code == 0 and out.splitlines()[-1].startswith("Loaded R09321.csv")
+
+
+@pytest.mark.parametrize("held", ["a company outside the pilot", "closed"])
+def test_a_journal_of_business_units_shorter_than_those_offered_is_not_taken_as_saved_through_excel(tmp_path, held):
+    """B-2745: a line whose business unit is shorter than every one of the chart's, with no subsidiary, is taken as
+    cut short by Excel; the chart's were those offered alone, so with the pilot's jobs longer than another company's
+    business units (or the short ones closed), a file as JD Edwards wrote it was refused. Every business unit of the
+    chart counts."""
+    from ap_coder.core.chart import BuRow, ChartRow
+
+    units = [(co, bu) for co, bus in (("00100", range(1001, 1006)), ("00200", range(20000001, 20000006)))
+             for bu in map(str, bus)]  # fmt: skip
+    store = Store(tmp_path / "ap.db")
+    store.import_business_units([BuRow(bu, f"Job {bu}", co, "JB", "N" if held == "closed" and co == "00100" else "")
+                                 for co, bu in units])  # fmt: skip
+    store.import_chart([ChartRow(bu, obj, "", said, 7, "", "", co) for co, bu in units
+                        for obj, said in (("5100", "Labour"), ("2110", "AP trade"))])  # fmt: skip
+    if held != "closed":
+        store.save_chart_settings(replace(store.chart_settings(), pilot=("00200",)))
+    head = ("Document Number,Doc Type,Doc Co,G/L Date,Line Number,Account Number,Amount,Remark,Supplier Number,"
+            "Supplier Name\n")  # fmt: skip
+    lines = [f"{500 + n},PV,{co},2026-03-0{n + 1},{line},{bu}.{obj},{amount},labour,4001,Acme Supply\n"
+             for n, (co, bu) in enumerate((("00100", "1001"), ("00200", "20000001")))
+             for line, obj, amount in ((1, "5100", "100.00"), (2, "2110", "-100.00"))]  # fmt: skip
+    seen = journal_cmd.look(store, (head + "".join(lines)).encode(), "gl.csv", trade="2110")
+    assert seen.state == journal_cmd.READY, seen.problem
 
 
 def _gl_lines(tmp_path, truth, name):

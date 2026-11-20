@@ -6672,7 +6672,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     candidates, the Account box (its list, its search, a business unit's), a fixed coding rule (`account_problem`),
     the PO's coding used on the screen (flagged, not kept quietly), a person's typing, Approve and Approve anyway, bulk
     approval and the second approval's check again (D-257). None slipped but the box's search, which read the first
-    1,000 matches and kept those offered (B-2652): what may be posted to is now asked of SQLite with the words.
+    1,000 matches and kept those offered (B-2652): what may be posted to is now asked of SQLite with the words,
+    and every other rule of what is offered with it (B-2741).
   - **The pilot** (`pilot_companies`, the same card and `chart settings --pilot-companies`; empty: every company). An
     invoice of a company outside it is `COMPANY_NOT_IN_PILOT`: an error Approve anyway never covers, always a person,
     so no approval (single, bulk, touchless, second) passes it until someone who may change the settings adds the
@@ -6964,6 +6965,23 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - *Left as it is:* an invoice the batch check holds stays in Ready to export, listed with why, and is not put on a
     keying batch's Not ready sheet (B-2148): that sheet lists what a batch holds that its own checks hold back at
     download.
+- **D-290** · **A business unit whose posting edit code is K (its budget locked) takes postings, as blank and ACT
+  do** (`core/chart.py` `ACTIVE`; every path reads it: the chart in memory, the database's `IndexedPairs`, the cost
+  centers, `chart load`'s count of closed business units, the Business units table's note; B-2744).
+  - **Why:** report 2's Job Sts is F0006 MCPECC, the business unit's posting edit code (UDC H00/PE). In JD Edwards,
+    K lets transactions post to the business unit and locks only its original budget (changed by change orders);
+    Job Cost locks a job's budget by setting it to K, so a construction group's open jobs are many of them K. Read as
+    closed, each was never offered and a line coded to one was BU_INACTIVE, an error Approve anyway never covers,
+    where JD Edwards takes the voucher. The accounts' own K already took postings (`KNOWN_EDITS`, D-272).
+  - **What:** a business unit is closed when its status is anything but ACT, blank or K: N (no postings) and P (no
+    postings, the job may be purged) are, as any other. *Not chosen:* a setting of the business units' codes (as
+    Accounts AP posts to is the accounts'): JD Edwards says what K means, and a person who wants one job closed
+    changes its status by hand (D-221).
+  - **A database loaded before:** its GL accounts and cost centers were worked out with K closed, while the chart's
+    answers read the statuses as they are: a K job's accounts were offered and a line coded to one CC_UNKNOWN
+    (B-2750). Its lists are worked out again once when a business unit has a status that takes postings now and did
+    not then (`migrations._chart_active`, settings.chart_active: the statuses they were worked out with; 5 s at
+    3,370,000 accounts). No schema version of its own: an older AP Coder still opens the database.
 - **D-295** · **The AI reviewer's corrections, reviewed** (D-263, D-184; an adversarial review, 20 Nov 2026; B-2800 to
   B-2806).
   - **An amount printed on the page** is one printed as money: with its cents, or a currency sign or code right

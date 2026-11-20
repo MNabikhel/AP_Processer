@@ -86,6 +86,81 @@ def test_a_search_finds_the_accounts_offered_past_a_thousand_that_are_not(tmp_pa
     assert [row[0] for row in store.account_pairs().search("widget")] == ["200000.5110"]
 
 
+HELD = {  # 1,100 jobs whose account 5110.9 is held back, each way (their units, the setting), then one open job
+    "closed": ({"status": "N"}, {}),
+    "named to be skipped": ({"name": "Job DO NOT USE"}, {"skip_words": ("do not use",)}),
+    "never offered": ({}, {"never_offered": ("1*.5110.*",)}),
+    "a control object": ({}, {"control": (("5110.9", "trade payable"),)}),
+    "not in the pilot": ({"company": "00100"}, {"pilot": ("00200",)}),
+    "not in report 9": ({"company": "00100"}, {"companies": ("00200",)}),
+    "not in the business units report": ({"listed": False}, {}),
+}
+
+
+@pytest.mark.parametrize("held", HELD)
+def test_a_search_finds_the_open_accounts_past_a_thousand_held_back(tmp_path, held):
+    """B-2741: past B-2652, the search still read the first 1,000 accounts that may be posted to and dropped those of
+    a closed business unit, one named to be skipped, one not in the business units report, a company held back or an
+    account never offered: old jobs (low numbers) closed, a cost code or a word found nothing on the open jobs. Every
+    rule is asked of SQLite with the words."""
+    from ap_coder.core.chart import BuRow, ChartRow
+
+    unit, settings = HELD[held]
+    rows = []
+    units = [BuRow("200000", "Job open Calgary", "00200", "JB", "")]
+    for n in range(1100):
+        bu = f"1{n:05d}"
+        rows += [ChartRow(bu, "", "", unit.get("name", f"Job {n} Calgary"), 3, "", "", "00100"),
+                 ChartRow(bu, "5110", "9", "Widget labour", 8, "", "", unit.get("company", "00200"))]  # fmt: skip
+        if unit.get("listed", True):
+            units.append(BuRow(bu, unit.get("name", f"Job {n} Calgary"), unit.get("company", "00200"), "JB",
+                               unit.get("status", "")))  # fmt: skip
+    rows += [ChartRow("200000", "", "", "Job open Calgary", 3, "", "", "00200"),
+             ChartRow("200000", "5110", "", "Widget labour", 7, "", "", "00200")]  # fmt: skip
+    store = Store(tmp_path / "ap.db")
+    store.import_business_units(units)
+    store.import_chart(rows)
+    pairs = IndexedPairs(store, ChartSettings(**settings))
+    assert pairs.status("200000", "5110") == chart.OK and pairs.status("100005", "5110.9") != chart.OK
+    for typed in ("widget", "5110", "labour", "calgary", "5110 calgary"):
+        assert [row[0] for row in pairs.search(typed)] == ["200000.5110"], typed
+    assert [row[0] for row in pairs.search("5110", units=frozenset({"100003", "200000"}))] == ["200000.5110"]
+
+
+def test_a_search_by_a_business_units_name_finds_one_companys_past_500_of_the_group(tmp_path):
+    """B-2742: a word of a business unit's name was looked for in the first 500 business units of the whole group
+    named so, before one company's or the pilot's were kept: a common word ("yard") found none of a company whose
+    business units sort after the others'."""
+    from ap_coder.core.chart import BuRow, ChartRow
+
+    units = [BuRow(f"{100000 + n}", f"Calgary yard {n}", "00100", "JB", "") for n in range(600)]
+    units += [BuRow(f"{200000 + n}", f"Calgary yard {n}", "00200", "JB", "") for n in range(30)]
+    store = Store(tmp_path / "ap.db")
+    store.import_business_units(units)
+    store.import_chart([ChartRow(u.code, "5100", "", "Fuel", 7, "", "", u.company) for u in units])
+    pairs = store.account_pairs()
+    for typed in ("calgary", "yard", "calgary 5100"):
+        assert len(pairs.search(typed, pairs.units_of("00200"))) == 30, typed
+        assert len(IndexedPairs(store, ChartSettings(pilot=("00200",))).search(typed)) == 30, typed
+
+
+def test_a_business_units_report_with_its_companies_unpadded_gives_each_companys_units(tmp_path):
+    """B-2743: report 2 saved through Excel reads its Co as 100, kept so; the business units of company 00100 were
+    asked by the stored company as it is, so none was found and the Account box searched every company's."""
+    from ap_coder.core.chart import BuRow, ChartRow
+
+    units = [BuRow("1001", "Tower A", "100", "JB", ""), BuRow("2001", "Bridge B", "200", "JB", "")]
+    store = Store(tmp_path / "ap.db")
+    store.import_business_units(units)
+    store.import_chart([ChartRow("1001", "5410", "", "Tools", 7, "", "", "00100"),
+                        ChartRow("2001", "5410", "", "Tools", 7, "", "", "00200")])  # fmt: skip
+    pairs = store.account_pairs()
+    assert isinstance(pairs, IndexedPairs) and pairs.company_of("1001") == "00100"
+    assert pairs.units_of("00100") == pairs.units_of("100") == frozenset({"1001"})
+    assert pairs.units_of("00100") == AccountPairs([], units).units_of("00100")
+    assert [row[0] for row in pairs.search("5410", pairs.units_of("00100"))] == ["1001.5410"]
+
+
 def _opened(monkeypatch) -> list[sqlite3.Connection]:
     """Every connection a Store opens from now on."""
     made: list[sqlite3.Connection] = []

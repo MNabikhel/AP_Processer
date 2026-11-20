@@ -623,11 +623,29 @@ def sheet_csv(rows: Iterable[Sequence[Any]]) -> bytes:
     return text.getvalue().encode("utf-8-sig")
 
 
+def _voided(voucher: Voucher) -> bool:
+    """A voucher voided, its lines and the void's in one document (D-258): each account's lines add up to nothing."""
+    cents: Counter[str] = Counter()
+    for line in voucher.lines:
+        cents[line.account] += round(line.amount * 100)
+    return not any(cents.values())
+
+
 def payable_left_out(journal: Journal) -> bool:
-    """Whether the account ledger as a table came without its payable lines: every voucher of it whose lines add up
-    to nothing has none (none needs a trade payable object to tell its payable lines from AP's coding)."""
-    return journal.flat and any(v.payable_left_out for v in journal.vouchers) and not any(
-        v.balanced and not v.payable_left_out for v in journal.vouchers)  # fmt: skip
+    """Whether the account ledger as a table came without its payable lines (none needs a trade payable object to
+    tell its payable lines from AP's coding): a voucher of it has none and does not add up to nothing, no line of it
+    is a payable object's, and no object closes two or more of the vouchers that add up to nothing and most of them
+    (``_closing``), as a trade payable object closes those posted with it, however many are not posted yet (B-2751).
+    A voided voucher (each account's lines add up to nothing) says nothing of it, nor one voucher moving an amount
+    between accounts (B-2740)."""
+    if not journal.flat or not any(v.payable_left_out for v in journal.vouchers):
+        return False
+    if any(line.kind == PAYABLE for voucher in journal.vouchers for line in voucher.lines):
+        return False
+    whole = [v for v in journal.vouchers if v.balanced and not v.payable_left_out and not _voided(v)]
+    closing = _closing(whole)
+    trade = closing.best()
+    return not trade or closing.either[trade] < max(2, CLOSES_MOST * len(whole))
 
 
 def cut_by_excel(journal: Journal, units: Iterable[str] = (), objects: Iterable[str] = ()) -> list[str]:
@@ -789,12 +807,14 @@ def suggest_objects(
     A guess that cannot be made is left empty and said. Raises ValueError when the file is not a CSV at all."""
     journal = read_journal(data, payable_objects=PayableObjects(()), tax_objects=())
     balanced = [v for v in journal.vouchers if v.balanced and all(_side_objects(v)) and not v.payable_left_out]
-    objects, why = _payable_guess(balanced)
     left_out = [v for v in journal.vouchers if v.payable_left_out]
-    if not objects.trade and not payable_left_out(journal):
-        return objects, (), tuple(why)
-    if not objects.trade:
+    if payable_left_out(journal):  # (a voucher there that adds up to nothing has no payable line to find, B-2740)
+        objects = PayableObjects(())
         why = ["Trade payable: none is needed, the file has no payable lines (the export left them out)."]
+    else:
+        objects, why = _payable_guess(balanced)
+        if not objects.trade:
+            return objects, (), tuple(why)
     lines = Counter(line.object for voucher in journal.vouchers for line in voucher.lines)
     mapped = tuple(dict.fromkeys(o for o in (clean(o) for o in tax_setup_objects) if o in lines))
     if mapped:

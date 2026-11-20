@@ -275,3 +275,43 @@ def test_po_lines_kept_before_a_subcontracts_retainage_was_read_hold_none_back(t
     po = Store(db).purchase_order("84")
     assert [li["retainage"] for li in po["lines"]] == [None]
     assert shape(db) == shape(Store(tmp_path / "new" / "ap_coder.db").path)
+
+
+def test_the_lists_of_a_database_loaded_before_budget_locked_jobs_took_postings_are_worked_out_again(
+    tmp_path, monkeypatch
+):
+    """B-2750: a business units report with a job at K (budget locked) loaded before K took postings (D-290) left the
+    job and the codes only it has out of the cost centers and GL accounts. The chart's answers read K as open now,
+    so its accounts were offered and a line coded to one was CC_UNKNOWN and GL_UNKNOWN. A database whose lists were
+    worked out before has them worked out again, once; what is offered is what a line's check takes."""
+    from ap_coder.coding.validation import validate_coding
+    from ap_coder.core.chart import BuRow, ChartRow
+    from ap_coder.core.schema import InvoiceCoding, LineItem
+    from ap_coder.core.store import chart as chart_store
+
+    db = Store(tmp_path / "ap_coder.db").path
+    with monkeypatch.context() as old:  # (the lists worked out as the release before D-290 did: K closed)
+        old.setattr(chart_store, "ACTIVE", ("ACT", ""))
+        store = Store(db)
+        store.import_business_units([BuRow("100001", "Tower job", "00100", "JB", ""),
+                                     BuRow("100002", "Bridge job", "00100", "JB", "K")])  # fmt: skip
+        store.import_chart([ChartRow(bu, obj, "", said, lod, "", "", "00100")
+                            for bu, obj, said, lod in (("100001", "", "Tower job", 3), ("100001", "5110", "Labour", 7),
+                                                       ("100002", "", "Bridge job", 3), ("100002", "5110", "Labour", 7),
+                                                       ("100002", "5300", "Rebar", 7))])  # fmt: skip
+    with closing(sqlite3.connect(db)) as conn, conn:
+        conn.execute("DELETE FROM settings WHERE key = 'chart_active'")  # (a database of a release before it)
+    assert [r["code"] for r in Store(db).list_accounts("cost_centers")] == ["100001", "100002"]
+    store = Store(db)
+    assert [r["code"] for r in store.list_accounts("gl_accounts")] == ["5110", "5300"]
+    reference = store.reference_data()
+    assert reference.pairs.search("rebar")[0][0] == "100002.5300"
+    line = LineItem(line_number=1, description="Rebar", quantity=1, unit_price=100, amount=100,
+                    predicted_gl_code="5300", predicted_cost_center="100002")  # fmt: skip
+    coding = InvoiceCoding(vendor_name="Acme Steel", invoice_number="1", invoice_date="2026-01-01", currency="CAD",
+                           subtotal=100, tax_total=0, grand_total=100, confidence_score=0.9,
+                           line_items=[line])  # fmt: skip
+    found = {issue.code for issue in validate_coding(coding, reference).issues}
+    assert not found & {"CC_UNKNOWN", "GL_UNKNOWN", "BU_INACTIVE"}, found
+    version = store.chart_version()
+    assert Store(db).chart_version() == version  # (once: opened again, nothing is worked out)

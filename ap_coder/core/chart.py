@@ -86,8 +86,10 @@ KNOWN_EDITS = {
 }
 BLANK_ONLY = "blank"  # the setting saved for blank alone: saved blank, it is ``POSTABLE``
 HEADER_EDIT = "N"  # the posting edit code of a title account: the accounts under it roll up into it
-# The business unit master's status of a business unit that takes postings; blank: the file gives no status.
-ACTIVE = ("ACT", "")
+# The business unit master's status of a business unit that takes postings; blank: the file gives no status. Its
+# posting edit code (F0006 MCPECC, UDC H00/PE) read as the status: blank or K (its budget locked, its transactions
+# still posted; D-290), not N (no postings) nor P (purged).
+ACTIVE = ("ACT", "", "K")
 # The words an ERP's names carry for "retired: do not use": a business unit whose name carries one is never offered,
 # a supplier whose name does is stopped (``core/store/vendors.py``, which takes the words, the setting's name and
 # ``markers`` from here). The one default and the one setting for both: ``SKIP_WORDS_SAVED`` is the default as the
@@ -270,7 +272,7 @@ BU_ALIASES: dict[str, tuple[str, ...]] = {
     "name": ("Job Name", "Business Unit Description", "Description", "Name", *jde_names("F0006", "MC", "DL01")),
     "company": ("Co", "Company", *jde_names("F0006", "MC", "CO")),
     "type": ("BU Ty", "BU Type", "Business Unit Type", *jde_names("F0006", "MC", "STYL")),
-    # (its posting edit code, blank when it takes postings, read as its status: ``ACTIVE`` has blank)
+    # (its posting edit code, blank when it takes postings, read as its status: ``ACTIVE`` has blank and K)
     "status": ("Job Sts", "Job Status", "Status", "Posting Edit - Business Unit", *jde_names("F0006", "MC", "PECC")),
 }
 CHART_NEEDS = ("business_unit", "object")  # the columns a chart cannot be read without

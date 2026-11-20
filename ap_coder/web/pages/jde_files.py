@@ -244,19 +244,25 @@ def _read_head(content: bytes, name: str, store: Store | None = None) -> dict[st
             return head
         accounts = chart.account_lists(read.rows, store.business_units(), store.chart_settings())[0]
         head["gl"] = {code: description for code, (description, _category) in accounts.items()}
+        companies = {row.company for row in read.rows if row.company}
+        if companies:  # (it replaces its companies' accounts alone: the GL accounts of the others' stay, D-267)
+            gone = {row["code"] for row in store.list_accounts("gl_accounts")} - accounts.keys()
+            head["gl_kept"] = sorted(store.chart_codes_kept(companies, {row.bu for row in read.rows}, gone))
     return head
 
 
 def _gl_replaced(store: Store, look: dict[str, Any] | None) -> dict[str, int] | None:
     """What loading the chart previewed does to the GL accounts listed now (B-2438): how many leave the list
     (``removed``: a code only a list imported on GL accounts & tax had) and how many get the chart's description
-    (``changed``); None with no chart to load."""
+    (``changed``); None with no chart to load. A file of some companies replaces their accounts alone: the GL accounts
+    of the others' stay (``gl_kept``, B-2746)."""
     gl = (look or {}).get("gl")
     if gl is None or look.get("problem"):
         return None
     listed = {row["code"]: row["description"] for row in store.list_accounts("gl_accounts")}
     changed = sum(1 for code, description in listed.items() if code in gl and gl[code] != description)
-    return {"removed": sum(1 for code in listed if code not in gl), "changed": changed}
+    kept = set(look.get("gl_kept") or ())
+    return {"removed": sum(1 for code in listed if code not in gl and code not in kept), "changed": changed}
 
 
 def _export_look(card: str, token: str) -> dict[str, Any] | None:
@@ -271,7 +277,7 @@ def _export_look(card: str, token: str) -> dict[str, Any] | None:
     look = _look(card, token, head["name"], rows[at] if rows else [], count=max(head["count"] - at - 1, 0))
     look["loading"] = _being_loaded(token)  # (a Load of it under way: the card says so, B-2437)
     look["refused"] = head.get("refused")  # (refused as cut short: why, what it holds, Load anyway; B-2832)
-    look["gl"] = head.get("gl")  # (the GL accounts its load lists: ``_gl_replaced``)
+    look["gl"], look["gl_kept"] = head.get("gl"), head.get("gl_kept")  # (what its load lists: ``_gl_replaced``)
     look["sample"] = import_specs.preview(rows, at, look["check"].found.values()) if rows else None
     if not rows:
         look["problem"] = EMPTY
