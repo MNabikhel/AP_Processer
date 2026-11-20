@@ -269,12 +269,18 @@ def classify_document(doc: Document, email_text: str = "") -> Decision:
         return Decision(NOT_FOR_AP, "a spreadsheet that does not say it is a statement")
     invoice = _find(_INVOICE_TITLE, top)
     statement = _find(_STATEMENT_TITLE, top)
+    # A document whose words call it an invoice before they say "statement" is an invoice, whatever it lists: a
+    # "Statement of Work", a "financial statement audit" or a "relevé des heures" in its lines, or in its file name,
+    # is no statement of account (B-2975).
+    titled, said = _INVOICE_TITLE.search(text[:TOP_CHARS]), _STATEMENT_TITLE.search(text[:TOP_CHARS])
+    calls_itself_invoice = titled is not None and (said is None or titled.start() < said.start())
     # A statement of account lists several invoices or ages the balance; a utility bill called a "statement" (usage,
     # a meter, a billing period) is a bill to pay, so it goes to the queue.
     listed = sum(
         1 for line in fold(doc.text[:MAX_TEXT].replace("\n", "\x00")).split("\x00") if _INVOICE_REF.search(line)
     )
-    listing = statement and (listed >= 3 or (listed >= 2 and _find(_AGING, text))) and not _find(_UTILITY, text)
+    listing = (statement and not calls_itself_invoice and (listed >= 3 or (listed >= 2 and _find(_AGING, text)))
+               and not _find(_UTILITY, text))  # fmt: skip
     # A credit note's title anywhere near the top ("Northwind Supply Ltd.   CREDIT MEMO"), but a bare "avoir" only in
     # the file name or starting a line (not "Merci de nous avoir choisi"); and not a credit memo a statement lists
     # under its own title ("Credit Memo CM-1002 -50.00").

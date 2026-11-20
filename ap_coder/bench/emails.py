@@ -2,12 +2,13 @@
 
     python -m ap_coder.bench triage --n 300 --seed 1 --out bench_triage
 
-Each email is built from a scenario (an invoice, a credit note, a utility bill called a "statement", a vendor
-statement as a PDF or a spreadsheet, a payment reminder with or without the invoice, a bank-detail change, a quote, a
-purchase order, a packing slip, remittance advice, an out-of-office reply, a newsletter, a portal link ...), in
-English or French, saved as .eml or as Outlook .msg, then unpacked with ``mailbox.unpack`` exactly as the dashboard
-does. Scored: the email's kind, where each attachment went (review queue, statements, a person), every bank-detail
-change flagged, and above all **invoices lost**: an invoice or credit note that did not reach the review queue.
+Each email is built from a scenario (an invoice, an invoice whose lines mention a statement (of work), a credit note, a
+utility bill called a "statement", a vendor statement as a PDF or a spreadsheet, a payment reminder with or without the
+invoice, a bank-detail change, a quote, a purchase order, a packing slip, remittance advice, an out-of-office reply, a
+newsletter, a portal link ...), in English or French, saved as .eml or as Outlook .msg, then unpacked with
+``mailbox.unpack`` exactly as the dashboard does. Scored: the email's kind, where each attachment went (review queue,
+statements, a person), every bank-detail change flagged, and above all **invoices lost**: an invoice or credit note that
+did not reach the review queue.
 
 The invoices are the benchmark's own made-up invoices (``generator``), some scanned (no text to read); the other
 documents are drawn here. Everything is made up: no real company, person or bank.
@@ -155,6 +156,36 @@ def _statement_pdf(rng: random.Random, vendor: str, lang: str, aged: bool) -> by
             (f"{_money(rng)}   {_money(rng)}   0.00   0.00", 10, False),
         ]
     lines.append((("Solde à payer" if fr else "Balance due") + f": {_money(rng)}", 12, True))
+    return _pdf(lines)
+
+
+def _invoice_saying_statement(rng: random.Random, vendor: str, lang: str, number: str) -> bytes:
+    """An invoice whose lines mention a statement (a statement of work, a financial statement audit, a relevé des
+    heures), its number, date and Bill To lines naming an invoice or a bill beside a digit: an invoice all the same
+    (B-2975)."""
+    fr = lang == "fr"
+    said = rng.choice(
+        ["Services selon le relevé des heures ci-joint", "Honoraires - relevé des travaux d'octobre"]
+        if fr
+        else ["Professional services per Statement of Work SOW-7", "Financial statement audit - interim",
+              "Statement preparation - September"]
+    )  # fmt: skip
+    lines = [
+        (vendor, 14, True),
+        ("FACTURE" if fr else rng.choice(["INVOICE", "Invoice"]), 18, True),
+        (("No de facture : " if fr else "Invoice No: ") + number, 10, False),
+        (("Date de facture" if fr else "Invoice Date") + ": 2026-10-31", 10, False),
+        (("Facturé à : Constructions Northern Ridge (fictif), 410 rue Elm" if fr
+          else "Bill To: Northern Ridge Builders (made-up), 410 Elm Street"), 10, False),
+        (f"{said}   {_money(rng)}", 10, False),
+    ]  # fmt: skip
+    if not fr and rng.random() < 0.5:  # three more lines naming a bill beside a digit
+        lines += [("Year-end engagement - progress bill 2   " + _money(rng), 10, False)] * 3
+    lines += [
+        (("Sous-total" if fr else "Subtotal") + f"   {_money(rng)}", 10, False),
+        (("TPS 5 %" if fr else "GST 5%") + f"   {_money(rng)}", 10, False),
+        (f"Total   {_money(rng)}", 12, True),
+    ]
     return _pdf(lines)
 
 
@@ -421,6 +452,7 @@ def scenario(rng: random.Random, index: int) -> Scenario:
         "remittance",
         "not_ap_text",
         "invoice_and_packing_slip",
+        "invoice_mentions_statement",
     ]
     name = kinds[index % len(kinds)]
     lang = "fr" if rng.random() < 0.3 else "en"
@@ -501,6 +533,15 @@ def scenario(rng: random.Random, index: int) -> Scenario:
         s.body = "Please see attached." if lang == "en" else "Voir pièce jointe."
         s.docs = [Doc(f"{name}.pdf", _other_pdf(rng, name, v, lang), "application/pdf", PERSON)]
         s.kind = triage.NOT_FOR_AP
+    elif name == "invoice_mentions_statement":  # an invoice still, whatever statement its lines or name mention
+        s.docs = [
+            Doc(
+                rng.choice([f"Invoice_{n}.pdf", f"{n}.pdf", "Statement of Work SOW-7.pdf"]),
+                _invoice_saying_statement(rng, v, lang, n),
+                "application/pdf",
+                QUEUE,
+            )
+        ]
     elif name == "invoice_and_packing_slip":  # the invoice is read, the packing slip waits for a person
         s.docs = [
             inv_doc(),
