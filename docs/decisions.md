@@ -7317,3 +7317,18 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - *Not chosen:* settling a code conflict (never guessed); a number's mentions changed across the whole tree (the
     other branch's mentions of it would move too); each bug and decision numbered as its branch is merged (the to-do
     "No more number clashes in the logs", a bigger change still to do).
+- **D-326** · **An invoice never approved is paid from the account its review screen opens with, however it is
+  approved: the Pay from stored when it was read is only that day's choice** (B-2965, B-2966, B-2968; D-66, D-185).
+  - **Why:** processing stores the account it chose (the vendor's last one, else the currency's default) with the
+    AI's coding. The review screen and the queue's Ready ignored it for an invoice never approved and opened with
+    today's choice (`banks.opening_choice`), but bulk approval approved the stored one and the queue's bulk form never
+    asked the Pay from rule. Once the default changed, a second account came in with no default, or the vendor's last
+    invoice was paid from another account, invoices were paid from an account no screen showed, or offered in bulk
+    while their screen kept Approve closed; only viewing one kept a draft.
+  - **How:** bulk approval (`bulk._still_clean`) pays from `banks.opening_choice` (the account approved before, for a
+    reopened or sent-back invoice; else today's choice) and its checks refuse that one as the screen does
+    (`PAY_FROM_MISSING`, `PAY_FROM_UNKNOWN`). The queue's Ready and its bulk offer ask one rule (`bulk.pay_from_stops`:
+    `banks.blocking` of that choice). The screen's own fill of Pay from is never an edit (`differs_from_stored`).
+  - *Not chosen:* storing no account at processing (an invoice approved touchless is approved as processing coded
+    it, on the same day); the queue's stored checks asking it (the vendor's last account moves at each approval,
+    which no checks stamp follows).

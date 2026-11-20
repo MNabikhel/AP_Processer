@@ -301,13 +301,14 @@ def differs_from_stored(
 ) -> bool:
     """Whether the coding on screen is not the one stored for the invoice (the reviewer changed something). Not an
     edit (B-801): an account or cost center blank either way ("" / "UNASSIGNED"), a cost center where none are in use
-    (the screen has no box for it), and ``filled``, the details the screen fills itself on every check (the default
-    Pay from account, the vendor list's tax numbers) while the invoice stored has none."""
+    (the screen has no box for it), and ``filled``, the details the screen fills itself on every check: the default
+    Pay from account, whatever account the invoice stored (the default the day it was read: bulk approval approves
+    the screen's, B-2965, B-2968), and the vendor list's tax numbers while the invoice stored has none."""
     try:
         before = InvoiceCoding.model_validate({k: v for k, v in stored.items() if k != "gl_distribution"})
     except ValueError:
         return True
-    ignore = {"confidence_score"} | {k for k in filled if not stored.get(k)}
+    ignore = {"confidence_score"} | {k for k in filled if k == "pay_from_account" or not stored.get(k)}
     shown, kept = coding.to_output(), before.to_output()
     return _comparable(shown, ignore, cost_centers) != _comparable(kept, ignore, cost_centers)
 
