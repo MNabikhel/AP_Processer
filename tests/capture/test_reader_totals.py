@@ -440,3 +440,20 @@ def test_labels_under_a_bare_bill_to_label_keep_the_customers_block_beside_it(tm
     rows = list(zip(labels, (ONE_ROW_CUSTOMER, _STREET, _CITY, "10045"), strict=False))
     cands = read_fields(build_layout(customer_beside_label(tmp_path, "form.pdf", rows)))["vendor_name"]
     assert ONE_ROW_CUSTOMER not in [r.value for r in cands]
+
+
+@pytest.mark.parametrize("label", ["Facturer à :", "FACTURER À", "Livrer à :"])
+def test_a_french_bill_to_label_in_the_infinitive_is_the_customers_block(tmp_path, label):
+    """B-2783: "Facturé à" and "Livré à" were bill-to labels, "Facturer à" and "Livrer à" (as the benchmark's own
+    French invoices print them) were not: the customer's name under them, the supplier's only in its logo, was read
+    as the supplier."""
+    from tests.pdfs import ONE_ROW_CUSTOMER
+
+    path = _pdf(tmp_path / "fr.pdf", [
+        (400, 50, "FACTURE", 14), (400, 70, "No de facture : 118204"), (400, 84, "Date : 2026-09-14"),
+        (50, 130, label), (50, 144, ONE_ROW_CUSTOMER), (50, 158, _STREET), (50, 172, _CITY),
+        (50, 260, "Description"), (500, 260, "Montant"), (50, 276, "Articles"), (500, 276, "100,00"),
+        (400, 340, "Sous-total"), (500, 340, "100,00"), (400, 354, "TPS 5 %"), (500, 354, "5,00"), (400, 368, "Total"),
+        (500, 368, "105,00"), (50, 400, "TPS/TVH : 123456782 RT0001"),
+    ])  # fmt: skip
+    assert ONE_ROW_CUSTOMER not in [r.value for r in read_fields(build_layout(path))["vendor_name"]]
