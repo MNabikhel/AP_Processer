@@ -344,10 +344,11 @@ def apply_rules(store: Store, coding: InvoiceCoding, draft: Draft, invoice_id: i
 def po_coding(store: Store, coding: InvoiceCoding, draft: Draft, invoice_id: int) -> tuple[list[dict[str, Any]], int]:
     """Set the GL account and cost center of the lines whose coding differs from the PO's to the PO's."""
     match = match_invoice(coding, store, invoice_id)
-    differs = match.coding_differs if match is not None else []
+    # The match's lines, one a line in order: each coded on its own grid row, never every row of its number (B-2923)
+    differs = [(n, m) for n, m in enumerate(match.lines) if "coding" in m.problems] if match is not None else []
     frame = numbered_lines(lines_frame(draft.lines))
-    for m in differs:
-        at = frame["line_number"] == m.invoice_line
+    for n, m in differs:
+        at = grid_row(frame, coding, n)
         if m.po_gl:
             frame.loc[at, "predicted_gl_code"] = m.po_gl
         if m.po_cc:
