@@ -1166,6 +1166,30 @@ def kept_voucher_match(final: dict[str, Any]) -> VoucherMatch | None:
     return VoucherMatch(rows=rows)
 
 
+def kept_as_loaded(matched: VoucherMatch, store: Store) -> VoucherMatch:
+    """A kept voucher match (``kept_voucher_match``) with each row's PO line's own tax (Y/N, explanation code,
+    rate/area), and its account when it kept none, as the purchase orders loaded now give them: what a keying sheet
+    holding the match says to give the PO line in JD Edwards and load again (B-2911). The PO line each row matches, its
+    quantity and its amount stay as kept (D-284); a line the purchase orders loaded now don't have, or give none of
+    them, keeps its own."""
+    loaded: dict[tuple[str, str, str], dict[str, dict[str, Any]]] = {}
+    rows = []
+    for row in matched.rows:
+        order = (row.order_number, row.order_type, row.order_company)
+        if row.on_po and order not in loaded:
+            heads = [o for o in store.orders_numbered(po_key(row.order_number))
+                     if ((o.get("order_type") or ""), (o.get("order_company") or "")) == order[1:]]  # fmt: skip
+            po = store.purchase_order(heads[0]["po_key"]) if len(heads) == 1 else None
+            loaded[order] = {str(pl.get("erp_line") or ""): pl for pl in (po or {}).get("lines") or []}
+        pl = loaded[order].get(row.line) if row.on_po and row.line else None
+        if pl is not None:
+            tax = (pl.get("tax_flag") or "", pl.get("tax_code") or "", pl.get("tax_area") or "")
+            row = replace(row, tax=tax if any(tax) else row.tax,
+                          account=row.account or join_account(pl.get("cost_center"), pl.get("gl_code")))  # fmt: skip
+        rows.append(row)
+    return replace(matched, rows=rows)
+
+
 def billed_by_line(
     po: dict[str, Any], invoices: list[dict[str, Any]], positive_only: bool = False, amounts: bool = False,
     matched: dict[Any, tuple[int, ...]] | None = None,
