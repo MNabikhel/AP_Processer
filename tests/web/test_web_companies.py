@@ -370,6 +370,18 @@ def test_a_name_written_for_a_company_the_companies_report_does_not_list_is_not_
     assert store.our_names() == ["Cascade Line = 330"]
 
 
+def test_a_name_written_with_a_company_saves_with_no_companies_report_loaded(client, store):
+    """B-2928: with JD Edwards' companies (report 9) not loaded, a line of "Your company's names" written "name =
+    company" (written ahead of card 9, or a name with "=" in it) was taken as naming no company of the report, and the
+    refusal, giving one of the report's companies as its example, failed (a 500): nothing of Settings → Review could
+    be saved, its province neither. Without report 9 the names are not checked against it (B-2694), and are saved."""
+    typed = "Maple Ridge Holdings Ltd.\nMRB = 210\nYard 9 ="
+    assert companies.unknown_variations(store, typed) == []
+    saved = client.post("/settings/review", data={"our_names": typed, "our_province": "BC"}, headers=PAGE)
+    assert saved.status_code == 200 and follow(client, saved)
+    assert store.our_names() == typed.splitlines() and store.get_setting("our_province") == "BC"
+
+
 def test_settings_turn_a_companys_canadian_tax_checks_on_or_off_and_say_how_they_were_worked_out(client, store):
     from ap_coder.erp import jde_settings
     from ap_coder.web.core import SHOW_JDE
