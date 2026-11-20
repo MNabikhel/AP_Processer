@@ -541,9 +541,10 @@ def _regime_of_the_place_of_supply(check: _TaxCheck) -> None:
         )
         check.foreign = 0.0
     elif not charged:
+        abroad = coding.supplier_province == OUTSIDE_CANADA
         check.add(WARNING, "NO_TAX_CHARGED", f"no sales tax charged on a supply in {name}; "
                   + ("every line is marked exempt, zero-rated or out of scope: confirm it" if all_stated
-                     else _nothing_charged(prov, expected_types)))  # fmt: skip
+                     else _nothing_charged(prov, expected_types, abroad)))  # fmt: skip
     for extra in sorted(charged - expected_types):
         if check.two_provinces and extra in ("GST", "HST"):
             continue
@@ -560,11 +561,14 @@ def _regime_of_the_place_of_supply(check: _TaxCheck) -> None:
             _hst_where_it_applies(check, expected_types, name)
 
 
-def _nothing_charged(prov: str, expected_types: set[str]) -> str:
+def _nothing_charged(prov: str, expected_types: set[str], abroad: bool = False) -> str:
     """What to confirm when an invoice charges no tax at all, and what is still due (B-1520): the provincial tax of a
-    PST province is self-assessed on the taxable lines whoever the vendor is (the self-assessment report counts it)."""
-    text = ("confirm it is exempt or zero-rated, or that the vendor is not registered for GST/HST (a small supplier, "
-            "no GST/HST number printed: no GST/HST is due)")  # fmt: skip
+    PST province is self-assessed on the taxable lines whoever the vendor is (the self-assessment report counts it).
+    ``abroad``: a supplier outside Canada, whose GST/HST not charged is paid at the border or self-assessed (B-2875)."""
+    why = ("a supplier outside Canada not registered for GST/HST charges none: the GST/HST is paid at the border on "
+           "goods (the customs entry), and self-assessed on services when it is due" if abroad
+           else "a small supplier, no GST/HST number printed: no GST/HST is due")  # fmt: skip
+    text = f"confirm it is exempt or zero-rated, or that the vendor is not registered for GST/HST ({why})"
     for provincial in [t for t in ("PST", "QST") if t in expected_types]:
         pname = tax_name(provincial, prov)
         if provincial == "QST":

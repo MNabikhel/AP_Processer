@@ -7039,8 +7039,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     Canada (no GST/HST charged: `NO_TAX_CHARGED`, the PST to self-assess), its USD voucher a foreign entry.
   - **The pilot day** (`bench/pilot_day.py`, D-275): the US suppliers in Washington charge the state's, county's and
     city's sales tax (three rows, or one), the one in Montana none; scored as read and as keyed.
+  - *Read only in the totals block* (B-2874): a state's, county's or city's tax row is no label wherever a line starts
+    with it (a line item says "City of Vancouver tax certificate"); it is read under a subtotal, on no line item's
+    row, its amount alone on its row (`entry._us_tax_rows`). NO_TAX_CHARGED for a supplier outside Canada says its
+    GST/HST is paid at the border or self-assessed (B-2875).
   - *Not done:* the rates of US sales tax are not checked (no table of them); the AI reviewer's instructions name
-    Canadian sales tax only; NO_TAX_CHARGED for a US supplier still names a small supplier as why none is charged.
+    Canadian sales tax only.
 - **D-312** · **How a US company's tax is keyed on its voucher is a setting, held for a person until the JD Edwards
   team confirms** (Settings → JD Edwards E1 → US sales and use tax; D-267, D-301, D-311).
   - **Held for a person** (the default, as before): the tax charged stays in the expense lines with the exempt code;

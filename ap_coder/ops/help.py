@@ -849,7 +849,9 @@ CHECKS: dict[str, CheckHelp] = {
     "NO_TAX_CHARGED": CheckHelp(
         TAX, "No tax charged",
         "No sales tax is charged on a Canadian supply. A vendor not registered for GST/HST (a small supplier, no "
-        "GST/HST number on the invoice) rightly charges none. The provincial tax of British Columbia, Saskatchewan and "
+        "GST/HST number on the invoice) rightly charges none; so does a supplier outside Canada not registered for it, "
+        "whose GST/HST is paid at the border on goods and self-assessed on services when it is due. The provincial "
+        "tax of British Columbia, Saskatchewan and "
         "Manitoba is still due on taxable lines whoever the vendor is: it is self-assessed, and the Self-assessment "
         "report counts those lines unless they are marked exempt.",
         "Confirm the items are exempt or zero-rated (e.g. basic groceries, some services) and mark them so, or that "
