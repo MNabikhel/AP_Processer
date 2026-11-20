@@ -65,7 +65,7 @@ def test_the_workflow_tests_skip_where_there_is_no_workflow(tmp_path):
     shutil.copy(__file__, copy / "test_ci_workflow.py")
     out = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-k",
                           "not looked_up_once and not where_there_is_no_workflow and not one_shard"
-                          " and not older_versions and not weighed_by", str(copy)],
+                          " and not older_versions and not weighed_by and not times_are_refreshed", str(copy)],
                          cwd=tmp_path, capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert out.returncode == 0, out.stdout[-2000:]
 
@@ -370,6 +370,42 @@ def test_the_parts_are_weighed_by_the_tests_each_run_really_runs(tmp_path, monke
     whole = json.loads((Path(conftest.__file__).parent / "test_times.json").read_text(encoding="utf-8"))
     assert all(len(pair) == 2 and pair[0] >= pair[1] >= 0 for pair in whole.values())
     assert all((Path(conftest.__file__).parents[1] / path).is_file() for path in whole)  # no file that is gone
+
+
+def test_the_times_are_refreshed_from_several_reports_and_a_test_over_two_seconds_goes_on_the_slow_list(tmp_path):
+    """tests/times.py: the files the reports measured get their times, the others keep theirs and a file that is gone
+    leaves (a folder at a time, or CI's parts, add up); ``--slow-over 2`` puts each default-run test over 2 s on
+    tests/slow_tests.txt, in order under its comment, as its rule says (one at 16.5 s had stayed in the default run)."""
+    from tests import times
+
+    for name in ("test_new", "test_kept"):
+        (tmp_path / "tests" / "a").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "tests" / "a" / f"{name}.py").write_text("", encoding="utf-8")
+    report = tmp_path / "part.xml"
+    report.write_text(
+        "<testsuites><testsuite>"
+        '<testcase classname="tests.a.test_new" name="test_waits[one]" time="3.5"/>'
+        '<testcase classname="tests.a.test_new" name="test_waits[two]" time="0.5"/>'
+        '<testcase classname="tests.a.test_new" name="test_quick" time="1.0"/>'
+        '<testcase classname="tests.a.test_new" name="test_in_a_browser_page" time="9.0"/>'
+        '<testcase classname="tests.a.test_new" name="test_listed" time="6.0"/>'
+        "</testsuite></testsuites>", encoding="utf-8")  # fmt: skip
+    listed = tmp_path / "slow_tests.txt"
+    listed.write_text("# the rule\ntests/z.py::test_last\ntests/a/test_new.py::test_listed\n", encoding="utf-8")
+    kept = tmp_path / "test_times.json"
+    kept.write_text(json.dumps({"tests/a/test_kept.py": [4.0, 1.0], "tests/a/test_gone.py": [9.0, 9.0]}))
+    slow = {"tests/z.py::test_last", "tests/a/test_new.py::test_listed"}
+    new, measured = times.refresh([report], slow, 2.0, tmp_path, kept, listed)
+    assert new == {"tests/a/test_new.py::test_waits"}  # (all its parameters: the list names a test without them)
+    assert listed.read_text(encoding="utf-8").splitlines() == [
+        "# the rule",
+        "tests/a/test_new.py::test_listed",
+        "tests/a/test_new.py::test_waits",
+        "tests/z.py::test_last",
+    ]
+    assert measured == {"tests/a/test_kept.py": [4.0, 1.0], "tests/a/test_new.py": [20.0, 1.0]}
+    assert json.loads(kept.read_text(encoding="utf-8")) == measured
+    assert times.refresh([report], slow | new, None, tmp_path, kept, listed) == (set(), measured)  # (nothing more)
 
 
 def test_an_older_versions_test_file_left_in_tests_is_not_run(tmp_path):
