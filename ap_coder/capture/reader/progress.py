@@ -57,7 +57,8 @@ _NOT_THIS_PERIOD = re.compile(
 # A holdback paid out: a line that bills it ("Holdback release - Phase 1", "Release of retainage")
 _RELEASE = re.compile(rf"{_HELD}\s*(?:release|released|payout|paid\s*out)|release\s*(?:of\s*)?(?:the\s*)?(?:\d{{1,2}}\s*%\s*)?{_HELD}"
                       r"|liberation\s*(?:de\s*)?(?:la\s*)?retenue|retenue\s*liberee")  # fmt: skip
-_TAX = re.compile(rf"^{_NUMBERED}(?:total\s*)?(gst\s*/\s*hst|hst|gst|qst|pst|rst|tps|tvq|tvh)\b")
+# (its rate may follow with no space: a scan's "GST5%on45,000.00")
+_TAX = re.compile(rf"^{_NUMBERED}(?:total\s*)?(gst\s*/\s*hst|hst|gst|qst|pst|rst|tps|tvq|tvh)(?![a-z])")
 _TAX_TYPES = {
     "gst": "GST",
     "tps": "GST",
