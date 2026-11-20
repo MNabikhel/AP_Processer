@@ -730,6 +730,8 @@ document.addEventListener("click", (e) => {
     // a new line: its description, where it starts (B-742); a tax line: its tax
     const fresh = body.lastElementChild;
     if (which === "lines") fresh?.querySelector("[data-row-more]")?.removeAttribute("hidden"); // (no printed line: its details to type)
+    // One Account box a line: its number is never typed (a hidden box), the one after the last is put (B-2990)
+    if (which === "lines" && fresh?.querySelector('input[type=hidden][name="line_number"]')) numberNew(fresh);
     (accountBox(fresh) || fresh?.querySelector('[name="line_description"]') || fresh?.querySelector("input:not([type=hidden]), select"))?.focus();
     if (which === "lines") fillSplitLines();
     soon(0);

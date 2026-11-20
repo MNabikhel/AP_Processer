@@ -468,3 +468,23 @@ def test_alt_enter_in_a_lines_account_box_inserts_a_line_below(browser, chart_co
     assert numbers == ["1", "5", "2", "3", "4"] and not page.query_selector(LIST)
     settle(page)
     assert not errors
+
+
+def test_a_line_added_with_the_button_takes_the_number_after_the_last_and_can_be_split(browser, chart_company):
+    """B-2990: on the chart screen (its line numbers hidden, never typed) a line added with "Add a line" had no number:
+    none shown, none in the draft, never offered to split, while its findings called it "Line 2". It takes the number
+    after the last, as a line inserted or duplicated does (B-2499)."""
+    page, errors = _review(browser, chart_company, "one_line")
+    store, invoice_id = chart_company.store, chart_company.invoices["one_line"][1]
+    page.click('[data-add-row="lines"]')
+    added = page.locator('[data-grid="lines"] [data-row]').last
+    added.locator('[name="line_description"]').fill("Added by hand")
+    added.locator('[name="line_amount"]').fill("12.34")
+    settle(page)
+    assert (
+        added.locator("[data-line-no]").inner_text() == "2"
+        and added.locator('[name="line_number"]').input_value() == "2"
+    )
+    assert page.eval_on_selector_all("[data-split-line] option", "os => os.map((o) => o.value)") == ["1", "2"]
+    lines = (store.invoice_draft(invoice_id, "") or {"lines": []})["lines"]
+    assert [(line["line_number"], line["description"]) for line in lines][-1] == (2, "Added by hand") and not errors
