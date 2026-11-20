@@ -7035,3 +7035,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     postings, the job may be purged) are, as any other. *Not chosen:* a setting of the business units' codes (as
     Accounts AP posts to is the accounts'): JD Edwards says what K means, and a person who wants one job closed
     changes its status by hand (D-221).
+  - **A database loaded before:** its GL accounts and cost centers were worked out with K closed, while the chart's
+    answers read the statuses as they are: a K job's accounts were offered and a line coded to one CC_UNKNOWN
+    (B-2750). Its lists are worked out again once when a business unit has a status that takes postings now and did
+    not then (`migrations._chart_active`, settings.chart_active: the statuses they were worked out with; 5 s at
+    3,370,000 accounts). No schema version of its own: an older AP Coder still opens the database.
