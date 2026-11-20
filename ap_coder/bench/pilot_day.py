@@ -696,6 +696,15 @@ class App:
         self.app = create_app(self.settings, self.store, start_reader=False)
         self.client = TestClient(self.app, base_url="http://localhost")
 
+    def close(self) -> None:
+        """Nothing of the day left holding its database open: the test client closed, the chart's connections
+        (``Store.forget_reference``), and any connection only the garbage collector would close (B-2725)."""
+        import gc
+
+        self.client.close()
+        self.store.forget_reference()
+        gc.collect()
+
     def get(self, url: str) -> str:
         answer = self.client.get(url)
         if answer.status_code != 200:
@@ -1138,6 +1147,35 @@ def score(invoices: list[DayInvoice], got: dict[str, dict[str, Any]], done: dict
 # --- the run -------------------------------------------------------------------------------------------------------
 
 
+def remove_folder(folder: Path, wait: float = 5.0) -> list[str]:
+    """``folder`` removed, read-only files too, a file still in use tried again for ``wait`` seconds (Windows removes
+    no file held open, and none read-only before Python 3.13; B-2725): what could not be removed, and why."""
+    import gc
+    import stat
+
+    left: list[str] = []
+
+    def again(func: Any, name: str, _exc: Any) -> None:
+        try:
+            os.chmod(name, os.stat(name).st_mode | stat.S_IWRITE | stat.S_IREAD)
+            func(name)
+        except OSError as error:
+            left.append(f"{name}: {error}")
+
+    ends = time.monotonic() + wait
+    while folder.exists():
+        left.clear()
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(folder, onexc=again)
+        else:  # pragma: no cover - Python 3.11
+            shutil.rmtree(folder, onerror=again)
+        if not folder.exists() or time.monotonic() > ends:
+            break
+        gc.collect()
+        time.sleep(0.2)
+    return left if folder.exists() else []
+
+
 def run(out: Path, seed: int = 1, quick: bool = False, scanned: float = 0.1, keep: bool = False,
         on: dt.date | None = None, counts: dict[str, int] | None = None) -> dict[str, Any]:  # fmt: skip
     """The pilot day in ``out`` (its data folder ``out/data`` removed after, unless ``keep``): the report. ``counts``:
@@ -1151,6 +1189,7 @@ def run(out: Path, seed: int = 1, quick: bool = False, scanned: float = 0.1, kee
     took: dict[str, float] = {"files": round(time.perf_counter() - started, 1)}
     before = os.environ.get("AP_PRIVATE_DIR")
     os.environ["AP_PRIVATE_DIR"] = str(out / "data")  # (the chat model's answers are kept there)
+    app: App | None = None
     try:
         with StandIn() as fake:
             app = App(out / "data", fake.base_url)
@@ -1169,19 +1208,20 @@ def run(out: Path, seed: int = 1, quick: bool = False, scanned: float = 0.1, kee
             took["review"] = round(time.perf_counter() - step, 1)
             asked = fake.stats()
     finally:
+        if app is not None:
+            app.close()
         if before is None:
             os.environ.pop("AP_PRIVATE_DIR", None)
         else:
             os.environ["AP_PRIVATE_DIR"] = before
-    if not keep:
-        shutil.rmtree(out / "data", ignore_errors=True)
+    left = [] if keep else remove_folder(out / "data")
     keyed = vouchers_keyed(rows)
     card, misses = score(invoices, got, done, keyed)
     took["all"] = round(time.perf_counter() - started, 1)
     report = {
         "config": {"seed": seed, "quick": quick, "scanned": scanned, "day": books.on.isoformat(),
                    "invoices": len(invoices), "scans": sum(i.scanned for i in invoices)},
-        "seconds": took, "loaded": loaded, "settings": settings,
+        "seconds": took, "loaded": loaded, "settings": settings, "data_left": left,
         "read": [r.get("label") for r in read], "rejected": rejected, "approved": done,
         "model": {k: asked.get(k) for k in ("requests", "by_kind") if k in asked},
         "scorecard": card, "misses": [vars(m) for m in misses],
