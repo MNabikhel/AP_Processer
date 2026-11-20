@@ -817,7 +817,9 @@ def _read_again(settings: Settings | None, store: Any, iid: int, identity: Any) 
 
 def _process_again(settings: Settings, store: Any, iid: int, identity: Any) -> bool:
     """Process the invoice again (its kept Azure reading among the readers) into its proposal, approved as touchless
-    processing would have (as ``page_worker.chat_again`` does). Whether the proposal was replaced."""
+    processing would have (as ``page_worker.chat_again`` does). Whether the proposal was replaced. A revision of the
+    invoice (``azure_read_again``): a review screen open on it (a laptop keeps nothing of who has it open) is out of
+    date, says so, and saves nothing over it (B-2985)."""
     from ..capture.workflow import AUTONOMOUS_REVIEWER, has_draft
     from .page_worker import chat_trust, reference_data
     from .pipeline import InvoicePipeline
@@ -832,7 +834,8 @@ def _process_again(settings: Settings, store: Any, iid: int, identity: Any) -> b
         return False
     capture = result.capture.to_dict() if result.capture is not None else None
     updated = store.replace_proposal(iid, result.output, result.report.to_dict(), capture, pipeline_meta(result),
-                                     expect=identity, unless_in_use=True)  # fmt: skip
+                                     NAME, expect=identity, unless_in_use=True, by=NAME,
+                                     action="azure_read_again")  # fmt: skip
     untrusted = chat_trust(store, result.header_model) if updated and result.autonomy.get("auto") else ""
     if updated and result.autonomy.get("auto") and not untrusted and not has_draft(store, iid):
         try:

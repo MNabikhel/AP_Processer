@@ -1066,6 +1066,35 @@ def test_in_a_browser_ticking_approve_anyway_never_scrolls_the_warning_away(brow
     assert abs(page.evaluate("window.scrollY") - before) < 40 and errors == []
 
 
+def test_in_a_browser_approve_anyway_ticked_while_a_check_runs_stays_ticked_and_is_sent(browser, store, monkeypatch):
+    """B-2987: "Approve anyway" ticked while the check of an edit was under way was unticked by that check's answer
+    (the bar drawn again as it was sent), and the round the tick asked for sent it unticked: the tick was lost."""
+    import threading
+
+    from ap_coder.web.pages import invoice_check
+
+    page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1400, "height": 1000})
+    page.wait_for_selector("[name=override]")
+    settle(page)  # the check made on opening the page
+    real, answer = invoice_check._check, threading.Event()
+
+    def held(*args: Any) -> Any:
+        answer.wait(10)  # answered once the box is ticked
+        return real(*args)
+
+    monkeypatch.setattr(invoice_check, "_check", held)
+    sent: list[bool] = []
+    page.on("request", lambda r: sent.append('name="override"' in (r.post_data or "")) if r.url.endswith("/check")
+            else None)  # fmt: skip
+    with page.expect_request(lambda r: r.url.endswith("/check")):
+        page.locator("[data-grid=lines] [name=line_description]").first.fill("Freight, as agreed")
+    page.check("[data-live=bar] [name=override]")  # while that check is under way
+    answer.set()
+    settle(page)
+    assert page.is_checked("[data-live=bar] [name=override]") and page.is_visible("[data-override-reason]")
+    assert sent == [False, True] and errors == []
+
+
 def test_in_a_browser_the_line_grid_fits_its_card_on_a_1280_screen(browser, store):
     """B-1507: at 1280x720 (a 1080p laptop at 150%) the line grid's fixed columns (398 px) were wider than its card
     (385 px): the delete icon and the right of the Amount box were cut off. The columns now give way."""

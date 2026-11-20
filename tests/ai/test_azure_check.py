@@ -892,6 +892,32 @@ def test_a_proposal_is_not_replaced_once_a_person_opened_it_meanwhile(store, mon
     assert outcome.read_again == "" and store.get_invoice(iid)["ai_output"] == before
 
 
+def test_on_a_laptop_a_reading_again_while_an_invoice_is_open_puts_its_screen_out_of_date(store, monkeypatch):
+    """B-2985: on a laptop nothing is kept of who has an invoice open (D-184), so Azure's reading again replaced the
+    proposal under an open review screen that was never told: it went on showing the values read before, and its check
+    saved them as the person's draft over the new reading without a word. The reading again is a revision of the
+    invoice, as the AI reviewer's corrections are (B-2805): the screen says so, read-only, and its check and approval
+    are refused."""
+    from tests.web.test_web_invoice import form_of
+    from tests.web.test_web_invoice_together import _open, _poll
+    from tests.webclient import client_for
+
+    monkeypatch.delenv("AP_SERVER_MODE", raising=False)
+    _turn_on(store, monkeypatch)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)
+    iid = _process(store).invoice_id
+    laptop = client_for(store)
+    screen, shown = _open(laptop, iid), form_of(store, iid)
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(fake_di.recorded(STEM)))
+    assert outcome.read_again == "now"  # (no draft yet, and nothing kept of who has it open)
+    stale = _poll(laptop, iid, screen)["stale"]
+    assert stale["text"].startswith(f"Read again by {azure_check.NAME} today at ") and "read-only" in stale["sub"]
+    for action in ("check", "approve"):
+        answer = laptop.post(f"/review/{iid}/{action}", data={**shown, **screen}, headers=PAGE)
+        assert answer.status_code == 409 and answer.json()["stale"]["text"] == stale["text"], (action, answer.text)
+    assert store.get_invoice(iid)["status"] == REVIEW and not store.invoice_drafts()
+
+
 def test_an_answer_that_cant_be_read_is_not_kept_and_fails_that_invoice(store, monkeypatch):
     _turn_on(store, monkeypatch)
     monkeypatch.setattr(azure_check, "low_confidence", lambda capture: True)

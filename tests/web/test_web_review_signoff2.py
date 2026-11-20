@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from ap_coder.core import memory
 from ap_coder.core.store import APPROVED, REVIEW
 from ap_coder.erp import jde_settings
@@ -76,6 +78,20 @@ def test_in_a_browser_alt_enter_in_a_description_inserts_a_line(browser, store):
     rows.first.locator("[name=line_description]").focus()
     page.keyboard.press("Alt+Enter")
     assert rows.count() == before + 1
+    assert page.errors == []
+
+
+@pytest.mark.parametrize("box", ["line_gl", "line_cc"])
+def test_in_a_browser_alt_enter_in_a_gl_account_or_cost_center_box_inserts_a_line(browser, store, box):
+    """B-2989: the GL account's and the cost center's list took Alt+Enter for Enter and opened, before the line's keys
+    saw it."""
+    page = _review(browser, store, "Pacific")
+    rows = page.locator("[data-grid=lines] > tr")
+    before = rows.count()
+    rows.first.locator(f".pk-input[data-picker-name={box}]").focus()
+    page.keyboard.press("Alt+Enter")
+    assert rows.count() == before + 1 and page.locator(".pk-layer").is_hidden()
+    settle(page)
     assert page.errors == []
 
 

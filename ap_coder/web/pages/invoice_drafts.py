@@ -290,7 +290,7 @@ _CHANGES = {"approved": "Approved", "final_approved": "Given its second approval
             "deleted": "Deleted", "sent_to_manager": "Sent to the manager to confirm the coding",
             "manager_confirmed": "Coding confirmed", "manager_sent_back": "Coding sent back",
             "manager_request_withdrawn": "Request to the manager withdrawn",
-            "verifier_corrected": "Corrected"}  # fmt: skip
+            "verifier_corrected": "Corrected", "azure_read_again": "Read again"}  # fmt: skip
 STALE_SUB = "This screen is read-only now: what you typed is still here to copy."
 
 

@@ -576,7 +576,8 @@ class LessonsMixin:
         Azure Document Intelligence's reading again, D-245; the AI reviewer's corrections, D-263). ``version``: only
         while its proposal is still that one (``proposal_version``, B-2802). Otherwise nothing changes and it returns
         False. ``by``: who changed it, in its history; ``action``: its event (the AI reviewer's corrections,
-        ``verifier_corrected``, are a revision: a review screen drawn before them is out of date, B-2805)."""
+        ``verifier_corrected``, and Azure's reading again, ``azure_read_again``, are a revision: a review screen drawn
+        before them is out of date, B-2805, B-2985)."""
         if not output:
             return False
         validation = report.to_dict() if hasattr(report, "to_dict") else dict(report or {})

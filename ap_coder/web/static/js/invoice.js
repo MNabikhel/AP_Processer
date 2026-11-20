@@ -54,6 +54,8 @@ let timer = 0;
 let stale = null; // what the screen said once it was out of date (showStale): nothing is checked or sent from it after
 let running = null; // the check under way (a promise), with any rounds asked for meanwhile
 let queued = false; // edits made while a check runs: check again after it
+let typingIn = null; // the box being typed in (since it took the focus): what a check fills is not put in it (B-2988)
+let owed = false; // an edit's check that Approve called off: checked once the approval does not go through (B-2986)
 const checking = document.querySelector("[data-checking]"); // "Checking…" beside the approve bar meanwhile
 
 function input(name) {
@@ -76,10 +78,18 @@ function applySections(answer, posted = null) {
     const open = [...el.querySelectorAll("details")].map((d) => d.open); // what the reviewer opened stays open
     // A box or choice of this section in use (ticked with the keyboard) keeps the focus once it is drawn again.
     const active = el.contains(document.activeElement) && document.activeElement.name ? document.activeElement : null;
+    // A choice of this section made since its check was sent ("Approve anyway" ticked meanwhile) is kept: drawn as it
+    // was sent, it would be lost, and the round it asked for would send it as before (B-2987).
+    const chosen = posted ? [...el.querySelectorAll("input[type=checkbox][name], input[type=radio][name]")]
+      .filter((x) => !x.disabled && x.checked !== posted.getAll(x.name).includes(x.value)) : [];
     el.innerHTML = html; // drawn by the server, every text escaped
     el.querySelectorAll("details").forEach((d, i) => {
       if (i < open.length) d.open = open[i];
     });
+    for (const was of chosen) {
+      const now = [...el.querySelectorAll(`input[name="${CSS.escape(was.name)}"]`)].find((x) => x.type === was.type && x.value === was.value);
+      if (now) now.checked = was.checked;
+    }
     if (active) {
       const same = [...el.querySelectorAll("[name]")].find((x) => x.name === active.name && x.value === active.value);
       same?.focus({ preventScroll: true });
@@ -618,9 +628,13 @@ document.addEventListener("input", (e) => {
 if (form) {
   document.addEventListener("input", (e) => {
     if (e.target.form !== form) return;
+    typingIn = e.target;
     dropUndo(); // an edit since: Undo would put that back too
     headerEdited(e.target);
     if (e.target.type !== "checkbox" && e.target.type !== "radio") soon();
+  });
+  document.addEventListener("focusout", (e) => {
+    if (e.target === typingIn) typingIn = null;
   });
   document.addEventListener("change", (e) => {
     if (e.target.form !== form) return;
@@ -664,6 +678,7 @@ document.addEventListener(
     if (f === form) {
       // Approving sends every field as it is now: a check still waiting (the field just left fired "change") would
       // only reach the server after the approval, and be told the invoice is no longer in the queue.
+      if (timer) owed = true;
       clearTimeout(timer);
       timer = 0;
       showChecking();
@@ -683,6 +698,14 @@ document.addEventListener(
   },
   true,
 );
+/** An approval refused, or its question put away: the edit whose check it called off is checked (and kept) now, so
+    the bar and the findings follow what the screen shows (B-2986). */
+function checkOwed() {
+  if (!owed) return;
+  owed = false;
+  check();
+}
+form?.addEventListener("apc:refused", checkOwed);
 document.addEventListener("click", (e) => {
   const a = e.target.closest("a[href]");
   if (!a || !form || !(timer || running) || a.target || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -707,6 +730,8 @@ document.addEventListener("click", (e) => {
     // a new line: its description, where it starts (B-742); a tax line: its tax
     const fresh = body.lastElementChild;
     if (which === "lines") fresh?.querySelector("[data-row-more]")?.removeAttribute("hidden"); // (no printed line: its details to type)
+    // One Account box a line: its number is never typed (a hidden box), the one after the last is put (B-2990)
+    if (which === "lines" && fresh?.querySelector('input[type=hidden][name="line_number"]')) numberNew(fresh);
     (accountBox(fresh) || fresh?.querySelector('[name="line_description"]') || fresh?.querySelector("input:not([type=hidden]), select"))?.focus();
     if (which === "lines") fillSplitLines();
     soon(0);
@@ -1259,13 +1284,14 @@ function vendorChanged(waited = false) {
 
 
 /** What the server filled in (the vendor list's numbers, the default Pay from account) and the details its checks are
-    about (amber, with a note), after a check. A value is put in only where the box still holds what was sent. */
+    about (amber, with a note), after a check. A value is put in only where the box still holds what was sent, and
+    never in the box being typed in: "15/10/20", a pause, then "26" (B-2988); its check puts it in once it is left. */
 function applyHeader(header, posted) {
   const sent = (name) => (posted ? posted.get(name) ?? "" : null);
   let company = false; // the company AP Coder decided again (D-286): the screen is drawn again for it (B-2684)
   for (const [name, value] of Object.entries(header.values || {})) {
     const el = input(name);
-    if (!el || (sent(name) !== null && el.value !== sent(name))) continue;
+    if (!el || el === typingIn || (sent(name) !== null && el.value !== sent(name))) continue;
     if (name === "company" && el.value !== value) company = true;
     el.value = value;
     if (name in TAX_FIELDS) viewer?.setEdited(name, value.trim(), false);
@@ -1800,7 +1826,10 @@ document.addEventListener("apc:ask-why", (event) => {
   };
   skip.addEventListener("click", () => send(false));
   save.addEventListener("click", () => send(true));
-  dialog.addEventListener("cancel", () => dialog.remove());
+  dialog.addEventListener("cancel", () => {
+    dialog.remove();
+    checkOwed();
+  });
   dialog.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
       e.preventDefault();
