@@ -13,7 +13,8 @@ before it is parsed), the columns (``COLUMNS_MOST``) and the rows (``chart.ROWS_
 at each bound (November 2026, a shared machine): a sheet of 249 MB as wide as the export is read in 39 s holding 7 MB
 more; 200,000 rows in 18 s holding 40 MB, their import 2 s under the write lock; a file of 500,000 rows is refused
 after 15 s with nothing held. A file that is no such workbook is refused in plain words that say what to do, never
-with a traceback (B-2124).
+with a traceback (B-2124). The survey (``sheet_survey``) takes the time of the XML's length, whatever it holds: a row of
+``ROW_MOST`` at most, each sheet read once and ``SURVEYED_MOST`` of them in all (B-2760).
 
 Entry points: ``read_chart``, ``read_business_units`` (a path, or an upload's bytes), giving ``chart.Rows``;
 ``read_rows``, the rows as they are, for another of JD Edwards' long exports (the vendor information list, D-219);
@@ -181,18 +182,48 @@ def sheet_heads(source: bytes, name: str = chart.FILE, most: int = HEADER_ROWS) 
         workbook.close()
 
 
-# The workbook's XML as ``sheet_survey`` reads it, a sheet a block at a time with no XML reader (D-271): a row, a cell,
-# a cell's reference ("C12"), type and value, an inline string's text; a namespace prefix ("x:row") is allowed.
-_ROW = re.compile(rb"<(?:\w+:)?row\b([^>]*?)(?:/>|>(.*?)</(?:\w+:)?row>)", re.S)
-_CELL = re.compile(rb"<(?:\w+:)?c\b([^>]*?)(?:/>|>(.*?)</(?:\w+:)?c>)", re.S)
+# The workbook's XML as ``sheet_survey`` reads it, a sheet a block at a time with no XML reader (D-271): the start and
+# end tags of a row, a cell, a cell's value, an inline string's text and a shared string (``_elements`` pairs them); a
+# cell's reference ("C12") and type; a namespace prefix ("x:row") is allowed. No pattern runs past the next tag, so
+# the time is the XML's length whatever it holds (B-2760).
+def _tags(name: bytes) -> re.Pattern[bytes]:
+    """The start and end tags of the element ``name``: whether it is the end tag, its attributes ("/" last: closed in
+    itself)."""
+    return re.compile(rb"<(/?)(?:\w+:)?" + name + rb"\b([^<>]*)>")
+
+
+_ROW, _CELL, _VALUE, _TEXT, _SHARED = (_tags(name) for name in (b"row", b"c", b"v", b"t", b"si"))
 _ROW_NUMBER = re.compile(rb'\br="(\d+)"')
 _REFERENCE = re.compile(rb'\br="([A-Z]+)\d*"')
 _TYPE = re.compile(rb'\bt="(\w+)"')
-_VALUE = re.compile(rb"<(?:\w+:)?v>(.*?)</(?:\w+:)?v>", re.S)
-_TEXT = re.compile(rb"<(?:\w+:)?t(?:\s[^>]*)?>(.*?)</(?:\w+:)?t>", re.S)
-_SHEET = re.compile(rb"<(?:\w+:)?sheet\b[^>]*?>")
-_ATTRIBUTE = re.compile(rb'([\w:]+)="([^"]*)"')
+_SHEET = re.compile(rb"<(?:\w+:)?sheet\b[^<>]*>")
+_ATTRIBUTE = re.compile(rb'(?<![\w:])([\w:]+)="([^"]*)"')
+_ROWS_END = re.compile(rb"</(?:\w+:)?sheetData>|<(?:\w+:)?sheetData\b[^<>]*/>")  # (after it, no row)
 BLOCK = 8 * MB  # of a sheet's XML read at a time
+ROW_MOST = 8 * MB  # a row of a sheet's XML (the chart's export: 7 KB)
+SURVEYED_MOST = 1_000_000_000  # the sheets a survey reads, unzipped (the made-up reports unzip to 9 times their size)
+
+
+def _elements(xml: bytes, tags: re.Pattern[bytes]) -> Iterator[tuple[bytes, bytes]]:
+    """Each element of the XML whose tags are ``tags``, in order: (its attributes, what is between its start and end
+    tags; b"" for one closed in itself). A start tag is paired with the end tag after it, each tag looked at once
+    (B-2760: a lazy ``(.*?)</row>`` searched to the end of the XML from each row never closed, 80 KB of them 12 s).
+    ``ValueError`` for an element never closed, or an end tag with none open: no workbook's XML."""
+    opened = None
+    for tag in tags.finditer(xml):
+        end, attributes = tag.groups()
+        if opened is None and not end:
+            if attributes.endswith(b"/"):
+                yield attributes[:-1], b""
+            else:
+                opened = tag
+        elif opened is not None and end:
+            yield opened.group(2), xml[opened.end() : tag.start()]
+            opened = None
+        else:
+            raise ValueError("an element of the XML is not closed, or closed with none open")
+    if opened is not None:
+        raise ValueError("an element of the XML is never closed")
 
 
 def _column(letters: bytes) -> int:
@@ -206,7 +237,7 @@ def _column(letters: bytes) -> int:
 def _parts(z: zipfile.ZipFile) -> tuple[dict[str, str], str]:
     """({sheet title: its part in the zip}, the shared strings' part, "" when there is none)."""
     rels = {}
-    for tag in re.findall(rb"<(?:\w+:)?Relationship\b[^>]*?>", z.read("xl/_rels/workbook.xml.rels")):
+    for tag in re.findall(rb"<(?:\w+:)?Relationship\b[^<>]*>", z.read("xl/_rels/workbook.xml.rels")):
         found = {k.decode(): html.unescape(v.decode()) for k, v in _ATTRIBUTE.findall(tag)}
         target = found.get("Target", "")
         target = target.lstrip("/") if target.startswith("/") else f"xl/{target}"
@@ -225,10 +256,14 @@ def _shared(z: zipfile.ZipFile, part: str) -> list[str]:
     """The workbook's shared strings, in order, each its text (a rich one's runs joined), stripped."""
     if not part:
         return []
-    out = []
-    for item in re.finditer(rb"<(?:\w+:)?si\b[^>]*>(.*?)</(?:\w+:)?si>", z.read(part), re.S):
-        out.append(html.unescape(b"".join(_TEXT.findall(item.group(1))).decode("utf-8", "replace")).strip())
-    return out
+    return [_text(item) for _attributes, item in _elements(z.read(part), _SHARED)]
+
+
+def _text(xml: bytes) -> str:
+    """The text of a string's runs (``<t>``) joined, stripped."""
+    return html.unescape(
+        b"".join(text for _attributes, text in _elements(xml, _TEXT)).decode("utf-8", "replace")
+    ).strip()
 
 
 def _text_of(attributes: bytes, inner: bytes, shared: list[str]) -> str:
@@ -236,9 +271,9 @@ def _text_of(attributes: bytes, inner: bytes, shared: list[str]) -> str:
     kind = _TYPE.search(attributes)
     kind = kind.group(1) if kind else b"n"
     if kind == b"inlineStr":
-        return html.unescape(b"".join(_TEXT.findall(inner)).decode("utf-8", "replace")).strip()
-    value = _VALUE.search(inner)
-    text = html.unescape(value.group(1).decode("utf-8", "replace")).strip() if value else ""
+        return _text(inner)
+    value = next(_elements(inner, _VALUE), None)
+    text = html.unescape(value[1].decode("utf-8", "replace")).strip() if value else ""
     if kind == b"s":
         return shared[int(text)] if text.isdigit() and int(text) < len(shared) else ""
     if kind == b"n" and text:
@@ -249,33 +284,35 @@ def _text_of(attributes: bytes, inner: bytes, shared: list[str]) -> str:
     return text
 
 
-def _last_row_end(xml: bytes) -> int:
-    """Where the last whole row of a block of a sheet's XML ends (after its "</row>", or "</x:row>"); 0: none yet."""
+def _last_row_start(xml: bytes) -> int:
+    """Where the last row of a block of a sheet's XML starts (its "<row", or "<x:row"), the rows before it whole; 0:
+    none yet. Each "row" is looked behind for its "<" within a few bytes only (B-2760: a row's "</" was looked for back
+    to the block's start, for each "row>")."""
     at = len(xml)
-    while (at := xml.rfind(b"row>", 0, at)) >= 0:
-        start = xml.rfind(b"</", 0, at)
-        if start >= 0 and re.fullmatch(rb"</(?:\w+:)?", xml[start:at]):
-            return at + len(b"row>")
+    while (at := xml.rfind(b"row", 0, at)) >= 0:
+        start = xml.rfind(b"<", max(0, at - 64), at)
+        if start >= 0 and re.fullmatch(rb"<(?:\w+:)?", xml[start:at]):
+            return start
     return 0
 
 
 def _tally(rows: bytes, shared: list[str], below: int, company: int | None, seen: list[Any]) -> None:
     """Counts the rows of a block of a sheet's XML into ``seen`` ([the last row's number, rows, {company: rows}]):
     those numbered over ``below`` with a cell filled, each by its cell in column ``company`` (None: none)."""
-    for row in _ROW.finditer(rows):
-        number = _ROW_NUMBER.search(row.group(1))
+    for attributes, inner in _elements(rows, _ROW):
+        number = _ROW_NUMBER.search(attributes)
         seen[0] = int(number.group(1)) if number else seen[0] + 1
-        if seen[0] <= below or not row.group(2):
+        if seen[0] <= below or not inner:
             continue
         filled, theirs, at = False, "", -1
-        for cell in _CELL.finditer(row.group(2)):
-            reference = _REFERENCE.search(cell.group(1))
+        for cell, value in _elements(inner, _CELL):
+            reference = _REFERENCE.search(cell)
             at = _column(reference.group(1)) if reference else at + 1
             if at == company:
-                theirs = _text_of(cell.group(1), cell.group(2) or b"", shared)
+                theirs = _text_of(cell, value, shared)
                 filled = filled or bool(theirs)
             elif not filled:
-                filled = bool(_text_of(cell.group(1), cell.group(2) or b"", shared))
+                filled = bool(_text_of(cell, value, shared))
             if filled and (company is None or at >= company):
                 break
         if filled:
@@ -285,15 +322,23 @@ def _tally(rows: bytes, shared: list[str], below: int, company: int | None, seen
 
 
 def _blocks(z: zipfile.ZipFile, part: str) -> Iterator[bytes]:
-    """A sheet's XML a block of whole rows at a time (``BLOCK``, cut after a row's end)."""
+    """A sheet's XML a block of whole rows at a time (``BLOCK``, cut before a row's start), up to the end of its rows
+    (``</sheetData>``: what follows is never read). ``ValueError`` for a row longer than ``ROW_MOST``, which no
+    export has: one never closed was held to the end of the sheet and searched again at each block (B-2760)."""
     with z.open(part) as sheet:
         left = b""
         while block := sheet.read(BLOCK):
             left += block
-            cut = _last_row_end(left)
+            cut = _last_row_start(left)
+            end = _ROWS_END.search(left, cut)
+            if end:
+                yield left[: end.start()]
+                return
             if cut:
                 yield left[:cut]
                 left = left[cut:]
+            elif len(left) > ROW_MOST:
+                raise ValueError("a row of the sheet's XML is longer than any export's")
         yield left
 
 
@@ -301,17 +346,17 @@ def _first_rows(z: zipfile.ZipFile, part: str, shared: list[str], most: int) -> 
     """A sheet's rows 1 to ``most``, each its cells' texts (``_text_of``) in their columns, "" where there is none."""
     rows: list[list[str]] = []
     for block in _blocks(z, part):
-        for row in _ROW.finditer(block):
-            number = _ROW_NUMBER.search(row.group(1))
+        for attributes, inner in _elements(block, _ROW):
+            number = _ROW_NUMBER.search(attributes)
             number = int(number.group(1)) if number else len(rows) + 1
             if number > most:
                 return rows
             rows += [[] for _ in range(number - 1 - len(rows))]  # (rows with no cell, which the XML leaves out)
             cells: list[str] = []
-            for cell in _CELL.finditer(row.group(2) or b""):
-                reference = _REFERENCE.search(cell.group(1))
+            for cell, value in _elements(inner, _CELL):
+                reference = _REFERENCE.search(cell)
                 at = _column(reference.group(1)) if reference else len(cells)
-                cells += [""] * (at - len(cells)) + [_text_of(cell.group(1), cell.group(2) or b"", shared)]
+                cells += [""] * (at - len(cells)) + [_text_of(cell, value, shared)]
             rows.append(cells[:COLUMNS_MOST])
     return rows
 
@@ -323,13 +368,23 @@ def sheet_survey(source: bytes, pick: Callable[[str, list[list[str]]], tuple[int
     are (their row number from 1) and its company column's position (None: none); None for a sheet not counted
     (0 rows). The rows are read in the sheets' XML a block at a time, no cell made of them, of each row the cells up to
     one filled and the company's: a workbook of 50 MB in seconds, where reading every row as ``read_rows`` does took
-    minutes (D-271). Within the bounds ``read_rows`` reads in; ``ChartError`` as its."""
+    minutes (D-271). Within the bounds ``read_rows`` reads in, each sheet's XML read once and ``SURVEYED_MOST`` of
+    them in all (B-2760); ``ChartError`` as its."""
     opened = io.BytesIO(source)
     _refuse_too_big(opened, name)
     out: list[tuple[str, int, dict[str, int]]] = []
     try:
         with zipfile.ZipFile(opened) as z:
             sheets, strings = _parts(z)
+            parts = [part for part in sheets.values() if part.startswith("xl/worksheets/")]
+            if len(set(parts)) < len(parts):
+                raise ValueError("two sheets of the workbook are one sheet's XML")
+            surveyed = sum(z.getinfo(part).file_size for part in parts)
+            if surveyed > SURVEYED_MOST:
+                raise ChartError(f"{name} unzips to more than a workbook of JD Edwards' reports does "
+                                 f"({surveyed // MB:,} MB of sheets; at most {SURVEYED_MOST // MB:,} MB is read), so "
+                                 "it was not opened. Put fewer reports in one workbook, or upload them on their own "
+                                 "cards.")  # fmt: skip
             shared = _shared(z, strings)
             for title, part in sheets.items():
                 if not part.startswith("xl/worksheets/"):
@@ -339,6 +394,8 @@ def sheet_survey(source: bytes, pick: Callable[[str, list[list[str]]], tuple[int
                 for block in _blocks(z, part) if picked is not None else ():
                     _tally(block, shared, picked[0], picked[1], seen)
                 out.append((title, seen[1], seen[2]))
+    except ChartError:
+        raise
     except UNREADABLE as exc:
         raise ChartError(f"{name} could not be read as an Excel workbook, so nothing was read: open it in Excel and "
                          "save it again as .xlsx, or export it from JD Edwards again.") from exc  # fmt: skip

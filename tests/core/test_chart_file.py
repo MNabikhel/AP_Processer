@@ -3,6 +3,7 @@ columns, every cell text, and a chart of the real size, which no other reader of
 
 from __future__ import annotations
 
+import io
 import time
 import zipfile
 
@@ -324,6 +325,88 @@ def test_a_sheet_whose_xml_names_its_namespace_is_counted_too(tmp_path):
     expected = chart_file.sheet_survey(data, lambda title, head: (1, 1))
     assert [found[1:] for found in expected] == [(2, {"00210": 2})]
     assert chart_file.sheet_survey(prefixed.read_bytes(), lambda title, head: (1, 1)) == expected
+
+
+_ROW = b'<row r="1"><c r="A1" t="s"><v>0</v></c></row>'
+_RELS = (b'<Relationship Id="rId1" Type="x/worksheet" Target="worksheets/sheet1.xml"/>'
+         b'<Relationship Id="rId2" Type="x/sharedStrings" Target="sharedStrings.xml"/>')  # fmt: skip
+
+
+def _crafted(rows: bytes = _ROW, shared: bytes = b"<sst><si><t>x</t></si></sst>",
+             sheets: bytes = b'<sheet name="S" r:id="rId1"/>', rels: bytes = _RELS) -> bytes:  # fmt: skip
+    """A workbook of the XML given, as no program writes it: its sheet's rows, its shared strings, the sheets its
+    workbook lists and its relationships."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("xl/workbook.xml", b'<workbook xmlns:r="r"><sheets>' + sheets + b"</sheets></workbook>")
+        z.writestr("xl/_rels/workbook.xml.rels", b"<Relationships>" + rels + b"</Relationships>")
+        z.writestr("xl/sharedStrings.xml", shared)
+        z.writestr("xl/worksheets/sheet1.xml", b"<worksheet><sheetData>" + rows + b"</sheetData></worksheet>")
+    return out.getvalue()
+
+
+def test_a_tiny_crafted_workbook_is_surveyed_at_once_never_holding_the_server():
+    """B-2760: rows, cells or shared strings never closed, 20,000 of them in an upload of 1 KB, took the survey's
+    patterns a search to the end of the XML from each (16,000 rows: 12 s; a sheet of 250 MB: days), the server held
+    meanwhile; so did the workbook's relationships never closed, or a sheet's attribute of 20,000 words. A sheet
+    listed again was read again (any number of times). Each is surveyed at once, those that are no workbook's XML
+    refused in plain words."""
+    shapes = {
+        "rows never closed": _crafted(b"<row>" * 20_000),
+        "cells never closed": _crafted(b"<row>" + b"<c>" * 20_000 + b"</row>"),
+        "shared strings never closed": _crafted(shared=b"<sst>" + b"<si>" * 20_000 + b"</sst>"),
+        "one sheet listed twice": _crafted(sheets=b'<sheet name="S" r:id="rId1"/><sheet name="T" r:id="rId1"/>'),
+        "relationships never closed": _crafted(rels=b"<Relationship " * 20_000),
+        "an attribute of 20,000 words": _crafted(sheets=b"<sheet " + b"a:" * 20_000 + b' r:id="rId1"/>'),
+    }
+    said = {}
+    for shape, data in shapes.items():
+        assert len(data) < 2_000, shape
+        started = time.monotonic()
+        try:
+            said[shape] = str(chart_file.sheet_survey(data, lambda title, head: (1, 0), "crafted.xlsx"))
+        except chart.ChartError as exc:
+            said[shape] = str(exc)
+        took = time.monotonic() - started
+        assert took < 2, f"{shape}: {took:.1f} s"
+    refused = [shape for shape, words in said.items() if words.startswith("crafted.xlsx could not be read as an Excel")]
+    assert refused == list(shapes)[:4], said
+
+
+def test_a_sheet_read_in_blocks_smaller_than_a_row_counts_the_same_and_a_row_longer_than_any_exports_is_refused(
+    tmp_path, monkeypatch
+):
+    """B-2760: a block of a sheet's XML is cut before a row's start (a row closed in itself too: an empty row given a
+    height) and ends with the rows (what follows them, such as merged cells, never read); a row that does not end
+    within ``ROW_MOST`` is refused, never held to the end of the sheet."""
+    import re
+
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.append(["Document", "Doc Co"])
+    for n in range(1, 60):
+        sheet.append([5000 + n, "00210" if n % 3 else "00310"])
+    for n in range(1, 60):
+        sheet.row_dimensions[100 + n].height = 30
+        sheet.cell(row=300, column=1 + n % 2, value=" ")
+        sheet.merge_cells(start_row=400 + n, start_column=1, end_row=400 + n, end_column=2)
+    sheet.cell(row=200, column=2, value="00420")
+    book.save(tmp_path / "saved.xlsx")
+    path = tmp_path / "book.xlsx"
+    with zipfile.ZipFile(tmp_path / "saved.xlsx") as z, zipfile.ZipFile(path, "w") as out:
+        for item in z.infolist():  # (the empty rows closed in themselves, as Excel writes them)
+            out.writestr(item, re.sub(rb'(<row [^>]*customHeight="1")></row>', rb"\1/>", z.read(item)))
+    data = path.read_bytes()
+    assert zipfile.ZipFile(path).read("xl/worksheets/sheet1.xml").count(b'customHeight="1"/>') == 59
+    whole = chart_file.sheet_survey(data, lambda title, head: (1, 1))
+    counted = (60, {"00210": 40, "00310": 19, "00420": 1})
+    assert [found[1:] for found in whole] == [_counted_as_read(data, "Sheet", 1, 1)] == [counted]
+    monkeypatch.setattr(chart_file, "BLOCK", 150)
+    monkeypatch.setattr(chart_file, "ROW_MOST", 1000)
+    assert chart_file.sheet_survey(data, lambda title, head: (1, 1)) == whole
+    monkeypatch.setattr(chart_file, "ROW_MOST", 100)
+    with pytest.raises(chart.ChartError, match="could not be read as an Excel workbook"):
+        chart_file.sheet_survey(data, lambda title, head: (1, 1))
 
 
 # --- The chart as a query saves it as text, streamed from disk (D-272) ----------------------------------------------
