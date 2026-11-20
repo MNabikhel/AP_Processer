@@ -226,14 +226,15 @@ def test_the_payment_terms_card_says_each_codes_rule_and_those_not_worked_out(cl
     ) in page
     assert (
         "Not worked out as JD Edwards does, so an invoice of these is due by the days to pay (Settings → Review) "
-        "and says to check its due date: JD Edwards terms code D: rule not supported (its due date “126365” is "
-        "not a date AP Coder reads); JD Edwards terms code Q: rule not supported (proximate month 3, day 15); "
-        "JD Edwards terms code R: rule not supported (a proximate date with a discount); JD Edwards terms code "
-        "V: rule not supported (2 split payments with no days between them)."
+        "and says to check its due date: D: its due date “126365” is not a date AP Coder reads; Q: proximate month "
+        "3, day 15; R: a proximate date with a discount; V: 2 split payments with no days between them."
     ) in page
     listed = page.split('id="terms-table"', 1)[1].split("</details>", 1)[0]
     assert '<b>E</b> End of next month <span class="muted">· Net 31st prox</span>' in listed
-    assert '<b>Q</b> 15th, 3 months on <span class="muted">· JD Edwards terms code Q: rule not supported' in listed
+    assert (
+        '<b>Q</b> 15th, 3 months on <span class="muted">· rule not supported (proximate month 3, day 15)</span>'
+        in listed
+    )
 
 
 def test_a_report_on_another_card_is_named_with_its_card(client, workbook):
