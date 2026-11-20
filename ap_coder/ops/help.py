@@ -638,9 +638,10 @@ CHECKS: dict[str, CheckHelp] = {
         "Information only: no due date and no payment terms AP Coder understands were read, and the supplier's JD "
         "Edwards terms code has a rule AP Coder does not work out as JD Edwards does (JD Edwards files → Payment "
         "terms): a proximate date other than a day of the next month or the end of the invoice's month, a fixed or "
-        "proximate due date with net days or a discount, split payments with no days between them, or a code not in "
-        "the table (an advanced payment term). So the due date is the invoice date plus the days to pay in Settings → "
-        "Review; JD Edwards works out its own from the code.",
+        "proximate due date with net days or a discount, split payments with no days between them, more than 180 net "
+        "days, a discount for more than 60 days or of 20% or more, or a code not in the table (an advanced payment "
+        "term). So the due date is the invoice date plus the days to pay in Settings → Review; JD Edwards works out "
+        "its own from the code.",
         "Check the due date against the supplier's terms; type it in Due date if it matters, or the terms in Payment "
         "terms (e.g. Net 45).",
     ),
