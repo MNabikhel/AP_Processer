@@ -8,7 +8,8 @@ aside for a person. No mailbox password, token or network access is given to AP 
 
 **What to deliver:** the whole email, as **.eml** or **.msg** (not only its attachments): the subject and text are what
 reveal a bank-detail change or a payment reminder. One file per email, any unique name. A file still being written is
-fine: AP Coder waits until a file has not changed for 5 seconds.
+fine: AP Coder waits until a file has not changed for 5 seconds, and up to a minute more for an email whose end is
+missing (a copy that stalled); one still cut off after that is read as far as it goes and waits for a person.
 
 ## Option 1: Power Automate on the shared mailbox (recommended)
 

@@ -2,6 +2,7 @@
 
 import time
 from email.message import EmailMessage
+from pathlib import Path
 from unittest.mock import patch
 
 from ap_coder.intake.mailbox import MAX_FORWARD_DEPTH, emails_in, read_eml, safe_name, unpack, unpack_folder
@@ -218,3 +219,66 @@ def test_an_email_forwarded_inside_itself_a_thousand_times_is_refused_before_it_
     raw += "Content-Type: text/plain\n\nhi\n"
     with patch("email.message_from_bytes", side_effect=AssertionError("parsed")), pytest.raises(UnreadableEmail):
         read_eml(raw.encode())
+
+
+def _three_invoices() -> bytes:
+    from tests.pdfs import pdf_bytes
+
+    m = EmailMessage()
+    m["Subject"], m["From"] = "Invoices for October", "ar@northwind.example"
+    m.set_content("Please find our three invoices attached.")
+    for n in (1, 2, 3):
+        m.add_attachment(pdf_bytes("Northwind Supplies", "INVOICE", f"Invoice No. INV-44{n}", "Total 105.00"),
+                         maintype="application", subtype="pdf", filename=f"INV-44{n}.pdf")  # fmt: skip
+    return m.as_bytes()
+
+
+def test_a_saved_email_still_being_copied_is_left_for_later_never_filed_as_done(tmp_path):
+    """B-2976: an email whose copy stalled past SETTLE_SECONDS (a slow network share) was unpacked as far as it was
+    written and moved to emails/ as sorted: the invoices after the cut were never read, and nothing said so. One whose
+    end is missing (no closing MIME boundary), changed in the last minute, waits for the next pick-up; one cut off for
+    longer is unpacked and waits for a person; one still growing as it is read waits too."""
+    import os
+
+    from ap_coder.bench.msgwriter import Attachment, Message, build_msg
+
+    raw = _three_invoices()
+    path = tmp_path / "Invoices for October.eml"
+    path.write_bytes(raw[: raw.rfind(b"\n--", 0, raw.index(b"INV-442.pdf"))])  # copied up to the second invoice
+    stalled = time.time() - 10
+    os.utime(path, (stalled, stalled))
+    assert unpack_folder(tmp_path) == [] and emails_in(tmp_path) == [path]
+    assert not list(tmp_path.glob("*.pdf"))  # nothing taken out of it yet
+    path.write_bytes(raw)  # the copy finished
+    os.utime(path, (stalled, stalled))
+    (whole,) = unpack_folder(tmp_path)
+    assert [p.name for p in whole.saved] == [f"Invoices for October - INV-44{n}.pdf" for n in (1, 2, 3)]
+    assert not whole.triage.needs_person
+
+    cut = tmp_path / "cut.eml"  # cut off for good (a copy that died): read as far as it goes, and a person told
+    cut.write_bytes(raw[: len(raw) // 2])
+    (half,) = unpack_folder(tmp_path, now=time.time() + 120)
+    assert half.triage.needs_person and "end of the email" in " ".join(half.triage.reasons)
+    assert (tmp_path / "emails" / "needs a person" / "cut.eml").exists()
+
+    msg = tmp_path / "Invoices.msg"  # an Outlook email cut off reads as damaged: it waits as well
+    msg.write_bytes(build_msg(Message(subject="Invoices", attachments=[Attachment("INV-441.pdf", raw[:4000])]))[:3000])
+    os.utime(msg, (stalled, stalled))
+    assert unpack_folder(tmp_path) == [] and emails_in(tmp_path) == [msg]
+    (damaged,) = unpack_folder(tmp_path, now=time.time() + 120)
+    assert damaged.error.startswith("could not be read")
+
+    growing = tmp_path / "growing.eml"
+    growing.write_bytes(raw)
+    os.utime(growing, (stalled, stalled))
+    real = Path.read_bytes
+
+    def read_while_written(self):
+        data = real(self)
+        if self == growing:
+            with open(self, "ab") as fh:
+                fh.write(b"more")
+        return data
+
+    with patch("pathlib.Path.read_bytes", read_while_written):
+        assert unpack_folder(tmp_path) == [] and emails_in(tmp_path) == [growing]

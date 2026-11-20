@@ -19,7 +19,9 @@ cannot be read) makes the email wait for a person, with the reason (``Mail.left_
 (.eml, .msg) is opened like a forwarded one.
 
 An email that cannot be read (damaged, far too large, or emails forwarded inside each other hundreds of
-times) moves to ``emails/could not read`` with the reason, so it never stops the other files.
+times) moves to ``emails/could not read`` with the reason, so it never stops the other files. One still being copied
+is left for a later pick-up: its size changing as it is read, or its end missing (or unreadable) and changed in the
+last ``CUT_OFF_SECONDS``; one still cut off after that is read as far as it goes and waits for a person.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from __future__ import annotations
 import base64
 import binascii
 import email
+import email.errors
 import email.policy
 import hashlib
 import json
@@ -46,6 +49,7 @@ from .msgfile import MsgError, html_to_text, read_msg
 MIN_IMAGE_BYTES = 15_000
 MAX_LOGO_BYTES = 150_000  # an inline picture larger than this is a photo of an invoice, not a signature logo
 SETTLE_SECONDS = 5  # an email changed more recently may still be being copied
+CUT_OFF_SECONDS = 60  # an email changed this recently whose end is missing (or can't be read) is still being copied
 MAX_EMAIL_BYTES = 100_000_000  # larger than any mail server sends: not read
 MAX_FORWARD_DEPTH = 20  # emails forwarded inside forwarded emails: deeper ones are not opened
 MAX_PARTS = 500  # attachments and text parts read from one email
@@ -53,6 +57,7 @@ MAX_BOUNDARY_LINES = 5_000  # lines starting "--" (each part has one): an email 
 LOGO = "(a small or inline picture, e.g. a logo)"
 SIGNATURE = "(a digital signature or contact card)"
 NO_INVOICE = "(the email's own text or a calendar invite)"
+CUT_OFF = "the end of the email (missing: it was cut off, or still being copied, when it was read)"
 OUTLOOK_FORMATTING = "(Outlook's formatting, winmail.dat)"  # it holds the attachments when nothing else came
 _NO_INVOICE_TYPES = {"text/plain", "text/html", "text/calendar", "application/ics"}
 _NO_INVOICE_SUFFIXES = {".txt", ".htm", ".html", ".ics"}
@@ -97,6 +102,7 @@ class Mail:
     found: list[tuple[str, bytes]] = field(default_factory=list)  # PDFs and pictures
     sheets: list[tuple[str, bytes]] = field(default_factory=list)  # CSV and Excel (a statement, maybe)
     skipped: list[str] = field(default_factory=list)
+    cut_off: bool = False  # its end is missing (no closing MIME boundary): copied or sent only in part
 
     @property
     def left_out(self) -> list[str]:
@@ -128,6 +134,11 @@ class _Opened:
 
 class UnreadableEmail(ValueError):
     """An email AP Coder will not open; the message says why in plain words."""
+
+
+class StillBeingSaved(OSError):
+    """A saved email still being copied (its size changing as it is read, or its end missing and changed in the last
+    ``CUT_OFF_SECONDS``): left where it is, for the next pick-up (B-2976)."""
 
 
 # Names Windows keeps for devices, whatever the extension ("CON.pdf", "nul.tar.gz" open the device, not a file).
@@ -353,6 +364,8 @@ def read_eml(raw: bytes, depth: int = 0, opened: _Opened | None = None) -> Mail:
 
     walk(msg)
     mail.body = "\n\n".join(t for t in [*texts, mail.body] if t.strip())[:200_000]  # its own words, then attached
+    # Any cut takes away the closing boundary of the email's outer part, the last line of a whole one (B-2976).
+    mail.cut_off = any(isinstance(d, email.errors.CloseBoundaryNotFoundDefect) for d in msg.defects)
     return mail
 
 
@@ -435,21 +448,33 @@ def _record(folder: Path, mail: Mail, email_file: Path, result: Unpacked, files:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def unpack(path: Path, folder: Path | None = None) -> Unpacked:
+def unpack(path: Path, folder: Path | None = None, now: float | None = None) -> Unpacked:
     """Sort the email at ``path`` (``triage``) and save each attachment where it belongs in ``folder`` (default:
     its own folder): invoices and credit notes next to it, statements in ``statements/``, the rest with the email in
     ``emails/needs a person/``. The email then moves to ``emails/`` (or ``emails/needs a person/``) and the decision
     is added to ``emails/triage.jsonl``. A file with the same name and content is not written twice. An email that
     cannot be read moves to ``emails/could not read`` and ``error`` says why; an OSError (the file locked or removed
-    meanwhile) is raised, so the next check tries again."""
+    meanwhile, or ``StillBeingSaved``) is raised, so the next check tries again. ``now``: the time of a pick-up of the
+    folder, which leaves an email cut off or unreadable changed in the last ``CUT_OFF_SECONDS`` for later (a copy that
+    stalled); one cut off for longer is read as far as it goes, and waits for a person (B-2976)."""
     folder = folder or path.parent
+    seen = path.stat()
     raw = path.read_bytes()
+    if len(raw) != seen.st_size or path.stat().st_size != seen.st_size:  # still growing as it was read
+        raise StillBeingSaved(f"{path.name} is still being saved")
+    copying = now is not None and abs(now - seen.st_mtime) < CUT_OFF_SECONDS
     try:
         mail = read_mail(path, raw)
+        if mail.cut_off:
+            mail.skipped.append(CUT_OFF)  # said, so the email waits for a person
         docs = [triage.document_for(name, content) for name, content in [*mail.found, *mail.sheets]]
         sorted_mail = triage.classify_email(mail.subject, mail.body, docs, mail.left_out)
     except Exception as exc:  # noqa: BLE001 - one bad email must never stop the others
+        if copying:  # a copy not finished reads as damaged (an Outlook .msg): read whole at a later pick-up
+            raise StillBeingSaved(f"{path.name} can't be read yet: it may still be being saved") from exc
         return _unreadable(path, folder, exc)
+    if mail.cut_off and copying:
+        raise StillBeingSaved(f"{path.name} ends before its last part: it is still being saved")
     result = Unpacked(path.name, mail.subject, skipped=mail.skipped, triage=sorted_mail)
     stem = safe_name(path.stem)[:40].rstrip(" .")
     person = folder / DONE_FOLDER / PERSON_FOLDER
@@ -513,17 +538,17 @@ def emails_in(folder: Path) -> list[Path]:
 
 
 def unpack_folder(folder: Path, now: float | None = None) -> list[Unpacked]:
-    """Unpack every saved email in ``folder`` that has finished copying (unchanged for ``SETTLE_SECONDS``).
-    One email that cannot be read is filed away with the reason; it never stops the others."""
+    """Unpack every saved email in ``folder`` that has finished copying (unchanged for ``SETTLE_SECONDS``, and whole:
+    ``unpack``'s ``now``). One email that cannot be read is filed away with the reason; it never stops the others."""
     now = time.time() if now is None else now
     out = []
     for path in emails_in(folder):
         try:
             if abs(now - path.stat().st_mtime) < SETTLE_SECONDS:  # (a time far ahead of the clock is not "now")
                 continue  # still being written: the next check picks it up
-            out.append(unpack(path, folder))
+            out.append(unpack(path, folder, now))
         except OSError:
-            continue  # locked or removed meanwhile: the next check picks it up
+            continue  # locked, removed or still being saved meanwhile: the next check picks it up
         except Exception as exc:  # noqa: BLE001 - anything else about this one email: file it away, go on
             out.append(_unreadable(path, folder, exc))
     return out
