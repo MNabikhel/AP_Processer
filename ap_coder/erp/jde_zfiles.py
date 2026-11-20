@@ -300,10 +300,12 @@ def _match_rows(v: _Voucher, keys: Mapping[str, Any], common: Mapping[str, Any],
     its own, D-265); without its rows (the PO not loaded) the invoice's line number, as before (D-284)."""
     final = v.final
     items = final.get("line_items") or []
-    rows = _line_rows(items, matched.rows) if matched is not None and matched.rows else None
+    rows = None
+    if matched is not None and matched.rows:
+        rows = {at: row for row, at in zip(matched.rows, row_lines(items, matched.rows), strict=True) if at is not None}
     out = []
     for n, li in enumerate(items):
-        row = rows[n] if rows is not None else None
+        row = rows.get(n) if rows is not None else None
         on_po = row is not None and row.on_po
         out.append({
             "EDUS": keys["VLEDUS"], "EDBT": keys["VLEDBT"], "EDTN": keys["VLEDTN"], "EDLN": 1,
@@ -315,20 +317,19 @@ def _match_rows(v: _Voucher, keys: Mapping[str, Any], common: Mapping[str, Any],
     return out
 
 
-def _line_rows(items: list[dict[str, Any]], rows: list[MatchRow]) -> list[MatchRow | None]:
-    """Each invoice line's row of its voucher match (None: it has none, a line on no PO line). The rows are made from
-    the lines in their order, at most one a line, so a line takes the next row, when made from it (its number and
-    description): never a row found by the line's number alone, which an invoice may repeat (page 2 starting again at
-    1, B-2920)."""
-    out: list[MatchRow | None] = []
-    k = 0
-    for li in items:
-        row = rows[k] if k < len(rows) else None
-        if row is not None and (row.invoice_line, row.description) == (li.get("line_number"), li.get("description")):
-            k += 1
-            out.append(row)
-        else:
-            out.append(None)
+def row_lines(items: list[dict[str, Any]], rows: list[MatchRow]) -> list[int | None]:
+    """The position in ``items`` (the invoice's lines) of the line each voucher match row was made from (None: none).
+    The rows are made from the lines in their order, at most one a line (none for a line on no PO line), so a row
+    takes the next line of its number and description: never a line found by its number alone, which an invoice may
+    repeat (page 2 starting again at 1, B-2920). The Z-files and the keying sheet (``jde_match``) both ask here."""
+    out: list[int | None] = []
+    start = 0
+    for row in rows:
+        mine = (row.invoice_line, row.description)
+        at = next((n for n in range(start, len(items))
+                   if (items[n].get("line_number"), items[n].get("description")) == mine), None)  # fmt: skip
+        out.append(at)
+        start = start if at is None else at + 1
     return out
 
 

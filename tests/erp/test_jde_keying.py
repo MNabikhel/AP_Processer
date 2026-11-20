@@ -1006,6 +1006,28 @@ def test_a_po_matched_voucher_is_keyed_as_voucher_match_rows_in_the_screens_orde
     assert book["Keying sheet"].page_setup.orientation == "landscape"
 
 
+def test_a_po_matched_voucher_whose_lines_number_again_from_1_keys_each_row_with_its_own_lines_remark_and_tax(tmp_path):
+    """B-2922: the keying sheet's Voucher Match rows took their remark, subledger and share of the tax from the
+    invoice line of their line's number, so on an invoice numbering its lines again from 1 (page 2) the cooler bags'
+    row (12.000, line 1 of page 1) had the setup's remark (line 1 of page 2) and not the bags' subledger, and the
+    setup's row, charged no GST, was taxed Y with the bags' GST. Each row now takes the line it was made from."""
+    store = po_store(tmp_path)
+    inv = po_invoice()
+    bags, setup, freight = inv["final_output"]["line_items"]
+    bags.update(remark="Trade fair cooler bags", subledger="1206", subledger_type="A")
+    setup.update(line_number=1, taxes_applied=[], tax_status="exempt")
+    freight["line_number"] = 2
+    d = doc([bags, setup, freight], [tl("GST", "", 0.05, 631.0, 31.55)], prov="AB", vendor_name=PROMO,
+            invoice_number="118204", invoice_date="2026-09-14", payment_terms="Net 30", po_number="40917")  # fmt: skip
+    inv = coded(d, inv_id=8)
+    (keyed,), held = jde_keying.vouchers([inv], settings(po_matched=True), promo_lookup, gl_names=NAMES, on=ON_DAY,
+                                         po_matches=jde_keying.po_matches(store, [inv]))  # fmt: skip
+    assert held == [] and [(m.line, m.remark, m.subledger, m.subledger_type, m.taxed) for m in keyed.matches] == [
+        ("12.000", "Trade fair cooler bags", "1206", "A", "Y"), ("13.000", "SETUP Lunch Cooler Setup", "", "", "N"),
+        ("14.000", "Charges not in the line table", "", "", "Y")]  # fmt: skip
+    assert keyed.balanced
+
+
 def test_a_po_matched_voucher_with_a_line_on_no_po_line_is_not_ready_and_says_why(tmp_path):
     """D-264: no PO line is ever guessed. A line that matches none of the PO's, or a PO that is not loaded, holds the
     voucher on the "Not ready" sheet with why; without the PO-matched setting the same invoice is keyed with its G/L
