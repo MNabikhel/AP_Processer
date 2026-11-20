@@ -6964,6 +6964,27 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - *Left as it is:* an invoice the batch check holds stays in Ready to export, listed with why, and is not put on a
     keying batch's Not ready sheet (B-2148): that sheet lists what a batch holds that its own checks hold back at
     download.
+- **D-298** · **An invoice one company of the group sends another: its supplier is offered with one click, never
+  read** (B-2790; D-262 the company's own names, D-267 report 9's join them).
+  - **The trade-off:** report 9's names stay the company's own, never read as the supplier: the bill-to of every
+    outside invoice prints one, and every company of the group is in the vendor master too, so a name read there
+    would make the customer the supplier, with its history, terms and bank account. An intercompany invoice (the
+    equipment company billing a project company) is named by its GST/HST number when the vendor master holds it
+    (D-262); without it (a US company has none), it is held with no supplier and no company decided, as before.
+  - **What a person sees:** under the empty vendor box (or with no company decided), "Maple Ridge Constructors Ltd. is
+    a company of the group and a supplier: if it billed this invoice, pick it.", and *Use MAPLE RIDGE CONSTRUCTORS
+    LTD* (the vendor list's name): never filled. Offered (`companies.group_suppliers`, in `invoice_fields.field_help`
+    after the page's own readings) is each company of report 9 (or a name written "name = company") printed on the
+    page outside its bill-to and ship-to blocks (`offline_coder.customer_block`: a "Bill to", "Ship to", "Client" or
+    "Attn" label's line and the six under it, the page's text alone), that is a supplier in use of the vendor master;
+    never the company decided, one in a bill-to or ship-to, or the supplier chosen. Picked, the company is decided
+    as before: rule (b) leaves the supplier's own name out, so the company billed, printed in the bill-to, decides.
+  - **Settings → Review** lists report 9's names under "Your company's names", read-only, said where they come from
+    and that they are never read as a supplier.
+  - *Not chosen:* reading a company of the group as the supplier when it is printed outside the bill-to (the rule
+    reader's bill-to blocks miss a customer printed without a label, an envelope's window: B-2720, and a wrong
+    supplier passes where an empty one is held); taking report 9's names out of the own names when they are
+    suppliers (every one is).
 - **D-300** · **A chart refused as cut short can be loaded anyway from its card, by someone who may change the
   settings** (B-2832; D-272 had the page name the command line's `--anyway`).
   - **What is refused stays refused for anyone:** a file with no account, or none that may be posted to (it is no
@@ -7022,24 +7043,3 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Not changed:** VLDDJ is still sent only from what the invoice prints (B-924): a voucher of the supplier's own
     terms leaves its due date to JD Edwards. JD Edwards' blank code (its most used terms) is still not read: a row
     with no code is left out, and a supplier with no code has no terms.
-- **D-298** · **An invoice one company of the group sends another: its supplier is offered with one click, never
-  read** (B-2790; D-262 the company's own names, D-267 report 9's join them).
-  - **The trade-off:** report 9's names stay the company's own, never read as the supplier: the bill-to of every
-    outside invoice prints one, and every company of the group is in the vendor master too, so a name read there
-    would make the customer the supplier, with its history, terms and bank account. An intercompany invoice (the
-    equipment company billing a project company) is named by its GST/HST number when the vendor master holds it
-    (D-262); without it (a US company has none), it is held with no supplier and no company decided, as before.
-  - **What a person sees:** under the empty vendor box (or with no company decided), "Maple Ridge Constructors Ltd. is
-    a company of the group and a supplier: if it billed this invoice, pick it.", and *Use MAPLE RIDGE CONSTRUCTORS
-    LTD* (the vendor list's name): never filled. Offered (`companies.group_suppliers`, in `invoice_fields.field_help`
-    after the page's own readings) is each company of report 9 (or a name written "name = company") printed on the
-    page outside its bill-to and ship-to blocks (`offline_coder.customer_block`: a "Bill to", "Ship to", "Client" or
-    "Attn" label's line and the six under it, the page's text alone), that is a supplier in use of the vendor master;
-    never the company decided, one in a bill-to or ship-to, or the supplier chosen. Picked, the company is decided
-    as before: rule (b) leaves the supplier's own name out, so the company billed, printed in the bill-to, decides.
-  - **Settings → Review** lists report 9's names under "Your company's names", read-only, said where they come from
-    and that they are never read as a supplier.
-  - *Not chosen:* reading a company of the group as the supplier when it is printed outside the bill-to (the rule
-    reader's bill-to blocks miss a customer printed without a label, an envelope's window: B-2720, and a wrong
-    supplier passes where an empty one is held); taking report 9's names out of the own names when they are
-    suppliers (every one is).

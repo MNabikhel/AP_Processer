@@ -195,7 +195,7 @@ it needs no GL account here; PST or QST stays in the line's expense. Then set **
 (where goods are delivered to you): the tax check uses it for an invoice that prints no ship-to or bill-to. In the
 same card, type **Your company's names** (the legal name and any other name invoices are addressed to, one a line):
 a name printed there is the customer, never read as the supplier. JD Edwards' companies, once loaded, count too and
-are listed under the box: an invoice one of them sends another offers that company under the vendor box, to pick.
+are listed under the box: an invoice one of them sends another offers that company under the **Supplier** box, to pick.
 
 **Bank accounts (optional).** JD Edwards' voucher entry takes a G/L bank account. To have each voucher carry
 one, type your bank accounts on **Setup → GL accounts & tax → Bank accounts**: the account as you key it in
