@@ -630,10 +630,13 @@ def test_a_page_following_a_job_is_sent_its_state_done_and_note_only(client):
 
 POLL = """async (every) => {
   const app = await import(document.querySelector('script[src*="/js/app.js"]').src);  // the page's own module
-  window.polled = app.poll("/polled", () => false, { everyMs: every });
+  window.asked = []; window.taken = [];  // when the page sent each look and took its answer (ms, the page's own time)
+  const look = () => (window.asked.push(performance.now()), "/polled");
+  window.polled = app.poll(look, () => (window.taken.push(performance.now()), false), { everyMs: every });
 }"""
 HIDDEN = """(hidden) => {
   Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+  if (!hidden) window.shownAt = performance.now();
   document.dispatchEvent(new Event("visibilitychange"));
 }"""
 
@@ -666,26 +669,27 @@ def test_in_a_browser_a_poll_asks_less_while_nothing_changes_and_nothing_while_t
         looks = _looks(page, answer)
         page.goto(base + "/help")
         page.evaluate(POLL, 200)
-        wait_until(page, lambda: len(looks) >= 7, timeout=10)
-        gaps = [b - a for a, b in zip(looks, looks[1:], strict=False)]
-        # Each look is timed and answered when this test's side of Playwright takes it, so a gap is its wait and more,
-        # never less: a late one only makes its gap longer (CI: 0.20, 0.55, 0.45 s), never one shorter than its wait.
-        waits = [0.2, 0.3, 0.45, 0.6]  # the pace, growing by half, up to three times the pace
-        assert gaps[0] < 0.5 and all(g > w - 0.03 for g, w in zip(gaps, waits, strict=False)), gaps
-        assert all(0.5 < g < 1.0 for g in gaps[4:6]), gaps  # ... up to 0.6 s
+        wait_until(page, lambda: page.evaluate("window.taken.length") >= 7, timeout=10)
+        # Each wait from an answer taken to the next look, as the page timed them: how long this test's side of
+        # Playwright took to answer a look is not in them (a slow runner's made the gaps it timed 0.1-0.5 s longer,
+        # B-2856); a timer late on a busy page only makes a wait longer, never shorter.
+        waits = page.evaluate("window.asked.slice(1).map((t, i) => (t - window.taken[i]) / 1000)")
+        want = [0.2, 0.3, 0.45, 0.6]  # the pace, growing by half, up to three times the pace
+        assert all(w > n - 0.03 for w, n in zip(waits, want, strict=False)) and waits[0] < 0.45, waits
+        assert all(0.57 < w < 0.85 for w in waits[3:6]), waits  # ... up to 0.6 s (half again would be 0.9)
         answer["done"] = 1  # a change: back to the pace
-        seen = len(looks)
-        wait_until(page, lambda: len(looks) >= seen + 2, timeout=5)
-        assert looks[seen + 1] - looks[seen] < 0.5, looks  # (0.2 s, not the 0.6 it had grown to)
+        seen = len(looks)  # answered as they were so far: the next is the change (the page may not have taken it yet)
+        wait_until(page, lambda: page.evaluate("window.asked.length") >= seen + 2, timeout=5)
+        changed = page.evaluate("(n) => (window.asked[n + 1] - window.taken[n]) / 1000", seen)
+        assert changed < 0.45, changed  # (0.2 s, not the 0.6 it had grown to)
 
         page.evaluate(HIDDEN, True)
         hidden_at = time.monotonic()
         page.wait_for_timeout(2000)
         assert [t for t in looks if t > hidden_at + 0.1] == []  # (one already under way may end)
         page.evaluate(HIDDEN, False)
-        shown_at = time.monotonic()
-        wait_until(page, lambda: looks[-1] > shown_at, timeout=2)
-        assert looks[-1] - shown_at < 0.4  # at once, not after the wait
+        wait_until(page, lambda: page.evaluate("window.asked.at(-1) > window.shownAt"), timeout=2)
+        assert page.evaluate("window.asked.at(-1) - window.shownAt") < 100  # ms: at once, not after the wait
 
 
 def test_in_a_browser_a_poll_stops_once_the_laptop_asks_who_they_are_again(chromium, store):

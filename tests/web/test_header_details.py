@@ -12,6 +12,7 @@ from ap_coder.coding.validation import Issue
 from ap_coder.core.schema import FROM_VENDOR_LIST
 from ap_coder.core.store import APPROVED, REVIEW, Store
 from ap_coder.web import invoice_fields, invoice_findings, invoice_form
+from tests.browser import settle
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
 from tests.web.test_web_invoice import PAGE, _open_review, browser, check, demo_db, form_of, me  # noqa: F401
 from tests.web.test_web_pilot_walkthrough import LAPTOP
@@ -198,7 +199,7 @@ def test_in_a_browser_picking_a_vendor_fills_its_numbers_and_follows_it(browser,
     gst, qst = page.locator(f"[name={GST}]"), page.locator(f"[name={QST}]")
     gst.fill("")
     qst.fill("1111111111 TQ0001")  # typed by the clerk: never overwritten
-    page.wait_for_timeout(600)
+    settle(page)
     vendor = page.locator("#vendor-name")
     _pick_vendor(page, "Pacific Office", "Pacific Office Supply")
     page.wait_for_function(f"document.querySelector('[name={GST}]').value === '555666775 RT0001'")
@@ -214,7 +215,7 @@ def test_in_a_browser_picking_a_vendor_fills_its_numbers_and_follows_it(browser,
     page.keyboard.press("Control+z")
     page.wait_for_function(f"document.querySelector('[name={GST}]').value === '555666775 RT0001'")
     assert "Pacific" in vendor.input_value()
-    page.wait_for_timeout(900)  # checked again: the server does not fill it again
+    settle(page)  # checked again: the server does not fill it again
     assert gst.input_value() == "555666775 RT0001"
     _pick_vendor(page, "Prairie Network", "Prairie Network Supply")
     page.wait_for_function(f"document.querySelector('[name={GST}]').value === '609274188 RT0001'")
@@ -341,7 +342,7 @@ def test_in_a_browser_pay_from_is_a_list_that_follows_the_currency(browser, stor
     select.select_option("CAD-PAY")  # picked: a CAD account for a USD invoice is kept, and said
     page.wait_for_selector('[data-field="pay_from_account"].is-flagged')
     assert "Not an account in the invoice's currency" in page.inner_text('[data-field="pay_from_account"]')
-    page.wait_for_timeout(600)
+    settle(page)
     assert select.input_value() == "CAD-PAY"
     assert errors == []
 
@@ -438,7 +439,7 @@ def test_in_a_browser_undo_after_a_vendor_change_puts_back_the_vendor_with_its_n
     page, errors = _open_review(browser, store, "Red River", viewport=LAPTOP)
     gst = page.locator(f"[name={GST}]")
     gst.fill("")
-    page.wait_for_timeout(600)
+    settle(page)
     _pick_vendor(page, "Pacific Office", "Pacific Office Supply")
     page.wait_for_function(f"document.querySelector('[name={GST}]').value === '555666775 RT0001'")
     _pick_vendor(page, "Prairie Network", "Prairie Network Supply")
@@ -446,7 +447,7 @@ def test_in_a_browser_undo_after_a_vendor_change_puts_back_the_vendor_with_its_n
     page.keyboard.press("Control+z")
     page.wait_for_function(f"document.querySelector('[name={GST}]').value === '555666775 RT0001'")
     assert "Pacific" in page.locator("#vendor-name").input_value()  # the vendor and its numbers, together
-    page.wait_for_timeout(900)  # checked again: nothing moves
+    settle(page)  # checked again: nothing moves
     assert "Pacific" in page.locator("#vendor-name").input_value() and gst.input_value() == "555666775 RT0001"
     state = json.loads(page.locator("input[data-from-vendor]").input_value())
     assert state["vendor"] == "pacific office supply" and state["fields"][GST] == "555666775 RT0001"
@@ -566,9 +567,9 @@ def test_in_a_browser_a_number_read_and_cleared_is_not_filled_from_the_vendor_li
     page, errors = _open_review(browser, store, "Red River", viewport=LAPTOP)
     gst = page.locator(f"[name={GST}]")
     gst.fill("")
-    page.wait_for_timeout(600)
+    settle(page)
     _pick_vendor(page, "Pacific Office", "Pacific Office Supply")
-    page.wait_for_timeout(1200)
+    settle(page)
     assert gst.input_value() == ""
     assert errors == []
 
@@ -640,7 +641,7 @@ def test_in_a_browser_picking_a_vendor_fills_the_number_on_its_approved_invoices
     _red_river(store, printed=False)
     page, errors = _open_review(browser, store, "Red River", viewport=LAPTOP)
     page.locator(f"[name={GST}]").fill("")
-    page.wait_for_timeout(600)
+    settle(page)
     _pick_vendor(page, name[:8], name)
     page.wait_for_function(f"document.querySelector('[name={GST}]').value === {usual!r}")
     note = page.locator(f'[data-field="{GST}"] [data-from-vendor-note]')

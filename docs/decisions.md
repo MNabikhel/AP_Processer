@@ -7057,6 +7057,29 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     reader's bill-to blocks miss a customer printed without a label, an envelope's window: B-2720, and a wrong
     supplier passes where an empty one is held); taking report 9's names out of the own names when they are
     suppliers (every one is).
+- **D-299** · **A browser test waits for the page to have done with an action by the page's own word: never a
+  fixed time, never Playwright's "networkidle"** (B-2850 to B-2857: CI's browser tests failed at random every few
+  runs, and passed when run again).
+  - **The page says it is at work with aria-busy:** the review screen's form (`#inv`) from an edit until its check
+    has answered and the answer is drawn (`showChecking`, invoice.js), as a line action's button, a file being read
+    and a slow page's link did already. (The form holds only hidden boxes: a screen reader reads nothing otherwise.)
+  - **`settle(page)`** (tests/browser.py): until nothing on the page says it is busy (`BUSY`) and none of its
+    requests is unanswered (the `chromium` fixture counts each page's: `Counted`), 0.1 s in a row; at most 15 s, then
+    it fails saying what was still under way. After an edit or a line action, before the next action or an assert
+    on what the page drew; or the outcome itself is waited for (`wait_until`, Playwright's `wait_for_*`).
+  - **Not networkidle:** it comes once a page, so asked for again after an action it returns at once, whatever is
+    under way (B-2851). `tests/meta/test_browser_harness.py` refuses `wait_for_load_state("networkidle")` in the
+    tests.
+  - **A state a slow server gives is made, not raced to:** the test holds the page's request (a route kept, then let
+    through) rather than act before the answer comes (B-2853). A time window is never shorter than the test's own
+    steps inside it (`AP_ARMED_MS`, B-2852), and a deadline is tested on Playwright's clock paused, moved on only by
+    the test (B-2854). A pace is timed by the page itself, not as the test's side of Playwright sees it (B-2856); a
+    page that reloads itself once a job is done is waited for before the test goes elsewhere (B-2857).
+  - **How the races were found:** the browser tests run with Chrome's CPU throttling (DevTools'
+    `Emulation.setCPUThrottlingRate`, 4 times slower) and each request to the test's server held back up to 0.6 s
+    at random, on one busy processor: the flaky tests failed most runs so, and none fails since.
+  - *Left as it is:* a fixed wait before an assert that something did *not* happen (it can pass wrongly on a slow
+    runner, never fail), and the waits for the page viewer's smooth scrolls and zoom.
 - **D-300** · **A chart refused as cut short can be loaded anyway from its card, by someone who may change the
   settings** (B-2832; D-272 had the page name the command line's `--anyway`).
   - **What is refused stays refused for anyone:** a file with no account, or none that may be posted to (it is no

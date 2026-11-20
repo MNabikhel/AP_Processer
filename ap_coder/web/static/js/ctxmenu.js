@@ -19,7 +19,8 @@
    * role=menu / menuitem: ↑ ↓ Home End move, Enter or Space picks, → opens a submenu and ← or Esc closes it, Esc or
      Tab closes the menu (the focus goes back where it was), a letter goes to the next item starting with it. Every key
      pressed in the menu stays in it: the page viewer's keys (H, R, +), the popovers' Esc and teaching a field never
-     see them. A click outside, a scroll, the window resized or left closes it.
+     see them. A click outside, a scroll that moves what it is for (the window's, or of the pane holding it: never the
+     page viewer moving to a line's place on the page, B-2850), the window resized or left closes it.
    * ``make`` may answer a promise (the words of the page loading first); the menu opens when it settles.
 */
 
@@ -174,7 +175,7 @@ function focusRow(menu, i) {
 }
 
 /** Open a menu of ``items`` at (x, y) of the window. */
-export function openMenu(items, { x = 0, y = 0, label = "", keyboard = false, opener = null, before = null } = {}) {
+export function openMenu(items, { x = 0, y = 0, label = "", keyboard = false, opener = null, before = null, anchor = null } = {}) {
   closeMenu(false);
   const list = (items || []).filter((it) => it && !it.disabled);
   if (!list.some((it) => it !== "-")) return null;
@@ -188,6 +189,7 @@ export function openMenu(items, { x = 0, y = 0, label = "", keyboard = false, op
   place(root, x, y);
   root.classList.add("open");
   root._keyboard = keyboard;
+  root._anchor = anchor; // what it is for: a scroll that leaves it where it was keeps the menu open
   openedAt = Date.now();
   focusRow(root, 0);
   return root;
@@ -294,7 +296,7 @@ async function show(found, ctx) {
   }
   // a row's menu: Esc gives the focus back to what had it before the right-click (B-798)
   const before = found.keepFocus && !ctx.keyboard ? focusedBefore : null;
-  if (items && items.length) openMenu(items, { x: ctx.x, y: ctx.y, label: ctx.label, keyboard: ctx.keyboard, opener: found.keepFocus ? null : boxOf(found.el), before });
+  if (items && items.length) openMenu(items, { x: ctx.x, y: ctx.y, label: ctx.label, keyboard: ctx.keyboard, opener: found.keepFocus ? null : boxOf(found.el), before, anchor: found.el });
 }
 
 /** The box a menu's element stands for: itself when it takes the focus, else its first box (a field's input). */
@@ -364,7 +366,9 @@ document.addEventListener(
 document.addEventListener(
   "scroll",
   (e) => {
-    if (root && Date.now() - openedAt > 250 && !root.contains(e.target) && !sub?.contains(e.target)) closeMenu(false);
+    if (!root || Date.now() - openedAt <= 250 || root.contains(e.target) || sub?.contains(e.target)) return;
+    if (root._anchor?.isConnected && !e.target.contains?.(root._anchor)) return; // another pane's: it did not move
+    closeMenu(false);
   },
   { capture: true, passive: true },
 );

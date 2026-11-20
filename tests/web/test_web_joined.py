@@ -389,10 +389,13 @@ def test_in_a_browser_files_are_ticked_or_picked_put_in_order_and_sent_as_one_vo
         page.click("button[aria-label='Move IMG_0413.pdf up']")
         page.click("button[aria-label='Move IMG_0413.pdf up']")
         page.select_option("#voucher-form select[name=kind]", "claim")
+        page.evaluate("() => (window.__sent = true)")
         go.click()
         wait_until(page, lambda: len(store.list_invoices()) == 1, timeout=60)
         assert joined_as() == [["IMG_0413.pdf", "IMG_0411.pdf"]]
         assert stored(store)[0]["ai_output"]["grand_total"] == 266.4  # the room and the fuel; the lunch still waits
+        # the page is drawn again once it sees the job done: waited for, else it cuts short the next goto (B-2857)
+        page.wait_for_function("() => window.__sent !== true", timeout=60000)
 
         # The files chosen to upload: offered once there are two, joined in the order the arrows leave them in.
         first = receipt(tmp_path, "page_1.pdf", RECEIPTS["IMG_0411"][:-1] + ["Total|63.01"])

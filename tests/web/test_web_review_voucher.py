@@ -13,6 +13,7 @@ from ap_coder.core import memory
 from ap_coder.core.store import APPROVED, PENDING, REVIEW
 from ap_coder.erp import jde, jde_settings
 from ap_coder.web import invoice_fields, invoice_findings, invoice_form, invoice_reading
+from tests.browser import settle
 from tests.web import test_web_invoice as screen
 from tests.web.test_web_invoice import PAGE, check, clean_invoice, form_of
 
@@ -530,7 +531,7 @@ def _page(browser, store, vendor, width=1366, height=768):
     page.on("pageerror", lambda e: page.errors.append(str(e)))
     page.goto(f"{base}/review/{_id(store, vendor)}")
     page.wait_for_selector(".iv-sheet:not(.loading)")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.wait_for_timeout(300)
     return page
 
@@ -564,7 +565,7 @@ def test_in_a_browser_ctrl_z_never_falls_through_to_the_browsers_undo(browser, s
     terms = page.locator("[form=inv][name=payment_terms]")
     terms.fill("Net 30 EOM")
     page.evaluate("document.activeElement.blur()")
-    page.wait_for_timeout(600)
+    settle(page)
     for _ in range(3):
         page.keyboard.press("Control+z")
     assert terms.input_value() == "Net 30 EOM"
@@ -775,7 +776,7 @@ def test_in_a_browser_a_subcontract_vouchers_retained_amounts_are_in_sight_besid
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto(f"{base}/review/{invoice_id}")
         page.wait_for_selector("[data-jde-retained]", state="attached")
-        page.wait_for_load_state("networkidle")
+        settle(page)
         assert "retained 2,500.00 (held back), 50,000.00 paid now" in page.inner_text(".inv-keyed-line")
         page.click("[data-more-details] > summary")  # (the voucher block is under More details)
         fits = page.evaluate("""() => { const t = document.querySelector('.inv-jde-match');

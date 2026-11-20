@@ -10,7 +10,7 @@ import pytest
 
 from ap_coder.core.store import REVIEW
 from ap_coder.web.app import create_app
-from tests.browser import browser_on
+from tests.browser import browser_on, settle
 from tests.conftest import chromium_path, copy_database
 from tests.webclient import web_settings
 
@@ -96,7 +96,7 @@ def _sweep(chromium, store, invoice_id: int, first: str = "") -> list[dict]:
     with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
         page = browser.new_page(viewport={"width": 1366, "height": 768})
         page.goto(f"{base}/review/{invoice_id}")
-        page.wait_for_load_state("networkidle")
+        settle(page)
         page.add_style_tag(content=BAR)
         if first:
             page.evaluate(first)

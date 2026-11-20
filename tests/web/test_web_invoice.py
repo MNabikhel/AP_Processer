@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import json
 import re
 from dataclasses import replace
 from typing import Any
@@ -21,7 +22,7 @@ from ap_coder.core.store import APPROVED, PARKED, PENDING, REJECTED, REVIEW, Sto
 from ap_coder.web import invoice_form
 from ap_coder.web.app import create_app
 from ap_coder.web.invoice_form import Draft
-from tests.browser import browser_on, wait_until
+from tests.browser import browser_on, settle, wait_until
 from tests.conftest import chromium_path
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
 from tests.webclient import PAGE, REVIEW_SCREEN
@@ -1041,7 +1042,7 @@ def test_in_a_browser_the_approve_anyway_box_keeps_the_focus_when_ticked_with_th
     at the top of the page."""
     page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1400, "height": 1000})
     page.wait_for_selector("[name=override]")
-    page.wait_for_timeout(800)  # the check made on opening the page
+    settle(page)  # the check made on opening the page
     page.locator("[name=override]").focus()
     with page.expect_response(lambda r: r.url.endswith("/check")):
         page.keyboard.press("Space")
@@ -1055,13 +1056,13 @@ def test_in_a_browser_ticking_approve_anyway_never_scrolls_the_warning_away(brow
     box, so the warning being approved over left the screen. The reason box takes the focus where it is."""
     page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1280, "height": 720})
     page.wait_for_selector("[name=override]")
-    page.wait_for_timeout(800)  # the check made on opening the page
+    settle(page)  # the check made on opening the page
     before = page.evaluate("window.scrollY")
     box = page.locator("[data-live=bar] [name=override]").bounding_box()  # clicked where it is, as a person does
     with page.expect_response(lambda r: r.url.endswith("/check")):
         page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
     wait_until(page, lambda: page.evaluate("document.activeElement.name") == "override_reason")
-    page.wait_for_timeout(500)  # the bar drawn again after the check
+    settle(page)  # the bar drawn again after the check
     assert abs(page.evaluate("window.scrollY") - before) < 40 and errors == []
 
 
@@ -1120,7 +1121,7 @@ def _open(browser, invoice_id, path=""):
     page.errors = []
     page.on("pageerror", lambda e: page.errors.append(str(e)))
     page.goto(base + (path or f"/review/{invoice_id}"))
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.posts = []
     page.on("request", lambda r: r.method == "POST" and page.posts.append(r.url.rsplit("/", 1)[-1]))
     return page
@@ -1209,21 +1210,21 @@ def test_in_a_browser_the_screen_opens_as_its_check_would_draw_it(browser, store
         page.on("request", lambda r, posts=posts: r.method == "POST" and posts.append(r.url))
         page.goto(f"{base}/review/{invoice_id}")
         page.wait_for_selector(".iv-sheet:not(.loading)")
-        page.wait_for_load_state("networkidle")
+        settle(page)
         if n == 0:  # edits kept from before: the screen opens with them
             with page.expect_response(lambda r: r.url.endswith("/check")):
                 page.fill("[form=inv][name=po_number]", "PO-KEPT-1")
-            page.wait_for_load_state("networkidle")
+            settle(page)
             page.reload()
             page.wait_for_selector(".iv-sheet:not(.loading)")
-            page.wait_for_load_state("networkidle")
+            settle(page)
             assert page.input_value("[form=inv][name=po_number]") == "PO-KEPT-1"
             del posts[:]
         assert posts == [] and page.text_content("[data-checking]") == "", posts  # no check on opening
         opened = page.evaluate(_SCREEN_STATE)
         with page.expect_response(lambda r: r.url.endswith("/check")):  # a check of the screen as it opened
             page.dispatch_event("#inv [name=reader_at]", "input")  # (no field of the invoice marked edited)
-        page.wait_for_load_state("networkidle")
+        settle(page)
         checked = page.evaluate(_SCREEN_STATE)
         assert checked == opened, (invoice_id, [k for k in opened if opened[k] != checked.get(k)])
         assert errors == []
@@ -1322,13 +1323,13 @@ def test_in_a_browser_an_edit_typed_just_before_leaving_is_kept(browser, store):
     invoice_id = store.list_invoices(REVIEW)[0]["id"]
     page = _open(browser, invoice_id, "/review")
     page.goto(f"{page.base}/review/{invoice_id}")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.fill("[form=inv][name=po_number]", "PO-NEW-1")
     page.wait_for_timeout(100)  # less than invoice.js's 450 ms
     page.go_back()
-    page.wait_for_timeout(800)
+    wait_until(page, lambda: any(i == invoice_id and "PO-NEW-1" in json.dumps(d) for i, _, d in store.invoice_drafts()))
     page.goto(f"{page.base}/review/{invoice_id}")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert page.input_value("[form=inv][name=po_number]") == "PO-NEW-1"
 
 
@@ -1340,7 +1341,7 @@ def test_in_a_browser_alt_arrows_in_a_text_box_stay_on_the_invoice_only_on_a_mac
     page = chromium.new_page(viewport={"width": 1366, "height": 768})
     page.add_init_script("Object.defineProperty(navigator, 'platform', {get: () => 'MacIntel'})")
     page.goto(f"{base}/review/{invoice_id}")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.click("#vendor-name")
     page.keyboard.press("End")
     page.keyboard.press("Alt+ArrowLeft")
@@ -1404,6 +1405,7 @@ def test_in_a_browser_a_refused_export_reloads_and_the_count_follows_the_ticks(b
     page.evaluate("() => { const b = document.getElementById('export-go'); b.disabled = false; b.click(); }")
     wait_until(page, lambda: "create" in page.posts)
     assert "create" in page.posts
+    settle(page)  # refused: the button says Export again (it said "Exporting…" until the answer came, B-2855)
     page.locator("input.export-pick:not(:disabled)").first.check()
     assert page.inner_text("#export-go").split("\n")[-1].strip() == "Export 1 invoice"
     # another tab exports them meanwhile
@@ -1411,7 +1413,7 @@ def test_in_a_browser_a_refused_export_reloads_and_the_count_follows_the_ticks(b
     page.evaluate("() => (window.__before = true)")
     page.click("#export-go")
     page.wait_for_function("() => window.__before !== true", timeout=10000)
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert "exported meanwhile" in page.inner_text("body")
     assert page.locator("input.export-pick").count() == 0 and page.errors == []
 
@@ -1472,6 +1474,7 @@ def test_in_a_browser_not_in_the_vendor_list_is_said_only_once_a_vendor_master_i
     with_master.fill(no_number, "")
     with_master.fill("#vendor-name", "Brand New Vendor Ltd")
     assert "Not in the vendor list" in with_master.inner_text("[data-vendor-match]")
+    settle(with_master)  # its edits kept before the invoice opens again (else that tab is out of date at its check)
 
     with store._conn() as conn:  # no vendor master: only the vendors approved before
         conn.execute("UPDATE vendors SET in_master = 0 WHERE in_master = 1")
@@ -1480,7 +1483,7 @@ def test_in_a_browser_not_in_the_vendor_list_is_said_only_once_a_vendor_master_i
     page = _open(browser, second["id"])
     page.fill(no_number, "")
     page.fill("#vendor-name", "Brand New Vendor Ltd")
-    page.wait_for_timeout(200)
+    settle(page)
     shown = page.inner_text("[data-vendor-match]")
     assert "Not in the vendor list" not in shown and "Pick the vendor" not in shown
     page.fill("#vendor-name", first["vendor_name"])
@@ -1561,13 +1564,13 @@ def test_in_a_browser_ticking_approve_anyway_by_its_words_never_scrolls_either(b
     about 390 px at 1366x768, the warning being approved over off the screen: the label's own focus scrolled."""
     page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1366, "height": 768})
     page.wait_for_selector("[name=override]")
-    page.wait_for_timeout(800)  # the check made on opening the page
+    settle(page)  # the check made on opening the page
     before = page.evaluate("window.scrollY")
     label = page.locator("[data-live=bar] .inv-override").bounding_box()
     with page.expect_response(lambda r: r.url.endswith("/check")):
         page.mouse.click(label["x"] + label["width"] - 20, label["y"] + label["height"] / 2)  # on the words
     wait_until(page, lambda: page.evaluate("document.activeElement.name") == "override_reason")
-    page.wait_for_timeout(500)
+    settle(page)
     assert page.evaluate("document.querySelector('[data-live=bar] [name=override]').checked")
     assert abs(page.evaluate("window.scrollY") - before) < 40 and errors == []
 
@@ -1599,7 +1602,7 @@ def test_in_a_browser_the_reader_poll_draws_the_panel_again_only_once_it_changed
             page.clock.run_for(5_000)
             page.wait_for_timeout(20)
         wait_until(page, lambda: len(polls) >= n)
-        page.wait_for_load_state("networkidle")
+        settle(page)
 
     poll_number(1)
     assert polls == [f"seen={tag}"] and page.evaluate("document.querySelector('[data-reader]').firstChild === panel")

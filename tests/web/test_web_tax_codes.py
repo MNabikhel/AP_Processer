@@ -8,7 +8,7 @@ import pytest
 
 from ap_coder.core.store import REVIEW
 from ap_coder.web import invoice_form, invoice_grid
-from tests.browser import wait_until
+from tests.browser import settle, wait_until
 from tests.web import test_web_ctxmenu as ctxmenu
 from tests.web.test_web_ctxmenu import _item, _menu, _review, _taxable
 from tests.web.test_web_invoice import check, form_of
@@ -104,7 +104,7 @@ def test_in_a_browser_a_lines_tax_code_moves_the_taxable_never_the_tax_charged_b
     select = page.locator("[data-grid=lines] select[data-tax-code]").nth(2)
     with page.expect_response(lambda r: r.url.endswith("/check")):
         select.select_option("GST+PST")  # the design service marked RST too: it isn't, by what is charged
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert _taxable(page, "PST") == "14645.00"  # the taxable follows the lines marked (B-610)
     assert _amount(page, "PST") == "941.15"  # what the invoice charges stays
     row = page.locator("[data-tax-check] tr[data-tax-row=PST]")
@@ -147,7 +147,7 @@ def test_in_a_browser_the_dropdown_follows_the_place_of_supply(browser, store, p
         details.locator("summary").click()
     with page.expect_response(lambda r: r.url.endswith("/check")):
         page.locator('select[name="ship_to_province"]').select_option(province)
-    page.wait_for_load_state("networkidle")
+    settle(page)
 
     def options():
         return page.eval_on_selector_all("[data-grid=lines] select[data-tax-code] >> nth=0 >> option",

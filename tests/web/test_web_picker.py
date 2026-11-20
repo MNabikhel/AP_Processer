@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import time
 from dataclasses import replace
 
 import pytest
@@ -18,7 +19,7 @@ from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.web import invoice_grid
 from ap_coder.web.app import create_app
-from tests.browser import browser_on, wait_until
+from tests.browser import browser_on, settle, wait_until
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
 from tests.webclient import PAGE, REVIEW_SCREEN
 
@@ -130,7 +131,7 @@ def _open(browser, path):
 def _review(browser, invoice_id):
     page, errors = _open(browser, f"/review/{invoice_id}")
     page.wait_for_selector(".iv-sheet:not(.loading)")
-    page.wait_for_load_state("networkidle")  # the opening check has answered
+    settle(page)  # the opening check has answered
     return page, errors
 
 
@@ -181,7 +182,7 @@ def test_in_a_browser_typing_a_word_from_inside_an_account_name_finds_it_and_ent
     assert _posted_gls(checked.value)[0] == code  # the select's value is what the form posts
     assert page.eval_on_selector("[data-grid=lines] select[name=line_gl]", "s => s.value") == code
     assert field.input_value().startswith(code) and field.get_attribute("aria-expanded") == "false"
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.reload()  # the check kept it as the draft
     page.wait_for_selector(".iv-sheet:not(.loading)")
     assert page.eval_on_selector("[data-grid=lines] select[name=line_gl]", "s => s.value") == code
@@ -207,7 +208,7 @@ def test_in_a_browser_a_code_or_a_name_typed_then_clicking_away_picks_its_accoun
         page.keyboard.press("ControlOrMeta+a")
         page.keyboard.type(text)
         page.locator(".inv-actionbar").click(position={"x": 5, "y": 5})  # somewhere else on the page
-        page.wait_for_load_state("networkidle")  # the check the change starts has answered
+        settle(page)  # the check the change starts has answered
 
     typed_then_away(first)  # the code alone
     assert value() == first and field.input_value() == accounts[first]
@@ -329,7 +330,7 @@ def test_in_a_browser_new_lines_and_split_lines_get_the_picker(browser, store):
     page.keyboard.type(accounts[2])
     page.keyboard.press("Enter")
     assert page.locator("[data-grid=lines] select[name=line_gl]").last.input_value() == accounts[2]
-    page.wait_for_load_state("networkidle")
+    settle(page)
 
     # Split the first line in two: the parts' accounts are pickers too, and the new rows from the server get theirs
     page.click("[data-split] > summary")
@@ -344,7 +345,7 @@ def test_in_a_browser_new_lines_and_split_lines_get_the_picker(browser, store):
     page.click("[data-split-go]")
     assert page.locator("[data-split-go][aria-busy=true]").count() == 1 or page.locator(GL).count() == rows + 2
     page.wait_for_function(f"() => document.querySelectorAll('[data-grid=lines] tr').length === {rows + 2}")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert page.locator(GL).count() == rows + 2
     assert page.locator("[data-grid=lines] .pk").count() >= rows + 2
     values = page.eval_on_selector_all("[data-grid=lines] select[name=line_gl]", "ss => ss.map((s) => s.value)")
@@ -719,7 +720,7 @@ def test_in_a_browser_the_accounts_used_for_this_vendor_follow_the_vendor_field(
         vendor.fill(first["vendor_name"])
         vendor.press("Escape")
     assert answered.value.json()["vendor_accounts"] == [accounts[-1]]
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.locator(GL).first.click()
     group = page.locator(".pk-layer [role=group]").first
     assert group.locator(".pk-group").inner_text().lower() == "used for this vendor"
@@ -779,7 +780,9 @@ def _agence(store):
 
 
 def _held_open(browser, invoice_id, route, retry_ms=None, clock=False):
-    """The review screen with its vendor list's requests answered by ``route(route, n)`` (n: from 1)."""
+    """The review screen with its vendor list's requests answered by ``route(route, n)`` (n: from 1). ``clock``: the
+    page's time is Playwright's, moved on with ``page.clock``; "paused": it moves on only so, never while the test
+    works (B-2854)."""
     chromium, base = browser
     page = chromium.new_page(viewport=LAPTOP)
     errors: list[str] = []
@@ -790,6 +793,8 @@ def _held_open(browser, invoice_id, route, retry_ms=None, clock=False):
         page.add_init_script(f"window.AP_VENDORS_RETRY_MS = {retry_ms}")
     if clock:
         page.clock.install()
+    if clock == "paused":
+        page.clock.pause_at(time.time() + 5)  # (a moment ahead: the time can't go back)
     page.goto(f"{base}/review/{invoice_id}")
     page.wait_for_selector(".iv-sheet:not(.loading)")
     wait_until(page, lambda: page.asked)
@@ -837,7 +842,7 @@ def test_in_a_browser_a_vendor_added_before_the_vendor_list_came_is_kept_when_it
     wait_until(page, lambda: "Added here" in match.inner_text())
     held[0].fulfill(status=200, content_type="application/json", body=before)  # the list as it was before
     wait_until(page, lambda: page.evaluate("document.querySelector('#vendor-name').value") == "Brand New Supply Co")
-    page.wait_for_timeout(300)
+    settle(page)  # the list drawn
     assert "Added here, not in JD Edwards yet" in match.inner_text()
     vendor = page.locator("#vendor-name")
     vendor.fill("")
@@ -862,10 +867,14 @@ def test_in_a_browser_add_new_vendor_fills_the_tax_numbers_ap_gave_the_vendor(br
     store.save_vendor("cascade cloudworks", "Cascade Cloudworks", expected_gst="123456789RT0001",
                       qst_number="1234567890TQ0001", pst_number="PST-1", province="QC")  # fmt: skip
     page, errors = _review(browser, invoice_id)
+    # The check of the name typed fills the numbers AP gave the vendor (B-2638): held, as on a slow server, so the
+    # dialog opens with its boxes blank (the test raced the check before, and lost on a slow runner: B-2853)
+    held: list = []
+    page.route("**/check", lambda r: held.append(r) if held is not None else r.continue_())
     page.fill("#vendor-name", "Cascade Cloudworks")
     page.dispatch_event("#vendor-name", "change")  # the name typed and left: not in the vendor list
     page.keyboard.press("Escape")
-    page.wait_for_load_state("networkidle")
+    wait_until(page, lambda: held)
     assert [page.input_value(f"[name={n}]") for n in blank] == ["", "", ""]
     page.click("[data-vendor-add] > summary")  # (the dialog fills its name as it opens: waited for, not raced)
     wait_until(page, lambda: page.input_value("[data-new=name]") == "Cascade Cloudworks")
@@ -873,7 +882,13 @@ def test_in_a_browser_add_new_vendor_fills_the_tax_numbers_ap_gave_the_vendor(br
     page.click("[data-new-go]")
     wait_until(page, lambda: "Added here" in page.locator(SAID).inner_text())
     wait_until(page, lambda: page.input_value("[name=gst_hst_registration_number]") != "")
-    assert [page.input_value(f"[name={n}]") for n in blank] == ["123456789RT0001", "1234567890TQ0001", "PST-1"]
+    kept = ["123456789RT0001", "1234567890TQ0001", "PST-1"]
+    assert [page.input_value(f"[name={n}]") for n in blank] == kept  # from the vendor added, the check still held
+    held, holding = None, held  # the checks go through from now on
+    for route in holding:
+        route.continue_()
+    settle(page)
+    assert [page.input_value(f"[name={n}]") for n in blank] == kept
     assert errors == []
 
 
@@ -895,7 +910,7 @@ def test_in_a_browser_a_vendor_list_that_did_not_come_is_asked_for_again_at_the_
 
     page, errors = _held_open(browser, inv["id"], answer, retry_ms=60_000)
     match = page.locator(SAID)
-    page.wait_for_load_state("networkidle")  # the fetch as it opened failed, the opening check answered
+    settle(page)  # the fetch as it opened failed, the opening check answered
     vendor = page.locator("#vendor-name")
     vendor.fill(other["name"])
     said = match.inner_text()
@@ -953,7 +968,9 @@ def test_in_a_browser_a_vendor_list_that_takes_too_long_is_given_up_and_asked_fo
     """A busy company server: the fetch is given up after 30 seconds, as a failure (asked for again 5 s on)."""
     inv, other = _agence(store)
     held = []
-    page, errors = _held_open(browser, inv["id"], lambda r, n: held.append(r), clock=True)
+    # the page's time stands still but for run_for: the test's own steps never count in the list's 30 s (on a slow
+    # runner they took more than the 1 s the 29 below leaves, and the list was given up before it looked: B-2854)
+    page, errors = _held_open(browser, inv["id"], lambda r, n: held.append(r), clock="paused")
     match = page.locator(SAID)
     vendor = page.locator("#vendor-name")
     vendor.fill(other["name"])

@@ -7,6 +7,7 @@ from __future__ import annotations
 from ap_coder.coding.bulk import clean_candidates, issues_today
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import APPROVED, PENDING
+from tests.browser import settle
 from tests.web.test_web_review_signoff import _id, _review, browser, demo_db, me, store
 
 __all__ = ["browser", "demo_db", "me", "store"]  # the fixtures, shared
@@ -43,7 +44,7 @@ def test_in_a_browser_the_approvals_undo_is_one_shift_tab_away_and_said(browser,
     page = _review(browser, store, "Pacific")
     page.keyboard.press("Control+Enter")
     page.wait_for_selector(".flash form[action$='/undo-approve']")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.wait_for_function("document.activeElement && document.activeElement.dataset.autofocused === '1'")
     assert store.get_invoice(invoice_id)["status"] in (APPROVED, PENDING)
     page.evaluate("window.openedOn = document.activeElement")
