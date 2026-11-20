@@ -111,7 +111,7 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
   `grep -rnw "B-1234" docs`: the logs, the archive and the entry files.
 - A refactor, clean-up or speed-up is proven to change nothing with `python scripts/same_behaviour.py` (probes on
   origin/main and this checkout, compared; D-124), plus the tests.
-- Merge parallel branches: `python scripts/combine.py BRANCH... [--onto REF]` (D-325: logs settled, then checked).
+- Merge parallel branches: `python scripts/combine.py BRANCH... [--onto REF]` (D-325; --trial: what conflicts).
 - See a page as a person does: `python scripts/screens.py /jde-files --data company` saves full-page pictures at
   1366, 911, 683 and 390 px (laptop zoom, phone) and prints what is past the right edge.
 - Bench runs (`python -m ap_coder.bench run|learn|lines|speed|coding|triage`): add `--quick` to check a change in

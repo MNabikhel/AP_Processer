@@ -4,6 +4,8 @@ bug or decision number two branches both took given anew to the later branch's e
     python scripts/combine.py BRANCH [BRANCH ...]    merge them into the current branch
     --onto REF                                       into a new branch from REF instead (combined-<date>)
     --no-check                                       skip the checks at the end
+    --trial [--pairs] BRANCH [BRANCH ...]            only say what each merge (and each two) would conflict on
+
 
 A conflict in a doc under docs/ is settled when the two sides changed different lines: both added entries at the end
 of BUGS.md or decisions.md (both kept, then sorted by number), both added a section to WHATS_NEW.md (both kept),
@@ -18,6 +20,12 @@ docs), in a commit on top of the branch; the branch itself is left as it was. Ea
 pushed. The checks: the meta tests (``python -m pytest -q -m "" tests/meta``), then ``python scripts/check.py`` on the
 files the merges changed. Exit code 0 when all is merged and checked, 1 when something needs a person, 2 when nothing
 was done.
+
+A trial (``--trial``) changes no worktree, index or ref: each merge is made by ``git merge-tree --write-tree`` (git
+2.38 or newer) as objects only, a number given anew and the docs the script settles included, and the next branch is
+tried on top of it. For each merge (and with ``--pairs`` each two branches merged with each other) it prints the files
+that would conflict: code, which a person settles, and docs, each said to be settled by the script or not, and why.
+Exit code 1 when code would conflict, 0 when only docs (or nothing) would, 2 when nothing could be tried.
 """
 
 from __future__ import annotations
@@ -25,6 +33,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import difflib
+import itertools
 import os
 import re
 import subprocess
@@ -38,6 +47,7 @@ from new_entry import FILE_NAME, FOLDERS, FROZEN, LOGS  # noqa: E402  (the logs,
 
 MENTION = re.compile(r"(?<![A-Za-z0-9_])([BD])-(\d+)(?!\d)")
 ALIKE = 0.6  # two entries of one number this alike (words) are one entry, edited on a side: not two that clash
+KINDS = {"B": "bugs", "D": "decisions"}
 
 
 class Stop(Exception):
@@ -107,11 +117,18 @@ def entry_files(rev: str, prefix: str) -> dict[int, str]:
     return {int(m[2]): path for path in paths if (m := FILE_NAME.fullmatch(path.rpartition("/")[2])) and m[1] == prefix}
 
 
+def entry_number(path: str) -> tuple[str, int] | None:
+    """The kind and number of the entry a path is the file of (None for any other path)."""
+    folder, _, name = path.rpartition("/")
+    if (m := FILE_NAME.fullmatch(name)) and FOLDERS[m[1]] == folder:
+        return m[1], int(m[2])
+    return None
+
+
 def renamed(path: str, given: dict[tuple[str, int], int]) -> str:
     """An entry file's path under the number given anew to it (else the path as it is)."""
-    folder, _, name = path.rpartition("/")
-    if (m := FILE_NAME.fullmatch(name)) and FOLDERS[m[1]] == folder and (m[1], int(m[2])) in given:
-        return f"{folder}/{m[1]}-{given[(m[1], int(m[2]))]}.md"
+    if (number := entry_number(path)) in given:
+        return f"{FOLDERS[number[0]]}/{number[0]}-{given[number]}.md"
     return path
 
 
@@ -133,6 +150,15 @@ def alike(a: str, b: str) -> bool:
     """Whether two entries of one number are one written twice: their words after the number."""
     a_words, b_words = a.split()[3:], b.split()[3:]  # (after "- **B-12** ·")
     return difflib.SequenceMatcher(None, a_words, b_words, autojunk=False).ratio() >= ALIKE
+
+
+def alike_said(prefix: str, n: int, versions: list[str]) -> str:
+    """What a person is asked of a number both sides gave an entry, the words alike: both entries, as written."""
+    shown = "".join(f"\n      {line}" for version in versions for line in version.strip().split("\n"))
+    return (
+        f"{prefix}-{n} on both sides, the words alike: the same entry edited, or two {KINDS[prefix]}? Keep the "
+        f"right one, or give the other the next number (python scripts/new_entry.py {prefix}).{shown}"
+    )
 
 
 def clashes(base: str, ours: str, theirs: str, prefix: str) -> list[int]:
@@ -243,24 +269,37 @@ def settle(text: str) -> str | None:
     return None if hunk is not None else "\n".join(out)
 
 
-def settle_file(path: str) -> str | None:
-    """Settles a conflicted file the script may settle; else why a person is needed."""
+def unsettled(path: str, stages: set[str], text: str | None, sides: list[str]) -> str | None:
+    """Why a conflicted file needs a person (None when the script settles it): ``stages`` git's stages of it (1 the
+    base, 2 and 3 the sides), ``text`` the file with git's markers (None when not UTF-8), ``sides`` an entry file's two
+    versions when both sides added it."""
     if not (path.startswith("docs/") and path.endswith(".md")):
         return "a conflict in code (or a file outside docs/), never settled by the script"
-    stages = {line.split()[2] for line in git("ls-files", "-u", "--", path).splitlines()}
+    if (number := entry_number(path)) and stages == {"2", "3"}:  # (two unlike are given two numbers before the merge)
+        return alike_said(*number, sides)
     if stages != {"1", "2", "3"}:
         return "added on both sides, or deleted on one"
-    try:
-        text = read(path)
-    except UnicodeDecodeError:
+    if text is None:
         return "not text in UTF-8"
     if re.search(r"^(<{8}|>{8}|\|{8})", text, re.M):  # git's markers in the base it made of two (criss-cross)
         return "the branches have more than one merge base, and git's merge of those conflicts here"
-    settled = settle(text)
-    if settled is None:
+    if settle(text) is None:
         return "both sides changed the same lines"
-    write(path, settled)
     return None
+
+
+def settle_file(path: str) -> str | None:
+    """Settles a conflicted file the script may settle; else why a person is needed."""
+    stages = {line.split()[2] for line in git("ls-files", "-u", "--", path).splitlines()}
+    try:
+        text = read(path)
+    except UnicodeDecodeError:
+        text = None
+    sides = [show(f":{stage}", path) for stage in ("2", "3")] if entry_number(path) else []
+    why = unsettled(path, stages, text, sides)
+    if why is None:
+        write(path, settle(text))
+    return why
 
 
 # A branch's numbers given anew: in the lines it changed since the merge base, on a commit of its own.
@@ -313,17 +352,18 @@ def renumbered(tip: str, base: str, given: dict[tuple[str, int], int], message: 
     return git("commit-tree", tree, "-p", tip, "-m", message), files
 
 
-def give_anew(base: str, head: str, tip: str, later: list[str]) -> dict[tuple[str, int], int]:
+def give_anew(base: str, head: str, tip: str, later: list[str], keep: bool = True) -> dict[tuple[str, int], int]:
     """The branch's numbers the branches merged before it gave to entries of their own, and the number each is given:
     the next one that neither these, the branches still to merge nor any branch of this clone use, reserved as
-    scripts/new_entry.py reserves one (so no worktree of this clone takes it meanwhile)."""
+    scripts/new_entry.py reserves one (so no worktree of this clone takes it meanwhile; not for a trial, ``keep``
+    False)."""
     given = {}
     for prefix in LOGS:
         clashing = clashes(base, head, tip, prefix)
         if clashing:
             top = max([*(highest(rev, prefix) for rev in [head, tip, *later]), *new_entry.taken(prefix)])
             for n in clashing:
-                top = given[(prefix, n)] = new_entry.reserve(prefix, top)
+                top = given[(prefix, n)] = new_entry.reserve(prefix, top) if keep else top + 1
     return given
 
 
@@ -368,10 +408,9 @@ def tidy_logs(head: str, notes: list[str], person: list[str]) -> None:
             notes.append(f"Sorted the newest entries of {path} by number.")
             print(f"  {notes[-1]}")
             text = tidy
-        twice = sorted(doubled(text, prefix) - doubled(before, prefix))
-        if twice:
-            said = ", ".join(f"{prefix}-{n}" for n in twice)
-            person.append(f"{path}: {said} written twice, differently (one side edited it): keep the right one")
+        for n in sorted(doubled(text, prefix) - doubled(before, prefix)):
+            versions = list(dict.fromkeys(entry for m, entry in entries(text, prefix) if m == n))
+            person.append(f"{path}: {alike_said(prefix, n, versions)}")
         if len(person) == asked:
             move_out(path, text, prefix, notes, person)
 
@@ -424,22 +463,135 @@ def merge(branch: str, later: list[str]) -> bool:
     return True
 
 
+# A trial: each merge made by git merge-tree, as objects only (no worktree, index or ref changed).
+
+
+def merge_tree(ours: str, theirs: str) -> tuple[str, dict[str, dict[str, str]]]:
+    """git's merge of two commits as a tree, and each file in conflict with its stages (1 the base, 2 and 3 the
+    sides) and their blobs."""
+    done = run_git(["-c", "merge.conflictstyle=diff3", "merge-tree", "--write-tree", "--no-messages", ours, theirs])
+    out = done.stdout.decode("utf-8", "replace").splitlines()
+    if done.returncode not in (0, 1) or not out:
+        said = done.stderr.decode("utf-8", "replace").strip()
+        raise Stop(f"git merge-tree --write-tree failed (a trial needs git 2.38 or newer):\n{said}")
+    stages: dict[str, dict[str, str]] = {}
+    for line in out[1:]:  # "<mode> <blob> <stage>\t<path>" for each file in conflict
+        info, _, path = line.partition("\t")
+        stages.setdefault(path, {})[info.split()[2]] = info.split()[1]
+    return out[0], stages
+
+
+def utf8(object_name: str) -> str | None:
+    """A blob's text (``<tree>:<path>``, or its id), None when it is not UTF-8."""
+    try:
+        return run_git(["show", object_name]).stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def with_files(tree: str, texts: dict[str, str]) -> str:
+    """A tree with these files written in it (as objects: a throwaway index, not the checkout's)."""
+    with tempfile.TemporaryDirectory() as folder:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(folder) / "index")}
+        git("read-tree", tree, env=env)
+        for path, text in texts.items():
+            blob = git("hash-object", "-w", "--stdin", data=text.encode("utf-8"))
+            git("update-index", "--add", "--cacheinfo", f"100644,{blob},{path}", env=env)
+        return git("write-tree", env=env)
+
+
+def try_merge(head: str, branch: str, later: list[str]) -> tuple[str, list[str], dict[str, str | None]]:
+    """One merge tried as the script would make it: the commit it would make (an object no ref names), what it would
+    do first, and each file in conflict with why a person is needed (None when the script settles it)."""
+    tip = git("rev-parse", f"{branch}^{{commit}}")
+    if run_git(["merge-base", "--is-ancestor", tip, head]).returncode == 0:
+        return head, ["already in"], {}
+    if run_git(["merge-base", head, tip]).returncode:
+        raise Stop(f"{branch} has no history in common with the branch before it: nothing tried.")
+    base = git("merge-base", head, tip)
+    notes = []
+    given = give_anew(base, head, tip, later, keep=False)
+    if given:
+        tip = renumbered(tip, base, given, f"Trial: {branch}'s entries numbered anew")[0]
+        notes.append(", ".join(f"{p}-{n} would be {p}-{new}" for (p, n), new in given.items()))
+    tree, conflicts = merge_tree(head, tip)
+    verdicts, settled = {}, {}
+    for path, stages in sorted(conflicts.items()):
+        sides = [utf8(stages[s]) or "" for s in ("2", "3") if s in stages] if entry_number(path) else []
+        text = utf8(f"{tree}:{path}")
+        verdicts[path] = unsettled(path, set(stages), text, sides)
+        if verdicts[path] is None:
+            settled[path] = settle(text)
+    commit = git("commit-tree", with_files(tree, settled), "-p", head, "-p", tip, "-m", f"Trial merge of {branch}")
+    return commit, notes, verdicts
+
+
+def files(n: int) -> str:
+    return f"{n} file{'s' if n != 1 else ''}"
+
+
+def said_trial(name: str, notes: list[str], verdicts: dict[str, str | None]) -> list[str]:
+    """Prints what one merge tried would conflict on; the code files in conflict."""
+    code = [path for path, why in verdicts.items() if not (path.startswith("docs/") and path.endswith(".md"))]
+    docs = {path: why for path, why in verdicts.items() if path not in code}
+    print(f"{name}: {files(len(verdicts)) + ' would conflict' if verdicts else 'no conflict'}"
+          f"{''.join(f' ({note})' for note in notes)}.")  # fmt: skip
+    if code:
+        print(f"  code, for a person: {', '.join(code)}")
+    if settles := [path for path, why in docs.items() if why is None]:
+        print(f"  docs, settled by combine.py: {', '.join(settles)}")
+    for path, why in docs.items():
+        if why is not None:
+            print(f"  docs, for a person: {path}: {why}")
+    return code
+
+
+def trial(branches: list[str], start: str, pairs: bool) -> int:
+    """What merging the branches in order onto ``start`` (and, with ``pairs``, each two) would conflict on; 1 when
+    code would, else 0."""
+    print(f"A trial: {', '.join(branches)} merged onto {start} in this order (nothing is changed).\n")
+    head, code, tried = git("rev-parse", f"{start}^{{commit}}"), [], []
+    for k, branch in enumerate(branches):
+        head, notes, verdicts = try_merge(head, branch, branches[k + 1 :])
+        tried.append((branch, verdicts))
+        code += said_trial(branch, notes, verdicts)
+    if pairs:
+        print("\nEach two, merged with each other:")
+        for one, other in itertools.combinations(branches, 2):
+            _, notes, verdicts = try_merge(git("rev-parse", f"{one}^{{commit}}"), other, [])
+            tried.append((f"{one} + {other}", verdicts))
+            code += said_trial(f"{one} + {other}", notes, verdicts)
+    people = [f"{name}: {path}" for name, verdicts in tried for path, why in verdicts.items()
+              if why is not None and path.startswith("docs/") and path.endswith(".md")]  # fmt: skip
+    docs = any(verdicts for _, verdicts in tried)
+    if code:
+        print(f"\nCode would conflict ({files(len(set(code)))}): combine.py would stop there for a person.")
+    elif people:
+        print(f"\nOnly docs would conflict; combine.py would stop for a person on {', '.join(people)}.")
+    else:
+        print("\nOnly docs would conflict, and combine.py would settle them all." if docs else "\nNo conflict.")
+    return 1 if code else 0
+
+
 # The run.
 
 
-def prepare(branches: list[str], onto: str | None) -> str:
-    """Checks the checkout and the branches, makes the --onto branch; the commit the merges start from."""
+def prepare(branches: list[str], onto: str | None, trial: bool = False) -> str:
+    """Checks the checkout and the branches, makes the --onto branch; the commit the merges start from. For a trial,
+    only the checkout and the branches (nothing is changed)."""
     if run_git(["rev-parse", "--show-toplevel"]).returncode:
         raise Stop("Not in a git checkout: run it from the AP Coder folder.")
     os.chdir(git("rev-parse", "--show-toplevel"))
-    if run_git(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).returncode == 0:
-        raise Stop("A merge is in progress: commit it (or git merge --abort) first.")
-    if git("status", "--porcelain", "--untracked-files=no"):
-        raise Stop("There are changes not committed: commit or stash them first.")
     unknown = [b for b in [*branches, *([onto] if onto else [])]
                if run_git(["rev-parse", "-q", "--verify", f"{b}^{{commit}}"]).returncode]  # fmt: skip
     if unknown:
         raise Stop(f"No branch or commit named {', '.join(unknown)}: nothing done.")
+    if trial:
+        return onto or "HEAD"
+    if run_git(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).returncode == 0:
+        raise Stop("A merge is in progress: commit it (or git merge --abort) first.")
+    if git("status", "--porcelain", "--untracked-files=no"):
+        raise Stop("There are changes not committed: commit or stash them first.")
     if onto:
         name = f"combined-{datetime.date.today():%Y-%m-%d}"
         taken = set(git("branch", "--list", "--format=%(refname:short)").splitlines())
@@ -476,9 +628,15 @@ def main(argv: list[str]) -> int:
     parser.add_argument("branches", nargs="+", metavar="BRANCH", help="the branches to merge, in this order")
     parser.add_argument("--onto", metavar="REF", help="merge into a new branch from REF (combined-<date>)")
     parser.add_argument("--no-check", action="store_true", help="skip the meta tests and scripts/check.py")
+    parser.add_argument("--trial", action="store_true", help="only say what each merge would conflict on")
+    parser.add_argument("--pairs", action="store_true", help="with --trial: also each two branches with each other")
     args = parser.parse_args(argv)
+    if args.pairs and not args.trial:
+        parser.error("--pairs goes with --trial")
     try:
-        start = prepare(args.branches, args.onto)
+        start = prepare(args.branches, args.onto, args.trial)
+        if args.trial:
+            return trial(args.branches, start, args.pairs)
     except Stop as stop:
         print(stop)
         return 2
