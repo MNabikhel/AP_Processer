@@ -6964,6 +6964,29 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - *Left as it is:* an invoice the batch check holds stays in Ready to export, listed with why, and is not put on a
     keying batch's Not ready sheet (B-2148): that sheet lists what a batch holds that its own checks hold back at
     download.
+- **D-295** · **The AI reviewer's corrections, reviewed** (D-263, D-184; an adversarial review, 20 Nov 2026; B-2800 to
+  B-2806).
+  - **An amount printed on the page** is one printed as money: with its cents, or a currency sign or code right
+    beside it (`_printed_money`); never digits run into letters or other digits (a phone, invoice, PO or GST/HST
+    number, a date, a postal code), nor a rate; a receipt's tax flag after its cents ("4.50GP") and a French "$" after
+    it ("75 $ 150 $") are its own (B-2808). A whole-dollar amount printed bare ("Freight 150") is not taken: the
+    correction is refused and nothing changes, as for any amount not printed. A tax no line can carry is refused.
+  - **A supplier** is never the company's own: its name is compared with Settings' names and JD Edwards' companies'
+    as the supplier list has it, before a supplier number is added ("NAME #2004"). Its name printed on the page is
+    whole words; only a name of several words may have them run together, as a scan reads it.
+  - **Only the proposal asked about is replaced:** `replace_proposal`'s `version` (`proposal_version`: the coding and
+    its findings, not the queue's re-check beside them) as the reviewer read the invoice. Read again or a finding
+    folded in meanwhile (Azure's check, text addressed to software), nothing changes. An invoice parked, drafted or
+    open (on the server) is not asked at all.
+  - **The corrections are a revision of the invoice** (`verifier_corrected`, in `REVISION_ACTIONS` beside D-184's):
+    a laptop keeps nothing of who has an invoice open, so they may go in under an open review screen; it is then out
+    of date ("Corrected by AI reviewer today at …"), read-only, and its check and approval are refused. Chosen over
+    keeping who has it open on a laptop too: D-184's rule stays, and the corrections are not lost (a refused one is
+    never asked again).
+  - **Every change is said:** a tax put on lines that had none is named in VERIFIER_CORRECTED.
+  - *Left as it is:* a GST/HST number printed only in the bill-to block is not left out, as capture leaves it out
+    (`BILL_TO_REASON`): the own-name check stops the company itself; a customer that is also in the supplier list,
+    under no name of the company's, could still be named by its number.
 - **D-300** · **A chart refused as cut short can be loaded anyway from its card, by someone who may change the
   settings** (B-2832; D-272 had the page name the command line's `--anyway`).
   - **What is refused stays refused for anyone:** a file with no account, or none that may be posted to (it is no
