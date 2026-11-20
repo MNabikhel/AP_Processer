@@ -216,7 +216,7 @@ def edit_form(store: Store, what: str, row: dict[str, Any]) -> dict[str, Any]:
                            "value": row["meals"], "file": None, "disabled": not row["listed"],
                            "note": note})  # fmt: skip
     elif what == loaded.UNITS:
-        note = "ACT, or blank, takes postings; any other status does not"
+        note = "ACT, blank or K (its budget locked) takes postings; any other status does not"
         fields = [_field(row, "name", "Name"), _field(row, "status", "Status", note=note)]
     else:
         fields = []

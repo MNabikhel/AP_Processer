@@ -238,11 +238,11 @@ class ByHandMixin:
 
     def edit_business_unit(self, code: str, *, name: str | None = None, status: str | None = None,
                            actor: str | None = None) -> dict[str, dict[str, Any]]:  # fmt: skip
-        """Change one business unit of the business unit master by hand: its ``name``, its ``status`` (``ACT`` or
-        blank takes postings; any other does not); None leaves each as it is. The GL accounts and the cost centers
-        follow at once, and the change is kept for the next load. Returns what changed, {field: {"from", "to"}},
-        recorded as one event; {} when nothing did. ``ValueError``, nothing changed: the business unit is not in
-        the master, or no account would be left to code to."""
+        """Change one business unit of the business unit master by hand: its ``name``, its ``status`` (``ACT``,
+        blank or K takes postings: ``chart.ACTIVE``; any other does not); None leaves each as it is. The GL accounts
+        and the cost centers follow at once, and the change is kept for the next load. Returns what changed, {field:
+        {"from", "to"}}, recorded as one event; {} when nothing did. ``ValueError``, nothing changed: the business
+        unit is not in the master, or no account would be left to code to."""
         with self._conn() as conn:
             dialect.begin_write(conn)
             code = clean(code)

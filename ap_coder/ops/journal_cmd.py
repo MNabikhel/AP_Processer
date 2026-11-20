@@ -276,9 +276,8 @@ def _state(store: Store, digest: str, journal: jr.Journal, objects: dict[str, tu
                            "add. To load it again, with other objects for instance, forget it first.")  # fmt: skip
     if not journal.vouchers:
         return REFUSED, "No voucher could be read from this file."
-    pairs = store.account_pairs()
-    units, codes = (pairs.business_units(), pairs.offered_codes()) if pairs is not None else ((), ())
-    cut = jr.cut_by_excel(journal, units, {chart.split_code(code)[0] for code in codes})
+    units, chart_objects = store.chart_codes() if store.has_chart() else ((), ())
+    cut = jr.cut_by_excel(journal, units, chart_objects)
     if cut:  # saved again through Excel, which reads "0021061010.2110" as a number (B-2346)
         return REFUSED, ("This file was saved through Excel and lost its leading zeros: export it again from JD "
                          "Edwards and load that file without opening it in Excel. "
@@ -326,7 +325,8 @@ def load(store: Store, data: bytes, name: str, *, trade: Any = None, intercompan
     the summary, then what was done or why nothing was). What was done: ``DONE`` (loaded); ``SAME_FILE`` (this very
     file is loaded already: nothing to do); ``DIFFERS`` (not loaded: the lines read do not add up to the report's
     total, and ``anyway`` was not given); ``REFUSED`` (not loaded, for the reason said). The objects a journal was
-    loaded with are saved for the next one."""
+    loaded with are saved for the next one; of a file with its payable lines left out, which has no line to say them
+    by, the payable objects saved stay unless given (B-2749)."""
     seen = look(store, data, name, trade=trade, intercompany=intercompany, tax=tax)
     said = list(seen.said)
     if seen.state == SAME_FILE:
@@ -339,7 +339,12 @@ def load(store: Store, data: bytes, name: str, *, trade: Any = None, intercompan
                                       dates_read="day first" if seen.journal.day_first else "month first")  # fmt: skip
     except ValueError as exc:
         return REFUSED, [*said, f"Not loaded: {exc}"]
-    store.save_journal_objects(**seen.objects, actor=actor)
+    objects = seen.objects
+    if jr.payable_left_out(seen.journal):
+        saved = store.journal_objects()
+        objects = {**objects, **{kind: saved[kind] for kind, given in (("trade", trade), ("intercompany", intercompany))
+                                 if given is None}}  # fmt: skip
+    store.save_journal_objects(**objects, actor=actor)
     return DONE, [*said, loaded_line(result)]
 
 

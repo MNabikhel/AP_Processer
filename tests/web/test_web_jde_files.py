@@ -1217,6 +1217,33 @@ def test_the_charts_load_says_how_many_gl_accounts_it_removes_or_changes(client,
     assert "9990" not in listed and "9991" not in listed and listed[first["code"]] == first["description"]
 
 
+def test_a_one_company_charts_preview_counts_only_the_gl_accounts_its_load_removes(client, store):
+    """B-2746: a chart file with a Company column replaces that company's accounts alone, the others' kept (D-267),
+    but its preview counted every GL account the file lacked as removed: "Replaces 3 of the GL accounts on GL
+    accounts & tax" for a refresh of one company that removed none. The other companies' accounts kept count."""
+    from ap_coder.web.core import using_store
+
+    head = ["Business Unit", "Object Account", "Subsidiary", "Account Description", "L D", "Posting Edit", "Company"]
+    other = [
+        ["200", None, None, "Bridge B", 3, "N", "00200"],
+        *[["200", obj, None, said, 7, None, "00200"] for obj, said in (("6100", "Rent"), ("6200", "Fuel"))],
+    ]
+    first = [
+        ["100", None, None, "Tower A", 3, "N", "00100"],
+        *[["100", obj, None, said, 7, None, "00100"] for obj, said in (("5410", "Tools"), ("5450", "Freight"))],
+    ]
+    token, _ = _look_of(client, "chart", "chart.xlsx", _book(("Sheet1", [head, *first, *other])))
+    follow(client, client.post("/jde-files/chart/load", data={"token": token}, headers=PAGE))
+    assert [r["code"] for r in store.list_accounts("gl_accounts")] == ["5410", "5450", "6100", "6200"]
+    for rows, removed in ((first, 0), (first[:2], 1)):  # (the company's file again; then without its 5450)
+        token, summary = _look_of(client, "chart", "chart_00100.xlsx", _book(("Sheet1", [head, *rows])))
+        with using_store(store):
+            assert jde_files.page_context(store, {"chart": token})["gl_replaced"]["removed"] == removed
+        assert ("Replaces 1 of the GL accounts" in client.get(f"/jde-files?chart={token}").text) == bool(removed)
+    follow(client, client.post("/jde-files/chart/load", data={"token": token}, headers=PAGE))
+    assert [r["code"] for r in store.list_accounts("gl_accounts")] == ["5410", "6100", "6200"]
+
+
 def test_loading_the_same_chart_or_units_again_is_recorded(client, store, exports):
     """B-2439: the chart or the business units loaded again from the same file recorded nothing: "last loaded" kept
     the first time and Activity showed no load. A load is recorded even when it changes nothing (and nothing else
