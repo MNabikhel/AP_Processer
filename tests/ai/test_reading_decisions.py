@@ -333,6 +333,24 @@ def test_the_companys_own_name_is_never_the_supplier(tmp_path, reference):
     assert result.output["vendor_name"] == ONE_ROW_SUPPLIER
 
 
+def test_the_suppliers_letterhead_or_remit_to_level_with_bill_to_still_names_the_supplier(tmp_path, reference):
+    """B-2781: the supplier's letterhead level with "BILL TO:", or its "Remit Payment To" beside "Bill To" (its name
+    only in its logo), was read as the customer's block (B-2642): no supplier (MISSING_VENDOR), though the vendor
+    master lists it by name and GST/HST number, and the number only "may be the customer's"."""
+    from tests.pdfs import ONE_ROW_GST, ONE_ROW_SUPPLIER, supplier_beside_bill_to
+
+    pipe, store = _offline(tmp_path, reference)
+    _listed(store, (ONE_ROW_SUPPLIER, "4471001", ONE_ROW_GST), ("Foothills Print Co.", "4471002", "100000009RT0001"))
+    for name, label, heading, named in (("letterhead.pdf", "BILL TO:", "", True),
+                                        ("remit.pdf", "Bill To", "Remit Payment To", False)):  # fmt: skip
+        result = pipe.process(supplier_beside_bill_to(tmp_path, name, label, heading, top=False, named=named))
+        fields = result.capture.fields
+        assert result.output["vendor_name"] == ONE_ROW_SUPPLIER, name
+        assert fields["vendor_name"].status in ("likely", "verified")
+        assert fields["gst_hst_registration_number"].status == "verified"
+        assert "MISSING_VENDOR" not in {i.code for i in result.report.issues}
+
+
 def test_the_freight_of_a_totals_table_of_one_row_is_a_jd_edwards_line_of_its_own(tmp_path, reference):
     """B-2639: the freight of "Line-Item Total | Freight Amount | ... | Amount Due:" over one row of amounts was not
     read, so it was on no line and JD Edwards would get 656.50 taxed. It is a line of its own, taxed with the goods:
