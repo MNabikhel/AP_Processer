@@ -388,7 +388,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "flags": merge_flags(field_flags(report.issues, store, coding, inv["id"]), code_flags(report.issues),
                              dates.notes),
         "flag_errors": flag_errors(errors, dates.notes),
-        "help": field_help(store, coding, draft, capture, dates, report.issues),
+        "help": field_help(store, coding, draft, capture, dates, report.issues, str(inv.get("extraction_md") or "")),
         "jde": jde_review.voucher_view(output, js, an8, match=voucher_match) if js is not None else None,
         "an8": an8 if js is not None else None,
         "from_vendor": from_list,

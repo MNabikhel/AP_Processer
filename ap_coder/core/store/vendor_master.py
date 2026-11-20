@@ -192,6 +192,14 @@ def with_number(vendor: dict[str, Any]) -> str:
 _NUMBERED = re.compile(r"\s*(.*?\S)\s*#\s*(\d{1,12})\s*")
 
 
+def without_number(name: str) -> str:
+    """A vendor's name without the supplier number one of several suppliers of a name is picked with (``with_number``:
+    "LAKESIDE CATERING LTD #2004" is "LAKESIDE CATERING LTD"); any other name as it is. What a supplier's name is
+    compared with the company's own names by (B-2794)."""
+    numbered = _NUMBERED.fullmatch(name)
+    return numbered.group(1) if numbered else name
+
+
 def named_otherwise(name: str, words: list[str], like: Any) -> dict[str, Any] | None:
     """The vendor of a name no vendor is kept under as it is written: the ONE rule the checks (``find_vendor``) and
     the exports' supplier number (``VendorIds.number_of``) both follow (B-2162). ``like(key, more)``: the vendors

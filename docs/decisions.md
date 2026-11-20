@@ -7025,6 +7025,34 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     with the setup permission).
   - *Not chosen:* an XML reader (ElementTree's: an event in Python for each element, and its entities to guard); a
     smaller bound in all (a real upload of 50 MB is near 500 MB).
+- **D-298** · **An invoice one company of the group sends another: its supplier is offered with one click, never
+  read** (B-2790, B-2792 to B-2794; D-262 the company's own names, D-267 report 9's join them).
+  - **The trade-off:** report 9's names stay the company's own, never read as the supplier: the bill-to of every
+    outside invoice prints one, and every company of the group is in the vendor master too, so a name read there
+    would make the customer the supplier, with its history, terms and bank account. An intercompany invoice (the
+    equipment company billing a project company) is named by its GST/HST number when the vendor master holds it
+    (D-262); without it (a US company has none), it is held with no supplier and no company decided, as before.
+  - **What a person sees:** under the empty vendor box (or one holding one of the company's own names, with no
+    company decided), "Maple Ridge Constructors Ltd. is a company of the group and a supplier: if it billed this
+    invoice, pick it.", and *Use MAPLE RIDGE CONSTRUCTORS LTD* (the vendor list's name): never filled. A supplier
+    in the box is never offered a replacement (B-2792). Offered (`companies.group_suppliers`, in
+    `invoice_fields.field_help` after the page's own readings) is each company of report 9 (or a name written
+    "name = company") printed on the page outside its bill-to and ship-to blocks, that is a supplier in use of the
+    vendor master; never the company decided, one in a bill-to or ship-to, or the supplier in the box. The blocks
+    are found on the page's text alone (`offline_coder.customer_block`): a "Bill to", "Ship to", "Sold to",
+    "Client" or "Attn" label's line, written with a hyphen or none too ("Bill-To", "SHIPTO"), or "Invoiced To",
+    "Customer Name", "Billing / Shipping / Delivery Address" (B-2792), and the six lines under it, up to a remit-to
+    (whose "Attn: Accounts Receivable" is the supplier's, B-2793) or the line items' headings. Picked, the company is
+    decided as before: rule (b) leaves the supplier's own name out, so the company billed, printed in the bill-to,
+    decides; a supplier picked with its number ("MAPLE RIDGE CONSTRUCTORS LTD #4410900", one of two of a name) is
+    compared without it (`vendor_master.without_number`, B-2794), there and where its letterhead's address is told
+    from the bill-to's (`offline_coder.code_from_capture`).
+  - **Settings → Review** lists report 9's names under "Your company's names", read-only, said where they come from
+    and that they are never read as a supplier.
+  - *Not chosen:* reading a company of the group as the supplier when it is printed outside the bill-to (the rule
+    reader's bill-to blocks miss a customer printed without a label, an envelope's window: B-2720, and a wrong
+    supplier passes where an empty one is held); taking report 9's names out of the own names when they are
+    suppliers (every one is).
 - **D-300** · **A chart refused as cut short can be loaded anyway from its card, by someone who may change the
   settings** (B-2832; D-272 had the page name the command line's `--anyway`).
   - **What is refused stays refused for anyone:** a file with no account, or none that may be posted to (it is no

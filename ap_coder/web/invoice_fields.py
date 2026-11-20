@@ -219,9 +219,10 @@ def settle_dates(header: dict[str, Any], fallback: dict[str, Any]) -> DateCheck:
 
 
 def field_help(store: Store, coding: InvoiceCoding, draft: Draft, capture: CaptureResult | None, dates: DateCheck,
-               issues: list[Any]) -> dict[str, dict[str, Any]]:  # fmt: skip
+               issues: list[Any], text: str = "") -> dict[str, dict[str, Any]]:  # fmt: skip
     """A note under an empty or unclear field with a one-click fix: which of two dates, a PO this vendor has open
-    ("Use PO-89904"), a value boxed on the page while the field is empty ("Use BC-4410 from the page")."""
+    ("Use PO-89904"), a value boxed on the page while the field is empty ("Use BC-4410 from the page"), the company
+    of the group printed on the page (``text``) that may have billed it, no supplier or no company decided (D-298)."""
     out: dict[str, dict[str, Any]] = {}
     for name, choices in dates.choices.items():
         out[name] = {"text": "Which date is it?",
@@ -255,6 +256,16 @@ def field_help(store: Store, coding: InvoiceCoding, draft: Draft, capture: Captu
             short = value if len(value) <= 24 else f"{value[:23]}…"
             out[name] = {"text": "Boxed on the page, but the field is empty.",
                          "actions": [{"label": f"Use {short} from the page", "value": value}]}  # fmt: skip
+    if "vendor_name" not in out and not (coding.vendor_name.strip() and coding.company.strip()):
+        group = companies.group_suppliers(store, text, coding)
+        if group:  # an intercompany invoice: the sender's name is never read as the supplier (D-298)
+            said = list(dict.fromkeys(name for name, _supplier in group))
+            out["vendor_name"] = {
+                "text": f"{said[0]} is a company of the group and a supplier: if it billed this invoice, pick it."
+                if len(said) == 1 else f"{' and '.join(said)} are companies of the group and suppliers: if one of "
+                "them billed this invoice, pick it.",
+                "actions": [{"label": f"Use {supplier}", "value": supplier} for _name, supplier in group],
+            }  # fmt: skip
     return out
 
 

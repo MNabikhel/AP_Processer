@@ -290,6 +290,14 @@ def _at(page: _Page, key: str, ends: bool = True) -> list[tuple[int, int]]:
     return found
 
 
+def _own_key(name: str) -> str:
+    """A supplier's name as compared with the company's own names and report 9's: its vendor key, without the
+    supplier number it may be picked with ("MAPLE RIDGE CONSTRUCTORS LTD #4410900", B-2794)."""
+    from ..core.store.vendor_master import without_number
+
+    return vendor_key(without_number(str(name or "")))
+
+
 def _named(text: str, names: dict[str, str], supplier: str) -> set[str]:
     """The companies whose names (``names``: {vendor key: company}) are printed in ``text``, the supplier's own left
     out, and a name printed only inside the supplier's ("fraser bend" in "Fraser Bend Aggregates Ltd.", B-2680, run
@@ -301,6 +309,35 @@ def _named(text: str, names: dict[str, str], supplier: str) -> set[str]:
             and any(not any(s <= a and b <= e for s, e in theirs) for a, b in _at(page, key))]  # fmt: skip
     longest = [key for key in hits if not any(key != other and f" {key} " in f" {other} " for other in hits)]
     return {names[key] for key in longest}
+
+
+def group_suppliers(store: Any, text: str, coding: InvoiceCoding) -> list[tuple[str, str]]:
+    """[(report 9's name, the supplier as the vendor box takes it)] of the companies of the group printed on the page
+    (``text``) outside its bill-to and ship-to (``offline_coder.customer_block``) that are suppliers in use of the
+    vendor master: one of them may have billed the invoice to another (an intercompany invoice), and their names are
+    never read as the supplier (``own_names``: the bill-to prints one on every outside invoice), so a person is
+    offered it to pick (D-298). Only with no supplier in the box, or one of the company's own names (the company
+    billed, by mistake: B-2792); never the company the invoice is for (``coding.company``), one in its bill-to or
+    ship-to, or the supplier in the box (its name, and a name only inside it); [] with fewer than two companies."""
+    table = companies(store)
+    supplier = _own_key(coding.vendor_name)
+    if len(table) < 2 or not text.strip() or (supplier and supplier not in map(vendor_key, own_names(store))):
+        return []
+    from ..ai.offline_coder import customer_block
+    from ..core.keys import IN_ERP
+    from ..core.store.vendor_master import erp_stopped, with_number
+
+    names = name_variations(store)
+    billed, rest = customer_block(text)
+    printed = _named(rest, names, supplier) - _named(billed, names, "")
+    out = []
+    for code in sorted((printed - {company_code(coding.company)}) & set(table)):
+        name = table[code].name
+        shared = store.vendors_sharing(name)  # several supplier numbers under the name: each with its number
+        found = shared or [v for v in [store.find_vendor(name)] if v is not None]
+        out += [(name, with_number(v) if shared else str(v["display_name"])) for v in found
+                if v.get("in_master") == IN_ERP and not erp_stopped(v)]  # fmt: skip
+    return out
 
 
 def decide(store: Store, coding: InvoiceCoding, text: str = "") -> Decision:
@@ -328,7 +365,7 @@ def _decided(store: Store, coding: InvoiceCoding, text: str, table: dict[str, Co
         if len(found) == 1:
             return Decision(found.pop(), BY_PO, f"the company of PO {coding.po_number.strip()}")
         could |= found
-    named = _named(text, name_variations(store), vendor) if text else set()
+    named = _named(text, name_variations(store), _own_key(coding.vendor_name)) if text else set()
     if len(named) == 1:
         code = named.pop()
         name = table[code].name if code in table else code

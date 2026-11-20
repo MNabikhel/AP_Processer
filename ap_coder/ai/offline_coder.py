@@ -51,6 +51,7 @@ from ..core.schema import (
     TaxLine,
     province_named,
 )
+from ..core.store.vendor_master import without_number
 from .extraction import ExtractionResult
 from .inference import CHAT_SUGGESTED, MODEL_SUGGESTED, CodingResult
 from .suggest import by_pairs, candidates, why_left
@@ -247,6 +248,33 @@ def addressed_to(text: str) -> str:
         elif n <= ship or (n > other and _ATTENTION.search(line)):
             out.append(line)
     return "\n".join(out)
+
+
+# A customer's block labelled in other words than _CUSTOMER_LABEL's and _SHIP_LABEL's (``customer_block``, B-2792).
+_CUSTOMER_WORDS = re.compile(
+    r"(?i)\binvoiced\s*to\b|^\W*(?:customer|client)\s+(?:name|address)\b|\b(?:billing|shipping|delivery)\s+address\b"
+)
+
+
+def customer_block(text: str) -> tuple[str, str]:
+    """(the page's bill-to and ship-to blocks, the rest of it): each "Bill to", "Ship to", "Client" or "Attn:"
+    label's line ("Bill-To", "SOLD-TO", "Invoiced To", "Customer Name", "Billing Address" too) and the
+    ``ADDRESS_BLOCK_LINES`` under it, up to a remit-to (the supplier's: an "Attn:" in it is the supplier's too) or the
+    line items' headings. Who an invoice is for, told from who sent it by the page's text alone
+    (``companies.group_suppliers``, D-298)."""
+    block, rest, until, remit = [], [], -1, -1  # (the last line of the customer's block, and of a remit-to)
+    for n, line in enumerate(text.splitlines()):
+        label = line.replace("-", " ")  # "Bill-To:", "SHIP-TO" (B-2792)
+        if any(rx.search(label) for rx in (_SHIP_LABEL, _CUSTOMER_LABEL, _CUSTOMER_WORDS)) or (
+            n > remit and _ATTENTION.search(label)  # "Attn: Accounts Receivable" in a remit-to (B-2793)
+        ):
+            until = n + ADDRESS_BLOCK_LINES
+        elif _REMIT_LABEL.search(label):
+            until, remit = -1, n + REMIT_BLOCK_LINES
+        elif _TABLE_HEADING.match(label):
+            until = -1
+        (block if n <= until else rest).append(line)
+    return "\n".join(block), "\n".join(rest)
 
 
 def addresses(text: str, ours: frozenset[str] = frozenset()) -> tuple[str, str, str]:
@@ -750,7 +778,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     charges = None if progress else capture.fields.get("other_charges")  # (a progress billing's: its holdback)
     freight = _amount(values, "other_charges") if charges is not None and charges.status in (VERIFIED, LIKELY) else 0.0
     # (the company's own names but the supplier's: a company of the group billing another, its letterhead its own)
-    supplier_province, ship_to_province = provinces(text, layout, our_name_keys(store) - {vendor_key(vendor)})
+    own = vendor_key(without_number(vendor))  # (its supplier number off, as one of a name's is picked: B-2794)
+    supplier_province, ship_to_province = provinces(text, layout, our_name_keys(store) - {own})
     invoice_on = _iso_or_empty(values.get("invoice_date"))
     # The province a tax line names when its rate does not say: where it is delivered as best known (the vendor's
     # province is never stored as the ship-to, D-61).
