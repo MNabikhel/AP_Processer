@@ -47,6 +47,7 @@ from .jde_voucher import (
     _recovered_types,
     _Voucher,
     accrues_use_tax,
+    meals_accounts,
 )
 
 if TYPE_CHECKING:
@@ -118,14 +119,14 @@ def row_taxes(v: _Voucher, settings: JdeSettings) -> list[str]:
 
 def _line_shares(v: _Voucher) -> dict[int, dict[str, int]]:
     """{invoice line number: {tax: its share of the tax charged, in cents}}: ``taxmath.invoice_taxes``' amounts, as
-    the review screen's Tax check has them."""
+    the review screen's Tax check has them (its tips the posting's: with the meals accounts it halved, D-310)."""
     from ..coding.tax import TaxSetup
     from ..coding.taxmath import invoice_taxes
     from ..core.schema import InvoiceCoding
 
     coding = InvoiceCoding.model_validate({k: x for k, x in v.final.items() if k != "gl_distribution"})
     out: dict[int, dict[str, int]] = {}
-    for line in invoice_taxes(coding, TaxSetup(_rates(), {})).lines:
+    for line in invoice_taxes(coding, TaxSetup(_rates(), {}, meals_gl_codes=meals_accounts(v.final))).lines:
         mine = out.setdefault(line.line_number, {})
         for t in line.taxes:
             mine[t.tax_type] = mine.get(t.tax_type, 0) + _units(t.amount, v.decimals)
