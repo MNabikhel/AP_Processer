@@ -236,18 +236,22 @@ _NEXT_ONES_SIGN = re.compile(r"\s*[$€£]\s*\Z")  # (the "$" find_amounts gives
 _JOINED_BEFORE = re.compile(r"(?:[\d#]|\w[-/.])\Z")  # a digit or "#" right before, or a letter or digit and "-" "/" "."
 _LETTER_BEFORE = re.compile(r"[^\W\d]\Z")  # (a scan's "Total1,207.50" has its cents; "RT0001" is no amount)
 _JOINED_AFTER = re.compile(r"[\w%]| %|[-/.]\d")  # a letter, digit or "%" right after, or a "-", "/" or "." and a digit
+_TAX_FLAG = re.compile(r"[A-Z]{1,2}(?!\w)")  # a receipt's tax flag run into an amount with cents ("4.50GP", "23.75H")
 
 
 def _printed_money(text: str) -> list[float]:
-    """Each amount ``text`` prints as money (without its sign): with its cents ("150.00", "1 234,56", "(50.00)") or a
-    currency sign or code right beside it ("$150", "150 CAD"). Never the digits of an identifier, a number run into
+    """Each amount ``text`` prints as money (without its sign): with its cents ("150.00", "1 234,56", "(50.00)", a
+    receipt's tax flag run into them: "4.50GP") or a currency sign or code right beside it ("$150", "150 CAD", the
+    French "75 $ 150 $"). Never the digits of an identifier, a number run into
     letters or other digits ("(604) 555-0150", "INV-000450", "2026-11-02", "V6B 1A1", "RT0001"), nor a rate ("5.00%"):
     a phone, invoice, PO or GST/HST number, a date or a street number is no amount printed."""
     from ..core.parsing import find_amounts
 
-    found = []
-    for value, start, end in find_amounts(text):
-        if (sign := _NEXT_ONES_SIGN.search(text, start, end)) and re.match(r"\s*\.?\d", text[end : end + 3]):
+    found, amounts = [], find_amounts(text)
+    for at, (value, start, end) in enumerate(amounts):
+        nxt = amounts[at + 1] if at + 1 < len(amounts) else None
+        french = nxt is not None and _NEXT_ONES_SIGN.search(text, nxt[1], nxt[2])  # ("75 $ 150 $": each its own)
+        if not french and (sign := _NEXT_ONES_SIGN.search(text, start, end)) and re.match(r"\s*\.?\d", text[end:]):
             end = sign.start()
         shown = text[start:end]
         start, end = start + len(shown) - len(shown.lstrip()), end - len(shown) + len(shown.rstrip())
@@ -258,8 +262,8 @@ def _printed_money(text: str) -> list[float]:
         if not before and (_JOINED_BEFORE.search(text, max(0, lead - 2), lead)
                            or not cents and _LETTER_BEFORE.search(text, max(0, start - 1), start)):  # fmt: skip
             continue  # run into a word or a number ("RT0001", "555-0150"; run into its currency, "CAD150", is money)
-        if not after and _JOINED_AFTER.match(text, end):
-            continue  # ("5.00%", "2026-11-02"; "722.93CAD" is money)
+        if not after and _JOINED_AFTER.match(text, end) and not (cents and _TAX_FLAG.match(text, end)):
+            continue  # ("5.00%", "2026-11-02"; "722.93CAD" and "4.50GP" are money)
         if cents or before or after or _CURRENCY.search(text, start, end):
             found.append(abs(value))
     return found

@@ -523,3 +523,24 @@ def test_a_tax_correction_no_line_can_carry_is_refused_with_why(store, how):  # 
                                                  supplier_wanted=False)  # fmt: skip
     assert refused == ["GST 7.00: no line can carry it (each is zero-rated or exempt from GST)"], refused
     assert said == ["total 152.00 (was 147.00)"] and out["line_items"][0]["taxes_applied"] == []
+
+
+def test_money_with_a_receipts_tax_flag_or_a_french_dollar_sign_after_it_is_printed():
+    """B-2808: B-2800 left out real money a page prints: a receipt's tax flag run into the amount ("4.50GP",
+    "23.75H": GST, PST, HST), and a French amount whose "$" follows it when another such amount comes next
+    ("75 $ 150 $": the "$" was taken as the next one's). Identifiers stay out (B-2800's test)."""
+    for printed, fix, want in (("FUEL SURCHARGE 4.50GP", _fix("charge", "4.50", "Fuel surcharge"),
+                                "added Fuel surcharge 4.50 as line 2"),
+                               ("FILTER KIT 23.75H", _fix("line_amount", "23.75", line_number=1),
+                                "line 1 23.75 (was 1,000.00)"),
+                               ("Livraison 75 $ 150 $", _fix("charge", "75", "Livraison"),
+                                "added Livraison 75.00 as line 2"),
+                               ("Prix 75 $ 150,00 $", _fix("charge", "75", "Livraison"),
+                                "added Livraison 75.00 as line 2")):  # fmt: skip
+        page = SHORT_PAGE.replace("Subtotal", f"{printed}\nSubtotal")
+        _, said, refused = corrections.apply_items(_short(), [fix], page, store=None, setup=None,
+                                                   supplier_wanted=False)  # fmt: skip
+        assert said and said[0] == want and not refused, (printed, said, refused)
+    for not_money in ("Ref 12.50abc", "Lot 4.50GPS", "75 $150"):  # (a word after it; "$150" is 150's own)
+        assert 4.5 not in corrections._printed_money(not_money) and 12.5 not in corrections._printed_money(not_money)
+        assert 75.0 not in corrections._printed_money(not_money), not_money
