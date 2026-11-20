@@ -628,7 +628,12 @@ if (form) {
     soon(e.target.tagName === "SELECT" || e.target.type === "checkbox" ? 0 : 200);
     // Another company (D-267): the Account boxes search its accounts and the box says its own tax note, so the screen
     // is drawn again once the check has kept the edits (B-2684).
-    if (e.target.matches("select[data-company]")) flush().then(() => lastCheckOk && !stale && location.reload());
+    // A company picked is kept whatever else the invoice says; AP Coder's own is decided again at each check (D-286).
+    if (e.target.matches("select[data-company]")) {
+      const how = document.querySelector("[data-company-how]");
+      if (how) how.value = "picked";
+      flush().then(() => lastCheckOk && !stale && location.reload());
+    }
   });
 }
 
@@ -1245,9 +1250,11 @@ function vendorChanged(waited = false) {
     about (amber, with a note), after a check. A value is put in only where the box still holds what was sent. */
 function applyHeader(header, posted) {
   const sent = (name) => (posted ? posted.get(name) ?? "" : null);
+  let company = false; // the company AP Coder decided again (D-286): the screen is drawn again for it (B-2684)
   for (const [name, value] of Object.entries(header.values || {})) {
     const el = input(name);
     if (!el || (sent(name) !== null && el.value !== sent(name))) continue;
+    if (name === "company" && el.value !== value) company = true;
     el.value = value;
     if (name in TAX_FIELDS) viewer?.setEdited(name, value.trim(), false);
     if (name === "vendor_name") {
@@ -1272,6 +1279,7 @@ function applyHeader(header, posted) {
     else vendorMatch.dataset.an8 = header.an8;
     showVendorMatch();
   }
+  if (company && !stale) flush().then(() => lastCheckOk && !stale && location.reload());
 }
 
 /** A note with a one-click fix under a field (which of two dates, an open PO, a value boxed on the page), from the

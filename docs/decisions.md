@@ -6930,3 +6930,37 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     say later: the rules change as files are loaded, and a person may have picked it. A company not in report 9 is a
     warning (`US_TAX_NOT_CHECKED`), not an error: the pilot may name one (D-272). An invoice approved before report 9
     and not reopened is exported under Settings' company, as approved.
+- **D-286** · **An invoice's company: how it was decided is kept, and what approves it** (D-267, D-285; B-2689 to
+  B-2695).
+  - **How it was decided** is kept with the coding (`company_how`): a person's pick stays whatever the rules say later;
+    a company AP Coder decided (its PO, a name on the page, the supplier's history, its business units) is decided
+    again at every check, as the facts it rests on change. One kept from before, with no source, is AP Coder's. The
+    Company box says which.
+  - **Report 9 read as written:** its country is CA or US however the address book spells it, its currency by its
+    letters. A short name (three letters or fewer) decides only printed as a word of its own in capitals; names run
+    together on a scan are found.
+  - **A company report 9 does not list** is an error (`COMPANY_NOT_IN_REPORT`), approved only anyway with a reason,
+    unless the pilot names it (D-272); Settings → Review's "name = company" lines are checked against report 9 on save.
+  - **The second approver** sees the warnings new since the first approval (a bill loaded since under another company)
+    and approves them only anyway, with a reason kept in the audit trail beside the first approval's.
+- **D-287** · **A batch for JD Edwards with several companies: its duplicates per company, and no voucher without
+  one** (D-267, D-270, D-285, D-286; B-2696 to B-2698).
+  - The batch's duplicate check (the Exports page's list, a batch made, the dry run, a batch of another format
+    downloaded for JD Edwards) compares companies as the review screen's does: the same supplier and invoice number of
+    the same company, or with either company not decided, is held as before. Of another company (a bill JD Edwards
+    has under it, or AP Coder's own invoice of it, in the batch or exported) it is no duplicate once a person approved
+    the invoice, or of AP Coder's own the other one, over the warning that said so (`DUPLICATE_OTHER_COMPANY`,
+    `DUPLICATE_INVOICE_OTHER_COMPANY`: the latest approval's findings, and the second approval's since, in the audit
+    trail).
+  - Another company's bill found since the invoice was approved (no approval went over it) holds it, said so: "found
+    since it was approved: reopen it to check its company". Its review screen then shows the warning.
+  - **An invoice approved before its company was decided** (no company on its coding, JD Edwards' companies loaded
+    since) is held at the batch, said so, to be reopened for its company: no longer keyed under Settings' company as
+    approved (D-285's "left as it is"). A keying sheet made before and downloaded again has it on its Not ready sheet,
+    the JD Edwards files' README among what to check. The review screen holds such an invoice in review already
+    (`COMPANY_UNKNOWN`), so the check is the batch's alone (`jde_voucher._vouchers`), not the screen's voucher.
+  - The Exports page's list checks with report 9 as a batch made does (each company's currency), and is worked out
+    again when report 9 changes.
+  - *Left as it is:* an invoice the batch check holds stays in Ready to export, listed with why, and is not put on a
+    keying batch's Not ready sheet (B-2148): that sheet lists what a batch holds that its own checks hold back at
+    download.

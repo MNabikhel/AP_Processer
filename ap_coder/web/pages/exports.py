@@ -282,19 +282,20 @@ READY_FORMAT = "ready-1"  # ``ready_problems``' rows as kept for every process; 
 def ready_problems(store: Store, invoice_ids: list[int]) -> list[dict[str, Any]]:
     """The invoices ready to export (``invoice_ids``) that cannot go to JD Edwards, as the page lists them
     (``problem_rows``): ``jde_check``'s, worked out once for every process (D-169) and kept until an invoice, the
-    vendor master, the ERP register, JD Edwards' settings, the tax-rate file (the amount sent gross reads it, B-2074)
-    or the day change (0.6 s at 300,000 invoices with 1,100 ready, at every visit before: D-206). Making a batch
-    checks its invoices again (``_create_batch``). Shared: read it, don't change it."""
-    # (checked by the very settings it is kept for, not read again: B-2075)
-    text = store.get_setting(jde_settings.SETTING_KEY)
+    vendor master, the ERP register, JD Edwards' settings or companies, the tax-rate file (the amount sent gross reads
+    it, B-2074) or the day change (0.6 s at 300,000 invoices with 1,100 ready, at every visit before: D-206). Making a
+    batch checks its invoices again (``_create_batch``). Shared: read it, don't change it."""
+    # (checked by the very settings it is kept for, not read again: B-2075), with JD Edwards' companies as a batch
+    # made reads them (each one's currency, B-2697)
+    text, table = store.get_setting(jde_settings.SETTING_KEY), store.get_setting(companies.COMPANIES_SETTING)
 
     def work() -> list[dict[str, Any]]:
         invoices = store.get_invoices(invoice_ids)
-        problems = jde.validate(invoices, jde_settings.JdeSettings.from_json(text), store.vendor_ids(),
+        problems = jde.validate(invoices, jde_settings.from_texts(text, table), store.vendor_ids(),
                                 jde.prior_records(store, invoices=invoices))  # fmt: skip
         return problem_rows(store, problems, invoices)
 
-    asked = (invoice_ids, text, dt.date.today().isoformat(), store.rates_stamp())
+    asked = (invoice_ids, text, table, dt.date.today().isoformat(), store.rates_stamp())
     return store.shared_answer("jde_ready", work, version=READY_FORMAT, changes=("register", "vendors"), asked=asked)
 
 

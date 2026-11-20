@@ -149,6 +149,7 @@ def current_draft(request: Request, inv: dict[str, Any]) -> tuple[invoice_form.D
                        taught=dict(saved.get("taught") or {}), reader_at=saved.get("reader_at", ""),
                        absent=list(saved.get("absent") or []), from_vendor=dict(saved.get("from_vendor") or {}),
                        pay_from_for=str(saved.get("pay_from_for") or ""),
+                       company_how=str(saved.get("company_how") or ""),
                        # "Approve anyway" and why: ticked again only for the same errors (``override_key``, B-2505)
                        override=str(saved.get("override") or ""),
                        override_reason=str(saved.get("override_reason") or ""))  # fmt: skip
