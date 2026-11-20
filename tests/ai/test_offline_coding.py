@@ -142,6 +142,22 @@ def test_a_province_with_the_postal_code_glued_on_is_read():
         assert addresses(text) == ("", "", ""), text
 
 
+def test_a_province_whose_postal_code_ocr_cut_short_is_read():
+    """B-2891: a scan's OCR loses a character of the postal code as well as the spaces ("Regina,SKS4P48" for S4P 4K8,
+    "Edmonton,ABT5JN3" for T5J 0N3): the ship-to's province was not read, and the place of supply became our own
+    province. A province code after a comma, then five of its postal code's characters starting with that province's
+    letter (S for Saskatchewan, T for Alberta) is read; another province's letter, or fewer characters, is not."""
+    from ap_coder.ai.offline_coder import addresses
+
+    page = ("Westmeadow Building Services Inc.\n1150 8th Avenue, Regina, SK S4R 1C9\n"
+            "Bill to:MapleRidgeHoldingsLtd,410ElmStreet,Edmonton,ABT5JN3 Terms:Net30\n"
+            "Ship to:MapleRidgeHoldingstd.,1900AlbertStreet,Regina,SKS4P48\nDescription Qty Amount")  # fmt: skip
+    assert addresses(page) == ("SK", "SK", "AB")
+    assert addresses("Foothills Ltd\nCalgary,ABT7Z 6L")[0] == "AB"
+    for text in ("Foothills Ltd\nCalgary,ABS4P48", "Foothills Ltd\nCalgary,ABT7Z6", "Order 12,ONA1B2C"):
+        assert addresses(text) == ("", "", ""), text
+
+
 def test_the_rate_table_is_read_again_once_the_rate_file_changes(tmp_path, monkeypatch):
     """The local coder kept the first rate table it read for the life of the process: a rate edited in the data
     folder's copy was not seen until a restart (B-957)."""
