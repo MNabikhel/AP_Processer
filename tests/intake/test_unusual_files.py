@@ -117,6 +117,44 @@ def test_the_pdf_made_from_a_picture_in_the_invoices_folder_is_not_listed_as_a_n
     assert [Path(f[0]).name for f in imports.list_folder(store, folder).new] == [result.source.name]
 
 
+@pytest.mark.parametrize("turn", [0, 90], ids=["upright", "taken sideways"])
+def test_the_pdf_made_from_a_photo_is_not_listed_nor_put_in_line_while_the_photo_is_read(pipeline, monkeypatch, turn):
+    """B-2978: the PDF made from a photo sat in the invoices folder while the photo was read (OCR, coding: seconds),
+    not stored yet, so the import page listed it as a new file and a pick-up put it in line: a second reader read it
+    at once, or once the page was set upright (the PDF written again) it was not found as stored: one photo, two
+    invoices. Each file AP Coder writes while it reads one in line is noted under that one's content."""
+    from ap_coder import capture
+    from ap_coder.ai import offline_coder
+    from ap_coder.core.store.folder import read_file
+    from ap_coder.intake import imports
+
+    store, pipe, folder = pipeline
+    photo = folder / "IMG_0413.png"
+    photo.write_bytes(_png_bytes())
+    store.queue_imports([read_file(photo)], source="watch")
+    row = store.claim_import("capture:A")
+    built = capture.build_layout
+
+    def sideways(path, **kw):
+        read = built(path, **kw)
+        read.pages[0].turn = turn
+        return read
+
+    during = []
+
+    def reading(path, layout_read):  # (after the PDF is made, and set upright)
+        during.append((imports.list_folder(store, folder).new, imports.pick_up(store, folder, lambda p: False)[0]))
+        return extract(path, layout_read)
+
+    extract = offline_coder.local_extraction
+    monkeypatch.setattr(capture, "build_layout", sideways)
+    monkeypatch.setattr(offline_coder, "local_extraction", reading)
+    result = pipe.process(photo, sha256=row["sha256"])
+    assert result.ok and result.source == folder / "IMG_0413.pdf", result.error
+    assert during == [([], [])]
+    assert len(store.list_invoices()) == 1 and imports.list_folder(store, folder).new == []
+
+
 def test_a_file_renamed_to_what_it_is_is_not_listed_as_a_new_file(pipeline):
     """A PDF saved as ".jpg" is renamed ".pdf" as it is read: under its new name the pick-up had never read it."""
     from ap_coder.intake import imports
@@ -279,7 +317,7 @@ def test_a_bug_while_a_picture_is_made_a_pdf_keeps_its_traceback_in_the_log(pipe
     store, pipe, folder = pipeline
     Image.new("RGB", (60, 40), "white").save(folder / "photo.jpg")
 
-    def bug(path):
+    def bug(path, noted=None):
         return None + 1.0  # (a TypeError of AP Coder's own making)
 
     monkeypatch.setattr(pictures, "to_pdf", bug)

@@ -50,3 +50,35 @@ def test_a_damaged_picture_is_said_plainly_whatever_pillow_raises():
         assert plain_error(ours, Path("photo.JPG")) == f"{type(exc).__name__}: {exc}"
     disk = OSError(28, "No space left on device")  # a system error is said as it is
     assert "No space left" in plain_error(disk, Path("photo.jpg"))
+
+
+def test_an_iphone_photo_cut_part_way_looks_incomplete_and_is_said_plainly(tmp_path):
+    """B-2979: a HEIC photo still being copied in (a phone's sync) was read at once, as only a PDF, a JPEG and a PNG
+    had an end to look for and only a TIFF, BMP, GIF or WEBP was decoded to tell: pillow-heif's ValueError ("Invalid
+    input: Unexpected end of file ...") stayed in the Failed tab, and the whole photo came in later as a second row.
+    Its boxes tell (each must end within the file, its meta and mdat there), and a damaged one is said plainly."""
+    import pytest
+    from PIL import ImageDraw
+
+    from ap_coder.capture.layout import register_heif
+    from ap_coder.intake.pictures import to_pdf
+
+    if not register_heif():
+        pytest.skip("pillow-heif is not installed")
+    page = Image.new("RGB", (900, 1200), "white")
+    for y in range(40, 1200, 40):
+        ImageDraw.Draw(page).text((40, y), f"INVOICE INV-77  line {y} ...... 123.45", fill="black")
+    out = io.BytesIO()
+    page.save(out, "HEIF", quality=80)
+    whole = out.getvalue()
+    for share in (0.02, 0.1, 0.3, 0.6, 0.9, 0.99):
+        cut = tmp_path / f"IMG_{share}.HEIC"
+        cut.write_bytes(whole[: int(len(whole) * share)])
+        assert looks_incomplete(cut), share
+    done = tmp_path / "IMG_0412.HEIC"
+    done.write_bytes(whole)
+    assert not looks_incomplete(done)
+    with pytest.raises(ValueError) as raised:  # cut off for good: its reading fails, said in plain words
+        to_pdf(tmp_path / "IMG_0.6.HEIC")
+    said = plain_error(raised.value, tmp_path / "IMG_0.6.HEIC")
+    assert said.startswith("IMG_0.6.HEIC can't be opened as a picture: the file is damaged"), said

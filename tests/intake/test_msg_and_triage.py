@@ -249,6 +249,41 @@ def test_a_credit_title_on_a_line_with_other_words_is_still_a_credit_note(text):
     assert triage.classify_document(triage.Document("scan0001.pdf", text)).kind == triage.CREDIT
 
 
+@pytest.mark.parametrize(
+    "name, lines",
+    [
+        ("BL-2026-114.pdf", ["Brightline IT Consulting Inc.", "INVOICE", "Invoice No: BL-2026-114",
+                             "Invoice Date: 2026-10-31", "Bill To: Madeup Constructors Inc., 410 Elm Street",
+                             "Professional services per Statement of Work SOW-7, October 2026", "Subtotal 4,000.00",
+                             "GST 200.00", "Total 4,200.00"]),
+        ("BL-2026-115.pdf", ["Brightline IT Consulting Inc.", "INVOICE", "Invoice No: BL-2026-115",
+                             "Invoice Date: 2026-10-31", "Invoice Period: October 1-31, 2026",
+                             "Services per Statement of Work SOW-7", "Total 4,200.00"]),
+        ("R1686061.pdf", ["Larkspur Tax Advisors", "Invoice", "Invoice # R1686061", "Inv. Date 2026-04-30",
+                          "Financial statement audit - interim 1,200.00",
+                          "Year-end engagement - progress bill 2 800.00",
+                          "Year-end engagement - progress bill 2 800.00",
+                          "Year-end engagement - progress bill 2 800.00", "Total 3,600.00"]),
+        ("F-2026-88.pdf", ["Conseils Brightline inc.", "FACTURE", "No de facture : F-2026-88",
+                           "Date de facture : 2026-10-31", "Facturé à : Constructions Madeup inc., 410 rue Elm",
+                           "Services selon le relevé des heures ci-joint", "Total 4 830,00 $"]),
+        ("Statement of Work SOW-7.pdf", ["Brightline IT Consulting Inc.", "INVOICE", "Invoice No: BL-2026-116",
+                                         "Invoice Date: 2026-10-31", "Bill To: Madeup Constructors Inc., 410 Elm",
+                                         "Total 4,200.00"]),
+    ],
+    ids=["statement of work", "invoice period", "financial statement audit", "releve des heures", "file name"],
+)  # fmt: skip
+def test_an_invoice_that_mentions_a_statement_is_still_an_invoice(name, lines, tmp_path):
+    """B-2975: an invoice titled INVOICE whose lines mention a "Statement of Work", a "financial statement" or a
+    "relevé des heures" (or whose file name does), with its number, date and Bill To lines naming an invoice or a bill
+    beside a digit, was filed under statements/ and never reached the review queue, no person told."""
+    doc = triage.document_for(name, _pdf(*lines))
+    assert triage.classify_document(doc).kind == triage.INVOICE
+    _eml(tmp_path / "inv.eml", "Invoice", "Please find our invoice attached.", (name, _pdf(*lines)))
+    result = unpack(tmp_path / "inv.eml")
+    assert [p.name for p in result.saved] == [f"inv - {name}"] and result.statements == []
+
+
 def test_kinds_in_english_and_french():
     assert _kind("Statement", "", ("soa.pdf", STATEMENT)).kind == triage.STATEMENT
     assert (
@@ -435,6 +470,28 @@ def test_the_process_page_lists_emails_that_need_a_person(tmp_path):
     (st,) = inbox.statements(store, folder)
     answer = post(client, f"/statements/emailed/{st['id']}/{st['n']}", {"vendor": ""})
     assert answer.status_code == 200 and "/statements?" in answer.json()["redirect"]
+
+
+def test_a_pdf_filed_as_a_statement_is_said_on_the_process_page_and_can_be_read_as_an_invoice(tmp_path):
+    """B-2975: a PDF triage filed under statements/ was said only on the Statements page, with Open and Done: the
+    process page now counts the statements received by email (a link to them), and a PDF one can be sent to the
+    review queue from the Statements page, as an email set aside for a person can."""
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    client = client_for(store)
+    from ap_coder.web.core import invoice_dir
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    _eml(folder / "soa.eml", "Statement", "attached", ("soa.pdf", STATEMENT))
+    unpack(folder / "soa.eml", folder)
+    page = client.get("/process").text
+    assert "1 statement received by email" in page and 'href="/statements#emailed"' in page
+    (st,) = inbox.statements(store, folder)
+    assert f'action="/process/inbox/{st["id"]}/to-queue/{st["n"]}"' in client.get("/statements").text
+    assert "is in the invoices folder" in follow(client, post(client, f"/process/inbox/{st['id']}/to-queue/{st['n']}"))
+    assert (folder / "soa - soa.pdf").is_file() and inbox.statements(store, folder) == []
+    assert "statement received by email" not in client.get("/process").text
 
 
 def test_an_emailed_statement_keeps_the_open_items_choice(store, setup_demo_template):

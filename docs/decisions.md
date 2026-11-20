@@ -7332,3 +7332,20 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - *Not chosen:* storing no account at processing (an invoice approved touchless is approved as processing coded
     it, on the same day); the queue's stored checks asking it (the vendor's last account moves at each approval,
     which no checks stamp follows).
+- **D-327** · **A file AP Coder writes in the invoices folder while it reads one in line counts as read, under the
+  content of the one in line, until its invoice is stored** (B-2978).
+  - **Why:** the PDF made from a photo (and a scan turned upright) sat in the folder for the seconds of the reading
+    with no invoice and no file in line of its own content: the import page listed it as new, a pick-up put it in
+    line, and a second reader (or the same one, once the page was set upright) read it again. What the pick-up read of
+    each file (`seen_files`, D-155) already says which files AP Coder has; while a photo is read, the content AP Coder
+    has its PDF as is the photo's: the file in line, then the invoice's `original_sha256`.
+  - **How:** `InvoicePipeline._note_reading` notes the file under the SHA-256 the import queue read of the file in
+    line, just before it takes its name: `intake.to_pdf` and `turn_upright` tell it (`noted`) of the `.part` file,
+    whose size and time the rename keeps; a file renamed to its kind is noted after the rename. `_KNOWN` then holds
+    through the queue's reading row, then through the invoice's `original_sha256`, and `_note_own_file` notes the
+    stored file as it is (B-2098). For that while, a `seen_files` row's `sha256` is the content the file was made
+    from, not its own.
+  - *Not chosen:* the PDF written under a hidden name and renamed once stored (the invoice points at its path, and
+    two pictures of one name read at once would take the same name); the claim refusing a second invoice of one
+    SHA-256 (a PDF set upright has another, and the import page would still list the file); the pick-up opening each
+    new PDF to see whose picture it was made from (a read of every new file).
