@@ -8,9 +8,11 @@ import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+from ...coding.line_tax import invoice_uncollected, supply_province, tax_vote
+from ..audit import changed_since
 from ..keys import LINE_FIELDS, line_pattern
 from ..memory import (
     ACCEPTED,
@@ -26,6 +28,7 @@ from ..memory import (
     Pattern,
     WithPast,
     _aggregate,
+    pair_lines,
     vendor_key,
 )
 from ..reference_data import UNASSIGNED
@@ -40,6 +43,10 @@ from ._base import (
     FEEDBACK_READ,
     _clean_code,
     _iso_week,
+    first_offer,
+    line_guessed,
+    nothing_proposed,
+    suggestion_kept,
 )
 from .summary import MEMO_WAIT, fetch_rows
 
@@ -201,6 +208,28 @@ def forget_past_lines(conn: Any, invoice_id: int) -> None:
     an invoice is about to forget: no longer what the lessons say, and none of their words left behind (B-1842)."""
     conn.execute("DELETE FROM past_lines WHERE vendor_key IN (SELECT DISTINCT vendor_key FROM feedback WHERE "
                  "invoice_id = ?)", (invoice_id,))  # fmt: skip
+
+
+@dataclass
+class _LineFeedback:
+    """What an approval's lines say (``LearningMixin._line_feedback``): their feedback rows, the outcomes counted,
+    how many lines the reviewer changed or coded by hand, and what changed since an approval before a reopen."""
+
+    counts: dict[str, int]
+    rows: list[tuple[Any, ...]] = field(default_factory=list)
+    changed: int = 0
+    coded: int = 0
+    reopen_changes: list[dict[str, str]] = field(default_factory=list)
+    cost_centers: bool = False  # whether the company keeps a cost center list (none to keep otherwise, B-562)
+
+
+def _ledger(suggestion: dict[str, Any] | None, li: dict[str, Any]) -> tuple[str, str, float | None, str]:
+    """An approved line's subledger, its type and its units (an account with posting edit code L or U keeps them,
+    D-268), and "person" when they are not what was proposed: a person typed them (B-2830)."""
+    final = (str(li.get("subledger") or ""), str(li.get("subledger_type") or ""), li.get("units") or None)
+    proposed = (str((suggestion or {}).get("subledger") or ""), str((suggestion or {}).get("subledger_type") or ""),
+                (suggestion or {}).get("units") or None)  # fmt: skip
+    return *final, "person" if final != proposed and any(final) else ""
 
 
 class LearningMixin:
@@ -681,3 +710,95 @@ class LearningMixin:
             "by_vendor": [dict(r) for r in by_vendor],
             "top_corrections": [dict(r) for r in corrections],
         }
+
+    def _line_feedback(self, invoice_id: int, inv: dict[str, Any], final_output: dict[str, Any], key: str,
+                       reviewer: str, now: str, bulk: bool) -> _LineFeedback:  # fmt: skip
+        """What each approved line says about the coding proposed: its outcome (accepted, corrected, coded by
+        hand), counted, and its feedback row (the coding memory and the tax code it is remembered with)."""
+        ai = inv["ai_output"] or {"line_items": []}
+        vendor_name = final_output.get("vendor_name", "")
+        out = _LineFeedback(counts={ACCEPTED: 0, CORRECTED: 0, CODED: 0, **({BULK: 0} if bulk else {})})
+        # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
+        by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
+        approved_before = (inv.get("meta") or {}).get("reopened_coding") or {}  # before a reopen (B-1299, D-112)
+        kept = suggestion_kept
+        # Without a cost center list the review screen has none to show or keep: a cost center the AI copied from
+        # coding memory is not part of what it proposed (B-562). Whether there is one, never the whole list (B-1933).
+        with self._conn() as conn:
+            cost_centers = out.cost_centers = conn.execute("SELECT 1 FROM cost_centers LIMIT 1").fetchone() is not None
+        final_lines = final_output.get("line_items", [])
+        # Where it is supplied, for the tax code each line is remembered with (D-80).
+        province = supply_province(final_output, self.our_province())
+        # And the provincial taxes the vendor did not collect, as the coder saw the invoice (what it read).
+        missing = "+".join(invoice_uncollected(ai if ai.get("line_items") else final_output, province))
+        for suggestion, li in pair_lines(ai.get("line_items", []), final_lines):
+            s_gl = suggestion.get("predicted_gl_code") if suggestion else None
+            s_cc = (suggestion.get("predicted_cost_center", "") if cost_centers else "") if suggestion else None
+            f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")
+            if f_gl == UNASSIGNED:
+                continue  # not a coding decision: nothing to learn from it
+            rule = by_rule.get(suggestion.get("line_number")) if suggestion else None
+            guess = line_guessed(suggestion, rule)
+            if offered := first_offer(suggestion, li):  # taken with one click: a suggestion taken, not coded (D5)
+                s_gl, s_cc = offered[0], offered[1] if cost_centers else ""
+            kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
+            # A kept guess is no edit; another account in its place is (B-479), as any change to what was proposed.
+            blank = nothing_proposed(s_gl, s_cc)
+            replaced = (
+                (f_gl != s_gl or (f_cc or "") != (s_cc or ""))
+                if guess
+                else not blank and not kept(s_gl, s_cc, f_gl, f_cc)
+            )
+            if not kept_rule and replaced:
+                out.changed += 1
+            if not kept_rule and blank and not guess:  # coded by hand where the AI left the line blank (B-670)
+                out.coded += 1
+            if rule is not None:  # the AI's own answer, as first recorded (not a rule's)
+                s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
+            # Accuracy measures what the AI proposed: the blanks it left are not counted against it. A line whose
+            # account it only guessed, or left blank, is the reviewer's own coding: neither confirmed nor corrected
+            # (B-475, B-650). (The rule's own answer decides: a rule that filled a blank leaves the line coded.)
+            outcome = (
+                CODED if guess or nothing_proposed(s_gl, s_cc) else ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc)
+                else CORRECTED
+            )  # fmt: skip
+            prior = approved_before.get(str(li["line_number"]))
+            moved = changed_since(prior, li["line_number"], f_gl, f_cc, cost_centers) if outcome == CODED else []
+            if moved:  # AP's own coding, approved before a reopen, changed: a correction of it (B-1299)
+                outcome, s_gl, s_cc = CORRECTED, prior[0], prior[1] if cost_centers else ""
+                out.changed, out.reopen_changes = out.changed + 1, out.reopen_changes + moved
+            if bulk and outcome == ACCEPTED:  # kept, but nobody looked at it: no confirmation (B-955)
+                outcome = BULK
+            out.counts[outcome] += 1
+            out.rows.append(
+                (
+                    invoice_id,
+                    li["line_number"],
+                    key,
+                    vendor_name,
+                    li["description"],
+                    li.get("amount"),
+                    s_gl,
+                    f_gl,
+                    s_cc,
+                    f_cc,
+                    outcome,
+                    reviewer,
+                    now,
+                    *tax_vote(
+                        suggestion,
+                        li,
+                        ai.get("line_items", []),
+                        ai.get("tax_lines") or [],
+                        final_lines,
+                        final_output.get("tax_lines") or [],
+                        bulk=bulk,
+                    ),
+                    province,
+                    missing,
+                    " ".join(str(li.get("remark") or "").split()),  # the remark it is keyed with (D-213)
+                    str(li.get("remark_from") or ""),
+                    *_ledger(suggestion, li),
+                )  # fmt: skip
+            )
+        return out

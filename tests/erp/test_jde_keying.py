@@ -1432,3 +1432,161 @@ def test_a_voucher_match_the_keying_sheet_would_hold_is_a_check_before_approval(
     odd = {**final, "line_items": [final["line_items"][0], {**final["line_items"][1], "description": "Artwork proof"}]}
     assert "PO_VOUCHER_MATCH" not in issues(odd) and "PO_LINE_NOT_ON_PO" in issues(odd)  # (said by the PO check)
     assert "PO_VOUCHER_MATCH" not in issues(case.coding())  # (keyed: nothing to say)
+
+
+def test_a_goods_line_printed_with_no_quantity_matches_its_amount_at_the_po_lines_unit_cost(tmp_path):
+    """B-2669 (D-283): an invoice line of goods printed with no quantity was matched with Quantity Matched 1 whatever
+    its PO line, so 599.00 of the 100 bags at 5.99 open was keyed as 1 bag, and JD Edwards would leave 99 open on a
+    line billed in full. Its amount at the PO line's unit cost is the quantity when that comes out whole (within the
+    unit cost's tolerance, to the cent), said under the voucher; else it stays 1, and the sheet says to check it."""
+    store = po_store(tmp_path)
+    inv = po_invoice()
+    final = inv["final_output"]
+    final["line_items"][0]["quantity"] = 0  # 599.00 of bags, no quantity printed
+    final["line_items"][1].update(quantity=0, amount=86.25)  # 1.5 setups' worth: no whole number of 57.50
+    final.update(subtotal=717.25, tax_lines=[tl("GST", "", 0.05, 717.25, 35.86)], tax_total=35.86,
+                 grand_total=753.11)  # fmt: skip
+    (v,), held = jde_keying.vouchers([inv], settings(po_matched=True), promo_lookup, on=ON_DAY,
+                                     po_matches=jde_keying.po_matches(store, [inv]))  # fmt: skip
+    assert held == [] and v.balanced
+    assert [(m.line, m.quantity, m.amount) for m in v.matches] == [("12.000", 100, 599.0), ("13.000", 1, 86.25),
+                                                                   ("14.000", 1, 32.0)]  # fmt: skip
+    assert ("Order 40917 line 12.000: the invoice prints no quantity; Quantity Matched is 100, its amount (599.00) at "
+            "the PO line's unit cost 5.99.") in v.notes  # fmt: skip
+    assert ("Order 40917 line 13.000: the invoice prints no quantity and its amount (86.25) is no whole number of the "
+            "PO line's unit cost 57.50: Quantity Matched is 1. Check the quantity JD Edwards shows for "
+            "it.") in v.notes  # fmt: skip
+
+
+def _approved_po_invoice(store, tmp_path, js):
+    """``po_invoice`` approved as the review screen approves it (its output from ``finalise_coding``, JD Edwards in
+    use with ``js``), on a keying sheet batch: (its id, the batch)."""
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.core.config import Settings
+
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
+    jde_settings.save(store, js)
+    store.import_accounts("gl_accounts", [{"code": "6420.2210"}], "code", None)
+    inv = po_invoice()
+    invoice_id = store.add_invoice(tmp_path / "118204.pdf", inv["final_output"], {})
+    output, _ = finalise_coding(_coding_of(inv), store.reference_data(), Settings(), store=store,
+                                exclude_invoice_id=invoice_id)  # fmt: skip
+    store.approve_invoice(invoice_id, output, "Pat Tester")
+    return invoice_id, store.create_export_batch([invoice_id], jde_keying.FORMAT, actor="Pat Tester")
+
+
+def test_a_keying_sheet_made_again_after_the_pos_are_loaded_again_keeps_the_rows_matched_at_approval(tmp_path):
+    """B-2671 (D-284): a keying sheet downloaded again after the purchase orders were loaded again (the vouchers keyed,
+    JD Edwards closed the bags' line and left it out of its open lines) made the approved invoice's voucher match
+    afresh: its bags matched another line or none, the voucher "Not ready". What was matched at approval is kept with
+    the invoice, and the sheet keys that each time."""
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from ap_coder.web.pages.exports import keying_file
+    from tests.coding.test_po import _jde_pos
+    from tests.pdfs import one_row_po_lines
+
+    store = po_store(tmp_path)
+    js = settings(po_matched=True, an8_overrides={vendor_key(PROMO): "4471001"})
+    _, batch = _approved_po_invoice(store, tmp_path, js)
+
+    def sheet():
+        book = openpyxl.load_workbook(io.BytesIO(keying_file(store, batch)[0]))
+        return [[list(r) for r in book[name].iter_rows(values_only=True)] for name in book.sheetnames]
+
+    first = sheet()
+    assert [r[3] for r in first[0] if r[0] == "40917"] == ["12.000", "13.000", "14.000"] and len(first[1]) == 1
+    bags, setup, freight = one_row_po_lines()
+    _jde_pos(store, [replace(bags, vouchered=Decimal(100), closed=True), setup, freight])
+    assert sheet() == first
+
+
+def test_a_kept_subcontract_match_keys_its_retained_amounts_after_the_subcontract_is_loaded_again(tmp_path):
+    """D-284 with D-273: a subcontract's progress billing ("Progress billing #3", 85,000: of its two lines only the
+    concrete is open for as much, so it is matched by its amount) approved keeps its Voucher Match rows with what a
+    subcontract's row needs: its line's retainage percent and the work billed on it before. Once JD Edwards has
+    vouchered it and the subcontract is loaded again (the line no longer open for 85,000: made afresh, it would match
+    no line, and the work before would count this billing), the keying sheet keys the rows matched at approval: each
+    row's Retained Amount, the amount due now, the check line and what is said of the retainage, as they were."""
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.bench import jde_exports
+    from ap_coder.coding import po
+    from ap_coder.core.config import Settings
+    from ap_coder.core.schema import PROGRESS_BILLING, VOUCHER_MATCH
+    from ap_coder.core.store import Store
+    from ap_coder.erp.import_specs import PURCHASE_ORDERS, check
+    from ap_coder.web.files import read_sheet
+    from ap_coder.web.pages.exports import keying_file
+    from tests.coding.test_po import _subcontract_lines
+
+    def load(lines):  # (report 6 of the build sheet, as the Purchase orders page reads it)
+        sheet, _ = read_sheet("report6.xlsx", jde_exports.po_lines_report_xlsx(lines))
+        found = check(PURCHASE_ORDERS, list(sheet.columns)).found
+        store.import_purchase_orders(po.rows_from_records(sheet.to_dict("records"), found)[0])
+
+    store = Store(tmp_path / "ap.db")
+    site, concrete, *others = _subcontract_lines()  # (41201: site work 100,000; concrete 150,000, 60,000 vouchered)
+    load([replace(site, vouchered=Decimal(20000)), concrete, *others])  # (80,000 and 90,000 open)
+    supplier = "Westmeadow Building Services Inc."
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
+    jde_settings.save(store, settings(po_matched=True, po_subcontracts=True,
+                                      an8_overrides={vendor_key(supplier): "541706"}))  # fmt: skip
+    store.import_accounts("gl_accounts", [{"code": "6420.2210"}], "code", None)
+    d = doc([line(1, 85000.0, "6420.2210", ["GST"], desc="Progress billing #3", cc=HQ)],
+            [tl("GST", "", 0.05, 85000.0, 4250.0)], prov="AB", vendor_name=supplier, invoice_number="WBS-P-3",
+            invoice_date="2026-10-31", payment_terms="Net 30", po_number="41201")  # fmt: skip
+    inv = coded(d)
+    invoice_id = store.add_invoice(tmp_path / "WBS-P-3.pdf", inv["final_output"], {})
+    output, _ = finalise_coding(_coding_of(inv), store.reference_data(), Settings(), store=store,
+                                exclude_invoice_id=invoice_id)  # fmt: skip
+    output[PROGRESS_BILLING] = {"this_period": 85000.0, "previous": 60000.0, "to_date": 145000.0, "holdback": 8500.0,
+                                "holdback_rate": 10.0, "taxes": {"GST": 4250.0}, "amount_due": 80750.0,
+                                "release": False, "adds_up": True}  # (as read off its page)  # fmt: skip
+    (kept,) = output[VOUCHER_MATCH]["rows"]
+    assert (kept["order_type"], kept["line"], kept["amount"], kept["retainage"], kept["billed_before"]) == (
+        "OS", "2.000", 85000.0, 10.0, 60000.0)  # fmt: skip
+    store.approve_invoice(invoice_id, output, "Pat Tester")
+    batch = store.create_export_batch([invoice_id], jde_keying.FORMAT, actor="Pat Tester")
+
+    def sheet():
+        book = openpyxl.load_workbook(io.BytesIO(keying_file(store, batch)[0]))
+        return [[list(r) for r in book[name].iter_rows(values_only=True)] for name in book.sheetnames]
+
+    first = sheet()
+    keyed = first[0]
+    assert len(first[1]) == 1 and not [r for r in keyed if r[0] == "Warning"]  # (ready; the work before as printed)
+    header = next(r for r in keyed if r[0] == "Order Number")
+    assert header[4:8] == ["Quantity Matched", "UM", "Amount Matched", jde_keying.RETAINED]
+    (row,) = [r for r in keyed if r[0] == "41201"]
+    assert row[:4] + row[6:8] == ["41201", "OS", "00210", "2.000", 85000, 8500]
+    assert ["Retained (held back)", 8500, "Amount due now", 80750] in [r[:4] for r in keyed]
+    assert any(str(r[3]).endswith("= 80,750.00: balanced") for r in keyed if r[0] == "Check")
+    assert any(str(r[1]).startswith("Retainage: each row retains 10% of its amount matched") for r in keyed)
+    # Vouchered in JD Edwards, the subcontract loaded again: its concrete open for 5,000 only
+    load([replace(site, vouchered=Decimal(20000)), replace(concrete, vouchered=Decimal(145000)), *others])
+    afresh = {k: v for k, v in output.items() if k != VOUCHER_MATCH}
+    assert jde_keying.po_matches(store, [{"id": invoice_id, "final_output": afresh}])[invoice_id].held
+    assert sheet() == first
+
+
+def test_a_canadian_companys_po_matched_voucher_charged_another_tax_says_why_it_is_held(tmp_path):
+    """B-2673: a Canadian company's PO-matched invoice charged a tax that is none of the GST, HST, PST and QST (a tax
+    line of type OTHER: a foreign sales tax, a levy read as a tax) was held by the gross check, "the amounts matched
+    (688.50) and the tax JD Edwards works out on them (34.43) add up to 722.93, not the gross 727.93: check the lines
+    and the taxes against the invoice", though both were right: that tax is on no row and JD Edwards works out none of
+    it. It is held for that, said."""
+    store = po_store(tmp_path)
+    inv = po_invoice()
+    final = inv["final_output"]
+    final["tax_lines"].append(tl("OTHER", "", 0.0, 688.5, 5.0))
+    final.update(tax_total=39.43, grand_total=727.93)
+    ready, held = jde_keying.vouchers([inv], settings(po_matched=True), promo_lookup, on=ON_DAY,
+                                      po_matches=jde_keying.po_matches(store, [inv]))  # fmt: skip
+    assert ready == [] and held[0].why == [
+        "the invoice charges 5.00 of a tax that is none of the GST, HST, PST and QST (a tax line of type OTHER): JD "
+        "Edwards works out none of it on a voucher match and it is on no row. Correct the tax line if it is one of "
+        "them, or key the voucher by hand"]  # fmt: skip

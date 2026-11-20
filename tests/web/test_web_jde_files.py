@@ -1376,3 +1376,45 @@ def test_the_vendor_information_lists_two_business_unit_columns_say_number_and_n
     token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.VENDOR_INFO_FILE))
     summary = _summary(client, token)
     assert '<b>Business unit number</b> <span class="muted">as</span> “Business Unit”' in summary
+
+
+def _cut_short(client, store, tmp_path) -> str:
+    """The whole made-up chart loaded, then a file of its first five accounts uploaded: its token."""
+    _upload_and_load(client, "chart", "chart.xlsx", cf.write_chart(tmp_path / "chart.xlsx").read_bytes())
+    short = cf.write_chart(tmp_path / "short.xlsx", cf.CHART[:6]).read_bytes()
+    return _token(client.post("/jde-files/chart/upload", files={"file": ("short.xlsx", short)}, headers=PAGE))
+
+
+def test_a_chart_that_looks_cut_short_is_refused_with_what_it_holds_and_loaded_anyway_from_the_card(
+        client, store, tmp_path):  # fmt: skip
+    """B-2832: a chart refused as cut short (D-272) only said to import it again with the command line's --anyway. The
+    card now says why, shows what the file holds, and offers Load anyway; loaded so, the activity log says it."""
+    token = _cut_short(client, store, tmp_path)
+    before = _accounts(store)
+    page = follow(client, client.post("/jde-files/chart/load", data={"token": token}, headers=PAGE))
+    card = page.split('id="chart-refused"', 1)[1].split("</form>", 1)[0]
+    assert "less than half the accounts loaded now of company 07310 (5 accounts, " in card
+    assert "--anyway" not in card and "python -m" not in card
+    assert "Read 6 rows of the chart: 6 accepted (5 accounts on 1 business unit), 0 rejected." in card
+    assert 'name="anyway" value="1"' in card and "Load anyway</button>" in card
+    assert _accounts(store) == before and before > 10
+    page = follow(client, client.post("/jde-files/chart/load", data={"token": token, "anyway": "1"}, headers=PAGE))
+    assert _accounts(store) == 5 and 'id="chart-refused"' not in page
+    (event,) = [e for e in store.events() if e["action"] == "accounts_imported" and e["detail"].get("anyway")]
+    assert event["detail"]["anyway"].startswith("the file has less than half the accounts loaded now of company 07310")
+    assert "loaded anyway: the file has less than half the accounts" in client.get("/activity").text
+
+
+def test_only_someone_who_may_change_the_settings_loads_a_chart_anyway(store, tmp_path):
+    """B-2832: on the server, a role that loads JD Edwards' files but may not change the settings is told who can load
+    a chart that looks cut short, and its Load anyway is refused."""
+    from tests.web.test_server_ux import client_as
+
+    loader = client_as(store, store.add_role("Chart loader", ["view", "code", "setup"]))
+    token = _cut_short(loader, store, tmp_path)
+    before = _accounts(store)
+    page = follow(loader, loader.post("/jde-files/chart/load", data={"token": token}, headers=PAGE))
+    card = page.split('id="chart-refused"', 1)[1].split("</section>", 1)[0]
+    assert "Load anyway</button>" not in card and "Someone who may change the settings can load it anyway" in card
+    refused = loader.post("/jde-files/chart/load", data={"token": token, "anyway": "1"}, headers=PAGE)
+    assert refused.status_code == 403 and _accounts(store) == before

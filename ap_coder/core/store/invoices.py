@@ -8,19 +8,16 @@ import math
 import sqlite3
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ...coding.line_tax import invoice_uncollected, supply_province, tax_vote
 from ...coding.terms import DEFAULT_TERMS_DAYS
-from ..audit import changed_since, diff_coding
+from ..audit import diff_coding
 from ..keys import po_key
-from ..memory import ACCEPTED, AUTONOMOUS_REVIEWER, BULK, CODED, CORRECTED, pair_lines, vendor_key
+from ..memory import AUTONOMOUS_REVIEWER, CODED, CORRECTED, vendor_key
 from ..paths import PROJECT_DIR, find_moved_file
-from ..reference_data import UNASSIGNED
 from ..schema import as_read
-from . import _base
+from . import _base, dialect
 from ._base import (
     _FOUND,
     _HEADER_FIELDS,
@@ -39,14 +36,10 @@ from ._base import (
     _now,
     _store_class,
     _tax_signature,
-    first_offer,
-    line_guessed,
-    nothing_proposed,
     parse_fx_rates,
-    suggestion_kept,
 )
 from .dialect import begin_write
-from .learning import forget_past_lines
+from .learning import _LineFeedback, forget_past_lines
 from .summary import LISTED_COLUMNS, QUEUE_ORDER, QUEUES, fetch_rows
 from .users import VOUCH_DAYS, account_of, same_approver
 
@@ -684,8 +677,9 @@ class InvoicesMixin:
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
                    suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at, final_tax_code,
-                   tax_source, tax_province, tax_uncollected, final_remark, remark_from)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   tax_source, tax_province, tax_uncollected, final_remark, remark_from, final_subledger,
+                   final_subledger_type, final_units, ledger_from)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 feedback_rows,
             )
         return counts
@@ -704,97 +698,6 @@ class InvoicesMixin:
         if inv["status"] != REVIEW:  # a failed read has nothing checked to approve
             raise ValueError(f"invoice {invoice_id} is not in the review queue ({inv['status']})")
         return inv
-
-    def _line_feedback(self, invoice_id: int, inv: dict[str, Any], final_output: dict[str, Any], key: str,
-                       reviewer: str, now: str, bulk: bool) -> _LineFeedback:  # fmt: skip
-        """What each approved line says about the coding proposed: its outcome (accepted, corrected, coded by
-        hand), counted, and its feedback row (the coding memory and the tax code it is remembered with)."""
-        ai = inv["ai_output"] or {"line_items": []}
-        vendor_name = final_output.get("vendor_name", "")
-        out = _LineFeedback(counts={ACCEPTED: 0, CORRECTED: 0, CODED: 0, **({BULK: 0} if bulk else {})})
-        # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
-        by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
-        approved_before = (inv.get("meta") or {}).get("reopened_coding") or {}  # before a reopen (B-1299, D-112)
-        kept = suggestion_kept
-        # Without a cost center list the review screen has none to show or keep: a cost center the AI copied from
-        # coding memory is not part of what it proposed (B-562). Whether there is one, never the whole list (B-1933).
-        with self._conn() as conn:
-            cost_centers = out.cost_centers = conn.execute("SELECT 1 FROM cost_centers LIMIT 1").fetchone() is not None
-        final_lines = final_output.get("line_items", [])
-        # Where it is supplied, for the tax code each line is remembered with (D-80).
-        province = supply_province(final_output, self.our_province())
-        # And the provincial taxes the vendor did not collect, as the coder saw the invoice (what it read).
-        missing = "+".join(invoice_uncollected(ai if ai.get("line_items") else final_output, province))
-        for suggestion, li in pair_lines(ai.get("line_items", []), final_lines):
-            s_gl = suggestion.get("predicted_gl_code") if suggestion else None
-            s_cc = (suggestion.get("predicted_cost_center", "") if cost_centers else "") if suggestion else None
-            f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")
-            if f_gl == UNASSIGNED:
-                continue  # not a coding decision: nothing to learn from it
-            rule = by_rule.get(suggestion.get("line_number")) if suggestion else None
-            guess = line_guessed(suggestion, rule)
-            if offered := first_offer(suggestion, li):  # taken with one click: a suggestion taken, not coded (D5)
-                s_gl, s_cc = offered[0], offered[1] if cost_centers else ""
-            kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
-            # A kept guess is no edit; another account in its place is (B-479), as any change to what was proposed.
-            blank = nothing_proposed(s_gl, s_cc)
-            replaced = (
-                (f_gl != s_gl or (f_cc or "") != (s_cc or ""))
-                if guess
-                else not blank and not kept(s_gl, s_cc, f_gl, f_cc)
-            )
-            if not kept_rule and replaced:
-                out.changed += 1
-            if not kept_rule and blank and not guess:  # coded by hand where the AI left the line blank (B-670)
-                out.coded += 1
-            if rule is not None:  # the AI's own answer, as first recorded (not a rule's)
-                s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
-            # Accuracy measures what the AI proposed: the blanks it left are not counted against it. A line whose
-            # account it only guessed, or left blank, is the reviewer's own coding: neither confirmed nor corrected
-            # (B-475, B-650). (The rule's own answer decides: a rule that filled a blank leaves the line coded.)
-            outcome = (
-                CODED if guess or nothing_proposed(s_gl, s_cc) else ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc)
-                else CORRECTED
-            )  # fmt: skip
-            prior = approved_before.get(str(li["line_number"]))
-            moved = changed_since(prior, li["line_number"], f_gl, f_cc, cost_centers) if outcome == CODED else []
-            if moved:  # AP's own coding, approved before a reopen, changed: a correction of it (B-1299)
-                outcome, s_gl, s_cc = CORRECTED, prior[0], prior[1] if cost_centers else ""
-                out.changed, out.reopen_changes = out.changed + 1, out.reopen_changes + moved
-            if bulk and outcome == ACCEPTED:  # kept, but nobody looked at it: no confirmation (B-955)
-                outcome = BULK
-            out.counts[outcome] += 1
-            out.rows.append(
-                (
-                    invoice_id,
-                    li["line_number"],
-                    key,
-                    vendor_name,
-                    li["description"],
-                    li.get("amount"),
-                    s_gl,
-                    f_gl,
-                    s_cc,
-                    f_cc,
-                    outcome,
-                    reviewer,
-                    now,
-                    *tax_vote(
-                        suggestion,
-                        li,
-                        ai.get("line_items", []),
-                        ai.get("tax_lines") or [],
-                        final_lines,
-                        final_output.get("tax_lines") or [],
-                        bulk=bulk,
-                    ),
-                    province,
-                    missing,
-                    " ".join(str(li.get("remark") or "").split()),  # the remark it is keyed with (D-213)
-                    str(li.get("remark_from") or ""),
-                )  # fmt: skip
-            )
-        return out
 
     # --- Second approval -----------------------------------------------------------------------------
 
@@ -839,6 +742,30 @@ class InvoicesMixin:
             sql = "SELECT MAX(id) FROM events WHERE invoice_id = ? AND action = 'approved'"
             return str(conn.execute(sql, (invoice_id,)).fetchone()[0] or "")
 
+    def approved_over(self, ids: list[int] | None = None) -> dict[int, set[str]]:
+        """{invoice: the codes of the findings showing as it was last approved}: what a person went ahead over (its
+        latest ``approved`` event's ``open_issues``, and those of the second approval given since, B-2695). Of the
+        invoices ``ids`` (None: every one); one approved over nothing is left out."""
+        issues = f"CASE WHEN {dialect.json_valid('e.detail')} THEN {dialect.json_get('e.detail', '$.open_issues')} END"
+        latest = "(SELECT MAX(a.id) FROM events a WHERE a.invoice_id = e.invoice_id AND a.action = 'approved')"
+        sql = (f"SELECT e.invoice_id, {issues} FROM events e WHERE e.action IN ('approved', 'final_approved') "
+               f"AND e.id >= {latest}")  # fmt: skip
+        params: tuple[Any, ...] = ()
+        if ids is not None:
+            sql, params = f"{sql} AND {_in_list('e.invoice_id')}", (json.dumps(sorted(set(ids))),)
+        out: dict[int, set[str]] = {}
+        with self._conn() as conn:
+            for invoice_id, shown in conn.execute(sql, params):
+                try:
+                    found = json.loads(shown) if isinstance(shown, str) else []
+                except ValueError:
+                    found = []
+                listed = found if isinstance(found, list) else []
+                codes = {str(i.get("code") or "") for i in listed if isinstance(i, dict)} - {""}
+                if codes:
+                    out.setdefault(int(invoice_id), set()).update(codes)
+        return out
+
     def coding_revision(self, invoice_id: int) -> int:
         """The invoice's revision: the id of its last event that changed where it stands or its stored coding
         (``REVISION_ACTIONS``; 0 when none), each logged with its change. A review screen drawn at another one is
@@ -857,26 +784,41 @@ class InvoicesMixin:
             ).fetchone()
         return dict(row) if row is not None else None
 
-    def final_approve(self, invoice_id: int, approver: str, login: str = "", *, shown: str | None) -> None:
-        """The second approval: by someone other than the first approver (another name and, when the
-        dashboard records it, another computer login; in server mode another account, ``same_approver``, not one the
-        first approver added or reset within ``VOUCH_DAYS`` days). ``shown``, always given: the approval the page
-        showed (``latest_approval_id``): approved again since, or none, it is refused (``ApprovedAgain``, B-654)."""
+    def second_approver_refused(self, invoice_id: int, approver: str, login: str = "") -> str | None:
+        """Why ``approver`` (``login``) may not give this invoice its second approval (``final_approve``), or None:
+        the first approver, their computer login or account, or an account they added or reset lately. Asked first,
+        before what the invoice says now, so the first approver is told that (B-2726)."""
         inv = self.get_invoice(invoice_id)
-        if inv is None or inv["status"] != PENDING:
-            raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
+        if inv is None:
+            return None
         first = next(iter(self.events(invoice_id, ["approved"], limit=1)), None)  # never lost behind 1000 (B-1497)
         first_login = ((first or {}).get("detail") or {}).get("login") or ""
         if same_approver(inv["reviewer"], first_login, approver, login):
             if account_of(first_login) is not None and account_of(login) is not None:
-                raise PermissionError("the second approval must come from another account than the first")
+                return "the second approval must come from another account than the first"
             if (approver or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold():
-                raise PermissionError("the second approval must come from someone other than the first approver")
-            raise PermissionError("the second approval must come from another computer login than the first")
+                return "the second approval must come from someone other than the first approver"
+            return "the second approval must come from another computer login than the first"
         first_user = ((first or {}).get("detail") or {}).get("user_id")
         if first_user is not None and account_of(login) is not None and self.vouched_for(first_user, account_of(login)):
-            raise PermissionError(f"the second approval can't come from an account the first approver added or reset "
-                                  f"the password of in the last {VOUCH_DAYS} days")  # fmt: skip
+            return (f"the second approval can't come from an account the first approver added or reset the password "
+                    f"of in the last {VOUCH_DAYS} days")  # fmt: skip
+        return None
+
+    def final_approve(self, invoice_id: int, approver: str, login: str = "", *, shown: str | None,
+                      over: list[dict[str, Any]] | None = None) -> None:  # fmt: skip
+        """The second approval: by someone other than the first approver (another name and, when the
+        dashboard records it, another computer login; in server mode another account, ``same_approver``, not one the
+        first approver added or reset within ``VOUCH_DAYS`` days). ``shown``, always given: the approval the page
+        showed (``latest_approval_id``): approved again since, or none, it is refused (``ApprovedAgain``, B-654).
+        ``over``: the warnings new since the first approval it is approved anyway over, each with why (B-2695), kept
+        with it as the first approval keeps its ``open_issues``."""
+        inv = self.get_invoice(invoice_id)
+        if inv is None or inv["status"] != PENDING:
+            raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
+        if (refused := self.second_approver_refused(invoice_id, approver, login)) is not None:
+            raise PermissionError(refused)
+        first = next(iter(self.events(invoice_id, ["approved"], limit=1)), None)  # (its reason, kept below)
         with self._conn() as conn:
             begin_write(conn)  # checked and approved in one go: no new first approval in between
             latest = conn.execute(
@@ -897,6 +839,7 @@ class InvoicesMixin:
                 "first_approver": inv["reviewer"], "total": (inv["final_output"] or {}).get("grand_total"),
                 **({"second_reason": reason} if reason else {}), **({"login": login} if login else {}),
                 **({"user_id": account_of(login)} if account_of(login) is not None else {}),
+                **({"open_issues": over} if over else {}),
             })  # fmt: skip
 
     def send_back(self, invoice_id: int, actor: str, reason: str = "") -> None:
@@ -956,19 +899,6 @@ class InvoicesMixin:
 # voucher approved by one person alone says on the keying sheet.
 TAX_ID_DIFFERS = "the tax ID differs from the supplier list's"
 TAX_ID_NOTE = "Tax ID differs from the supplier list: confirm before paying"
-
-
-@dataclass
-class _LineFeedback:
-    """What an approval's lines say (``InvoicesMixin._line_feedback``): their feedback rows, the outcomes counted,
-    how many lines the reviewer changed or coded by hand, and what changed since an approval before a reopen."""
-
-    counts: dict[str, int]
-    rows: list[tuple[Any, ...]] = field(default_factory=list)
-    changed: int = 0
-    coded: int = 0
-    reopen_changes: list[dict[str, str]] = field(default_factory=list)
-    cost_centers: bool = False  # whether the company keeps a cost center list (none to keep otherwise, B-562)
 
 
 def _approval_edits(ai: dict[str, Any], final_output: dict[str, Any], lines: _LineFeedback) -> list[str]:

@@ -24,7 +24,8 @@ def test_a_small_day_is_read_approved_keyed_and_scored(tmp_path):
     counts = {"po": 1, "office": 2, "undecided": 1, "us": 1, "outside_pilot": 1, "dup_erp": 1, "buyer_trap": 1}
     report = pilot_day.run(tmp_path, counts=counts, scanned=0)
     card, misses = report["scorecard"], report["misses"]
-    assert report["config"]["invoices"] == 8 and not (tmp_path / "data").exists()
+    assert report["config"]["invoices"] == 8 and report["data_left"] == [], report["data_left"]  # (B-2725)
+    assert not (tmp_path / "data").exists()
     assert card["all"]["company"] == [8, 8] and card["all"]["supplier"] == [8, 8], misses
     for category in ("undecided", "outside_pilot", "dup_erp", "us"):
         assert card[category]["findings"] == [1, 1], [m for m in misses if m["category"] == category]
@@ -46,3 +47,29 @@ def test_the_commands_help_is_printed(capsys):
     with pytest.raises(SystemExit) as done:
         parser.parse_args(["pilotday", "--help"])
     assert done.value.code == 0 and "of each category" in capsys.readouterr().out
+
+
+def test_a_data_folder_with_a_read_only_file_is_removed_and_what_cannot_be_is_said(tmp_path, monkeypatch):
+    """B-2725: CI's Windows jobs (Python 3.11, 3.12) found the pilot day's data folder still there after a run:
+    ``shutil.rmtree(..., ignore_errors=True)`` leaves a file Windows will not remove (read-only before Python 3.13, or
+    held open a moment longer) and says nothing. The day's database is closed first; a read-only file is made
+    writable; what cannot be removed is tried again, then said in the report."""
+    import os
+    import stat
+
+    folder = tmp_path / "data"
+    (folder / "inner").mkdir(parents=True)
+    kept = folder / "inner" / "kept.txt"
+    kept.write_text("x", encoding="utf-8")
+    os.chmod(kept, stat.S_IREAD)
+    assert pilot_day.remove_folder(folder) == [] and not folder.exists()
+    (folder / "inner").mkdir(parents=True)
+    (folder / "inner" / "held.txt").write_text("x", encoding="utf-8")
+
+    def refused(path, *args, **kwargs):  # as Windows does while another program holds a file open
+        (kwargs.get("onexc") or kwargs.get("onerror"))(os.unlink, str(folder / "inner" / "held.txt"), None)
+
+    monkeypatch.setattr(pilot_day.os, "unlink", lambda *a, **k: (_ for _ in ()).throw(PermissionError("in use")))
+    monkeypatch.setattr(pilot_day.shutil, "rmtree", refused)
+    left = pilot_day.remove_folder(folder, wait=0.3)
+    assert len(left) == 1 and left[0].endswith("held.txt: in use") and folder.exists()

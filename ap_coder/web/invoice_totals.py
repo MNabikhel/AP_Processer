@@ -52,6 +52,8 @@ METER_ABOUT = {
 def due_text(coding: dict[str, Any], default_days: int, vendor_terms: str = "") -> str:
     p = payment(coding, default_days, vendor_terms)
     text = terms_describe(p) + (" (vendor master terms)" if p.source == "vendor" else "")
+    if len(dates := p.instalments()) > 1:  # JD Edwards' split payments (D-302)
+        text += f" · the first of {len(dates)} payments: " + ", ".join(f"{d:%b} {d.day}" for d in dates)
     if p.discount_open():
         text += f" · {p.terms.discount_pct:g}% off until {p.discount_by:%b} {p.discount_by.day}"
     return text

@@ -527,7 +527,11 @@ COMPANY_TAX = "company_tax"
 # due; ``capture.reader.progress``), read off its page when it came in and kept beside the coding, for its voucher's
 # retained amounts.
 PROGRESS_BILLING = "progress_billing"
-WORKED_OUT = (PLACE_OF_SUPPLY, FROM_VENDOR_LIST, COMPANY_TAX, PROGRESS_BILLING)
+# A PO-matched voucher's Voucher Match rows as matched when it was approved (D-284: ``coding/po.py`` ``kept_match``),
+# kept beside the coding so that its keying sheet and Z-files key them each time, whatever the purchase orders loaded
+# since; absent when they could not be made then.
+VOUCHER_MATCH = "voucher_match"
+WORKED_OUT = (PLACE_OF_SUPPLY, FROM_VENDOR_LIST, COMPANY_TAX, PROGRESS_BILLING, VOUCHER_MATCH)
 
 
 def as_read(final: dict[str, Any], proposed: dict[str, Any]) -> dict[str, Any]:
@@ -562,6 +566,9 @@ class InvoiceCoding(BaseModel):
     # The JD Edwards company it is ours under ("00210"), with several companies (D-267): AP Coder's answer
     # (``coding/company.py``) or a person's pick; "" when none is decided (one company: always).
     company: str = ""
+    # How it was decided (``companies.PICKED``: a person, kept; else AP Coder's rule, "po", "name", "history",
+    # "business unit", decided again at each check): "" with none, or a company kept before this was (AP Coder's).
+    company_how: str = ""
     subtotal: float
     tax_lines: list[TaxLine] = Field(default_factory=list)
     tax_total: float
@@ -623,11 +630,13 @@ class InvoiceCoding(BaseModel):
         return province_code(value)
 
     def to_output(self) -> dict[str, Any]:
-        """The target schema; ``pay_from_account`` and ``company`` only when one is chosen (they are ours, not read
-        from the invoice: an invoice coded without bank accounts or several companies keeps the target schema exactly,
-        D-66, D-267)."""
+        """The target schema; ``pay_from_account`` and ``company`` (with how it was decided) only when one is chosen
+        (they are ours, not read from the invoice: an invoice coded without bank accounts or several companies keeps
+        the target schema exactly, D-66, D-267)."""
         out = self.model_dump()
         for name in ("pay_from_account", "company"):  # (ours, only when chosen: D-66, D-267)
             if not out.get(name):
                 out.pop(name, None)
+        if not out.get("company") or not out.get("company_how"):  # (how it was decided: with a company, D-286)
+            out.pop("company_how", None)
         return out

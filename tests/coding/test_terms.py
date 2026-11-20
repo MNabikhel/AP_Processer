@@ -335,3 +335,68 @@ def test_jd_edwards_terms_codes_count_as_their_terms_once_the_table_is_loaded(st
     assert store.vendor_terms(key) == "2/10 Net 15" and store.all_vendor_terms()[key] == "2/10 Net 15"
     due = payment({"invoice_date": "2026-03-02", "grand_total": 100}, 30, store.vendor_terms(key))
     assert due.due == dt.date(2026, 3, 17) and due.discount_by == dt.date(2026, 3, 12)
+
+
+# F0014 by JD Edwards' field names: (code, description, discount, discount days, net days, due date, split payments,
+# days to pay aging, proximate month, proximate day). Every code is made up.
+F0014_HEAD = ["PNPTC", "PNPTD", "PNDCP", "PNDCD", "NDTP", "PNDDJ", "PNNSP", "PNDTPA", "PNPXDM", "PNPXDD"]
+F0014_RULES = (
+    ("E", "End of next month", "0", "0", "0", "", "0", "0", "1", "31"),
+    ("P", "15th prox", ".00", "0", "0", "", "0", "0", "1", "15"),
+    ("M", "End of this month", "", "", "0", "", "", "", "0", "31"),
+    ("Y", "Year end", "", "", "0", "12/31/2026", "", "", "", ""),
+    ("S", "2% 10, thirds", ".02", "10", "30", "", "3", "30", "", ""),
+    ("Q", "15th, 3 months on", "", "", "0", "", "", "", "3", "15"),
+    ("R", "1% 10, 25th prox", ".01", "10", "0", "", "", "", "1", "25"),
+    ("D", "Fixed, Julian", "", "", "0", "126365", "", "", "", ""),
+    ("V", "Halves", "", "", "30", "", "2", "0", "", ""),
+)
+
+
+def test_jd_edwards_proximate_fixed_and_split_terms_are_due_as_jd_edwards_has_them_and_others_are_said(store):
+    """B-2834 (D-302): F0014's proximate date, fixed due date and split payments were not read (D-266 read the
+    discount and net days only): a code due on the last day of next month, or on a fixed day, has no net days, so it
+    read "Due on receipt" and the invoice was due the day it was issued. Now each is due as JD Edwards has it, and a
+    rule AP Coder does not work out as JD Edwards does is said, never guessed: a proximate date other than a day of
+    the next month or the end of the invoice's month, one with a discount, a fixed due date it cannot read, split
+    payments with no days between them, a code not in the table (an advanced payment term, F00141)."""
+    from ap_coder.coding.terms import JDE_TERMS_ALIASES, JDE_TERMS_SETTING, jde_meaning, jde_table
+    from ap_coder.core.headers import match_columns
+    from ap_coder.core.memory import vendor_key
+    from ap_coder.web.invoice_totals import due_text
+
+    rows = [dict(zip(F0014_HEAD, row, strict=True)) for row in F0014_RULES]
+    table, left = jde_table(rows, match_columns(F0014_HEAD, JDE_TERMS_ALIASES))
+    assert left == 0 and table["S"] == {"description": "2% 10, thirds", "net_days": 30, "discount_pct": 2.0,
+                                        "discount_days": 10, "splits": 3, "split_days": 30}  # fmt: skip
+    words = {code: jde_meaning(code, table) for code in "EPMYS"}
+    assert words == {"E": "Net 31st prox", "P": "Net 15th prox", "M": "Due end of month", "Y": "Due 2026-12-31",
+                     "S": "2/10 Net 30 in 3 payments 30 days apart"}  # fmt: skip
+    assert all(terms_key(said) == said for said in words.values())  # (each reads back as itself)
+    issued = {"invoice_date": "2026-01-20", "grand_total": 100.0, "subtotal": 100.0}
+    due = {code: payment(issued, 30, said) for code, said in words.items()}
+    assert {code: p.due for code, p in due.items()} == {
+        "E": dt.date(2026, 2, 28), "P": dt.date(2026, 2, 15), "M": dt.date(2026, 1, 31), "Y": dt.date(2026, 12, 31),
+        "S": dt.date(2026, 2, 19)}  # fmt: skip
+    assert {p.source for p in due.values()} == {"vendor"}
+    assert due["S"].instalments() == [dt.date(2026, 2, 19), dt.date(2026, 3, 21), dt.date(2026, 4, 20)]
+    assert due["S"].discount_by == dt.date(2026, 1, 30) and due["E"].instalments() == [dt.date(2026, 2, 28)]
+    assert "the first of 3 payments: Feb 19, Mar 21, Apr 20" in due_text(issued, 30, words["S"])
+    for code, why in (("Q", "proximate month 3, day 15"), ("R", "a proximate date with a discount"),
+                      ("D", "its due date “126365” is not a date AP Coder reads"),
+                      ("V", "2 split payments with no days between them"),
+                      ("Z", "not in JD Edwards' payment terms loaded (F0014): an advanced payment term's due date "
+                            "rules (F00141, F00142) are not read")):  # fmt: skip
+        said = jde_meaning(code, table)
+        assert said == f"JD Edwards terms code {code}: rule not supported ({why})"
+        assert payment(issued, 30, said).source == "default" and parse_terms(said) == Terms()
+        found = {c: (severity, words) for severity, c, words in payment_findings(issued, 30, dt.date(2026, 1, 21),
+                                                                                 vendor_terms=said)}  # fmt: skip
+        assert found["JDE_TERMS_UNSUPPORTED"] == ("info", f"{said}, check the due date: it assumes 30 days "
+                                                          "(Settings → Review, Days to pay)")  # fmt: skip
+        assert "TERMS_NOT_FOUND" not in found
+    assert jde_meaning("Net 45", table) == "Net 45" and jde_meaning("Z", {}) == "Z"  # (words, or no table loaded)
+    store.import_vendor_master([{"vendor_name": "Acme Ltd", "erp_id": "41001", "terms": "E", "gst": "",
+                                 "status": "active"}])  # fmt: skip
+    store.set_setting(JDE_TERMS_SETTING, json.dumps(table))
+    assert store.vendor_terms(vendor_key("Acme Ltd")) == "Net 31st prox"

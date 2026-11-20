@@ -6834,6 +6834,78 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     load it is counted by neither; an invoice that over-bills the line in that window is not warned. *Not chosen:*
     counting an export made after the PO's load (`purchase_orders.updated_at` is also moved by a person closing or
     opening a PO by hand, so it is no load time); the quantity lines (their quantity ordered is the original).
+- **D-281** · **With JD Edwards in use, an invoice on a purchase order is matched to its PO lines (2-way) unless
+  Settings → JD Edwards E1 says receipts (3-way): only then is what a PO line received checked** (`JdeSettings.
+  po_match_to`, `jde_settings.receipts_checked`, `coding/po.py` `match_invoice`, the Purchase orders page's flags;
+  B-2668).
+  - **Why:** JD Edwards' exports (Open Order Inquiry, the order details grid, F4311) give Quantity Received 0 on every
+    line nothing was received on through JD Edwards, which is every line of a company that matches straight to the
+    PO lines: the pilot tester's Voucher Match has Receipt Line blank (D-264). Every line of every PO-matched invoice
+    was PO_NOT_RECEIVED.
+  - **What:** *Match to* under *PO-matched vouchers*: PO lines (2-way, the default, also for a setup saved before) or
+    receipts (3-way: PO_NOT_RECEIVED, "ordered and received" and the review screen's received column as before).
+    Without JD Edwards in use nothing changes: a PO file that gives what was received is checked against it.
+  - *Not chosen:* telling 2-way from the file (a 0 received is also a line not received yet); the receipts' own lines
+    on the keying sheet (Receipt Line): not typed by the pilot tester. Month-end's received-not-billed accruals read
+    what was received whatever the setting (they are about receipts).
+- **D-282** · **PO lines alike (the same description and price) are shared out among a PO's invoices in invoice
+  order: the line the invoice line points to, else the one with room left; never guessed between lines that could
+  each take it** (`coding/po.py` `share_out`, `PoBilling.shares` and `share_with`, PO_LINE_AMBIGUOUS; B-2670).
+  - **Why:** a PO for two jobs orders the same item twice, each line on its job's account (REBAR 15M, 100 at 12.50 on
+    business unit 1100 and on 1200). Each invoice line took the PO line it most resembles, the first of a tie: every
+    invoice billed the first job's line, over it from the second, its Voucher Match row on the first job's account.
+  - **What:** an invoice line resembling several PO lines as much takes (1) the one its own coding points to most:
+    its business unit, object or subledger the PO line's, or the PO line's business unit or subledger (a job number,
+    3 characters or more) among its words; else (2) of those, the only one with room left for it: what was ordered,
+    or what JD Edwards has open on the line (then the invoices exported are counted in it already, D-280), less what
+    the PO's invoices before it (by id) and its own lines before took; the quantity it matches (D-283) or, on a line
+    billed by amount, its amount (2% and a cent more); a credit, a line with as much billed to give back. Else none:
+    PO_LINE_AMBIGUOUS (a warning, never touchless) names the lines and their accounts and says whether each has room
+    or none has, the line bills none of them (left to expense, the PO page), its voucher match is held with why
+    (D-264), and the review screen's PO match says "Which PO line?". A line coded to the business unit of the one it
+    bills is told the next time it is checked.
+  - **Where it holds:** an invoice's match (`match_invoice`), what the PO's other invoices bill on each line, and the
+    Purchase orders page, all from one sharing out of the PO's invoices in order; a kept PO (D-202) shares them out
+    from its rows when a line of theirs is alike (its kept lines say so), else is added up as before, to the last
+    digit; without lines alike nothing changes.
+  - *Not chosen / left:* the PO line's second description (JD Edwards' Description 2) and the ship-to as evidence:
+    neither is kept (a schema change, for when the pilot's grid shows they tell jobs apart); the business unit's name
+    from the chart. Month-end's received-not-billed accruals pair a line with the first alike (`billed_on`, by
+    description, D-194). A kept PO with lines alike reads its invoices' lines at each ask (0.2 to 0.3 s at 3,000).
+- **D-283** · **A goods line printed with no quantity matches its amount at its PO line's unit cost when that comes out
+  a whole number; else 1, said** (`coding/po.py` `unprinted_quantity`, `LineMatch.quantity_from`, the keying sheet's
+  notes; B-2669). This changes D-264, where such a line matched 1 whatever its PO line.
+  - **Why:** an invoice that prints the amount of a PO line of 100 bags at 5.99 and no quantity bills the 100 bags:
+    keyed as 1, JD Edwards would leave 99 open on a line billed in full, and the next invoice on it would be over.
+  - **What:** on a PO line with a quantity and a unit cost (not one billed by amount, whose quantity is the
+    invoice's or empty, D-264), the amount ÷ the unit cost, rounded to the nearest whole number, when that number
+    at the amount is the unit cost within the price tolerance (2% or 50 cents, `_same_price`) to the cent; negative
+    on a credit. Said under the voucher ("Quantity Matched is 100, its amount (599.00) at the PO line's unit cost
+    5.99"). When it does not come out so (86.25 of a 57.50 setup), 1 as before, and the sheet says to check the
+    quantity JD Edwards shows. A charge (freight, a fee) still matches 1: it is billed by the shipment.
+  - *Not chosen:* a quantity with decimals (7.69 bags): a quantity printed nowhere is no measure, and a whole number
+    within the price tolerance is what a person would type; the quantity in the PO checks (PO_QTY_OVER is about the
+    quantity printed, none here).
+- **D-284** · **A PO-matched voucher's Voucher Match rows are kept with the invoice when it is approved; its keying
+  sheet and its Z-files key those, and the Z-files name the order and its lines as the sheet does** (`schema.
+  VOUCHER_MATCH`, `coding/po.py` `kept_match`, `kept_voucher_match`, `pipeline._erp_findings`, `jde_keying.
+  po_matches`, `jde_zfiles._order_of`, `_match_rows`; B-2671, B-2672). This settles D-264's F0411Z1T, left naming the
+  invoice's line numbers.
+  - **Why:** a batch's sheet is made again from the approved data at each download (D-75): after the purchase orders
+    were loaded again (the vouchers keyed, a line JD Edwards closed left out, what is open changed) its invoices'
+    matches were made afresh, so a sheet downloaded again said "Not ready", or matched another line. And the Z-files
+    named Settings' order type and company and the invoice's line numbers, the sheet the PO's own.
+  - **What:** the match made with the approval's checks (`finalise_coding`, D-75) goes beside the approved coding as
+    WORKED_OUT (dropped from the coding, as the place of supply is), its rows only when it has rows and nothing held
+    it (held, it is made again from the purchase orders loaded, as before). `po_matches` gives it for an invoice that
+    has one; a reopened invoice approved again keeps the new one. The Z-files are given the same matches (the batch's
+    ZIP, the dry run, the AIS posting): VLPDCT / VLPKCO the order's type and company (Settings' when the file gave
+    none, or with no match: the PO not loaded), F0411Z1T's DCTO / KCOO likewise and its LNID the PO line's number
+    as JD Edwards shows it ("12.000", with its decimal point as UORG and PRRC; blank for a charge keyed on an account
+    of its own). F0411Z1T's other columns are the invoice line's, as before; the file is still to be confirmed with
+    the JD Edwards team (docs/JDE_E1.md).
+  - *Not chosen:* keeping the match at the batch for an invoice approved before (what was matched at its approval is
+    not known; it is made from the purchase orders loaded, as before): the approval is the moment the person saw it.
 - **D-285** · **What decides an invoice's company and what may approve it, reviewed** (D-263, D-267, D-270, D-272;
   an adversarial review, 19 Nov 2026; B-2680 to B-2688).
   - **The names on the page** decide the company at every check made again (the review screen, the queue's Ready,
@@ -6858,3 +6930,95 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     say later: the rules change as files are loaded, and a person may have picked it. A company not in report 9 is a
     warning (`US_TAX_NOT_CHECKED`), not an error: the pilot may name one (D-272). An invoice approved before report 9
     and not reopened is exported under Settings' company, as approved.
+- **D-286** · **An invoice's company: how it was decided is kept, and what approves it** (D-267, D-285; B-2689 to
+  B-2695).
+  - **How it was decided** is kept with the coding (`company_how`): a person's pick stays whatever the rules say later;
+    a company AP Coder decided (its PO, a name on the page, the supplier's history, its business units) is decided
+    again at every check, as the facts it rests on change. One kept from before, with no source, is AP Coder's. The
+    Company box says which.
+  - **Report 9 read as written:** its country is CA or US however the address book spells it, its currency by its
+    letters. A short name (three letters or fewer) decides only printed as a word of its own in capitals; names run
+    together on a scan are found.
+  - **A company report 9 does not list** is an error (`COMPANY_NOT_IN_REPORT`), approved only anyway with a reason,
+    unless the pilot names it (D-272); Settings → Review's "name = company" lines are checked against report 9 on save.
+  - **The second approver** sees the warnings new since the first approval (a bill loaded since under another company)
+    and approves them only anyway, with a reason kept in the audit trail beside the first approval's.
+- **D-287** · **A batch for JD Edwards with several companies: its duplicates per company, and no voucher without
+  one** (D-267, D-270, D-285, D-286; B-2696 to B-2698).
+  - The batch's duplicate check (the Exports page's list, a batch made, the dry run, a batch of another format
+    downloaded for JD Edwards) compares companies as the review screen's does: the same supplier and invoice number of
+    the same company, or with either company not decided, is held as before. Of another company (a bill JD Edwards
+    has under it, or AP Coder's own invoice of it, in the batch or exported) it is no duplicate once a person approved
+    the invoice, or of AP Coder's own the other one, over the warning that said so (`DUPLICATE_OTHER_COMPANY`,
+    `DUPLICATE_INVOICE_OTHER_COMPANY`: the latest approval's findings, and the second approval's since, in the audit
+    trail).
+  - Another company's bill found since the invoice was approved (no approval went over it) holds it, said so: "found
+    since it was approved: reopen it to check its company". Its review screen then shows the warning.
+  - **An invoice approved before its company was decided** (no company on its coding, JD Edwards' companies loaded
+    since) is held at the batch, said so, to be reopened for its company: no longer keyed under Settings' company as
+    approved (D-285's "left as it is"). A keying sheet made before and downloaded again has it on its Not ready sheet,
+    the JD Edwards files' README among what to check. The review screen holds such an invoice in review already
+    (`COMPANY_UNKNOWN`), so the check is the batch's alone (`jde_voucher._vouchers`), not the screen's voucher.
+  - The Exports page's list checks with report 9 as a batch made does (each company's currency), and is worked out
+    again when report 9 changes.
+  - *Left as it is:* an invoice the batch check holds stays in Ready to export, listed with why, and is not put on a
+    keying batch's Not ready sheet (B-2148): that sheet lists what a batch holds that its own checks hold back at
+    download.
+- **D-300** · **A chart refused as cut short can be loaded anyway from its card, by someone who may change the
+  settings** (B-2832; D-272 had the page name the command line's `--anyway`).
+  - **What is refused stays refused for anyone:** a file with no account, or none that may be posted to (it is no
+    chart), and a file without a column the report needs (D-234: the command line keeps its `--anyway`). Only a
+    refresh that *looks* cut short (`ChartCutShort`: a company, or the whole chart, with less than half the accounts
+    it has now; a company found in fewer files than last time) may be loaded anyway: JD Edwards may really have that.
+  - **The card:** the refusal sends the page back to the file's card, which says why (no command named), what the file
+    holds (what the load read, the lines the command line prints), and for a person with the settings permission (on a
+    laptop: everyone) Load anyway behind a box to tick ("This is what JD Edwards has now"); for anyone else who
+    loads files, who can. The server refuses the anyway of anyone without the permission (403). Start over (`whole`)
+    is kept as it was ticked.
+  - **Recorded:** the load's event (`accounts_imported`) keeps `anyway`, why it looked cut short; Activity says
+    "loaded anyway: ...". The command line's `--anyway` records it the same way.
+- **D-301** · **The open G/L period, the default and header business units and the G/L bank account are each
+  company's own in a group, else Settings' single value** (B-2833; D-182 the open period, D-66 VLGLBA, D-267 the
+  companies).
+  - **Kept:** `JdeSettings.company_values`, `{company: {open_from, open_to, default_bu, header_bu, bank_glba}}`, only
+    what is set (`clean_company_values`). A voucher is keyed with `of_company(settings, its company)`
+    (`for_voucher`): Settings with that company's values put in; Settings themselves for a company with none, so one
+    company (and a group that sets none) is keyed exactly as before. The PO company (VLPKCO) is not one of them.
+  - **A company's open period is both days together:** either day set gives the company its own period (the other
+    blank: no start, or no end), never one day of its own and the other of Settings'. Its bank accounts are added to
+    Settings' (a Pay from account it maps none for takes Settings'); VLGLBA is sent once any is mapped, in Settings or
+    for a company (`uses_glba`).
+  - **Where it counts:** the voucher's checks and G/L date (`_prepare`, `gl_date_of`, `period_problem`), VLMCU and
+    VLGLBA (`voucher_rows`, `glba`, `bank_notes`), a PO-matched voucher's tax lines (`jde_match`), the API's checks
+    before a send (`jde_post`: and JD Edwards refusing a voucher as in a closed period holds that company's month
+    only), the pilot's score (`ops/pilot_score.py`). The accruals' late batches (`late_after`) are a batch's, not a
+    company's: a batch is late after the period end when any company's open period starts after it.
+  - **The page:** Settings → JD Edwards E1, a card with a row per company once report 9 names two or more: the open
+    period, Default BU, Header BU and a box per bank account in use (and any mapped since put out of use); a blank
+    box takes the value above. A form without the table keeps what is saved.
+  - **Speed:** a company's settings share the account mapping's index with Settings' (`SHARED`,
+    `jde_accounts._gl_index`), so a group's vouchers are prepared as fast as one company's.
+- **D-302** · **A supplier's JD Edwards terms code is due as JD Edwards works it out, for the rules F0014 gives;
+  any other is said, never guessed** (B-2834; D-266 read the discount and net days, "*Not done:* F0014's prox, split
+  and fixed-date rules").
+  - **Read** (`terms.jde_table`, each only when set): *Due Date* (PNDDJ), *Prox Date Month* and *Prox Date Day*
+    (PNPXDM, PNPXDD), *Number of Split Payments* and *Days To Pay Aging* (PNNSP, PNDTPA): the data items of F0014
+    as JD Edwards' payment terms retrieval function names them (DDJ, PXDM, PXDD, NSP, DTPA), titled on the build
+    sheet as the data dictionary does. Oracle's documentation: a fixed due date is the due date; a proximate date
+    is the day of the month that many months after the invoice's (month 0, day 31: the end of its month); split
+    payments are equal, the first at the net days, each next that many days later, the discount all on the first.
+  - **Worked out** (`jde_words`, as words `parse_terms` reads back, so the rest of AP Coder is unchanged): a
+    discount and net days ("2/10 Net 30"); a fixed due date alone ("Due 2026-12-31"); a proximate date alone of
+    month 1 ("Net 31st prox": a shorter month's last day) or month 0 day 31 ("Due end of month"); split payments
+    some days apart ("Net 30 in 3 payments 30 days apart": the due date is the first's; the review screen's
+    *Payment due* lists each, `Payment.instalments`).
+  - **Said, not guessed** (`jde_unsupported`): two of those rules together, a fixed or proximate date with net days
+    or a discount (how JD Edwards combines them is not documented), a proximate date of any other month or day, a
+    due date that is not a date AP Coder reads (a Julian number: ReportsNow prints dates), split payments with no
+    days between them, and, a table loaded, a code of 3 characters or fewer not in it (an advanced payment term:
+    F00141 with its due date rules F00142, work day calendars and installments F00144, which AP Coder does not
+    load). Such a code reads as no terms (`JDE_UNSUPPORTED`): the invoice is due by Settings' days to pay and says
+    so (JDE_TERMS_UNSUPPORTED, information only, in place of TERMS_NOT_FOUND); the card and its load list them.
+  - **Not changed:** VLDDJ is still sent only from what the invoice prints (B-924): a voucher of the supplier's own
+    terms leaves its due date to JD Edwards. JD Edwards' blank code (its most used terms) is still not read: a row
+    with no code is left out, and a supplier with no code has no terms.

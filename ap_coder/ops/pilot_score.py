@@ -450,6 +450,7 @@ def our_invoices(store: Any, settings: jde_settings.JdeSettings | None = None, p
         except Exception:  # noqa: BLE001 - an invoice JD Edwards would refuse: its tax treatment is not compared
             pass
         dist = distribution(final, treatments)
+        own = jde_settings.for_voucher(final, settings)  # (its company's default business unit, D-301)
         # each line beside AP Coder's own: by its number and which of the lines of that number it is (B-2325)
         as_proposed = {id(e): li for li, e in pair_lines((inv.get("ai_output") or {}).get("line_items") or [],
                                                          [e for e in dist if e.get("kind") == "expense"])}  # fmt: skip
@@ -464,12 +465,12 @@ def our_invoices(store: Any, settings: jde_settings.JdeSettings | None = None, p
             o.lines.append({
                 "line_number": e.get("line_number"), "description": str(e.get("description") or ""),
                 "amount": parse_amount(e.get("amount")) or 0.0, "kind": e.get("kind") or "expense",
-                "recoverable_tax": recoverable, "gl": gl, "cc": cc, "account": _account(gl, cc, settings),
+                "recoverable_tax": recoverable, "gl": gl, "cc": cc, "account": _account(gl, cc, own),
                 "proposed_gl": p_gl, "proposed_cc": p_cc,
-                "proposed_account": _account(p_gl, p_cc, settings) if p_gl and p_gl != UNASSIGNED else None,
+                "proposed_account": _account(p_gl, p_cc, own) if p_gl and p_gl != UNASSIGNED else None,
                 # as proposed: what decided the account (its "source"; "" when nothing did) and the accounts offered
                 "decided": str(((ai or {}).get("decided_by") or {}).get("source") or ""),
-                "candidates": [_account(str(c.get("code") or ""), str(c.get("business_unit") or ""), settings)
+                "candidates": [_account(str(c.get("code") or ""), str(c.get("business_unit") or ""), own)
                                or (str(c.get("business_unit") or ""), *split_code(c.get("code")))
                                for c in (ai or {}).get("candidates") or []],
             })  # fmt: skip

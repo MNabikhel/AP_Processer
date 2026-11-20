@@ -308,6 +308,7 @@ def apply_items(output: dict[str, Any], items: list[dict[str, Any]], text: str, 
             if number:
                 out["gst_hst_registration_number"] = number
             out.pop("company", None)  # decided again for this supplier: its PO, history (D-267, B-2682)
+            out.pop("company_how", None)
             continue
         amount = parse_amount(str(item.get("amount") or ""))
         if amount is None:
