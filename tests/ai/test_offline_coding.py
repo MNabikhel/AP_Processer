@@ -153,9 +153,34 @@ def test_a_province_whose_postal_code_ocr_cut_short_is_read():
             "Bill to:MapleRidgeHoldingsLtd,410ElmStreet,Edmonton,ABT5JN3 Terms:Net30\n"
             "Ship to:MapleRidgeHoldingstd.,1900AlbertStreet,Regina,SKS4P48\nDescription Qty Amount")  # fmt: skip
     assert addresses(page) == ("SK", "SK", "AB")
-    assert addresses("Foothills Ltd\nCalgary,ABT7Z 6L")[0] == "AB"
-    for text in ("Foothills Ltd\nCalgary,ABS4P48", "Foothills Ltd\nCalgary,ABT7Z6", "Order 12,ONA1B2C"):
-        assert addresses(text) == ("", "", ""), text
+    assert addresses("Foothills Ltd\nBill to:\nKestrel Foods, Calgary,ABT7Z 6L")[2] == "AB"
+    for text in ("Calgary,ABS4P48", "Calgary,ABT7Z6", "Order 12,ONA1B2C"):
+        assert addresses(f"Foothills Ltd\nBill to:\n{text}") == ("", "", ""), text
+
+
+def test_words_or_a_date_after_a_comma_are_no_postal_code_cut_short():
+    """B-2893: B-2891's postal code cut short was read in all-caps words after a comma ("SERVICE CALL, ON NOV 12 2026"
+    under a job site's label: an Ontario place of supply for a Regina job, its GST and PST then checked against
+    Ontario's HST), an order number, a line item or the letterhead. It is read only in a labelled address's block,
+    never under the line items' headings, after a city's name, as a postal district (letter, digit, letter) and two
+    more characters, one a digit; and a full postal code further down the block comes first."""
+    from ap_coder.ai.offline_coder import addresses, provinces, spatial_addresses
+    from ap_coder.capture.types import Box, DocLayout, Line, PageLayout, Word
+
+    page = ("WESTMEADOW BUILDING SERVICES INC.\n1150 8TH AVENUE, REGINA, SK S4R 1C9\n"
+            "BILL TO: MAPLE RIDGE HOLDINGS LTD\n1900 ALBERT STREET\nREGINA, SK S4P 4K8\n"
+            "JOB SITE: 1900 ALBERT STREET, REGINA\nSERVICE CALL, ON NOV 12 2026\nDESCRIPTION QTY AMOUNT\n")  # fmt: skip
+    assert provinces(page) == ("SK", "SK")
+    for line in ("WORK PERFORMED, ON LOT 12", "WELD INSPECTION, QC JOB 12", "TARP, PE COVER", "HARDWARE, NS BOX 12",
+                 "RENTAL, AB TOOLS", "Order 12,ONK1B2C"):  # fmt: skip
+        assert addresses(f"Prairie Supply\n12 Main St, Regina, SK S4P 3Y2\nShip to:\n{line}\n")[1] == "", line
+    item = "Description Qty Amount\nValve kit, Ottawa,ONK1B2C 2"  # (a line item's)
+    assert addresses(f"Prairie Supply\nRegina, SK S4P 3Y2\nShip to: Kestrel Foods\n{item}")[1] == ""
+    assert addresses("Prairie Supply\nShip to:\nDock 3, Edmonton,ABT5J 0N\nSaskatoon, SK S7K 1A1\n")[1] == "SK"
+    rows = [(0.1, 0.10, "SHIP TO"), (0.1, 0.12, "Dock 3, Edmonton,ABT5J 0N"), (0.1, 0.14, "Saskatoon, SK S7K 1A1")]
+    lines = [Line([Word(t, Box(1, x, y, x + 0.3, y + 0.014))], Box(1, x, y, x + 0.3, y + 0.014), t) for x, y, t in rows]
+    layout = DocLayout([PageLayout(1, 612.0, 792.0, [w for ln in lines for w in ln.words], lines)], "text")
+    assert spatial_addresses(layout)[0] == "SK"
 
 
 def test_a_line_whose_quantity_ocr_lost_bills_its_amount_at_its_unit_price(reference):

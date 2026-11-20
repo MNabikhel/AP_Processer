@@ -104,10 +104,13 @@ _PROVINCE_AT = re.compile(
     r"(?:\(|\b)(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)"
     rf"(?:(?:\)|\b)\s*,?\s*{_POSTAL}|(?={_POSTAL}(?![A-Za-z0-9])){_POSTAL})"
 )
-# A scan's postal code with one of its last three characters lost too ("Regina,SKS4P48" for S4P 4K8, B-2891): after a
-# city's comma, the province code and five characters that start with its own letter (``_POSTAL_LETTERS``).
+# A scan's postal code with one of its last three characters lost too ("Regina,SKS4P48" for S4P 4K8, B-2891): a city's
+# name and its comma, the province code, its postal district (a letter that is the province's own, ``_POSTAL_LETTERS``,
+# a digit, a letter) and two more characters, one a digit; never words ("ON NOV 12", B-2893). Read only in a labelled
+# address's block when nothing stronger is (``_cut_province``).
 _PROVINCE_CUT = re.compile(
-    r",\s*(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)\s*([A-Z])[\dOI][A-Z]\s?[\dOIA-Z]{2}(?![A-Za-z0-9])"
+    r"[^\W\d_]{3}\.?\s*,\s*(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)\s*([A-Z])\d[A-Z]\s?(?:\d[A-Z\d]|[A-Z]\d)"
+    r"(?![A-Za-z0-9])"
 )
 _POSTAL_LETTERS = {"NL": "A", "NS": "B", "PE": "C", "NB": "E", "QC": "GHJ", "ON": "KLMNP", "MB": "R", "SK": "S",
                    "AB": "T", "BC": "V", "NT": "X", "NU": "X", "YT": "Y"}  # fmt: skip
@@ -293,6 +296,10 @@ def addresses(text: str, ours: frozenset[str] = frozenset()) -> tuple[str, str, 
         pending = [(kind, at) for kind, at in pending if n - at <= ADDRESS_BLOCK_LINES]
         where = _province_of(line, named=False)
         named = "" if where else _province_of(line)
+        if not where and not named and pending and not table:
+            end = pending[0][1] + ADDRESS_BLOCK_LINES
+            if not any(_PROVINCE_AT.search(r) for r in rows[n + 1 : end + 1]):  # (a full postal code comes first)
+                where = _cut_province(line)
         if not where and not named:
             continue
         if not supplier and not after_label:
@@ -389,6 +396,18 @@ def _block_province(label: Line, lines: list[Line], labels: list[Line], width: f
         found = _province_of(ln.text)
         if found:
             return found
+    for text in ("" if named else after, *(ln.text for _, ln in sorted(block, key=lambda item: item[0]))):
+        found = _cut_province(text)  # (only when no address of the block is read whole)
+        if found:
+            return found
+    return ""
+
+
+def _cut_province(text: str) -> str:
+    """The province of an address on ``text`` whose postal code a scan cut short (``_PROVINCE_CUT``); "" if none."""
+    for m in _PROVINCE_CUT.finditer(text or ""):
+        if m.group(2) in _POSTAL_LETTERS[m.group(1)]:
+            return m.group(1)
     return ""
 
 
@@ -398,9 +417,6 @@ def _province_of(text: str, named: bool = True) -> str:
     m = _PROVINCE_AT.search(text or "")
     if m:
         return m.group(1)
-    for m in _PROVINCE_CUT.finditer(text or ""):
-        if m.group(2) in _POSTAL_LETTERS[m.group(1)]:
-            return m.group(1)
     for m in _PROVINCE_NAMED_AT.finditer(text or ""):
         name, letters = m.group(1), re.sub(r"[\W\d_]", "", m.group(1))
         if m.group("postal"):
