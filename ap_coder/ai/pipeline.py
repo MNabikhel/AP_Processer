@@ -316,7 +316,9 @@ def finalise_coding(
     fill_remarks(coding, store, reference, wanted=reference.pairs is not None or remarks_typed)
     posting_edits.fill(coding, store, reference, exclude_invoice_id)  # an account's subledger or units (D-268)
     output = coding.to_output()
-    if not coding.ship_to_province:  # no ship-to printed: where it is delivered to us (tax.supply_source)
+    # No ship-to printed: where it is delivered to us (tax.supply_source); none for a company not checked for Canadian
+    # tax (a US one: no province of ours is where it is delivered, B-2871).
+    if not coding.ship_to_province and canadian_tax:
         place, source = supply_source(coding, reference.tax)
         # Stored beside the printed ship-to, never in it, so that recoding the lines moves it (worked out again
         # each time); never the vendor's province: it stays a guess.

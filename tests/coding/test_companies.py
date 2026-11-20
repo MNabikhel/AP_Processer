@@ -362,3 +362,17 @@ def test_report_9s_country_and_currency_are_read_however_they_are_written(tmp_pa
                                                                          "country": "us"}}))  # fmt: skip
     assert companies.canadian(store, "00210") == (True, "CA and CAD")
     assert companies.companies(store)["00310"].country == "US"
+
+
+def test_a_us_companys_invoice_is_given_no_canadian_place_of_supply(group, reference, ground_truth):
+    """B-2871: a US company's invoice with no ship-to printed was kept with Settings → Review's province as where it
+    is delivered (``PLACE_OF_SUPPLY``): its stored header and the reports said Alberta for it."""
+    import dataclasses
+
+    from ap_coder.core.schema import PLACE_OF_SUPPLY
+
+    reference = dataclasses.replace(reference, tax=dataclasses.replace(reference.tax, our_province="AB"))
+    picked = {"ship_to_province": "", "company_how": "picked"}
+    us, _issues, _report = _check(group, reference, _coding(ground_truth, company="00310", **picked))
+    canadian, _issues, _report = _check(group, reference, _coding(ground_truth, company="00210", **picked))
+    assert PLACE_OF_SUPPLY not in us and canadian[PLACE_OF_SUPPLY] == "AB"

@@ -269,3 +269,26 @@ def test_an_invoice_approved_before_report_9_is_sent_back_at_its_second_approval
     assert store.get_invoice(page.id)["final_output"]["company"] == "00210"
     shown = html.unescape(_second_approval(store, client, monkeypatch, page))
     assert store.get_invoice(page.id)["status"] == APPROVED, shown[shown.find("Not done") :][:300]
+
+
+def test_a_us_companys_invoice_shows_no_canadian_place_of_supply(client, store):
+    """B-2871: the review screen's header said "Place of supply: Alberta" (Settings → Review's province) on a US
+    company's invoice shipped to Spokane, WA, or with no ship-to printed, though no Canadian tax is checked for it. A
+    company not checked for Canadian tax shows the ship-to printed (outside Canada), never a province worked out."""
+    load_sample_setup(store)
+    store.set_setting("our_province", "AB")
+    _card(client, jde_group.companies_xlsx())
+    us = {"company": "00310", "company_how": "picked", "currency": "USD"}
+    shown = {}
+    for ship_to in ("OUTSIDE_CANADA", ""):
+        invoice_id = add_clean(store, ship_to_province=ship_to, **us)
+        data = Draft.stored(store.get_invoice(invoice_id)["ai_output"]).header
+        answer = client.post(f"/review/{invoice_id}/check", data=data, headers=PAGE).json()
+        head = html.unescape(answer["sections"]["summary"]).split('class="rvw-head-meta"', 1)[1].split("</div>")[0]
+        shown[ship_to] = re.findall(r'title="Place of supply">([^<]*)<', head)
+    assert shown == {"OUTSIDE_CANADA": ["Outside Canada"], "": []}
+    canadian = add_clean(store, ship_to_province="", company="00210", company_how="picked")
+    data = Draft.stored(store.get_invoice(canadian)["ai_output"]).header
+    head = html.unescape(client.post(f"/review/{canadian}/check", data=data, headers=PAGE).json()["sections"][
+        "summary"])  # fmt: skip
+    assert 'title="Place of supply">Alberta<' in head  # (a Canadian company's: Settings' province, as before)
