@@ -241,8 +241,8 @@ def _page(text: str) -> _Page:
     run: list[str] = []
     edges, capitals, at = {0}, {}, 0  # type: ignore[var-annotated]
     for word in re.findall(r"[A-Za-z0-9]+", folded.replace("&", " and ")):
-        edges.update(at + i for i in range(1, len(word))
-                     if (word[i].isupper() and word[i - 1].islower()) or word[i].isdigit() != word[i - 1].isdigit())  # fmt: skip
+        edges.update(at + i for i in range(1, len(word)) if (word[i].isupper() and word[i - 1].islower())
+                     or word[i].isdigit() != word[i - 1].isdigit())  # fmt: skip
         if word.isupper():
             capitals.setdefault(word.lower(), []).append((at, at + len(word)))
         run.append(word.lower())
