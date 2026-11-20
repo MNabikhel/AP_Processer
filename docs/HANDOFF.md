@@ -575,12 +575,14 @@ From `CLAUDE.md`, with why:
   connection gets the same treatment: off by default, an Admin switches it on, one named address, a test in
   `tests/offline/` that it reaches nothing else.
 - **No company data in the repository.** It lives in the data folder; keep `.gitignore` as it is.
-- **A bug fix starts with a failing test**, then the fix, then one line at the end of `docs/BUGS.md` (format at its
-  top; the next number is after the last `B-` line). A suspicion that didn't reproduce is an `N-` line.
-- **Significant choices go in `docs/decisions.md`**, one entry each (next `D-` number, lines of 120 characters at
-  most), and are named in the pull request. Never renumber; a reversed decision is marked "replaced by D-NN". Read
-  the decisions before changing something that looks odd: most odd things have a reason there (full texts of D-01 to
-  D-124 in `docs/archive/decisions-2026-10.md`).
+- **A bug fix starts with a failing test**, then the fix, then its entry: `python scripts/new_entry.py B "what broke ·
+  severity · test"` takes the next number and writes `docs/bugs/B-NNNN.md` (D-328; the format at the top of
+  `docs/BUGS.md`, which keeps B-1442 to B-2997, frozen). A suspicion that didn't reproduce is an `N-` line.
+- **Significant choices get an entry too**, `docs/decisions/D-NNN.md` from `python scripts/new_entry.py D --file
+  entry.md` (the format at the top of `docs/decisions.md`, lines of 120 characters at most), and are named in the pull
+  request. Never renumber; a reversed decision is marked "replaced by D-NN". Read the decisions before changing
+  something that looks odd: most odd things have a reason there (`docs/decisions.md` to D-327, then
+  `docs/decisions/`; full texts of D-01 to D-124 in `docs/archive/decisions-2026-10.md`).
 - **Plain English in what people read** (the dashboard, guides): "pilot tester" for the person running the pilot.
 - **Every check code needs its help** in `ops/help.py` (`tests/ops/test_help.py` enforces it); **every web route
   needs a role rule** in `web/roles.py` (`tests/web/test_roles.py` fails until it has one).
