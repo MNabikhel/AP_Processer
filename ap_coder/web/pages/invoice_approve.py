@@ -107,7 +107,7 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
 
     confirm_codes(analysis.output)  # approving confirms the tax codes worked out to check (B-713)
     # what the screen filled in under the lines itself: approved as shown, not typed by this person (B-2935)
-    filled = posting_edits.filled_in(analysis.coding, store, reference, invoice_id)
+    filled = posting_edits.filled_in(analysis.coding, store, reference, invoice_id, ai.get("line_items") or [])
     try:
         counts = store.approve_invoice(invoice_id, analysis.output, me, open_issues=open_issues, login=login(),
                                        filled=filled)  # fmt: skip

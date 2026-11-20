@@ -22,10 +22,11 @@ Entry points: ``needed``, ``fill``, ``filled_in``, ``findings``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..core.chart import join_account
+from ..core.memory import pair_lines
 from ..core.reference_data import UNASSIGNED, ReferenceData
 
 SUBLEDGER, UNITS = "L", "U"  # the posting edit codes: a subledger is required; units are required
@@ -94,15 +95,23 @@ def fill(coding: Any, store: Any, reference: ReferenceData, invoice_id: int | No
         li.units = use.units if use is not None else None
 
 
-def filled_in(coding: Any, store: Any, reference: ReferenceData,
-              invoice_id: int | None = None) -> dict[int, tuple[str, str, float | None]]:  # fmt: skip
-    """{line number: (subledger, type, units)} that ``fill`` gives each line of ``coding`` with nothing typed under
-    it: what AP Coder puts there itself, so a line approved with them was not typed by a person (B-2935)."""
-    blank = coding.model_copy(deep=True)
-    for li in blank.line_items:
-        li.subledger, li.subledger_type, li.units = "", "", None
-    fill(blank, store, reference, invoice_id)
-    return {li.line_number: (li.subledger, li.subledger_type, li.units or None) for li in blank.line_items}
+def filled_in(coding: Any, store: Any, reference: ReferenceData, invoice_id: int | None = None,
+              proposed: Sequence[Mapping[str, Any]] = ()) -> dict[int, tuple[str, str, float | None]]:  # fmt: skip
+    """{line number: (subledger, type, units)} under each line of ``coding`` with nothing typed in its boxes: what
+    AP Coder puts there itself, so a line approved with them was not typed by a person (B-2935). As the review screen
+    has the boxes: a line still on the account it was ``proposed`` with (the lines as read) keeps the proposal's, one
+    on another account starts empty, and ``fill`` fills what is empty (B-2940)."""
+
+    def account(line: Any) -> tuple[str, str]:
+        return _code(_get(line, "predicted_gl_code")), _code(_get(line, "predicted_cost_center"))
+
+    shown = coding.model_copy(deep=True)
+    for before, li in pair_lines(list(proposed), list(shown.line_items)):
+        kept = before if before is not None and account(before) == account(li) else {}
+        li.subledger, li.subledger_type = str(kept.get("subledger") or ""), str(kept.get("subledger_type") or "")
+        li.units = kept.get("units") or None
+    fill(shown, store, reference, invoice_id)
+    return {li.line_number: (li.subledger, li.subledger_type, li.units or None) for li in shown.line_items}
 
 
 def findings(coding: Any, reference: ReferenceData) -> list[tuple[str, str, str, int]]:

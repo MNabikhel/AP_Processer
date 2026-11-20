@@ -652,3 +652,27 @@ def test_units_the_screen_filled_are_approved_as_the_apps_and_units_typed_as_a_p
     page.open()
     assert page.form["line_units"][0] == "7" and page.approve()["ok"]
     assert _ledger_rows(store, page.id)[0] == (1, 7.0, "person")
+
+
+def test_units_typed_over_the_proposed_ones_are_a_persons_though_the_corrected_quantity_gives_them(
+    chart_company, chart_company_client
+):
+    """B-2940: B-2935 held approved units against what AP Coder would fill in an empty box, though the screen fills
+    only an empty one: the line read with its quantity misread as 4 on an account taking units (proposed: units 4),
+    the person corrected the quantity to 1 and typed 1 over the 4, and the units were recorded as AP Coder's."""
+    store = chart_company.store
+    invoice_id = chart_company.invoices["one_line"][1]
+    page = _page(chart_company, chart_company_client, "one_line")
+    _posting_edit(store, page.lines[0].account, "U")
+    ai = store.get_invoice(invoice_id)["ai_output"]  # as read on that account: the units the misread quantity
+    amount = float(ai["line_items"][0]["amount"])
+    ai["line_items"][0].update(quantity=4.0, unit_price=amount / 4, units=4.0)
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET ai_output = ? WHERE id = ?", (json.dumps(ai), invoice_id))
+    page.open()
+    assert page.form["line_units"] == ["4"]
+    typed = {**page.form, "line_quantity": ["1"], "line_unit_price": [f"{amount:.2f}"], "line_units": ["1"]}
+    assert chart_company_client.post(f"/review/{page.id}/check", data=typed, headers=PAGE).status_code == 200
+    page.open()
+    assert page.form["line_units"] == ["1"] and page.approve()["ok"]
+    assert _ledger_rows(store, page.id) == [(1, 1.0, "person")]
