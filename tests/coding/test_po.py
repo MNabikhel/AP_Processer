@@ -1599,3 +1599,34 @@ def test_an_invoice_on_po_lines_alike_counts_what_an_approved_invoices_kept_matc
     store.create_export_batch([e], jde_keying.FORMAT, actor="Pat Tester")
     (matched,) = jde_keying.po_matches(store, store.get_invoices([e])).values()
     assert matched.held == [] and [(row.line, row.quantity) for row in matched.rows] == [("1.000", 100.0)]
+
+
+def test_an_exported_invoice_on_po_lines_alike_stays_on_its_line_once_the_pos_are_loaded_again(tmp_path):
+    """B-2914 (D-320): an exported invoice of 80 with no job, on the first of two PO lines alike (job 1100's 100, job
+    1200's 50) by room, was checked for room against what JD Edwards had open once the POs were loaded again (20 on
+    the first line): an open quantity that has the invoice off it already. It became PO_LINE_AMBIGUOUS, the PO page
+    counted it on no line, and an invoice approved before the matches were kept had its keying sheet made again Not
+    ready; with the second line raised to 100 it moved there, keyed on job 1200's account. An exported invoice with
+    its match kept stays on the line it keys; one without is checked against what was ordered, less every invoice
+    before it."""
+    from ap_coder.erp import jde_keying
+
+    for kept in (True, False):
+        store = Store(tmp_path / f"{kept}.db")
+        _rebar_po(store, second=50.0)
+        _jde_rebar(store)
+        a = store.add_invoice(tmp_path / "a.pdf", _rebar(80, number="NR-A").model_dump(), {})
+        if kept:
+            assert _approve(store, a, _rebar(80, number="NR-A")) == [("1.000", 80.0)]
+        else:  # (approved before the matches were kept)
+            store.approve_invoice(a, _rebar(80, number="NR-A").model_dump(), "Pat Tester")
+        store.create_export_batch([a], jde_keying.FORMAT, actor="Pat Tester")
+        _rebar_po(store, open_first=20.0, second=50.0)  # (keyed in JD Edwards: 80 off the first line's open)
+        match = match_invoice(_rebar(80, number="NR-A"), store, a)
+        assert [m.po_line for m in match.lines] == [1] and [f[1] for f in match.findings] == ["PO_MATCHED"], kept
+        assert _billed(store) == ["80", "0"]
+        (matched,) = jde_keying.po_matches(store, store.get_invoices([a])).values()
+        assert matched.held == [] and [(row.line, row.quantity) for row in matched.rows] == [("1.000", 80.0)]
+        _rebar_po(store, open_first=20.0, second=100.0)  # (the second line raised to 100 in JD Edwards)
+        (matched,) = jde_keying.po_matches(store, store.get_invoices([a])).values()
+        assert [row.line for row in matched.rows] == (["1.000"] if kept else []), kept  # (never moved to 2.000)

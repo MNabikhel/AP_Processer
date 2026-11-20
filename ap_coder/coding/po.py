@@ -499,16 +499,20 @@ def _shared(po_lines: list[dict[str, Any]], invoices: list[tuple[list[dict[str, 
     each of its lines is keyed on (an approved invoice's kept voucher match, ``_keyed_lines``), None when not: those
     are taken first, on those lines, and never shared out again; the others are shared out over the room left, in
     order (D-320). What is taken of a line's room counts the invoices not exported yet where the ERP gave what it has
-    open on the line (it has counted the exported ones, D-280), every invoice where it gave none."""
+    open on the line (it has counted the exported ones, D-280), every invoice where it gave none; an exported invoice's
+    own room is what was ordered, less every invoice before it (the ERP's open has it off already)."""
     keyed = keyed or [None] * len(invoices)
     if all(k is None for k in keyed) and all(len(found) <= 1 for mine in choices for found in mine):
         return [[found[0] if found else None for found in mine] for mine in choices]  # (no lines alike: no room)
     by_number = {int(pl["line_number"]): pl for pl in po_lines}
     taken: dict[int, float] = {}
+    every: dict[int, float] = {}  # (every invoice's, exported or not)
 
     def take(li: dict[str, Any], n: int, exported: bool) -> None:
+        need = _taking(li, by_number[n])
+        every[n] = every.get(n, 0.0) + need
         if not (exported and _by_open(by_number[n])):
-            taken[n] = taken.get(n, 0.0) + _taking(li, by_number[n])
+            taken[n] = taken.get(n, 0.0) + need
 
     for (lines, exported), fixed in zip(invoices, keyed, strict=True):
         for li, n in zip(lines, fixed, strict=True) if fixed is not None else ():
@@ -521,7 +525,8 @@ def _shared(po_lines: list[dict[str, Any]], invoices: list[tuple[list[dict[str, 
             continue
         shared: list[int | Alike | None] = []
         for li, found in zip(lines, mine, strict=True):
-            n = found[0] if len(found) == 1 else _told(li, found, by_number, taken) if found else None
+            n = (found[0] if len(found) == 1 else _told(li, found, by_number, every if exported else taken, exported)
+                 if found else None)  # fmt: skip
             if isinstance(n, int):
                 take(li, n, exported)
             shared.append(n)
@@ -533,13 +538,13 @@ _WORD = re.compile(r"[a-z0-9]+")
 
 
 def _told(li: dict[str, Any], alike: tuple[int, ...], by_number: dict[int, dict[str, Any]],
-          taken: dict[int, float]) -> int | Alike:  # fmt: skip
+          taken: dict[int, float], ordered: bool = False) -> int | Alike:  # fmt: skip
     """Which of the PO lines ``alike`` an invoice line bills (``share_out``): the one it points to, else the one of
-    those with room left for it; ``Alike`` when that tells none."""
+    those with room left for it (``ordered``: in what was ordered, ``_has_room``); ``Alike`` when that tells none."""
     pointed = _pointed(li, alike, by_number)
     if len(pointed) == 1:
         return pointed[0]
-    fits = tuple(n for n in pointed if _has_room(li, by_number[n], taken.get(n, 0.0)))
+    fits = tuple(n for n in pointed if _has_room(li, by_number[n], taken.get(n, 0.0), ordered))
     return fits[0] if len(fits) == 1 else Alike(fits, True) if fits else Alike(pointed, False)
 
 
@@ -575,16 +580,17 @@ def _taking(li: dict[str, Any], pl: dict[str, Any]) -> float:
     return matched_quantity(li)
 
 
-def _has_room(li: dict[str, Any], pl: dict[str, Any], taken: float) -> bool:
-    """Whether a PO line, ``taken`` of it already, has room left for an invoice line: what was ordered (or what the
-    ERP has open on it), 2% and a cent more on a line billed by amount; a credit, as much billed on it to give back."""
+def _has_room(li: dict[str, Any], pl: dict[str, Any], taken: float, ordered: bool = False) -> bool:
+    """Whether a PO line, ``taken`` of it already, has room left for an invoice line: what was ordered (or, not
+    ``ordered``, what the ERP has open on it), 2% and a cent more on a line billed by amount; a credit, as much billed
+    on it to give back."""
     need = _taking(li, pl)
     if need < 0:
         return taken + need >= -1e-6
     if pl.get("amount_only"):
-        room = pl["amount"] if pl.get("open_amount") is None else pl["open_amount"]
+        room = pl["amount"] if ordered or pl.get("open_amount") is None else pl["open_amount"]
         return taken + need <= room * (1 + TOTAL_TOLERANCE) + 0.01
-    room = pl["quantity"] if pl.get("open_quantity") is None else pl["open_quantity"]
+    room = pl["quantity"] if ordered or pl.get("open_quantity") is None else pl["open_quantity"]
     return taken + need <= room + 1e-6
 
 
