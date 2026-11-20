@@ -591,3 +591,29 @@ def test_an_invoice_whose_review_screen_asks_for_the_bank_account_is_neither_off
     assert out == {"approved": [], "skipped": [(i, pick) for i in ids]}
     store.save_bank_accounts([_bank("CAD-NEW", True)])  # a default: offered, and paid from it
     assert [c["id"] for c in bulk.sort_for_bulk(store)[0]] == ids and _bulk_form(client_for(store))["ids"]
+
+
+def test_a_gl_account_taken_out_while_the_job_runs_leaves_the_invoices_coded_to_it(store, monkeypatch):
+    """B-2967: the job read the GL accounts (and cost centers, tax setup) once, at its start, and checked every
+    invoice against them: an Admin took GL account 6800 out of the list after the job's first invoice, and the next
+    ones, coded to it, were approved, a hard error on their review screen."""
+    ids = _clean(store, 3)
+    assert "6800" in {li["predicted_gl_code"] for li in store.get_invoice(ids[1])["ai_output"]["line_items"]}
+    real = bulk._still_clean
+
+    def meanwhile(store_, reference, settings, invoice_id, stamp, server):
+        out = real(store_, reference, settings, invoice_id, stamp, server)
+        if invoice_id == ids[0]:  # the Admin's change, from another worker
+            admin = Store(store.path)
+            admin.save_accounts("gl_accounts", [r for r in admin.list_accounts("gl_accounts") if r["code"] != "6800"])
+        return out
+
+    monkeypatch.setattr(bulk, "_still_clean", meanwhile)
+    job, _ = store.start_bulk_job("", {"name": "Sam", "login": "sam", "server": False, "as": {}},
+                                  _asked(store, ids), bulk.JOB_FORMAT)  # fmt: skip
+    jobs.run_bulk(store, web_settings(), store.claim_bulk_job("r", jobs.BULK_STALE, bulk.JOB_FORMAT), "r")
+    ended = store.bulk_job(job)
+    assert ended["approved"] == ids[:1]  # (checked before the change)
+    gone = "GL account 6800 is not in your GL accounts: pick one from the list"
+    assert ended["skipped"] == [[i, gone] for i in ids[1:]]
+    assert [store.get_invoice(i)["status"] for i in ids[1:]] == [REVIEW, REVIEW]
