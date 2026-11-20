@@ -6,6 +6,8 @@ from __future__ import annotations
 import html
 import re
 
+import pytest
+
 from ap_coder.bench import jde_company, jde_group
 from ap_coder.bench import jde_exports as made
 from ap_coder.coding import companies
@@ -238,7 +240,33 @@ def test_a_chart_searched_as_typed_lists_a_business_units_accounts_with_nothing_
     assert [row[0] for row in found] == [f"{cf.HOME}.{code}" for code in ("5410", "5410.2210", "5410.7701", "5710")]
     assert found[1] == [f"{cf.HOME}.5410.2210", "Coffee and Refreshments", "Head Office General"]
     assert client.get(f"/review/accounts.json?unit={cf.CLOSED}").json()["list"] == []  # (closed: nothing offered)
-    assert client.get("/review/accounts.json?unit=").json()["list"] != []  # (no unit: the whole list, as before)
+    assert client.get("/review/accounts.json?unit=").json()["list"] == []  # (no unit: none, never the whole list)
+
+
+def test_a_chart_searched_as_typed_is_never_made_or_sent_whole_for_a_question_with_nothing_asked(
+    client, store, monkeypatch
+):
+    """B-2762: a chart too big to send (more than LIST_MOST accounts, a group's of millions: D-267) was still made
+    whole, sent and kept for ``GET /review/accounts.json`` with nothing typed and no business unit, by anyone who may
+    look at invoices (the Read-only role): at 3,500,000 accounts about 90 s of the server and over a gigabyte, kept
+    until the chart changed. No page asks for it so; it is answered with no account, what the page asks as before."""
+    from ap_coder.web.pages import invoice_lookups
+    from tests import chart_files as cf
+    from tests.core.test_chart import _chart, _units
+
+    load_sample_setup(store)
+    store.import_business_units(_units().rows)
+    store.import_chart(_chart().rows)
+    monkeypatch.setattr(invoice_lookups, "LIST_MOST", 5)
+    monkeypatch.setattr(invoice_lookups, "_account_list", lambda reference: pytest.fail("the whole list was made"))
+    for asked in ("", "?v=0123", "?unit=", "?q=", "?company=&q=&unit="):
+        answer = client.get(f"/review/accounts.json{asked}")
+        assert answer.json() == {"list": []} and answer.headers["cache-control"] == "no-store", asked
+    found = client.get("/review/accounts.json?q=coffee").json()["list"]
+    assert found == [[f"{cf.HOME}.5410.2210", "Coffee and Refreshments", "Head Office General"]]
+    assert [row[0] for row in client.get(f"/review/accounts.json?unit={cf.HOME}").json()["list"]][:1] == [
+        f"{cf.HOME}.5410"
+    ]
 
 
 def test_an_invoice_approved_before_report_9_is_sent_back_at_its_second_approval_to_be_given_its_company(

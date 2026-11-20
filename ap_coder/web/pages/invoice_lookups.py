@@ -208,13 +208,16 @@ def accounts_json(request: Request, v: str = "", q: str = "", company: str = "",
     not printed in every page. Kept by the browser as the vendor list is (``vendors_json``, D-160): for good on a
     laptop while ``v`` is its version, ``no-store`` behind the company server's login. An empty list without a
     chart (no page asks for it then). A chart searched as typed (D-267) answers the words ``q``, and with nothing
-    typed the accounts of the line's business unit ``unit`` (``UNIT_MOST`` at most)."""
+    typed the accounts of the line's business unit ``unit`` (``UNIT_MOST`` at most); with neither, none: a chart of
+    more than LIST_MOST accounts is never sent whole."""
     store = get_store(request)
     reference = reference_or_none(store)
     if (q or unit) and reference is not None and account_lines.in_use(reference):  # (a search as typed, D-267)
         units = reference.pairs.units_of(company) if company and companies.several(store) else None
         found = reference.pairs.search(q, units or None) if q else _unit_accounts(reference, unit, units or None)
         return JSONResponse({"list": found}, headers={"Cache-Control": "no-store"})
+    if account_lines.in_use(reference) and len(reference.pairs) > LIST_MOST:  # (never made whole for it: B-2762)
+        return JSONResponse({"list": []}, headers={"Cache-Control": "no-store"})
     kept = account_list(store, reference)
     if kept is None:
         return JSONResponse({"list": []}, headers={"Cache-Control": "no-store"})
