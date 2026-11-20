@@ -620,3 +620,35 @@ def test_a_line_on_an_ordinary_account_shows_no_subledger_or_units_box(chart_com
     (row,) = _rows(page.text)
     assert re.search(r'<td class="c-ledger" data-ledger=""[^>]* hidden>', row)
     assert page.form["line_subledger"] == [""] and page.form["line_units"] == [""]
+
+
+def _ledger_rows(store, invoice_id: int) -> list[tuple]:
+    with store._conn() as conn:
+        return [tuple(r) for r in conn.execute("SELECT line_number, final_units, ledger_from FROM feedback WHERE "
+                                               "invoice_id = ? ORDER BY line_number", (invoice_id,))]  # fmt: skip
+
+
+def test_units_the_screen_filled_are_approved_as_the_apps_and_units_typed_as_a_persons(
+    chart_company, chart_company_client
+):
+    """B-2935: a line's account takes units (posting edit code U) but the line was read before it did: the screen
+    fills the line's quantity in, and approved as shown the units were recorded as typed by a person (a correction's
+    weight, deciding over the past coding's units), as the line read had none. Only units neither proposed nor
+    filled are a person's."""
+    store = chart_company.store
+    page = _page(chart_company, chart_company_client, "one_line")
+    _posting_edit(store, page.lines[0].account, "U")
+    page.check()
+    assert page.form["line_units"] == ["1"]  # the line's quantity, filled by the screen
+    assert page.approve()["ok"]
+    assert _ledger_rows(store, page.id) == [(1, 1.0, "")]
+    page = _page(chart_company, chart_company_client, "quebec")
+    _posting_edit(store, page.lines[0].account, "U")
+    page.check()
+    units = page.form["line_units"]
+    answer = chart_company_client.post(f"/review/{page.id}/check", data={**page.form, "line_units": ["7", *units[1:]]},
+                                       headers=PAGE)  # fmt: skip
+    assert answer.status_code == 200
+    page.open()
+    assert page.form["line_units"][0] == "7" and page.approve()["ok"]
+    assert _ledger_rows(store, page.id)[0] == (1, 7.0, "person")

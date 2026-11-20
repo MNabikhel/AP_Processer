@@ -385,7 +385,9 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "math": (math := math_check(coding, reference.tax)),
         "tax_marks": tax_marks(math, report.issues),
         "split": spend_split(output, reference),
-        "posting": {**distribution(output, reference, js), "note": posting_note(coding, reference)},
+        # each line's account as its company's voucher keys it (its own default business unit, D-301)
+        "posting": {**distribution(output, reference, js and jde_settings.for_voucher(output, js)),
+                    "note": posting_note(coding, reference)},
         "flags": merge_flags(field_flags(report.issues, store, coding, inv["id"]), code_flags(report.issues),
                              dates.notes),
         "flag_errors": flag_errors(errors, dates.notes),

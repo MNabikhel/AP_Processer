@@ -17,7 +17,7 @@ Where it comes from (``fill``), a person's own always first (the review screen s
 A line whose account asks for neither keeps none (what is not shown is never sent). ``findings`` says what is still
 missing, an error each (``JDE_SUBLEDGER_NEEDED``, ``JDE_UNITS_NEEDED``): JD Edwards would refuse the line.
 
-Entry points: ``needed``, ``fill``, ``findings``.
+Entry points: ``needed``, ``fill``, ``filled_in``, ``findings``.
 """
 
 from __future__ import annotations
@@ -92,6 +92,17 @@ def fill(coding: Any, store: Any, reference: ReferenceData, invoice_id: int | No
     for li in unitless:
         use = prior.use(join_account(li.predicted_cost_center, li.predicted_gl_code)) if prior else None
         li.units = use.units if use is not None else None
+
+
+def filled_in(coding: Any, store: Any, reference: ReferenceData,
+              invoice_id: int | None = None) -> dict[int, tuple[str, str, float | None]]:  # fmt: skip
+    """{line number: (subledger, type, units)} that ``fill`` gives each line of ``coding`` with nothing typed under
+    it: what AP Coder puts there itself, so a line approved with them was not typed by a person (B-2935)."""
+    blank = coding.model_copy(deep=True)
+    for li in blank.line_items:
+        li.subledger, li.subledger_type, li.units = "", "", None
+    fill(blank, store, reference, invoice_id)
+    return {li.line_number: (li.subledger, li.subledger_type, li.units or None) for li in blank.line_items}
 
 
 def findings(coding: Any, reference: ReferenceData) -> list[tuple[str, str, str, int]]:

@@ -79,6 +79,28 @@ def test_with_jd_edwards_in_use_the_screen_says_what_its_batch_would_hold_back(c
     assert "CC400.6010" in answer["sections"]["posting"]
 
 
+def test_the_posting_preview_shows_the_accounts_of_the_invoices_company_as_its_voucher_keys_them(client, store):
+    """B-2936: with several companies, one with its own default business unit (D-301), the review screen's GL posting
+    preview showed each line's JD Edwards account with Settings' default business unit (or "not mapped" without
+    one), while the voucher keys the company's own."""
+    from ap_coder.bench.jde_group import GROUP
+    from ap_coder.coding.companies import COMPANIES_SETTING
+
+    invoice_id = _id(store, "Prairie")
+    store.set_setting(COMPANIES_SETTING, json.dumps({c[0]: {"name": c[1], "currency": c[2], "country": c[3]}
+                                                     for c in GROUP[:2]}))  # fmt: skip
+    _jde_on(store, default_bu="CC400", bu_from_cost_center=False, company="00220",
+            company_values={"00210": {"default_bu": "21000"}})  # fmt: skip
+
+    def accounts(company: str) -> set[str]:
+        answer = check(client, invoice_id, {**form_of(store, invoice_id), "company": company})
+        shown = set(re.findall(r"data-ani>([^<]*)<", answer["sections"]["posting"])) - {"posted by JD Edwards"}
+        return {account.split(".")[0] for account in shown}
+
+    assert accounts("00210") == {"21000"}
+    assert accounts("00220") == {"CC400"}  # a company with none of its own: Settings'
+
+
 def test_an_invoice_approved_on_the_screen_is_never_held_back_at_export(client, store):
     """What the screen allowed, the JD Edwards batch takes: the screen asks jde.validate's questions."""
     _jde_on(store, default_bu="CC400")

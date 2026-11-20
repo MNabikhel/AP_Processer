@@ -20,6 +20,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_message
+from ap_coder.coding import posting_edits
 from ap_coder.coding.vendors import MOVED_OFF_HOLD
 from ap_coder.core import audit, ui
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED
@@ -105,8 +106,11 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     from ap_coder.coding.line_tax import confirm_codes
 
     confirm_codes(analysis.output)  # approving confirms the tax codes worked out to check (B-713)
+    # what the screen filled in under the lines itself: approved as shown, not typed by this person (B-2935)
+    filled = posting_edits.filled_in(analysis.coding, store, reference, invoice_id)
     try:
-        counts = store.approve_invoice(invoice_id, analysis.output, me, open_issues=open_issues, login=login())
+        counts = store.approve_invoice(invoice_id, analysis.output, me, open_issues=open_issues, login=login(),
+                                       filled=filled)  # fmt: skip
     except (KeyError, ValueError):  # KeyError: deleted meanwhile, after it was read above
         return changed_meanwhile(request, invoice_id)
     learned = learn_from_approval(store, invoice_id, analysis.output, actor=me, taught=invoice_form.taught_boxes(draft))

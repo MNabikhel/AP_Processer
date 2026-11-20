@@ -400,3 +400,29 @@ def test_jd_edwards_proximate_fixed_and_split_terms_are_due_as_jd_edwards_has_th
                                  "status": "active"}])  # fmt: skip
     store.set_setting(JDE_TERMS_SETTING, json.dumps(table))
     assert store.vendor_terms(vendor_key("Acme Ltd")) == "Net 31st prox"
+
+
+def test_jd_edwards_terms_longer_than_terms_are_read_are_said_not_read_as_none():
+    """B-2939: codes of more net days (NDTP 270, a split Net 365), or of a longer or larger discount (2% by day 90),
+    than AP Coder reads a term as were passed as worked out, but their words read back as no terms (due in Settings'
+    30 days, "Payment terms not found") or without the discount, unsaid. Each is said, as any rule not worked out
+    (D-302); the longest that reads back still does."""
+    from ap_coder.coding.terms import jde_meaning
+
+    def row(net, pct=0.0, days=0, **more):
+        return {"description": "", "net_days": net, "discount_pct": pct, "discount_days": days, **more}
+
+    table = {"N27": row(270), "S36": row(365, splits=2, split_days=30), "D90": row(120, 2.0, 90),
+             "D25": row(30, 25.0, 10), "N18": row(180), "D60": row(90, 2.0, 60)}  # fmt: skip
+    issued = {"invoice_date": "2026-01-15", "grand_total": 100.0, "subtotal": 100.0}
+    for code, why in (("N27", "net 270 days: AP Coder reads 180 at most"),
+                      ("S36", "net 365 days: AP Coder reads 180 at most"),
+                      ("D90", "a discount for 90 days: AP Coder reads 60 at most"),
+                      ("D25", "a discount of 25%: AP Coder reads less than 20%")):  # fmt: skip
+        said = jde_meaning(code, table)
+        assert said == f"JD Edwards terms code {code}: rule not supported ({why})"
+        found = [c for _, c, _ in payment_findings(issued, 30, dt.date(2026, 1, 16), vendor_terms=said)]
+        assert "JDE_TERMS_UNSUPPORTED" in found and "TERMS_NOT_FOUND" not in found
+    assert payment(issued, 30, jde_meaning("N18", table)).due == dt.date(2026, 7, 14)
+    longest = payment(issued, 30, jde_meaning("D60", table))
+    assert (longest.due, longest.discount_by) == (dt.date(2026, 4, 15), dt.date(2026, 3, 16))
