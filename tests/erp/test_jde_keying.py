@@ -1458,6 +1458,45 @@ def test_a_goods_line_printed_with_no_quantity_matches_its_amount_at_the_po_line
             "it.") in v.notes  # fmt: skip
 
 
+def test_a_line_printed_with_no_quantity_on_a_po_line_costing_a_fraction_of_a_cent_matches_its_whole_count(tmp_path):
+    """B-2910 (D-283): JD Edwards keeps a unit cost to 4 decimals. 45.00 of the 1,000 deck screws at 0.045, printed with
+    no quantity, was matched as 1 and the line left open for 999: the price worked out (0.045) was rounded to the cent
+    (0.04) before it was compared with the unit cost, whose tolerance below 5 cents is less than that rounding. The
+    sheet also said the cost as 0.04."""
+    from ap_coder.coding import po as po_mod
+    from ap_coder.core.schema import InvoiceCoding
+    from ap_coder.core.store import Store
+
+    store = Store(tmp_path / "ap.db")
+    store.import_purchase_orders([{"po_number": "4513", "vendor_name": "Northern Rebar Supply Ltd.",
+                                   "supplier_number": "71120", "order_type": "OP", "order_company": "00210",
+                                   "line_number": 1, "erp_line": "1.000", "description": "DECK SCREW #8 2IN",
+                                   "quantity": 1000.0, "unit_price": 0.045, "amount": 45.0, "open_quantity": 1000.0,
+                                   "uom": "EA", "gl_code": "5010", "cost_center": "1100", "status": "open",
+                                   "currency": "CAD"}])  # fmt: skip
+
+    def matched(amount):
+        coding = InvoiceCoding.model_validate({
+            "vendor_name": "Northern Rebar Supply Ltd.", "invoice_number": "NR-9", "invoice_date": "2026-10-02",
+            "po_number": "4513", "currency": "CAD", "subtotal": amount, "tax_total": 0.0, "grand_total": amount,
+            "confidence_score": 0.9,
+            "line_items": [{"line_number": 1, "description": "DECK SCREW #8 2IN", "quantity": 0, "unit_price": 0,
+                            "amount": amount, "predicted_gl_code": "5010",
+                            "predicted_cost_center": "1100"}]})  # fmt: skip
+        return po_mod.voucher_match(po_mod.match_invoice(coding, store), "4513")
+
+    vm = matched(45.0)
+    assert [(r.line, r.quantity, r.quantity_from) for r in vm.rows] == [("1.000", 1000.0, "amount")]
+    warnings, notes = [], []
+    jde_keying._match_said(vm, warnings, notes)
+    assert warnings == [] and notes == ["Order 4513 line 1.000: the invoice prints no quantity; Quantity Matched is "
+                                        "1,000, its amount (45.00) at the PO line's unit cost 0.045."]  # fmt: skip
+    assert [(r.quantity, r.quantity_from) for r in matched(-45.0).rows] == [(-1000.0, "amount")]  # (a credit)
+    assert po_mod.unprinted_quantity(42.5, 0.0085) == (5000.0, "amount")
+    assert po_mod.unprinted_quantity(125.0, 0.0125) == (10000.0, "amount")
+    assert po_mod.unprinted_quantity(86.25, 57.5) == (1.0, "one")  # (no whole number of it, as before)
+
+
 def _approved_po_invoice(store, tmp_path, js):
     """``po_invoice`` approved as the review screen approves it (its output from ``finalise_coding``, JD Edwards in
     use with ``js``), on a keying sheet batch: (its id, the batch)."""

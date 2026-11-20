@@ -306,7 +306,8 @@ def _match_said(matched: po_mod.VoucherMatch | None, warnings: list[str], notes:
         key = (row.order_number, row.order_type, row.order_company, row.line)
         if row.no_quantity and (row.retainage or row.order_type.upper() == po_mod.SUBCONTRACT):
             continue  # (a subcontract's lump sum: matched by its amount alone, D-273)
-        count, cost = po_mod._qty(row.quantity or 0), f"{row.unit_cost or 0:,.2f}"
+        count, cost = po_mod._qty(row.quantity or 0), f"{row.unit_cost or 0:,.4f}"
+        cost = cost[:-2] + cost[-2:].rstrip("0")  # (to the cent, or the 4 decimals JD Edwards keeps: 0.045, B-2910)
         if row.quantity_from == "amount":  # a line printed with no quantity (D-283)
             notes.append(f"{where}: the invoice prints no quantity; Quantity Matched is {count}, its amount "
                          f"({row.amount:,.2f}) at the PO line's unit cost {cost}.")  # fmt: skip

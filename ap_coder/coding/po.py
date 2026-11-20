@@ -1037,11 +1037,12 @@ def matched_quantity(li: dict[str, Any]) -> float:
 
 def unprinted_quantity(amount: float, unit_cost: float) -> tuple[float, str]:
     """(the quantity a goods line printed with none matches on a PO line of ``unit_cost``, how: ``LineMatch.
-    quantity_from``): its amount at that cost when it comes out a whole number, the cost within its tolerance to the
-    cent (``_same_price``); else 1 (-1 on a credit), as before (D-283)."""
+    quantity_from``): its amount at that cost when it comes out a whole number, the cost within its tolerance
+    (``_same_price``; not rounded to the cent first: a cost of a fraction of a cent, 0.045, has less tolerance than
+    that, B-2910); else 1 (-1 on a credit), as before (D-283)."""
     sign = -1.0 if amount < 0 else 1.0
     count = math.floor(abs(amount / unit_cost) + 0.5) if unit_cost else 0
-    if count >= 1 and _same_price(round(abs(amount) / count, 2), unit_cost):
+    if count >= 1 and _same_price(abs(amount) / count, unit_cost):
         return sign * count, "amount"
     return sign, "one"
 
