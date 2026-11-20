@@ -159,8 +159,8 @@ def _to_fix(facts: dict[str, Any], cost_centers: bool) -> tuple[str, int, int]:
 
 def attention(store: Store, reference: ReferenceData | None, pending: list[dict[str, Any]],
               threshold: float | None = None, checks: dict[int, dict[str, Any]] | None = None,
-              recheck: bool | None = None, parts: dict[int, tuple[str, str, int, int, bool, str]] | None = None
-              ) -> dict[int, str]:  # fmt: skip
+              recheck: bool | None = None, parts: dict[int, tuple[str, str, int, int, bool, str]] | None = None,
+              held: dict[int, str] | None = None) -> dict[int, str]:  # fmt: skip
     """Why each invoice of ``pending`` (the queue) needs attention, by id; one not listed is Ready: its review
     screen's Approve is open as it stands, and nothing in its checks keeps bulk approval from taking it (B-1027).
     The lines' codes are asked as the review screen asks (``codes_to_pick``), then the checks' flag (an error, or
@@ -169,31 +169,19 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
     invoice whose stored checks were made against other settings is checked again (B-815). ``parts``: filled with
     what each one's reason was made from (what its lines need, its Pay from account's trouble, its errors, its other
     findings for a person, confidence under the threshold, why its lines coded from other vendors' approvals leave it
-    for a person, D-241): what ``first_to_fix`` says in words."""
-    from ap_coder.coding import banks
-
+    for a person, D-241): what ``first_to_fix`` says in words. ``held``: ``bulk.pay_from_stops`` of ``pending``, when
+    the caller has it."""
     if checks is None:
         checks = queue_checks(store, [i["id"] for i in pending], recheck=recheck)[0]
     cost_centers = reference is not None and uses_cost_centers(reference)
-    accounts = store.bank_accounts()
-    paying = any(a["active"] for a in accounts)  # the review screen's Pay from rule (B-685): its Approve, its Ready
-    pay = {i["id"]: _pay(checks.get(i["id"]) or {}, i) for i in pending} if paying else {}
-    last = store.last_pay_froms(sorted({p[3] for p in pay.values()})) if paying else {}  # each vendor's last one
-    blocks: dict[tuple[str, bool, str, str], str] = {}  # what stops each Pay from asked, worked out once a call
+    # the review screen's Pay from rule (B-685): its Approve, its Ready
+    held = bulk.pay_from_stops(store, pending, checks) if held is None else held
     out = {}
     for inv in pending:
         to_pick, errors, warned = _to_fix(checks.get(inv["id"]) or {}, cost_centers)
         others = str((checks.get(inv["id"]) or {}).get("q_others") or "")  # (``supplier.others_reason``, D-241)
         low = threshold is not None and (inv.get("adjusted_confidence") or 0.0) < threshold
-        bank = ""
-        if paying:
-            code, approved, currency, key = pay[inv["id"]]
-            asked = (code, approved, currency, last.get(key, ""))
-            if asked not in blocks:
-                choice = banks.opening_choice({"pay_from_account": code, "currency": currency}, approved, accounts,
-                                              asked[3])  # fmt: skip
-                blocks[asked] = banks.blocking(choice, accounts, currency)
-            bank = blocks[asked]
+        bank = held.get(inv["id"], "")
         why = [
             to_pick,
             bank,
@@ -259,27 +247,6 @@ def first_to_fix(parts: tuple[str, str, int, int, bool, str], issues: list[dict[
         return counted
     more = errors + warned + bool(to_pick) + bool(bank) + bool(others) - 1
     return f"{first} (and {more} more)" if more > 0 else first
-
-
-def _pay(facts: dict[str, Any], inv: dict[str, Any]) -> tuple[str, bool, str, str]:
-    """(its Pay from account, approved before or not, its currency, its vendor's key) of a queue invoice, as its
-    review screen opens with them (``bulk.queue_facts``): each text decoded once (``_PAYS``)."""
-    text = facts.get("q_pay")
-    if text:
-        pay = _PAYS.get(text)
-        if pay is None:
-            if len(_PAYS) >= PAYS_KEPT:
-                _PAYS.clear()
-            code, approved, currency, key = json.loads(text)
-            pay = _PAYS[text] = (code, approved, currency, key)
-        return pay
-    return "", False, "CAD", vendor_key(inv.get("vendor_name") or "")
-
-
-# Each Pay from text of the queue's facts (``q_pay``), decoded: the queue reads 2,700 at each visit, most of them read
-# at the last. Past PAYS_KEPT texts they are all let go.
-_PAYS: dict[str, tuple[str, bool, str, str]] = {}
-PAYS_KEPT = 16_384
 
 
 def draft_reasons(request: Request, pending: list[dict[str, Any]]) -> dict[int, str]:
@@ -493,7 +460,8 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     # settings show their earlier checks meanwhile, and the page says so (its background process does it, D-155).
     checks, updating = queue_checks(store, [i["id"] for i in pending], settings, recheck=not server_mode(request))
     parts: dict[int, tuple[str, str, int, int, bool, str]] = {}
-    reasons = attention(store, reference, pending, threshold, checks, parts=parts)  # Ready: its Approve is open
+    held = bulk.pay_from_stops(store, pending, checks)  # its Pay from refused: neither Ready nor offered in bulk
+    reasons = attention(store, reference, pending, threshold, checks, parts=parts, held=held)  # Ready: Approve is open
     drafts = draft_reasons(request, pending)  # an invoice with edits kept: what its screen says (B-996)
     reasons.update(drafts)
     parts = {i: p for i, p in parts.items() if i not in drafts}
@@ -532,7 +500,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
 
         shown = {"attention": flagged, "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)
         shown = sort_queue(filter_queue(shown, q), sort)
-        candidates, left = sort_for_bulk(store, pending, checks) if show != "attention" else ([], {})
+        candidates, left = sort_for_bulk(store, pending, checks, held) if show != "attention" else ([], {})
         context.update(
             pending=pending,
             updating=updating,

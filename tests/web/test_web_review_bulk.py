@@ -574,3 +574,20 @@ def test_bulk_approval_pays_from_the_account_the_review_screen_opens_with(store)
     out = bulk.bulk_approve(store, store.reference_data(), web_settings(), ids, "Pat")
     assert out == {"approved": ids, "skipped": []}
     assert [store.get_invoice(i)["final_output"]["pay_from_account"] for i in ids] == ["CAD-NEW", "CAD-PAY"]
+
+
+def test_an_invoice_whose_review_screen_asks_for_the_bank_account_is_neither_offered_nor_approved_in_bulk(store):
+    """B-2966: invoices read while CAD-OLD was our only CAD account were stored paid from it. A second CAD account
+    added, neither the default, their review screen opens with no Pay from and keeps Approve closed, and the queue
+    said each needs attention ("Pick the bank account"), yet its bulk form offered them all."""
+    store.save_bank_accounts([_bank("CAD-OLD")])
+    ids = _paid_from(store, 3, "CAD-OLD")
+    store.save_bank_accounts([_bank("CAD-NEW")])
+    pick = "Pick the bank account to pay this invoice from"
+    assert set(review.attention(store, store.reference_data(), store.list_invoices(REVIEW)).values()) == {pick}
+    assert bulk.sort_for_bulk(store) == ([], {i: "pay from" for i in ids})
+    assert 'action="/review/bulk-approve"' not in client_for(store).get("/review").text
+    out = bulk.bulk_approve(store, store.reference_data(), web_settings(), ids, "Pat")
+    assert out == {"approved": [], "skipped": [(i, pick) for i in ids]}
+    store.save_bank_accounts([_bank("CAD-NEW", True)])  # a default: offered, and paid from it
+    assert [c["id"] for c in bulk.sort_for_bulk(store)[0]] == ids and _bulk_form(client_for(store))["ids"]

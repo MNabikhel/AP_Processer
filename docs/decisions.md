@@ -3722,7 +3722,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **With D-193 (merged beside it):** the review queue's two caches are listed too: its lists and facts kept by
     invoice (`review_queue._KEPT`, 16 MB: two databases', about 1.1 KB an invoice in the queue, 5.4 MB for the
     100,000-invoice seed's 3,036 listed and 2,122 in review; `KEPT_MOST` 16 -> 4, a company server has one) and the
-    Pay from texts decoded (`review._PAYS`, 6 MB full). A web worker's caches come to 1,039 MB; `WORKER_CACHES_MOST`
+    Pay from texts decoded (`bulk._PAYS`, 6 MB full). A web worker's caches come to 1,039 MB; `WORKER_CACHES_MOST`
     is 1,050 MB, 0.7 of `WORKER_MB` (the test's limit).
 - **D-196** · **server-update's safety copy is made while the old version serves and brought up to date once it is
   stopped, with only what was written since: the downtime no longer grows with the database** (scale goal, phase 8,
