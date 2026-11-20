@@ -534,14 +534,8 @@ def scenario(rng: random.Random, index: int) -> Scenario:
         s.docs = [Doc(f"{name}.pdf", _other_pdf(rng, name, v, lang), "application/pdf", PERSON)]
         s.kind = triage.NOT_FOR_AP
     elif name == "invoice_mentions_statement":  # an invoice still, whatever statement its lines or name mention
-        s.docs = [
-            Doc(
-                rng.choice([f"Invoice_{n}.pdf", f"{n}.pdf", "Statement of Work SOW-7.pdf"]),
-                _invoice_saying_statement(rng, v, lang, n),
-                "application/pdf",
-                QUEUE,
-            )
-        ]
+        doc_name = rng.choice([f"Invoice_{n}.pdf", f"{n}.pdf", "Statement of Work SOW-7.pdf"])
+        s.docs = [Doc(doc_name, _invoice_saying_statement(rng, v, lang, n), "application/pdf", QUEUE)]
     elif name == "invoice_and_packing_slip":  # the invoice is read, the packing slip waits for a person
         s.docs = [
             inv_doc(),
