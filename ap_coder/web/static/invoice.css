@@ -329,6 +329,8 @@ button.inv-pick .ms {font-size: 14px;}
 .inv-vendor .inv-vendor-match.ok {color: #166534;}
 .inv-vendor .inv-vendor-match.warn {color: #92400e;}
 .inv-vendor .inv-vendor-match button {font: inherit; color: var(--lg-accent); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;}
+/* Its one-click offer's words beside the bulb, the supplier's button under them (D-219, D-298). */
+.inv-vendor .inv-help [data-help-text] {flex: 1 1 16em;}
 .inv-vendor-add {align-self: flex-start;}
 .inv-vendor-add .pop-body {left: 0; right: auto;}
 .inv-vendor-add .pop-body .row {display: flex; gap: 8px;}

@@ -249,6 +249,21 @@ def addressed_to(text: str) -> str:
     return "\n".join(out)
 
 
+def customer_block(text: str) -> tuple[str, str]:
+    """(the page's bill-to and ship-to blocks, the rest of it): each "Bill to", "Ship to", "Client" or "Attn:"
+    label's line and the ``ADDRESS_BLOCK_LINES`` under it, up to a remit-to (the supplier's) or the line items'
+    headings. Who an invoice is for, told from who sent it by the page's text alone (``companies.group_suppliers``,
+    D-298)."""
+    block, rest, until = [], [], -1
+    for n, line in enumerate(text.splitlines()):
+        if _SHIP_LABEL.search(line) or _CUSTOMER_LABEL.search(line) or _ATTENTION.search(line):
+            until = n + ADDRESS_BLOCK_LINES
+        elif _REMIT_LABEL.search(line) or _TABLE_HEADING.match(line):
+            until = -1
+        (block if n <= until else rest).append(line)
+    return "\n".join(block), "\n".join(rest)
+
+
 def addresses(text: str, ours: frozenset[str] = frozenset()) -> tuple[str, str, str]:
     """(supplier, ship-to, bill-to) provinces from the addresses on the page: the first address is the supplier's
     (its letterhead), the first after a "Ship to" / "Livré à" label the ship-to, the first after a "Bill to" /

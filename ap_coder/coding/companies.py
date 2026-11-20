@@ -303,6 +303,33 @@ def _named(text: str, names: dict[str, str], supplier: str) -> set[str]:
     return {names[key] for key in longest}
 
 
+def group_suppliers(store: Any, text: str, coding: InvoiceCoding) -> list[tuple[str, str]]:
+    """[(report 9's name, the supplier as the vendor box takes it)] of the companies of the group printed on the page
+    (``text``) outside its bill-to and ship-to (``offline_coder.customer_block``) that are suppliers in use of the
+    vendor master: one of them may have billed the invoice to another (an intercompany invoice), and their names are
+    never read as the supplier (``own_names``: the bill-to prints one on every outside invoice), so a person is
+    offered it to pick (D-298). Never the company the invoice is for (``coding.company``), one in its bill-to or
+    ship-to, or the supplier chosen (its name, and a name only inside it); [] with fewer than two companies."""
+    table = companies(store)
+    if len(table) < 2 or not text.strip():
+        return []
+    from ..ai.offline_coder import customer_block
+    from ..core.keys import IN_ERP
+    from ..core.store.vendor_master import erp_stopped, with_number
+
+    names = name_variations(store)
+    billed, rest = customer_block(text)
+    printed = _named(rest, names, vendor_key(coding.vendor_name)) - _named(billed, names, "")
+    out = []
+    for code in sorted((printed - {company_code(coding.company)}) & set(table)):
+        name = table[code].name
+        shared = store.vendors_sharing(name)  # several supplier numbers under the name: each with its number
+        found = shared or [v for v in [store.find_vendor(name)] if v is not None]
+        out += [(name, with_number(v) if shared else str(v["display_name"])) for v in found
+                if v.get("in_master") == IN_ERP and not erp_stopped(v)]  # fmt: skip
+    return out
+
+
 def decide(store: Store, coding: InvoiceCoding, text: str = "") -> Decision:
     """The invoice's company (module docstring: (a) to (e)); ``text``: the page as read. With one company: none. A
     company a person picked (``coding.company_how``) is kept; any other is decided again (D-286)."""

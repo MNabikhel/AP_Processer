@@ -6,6 +6,8 @@ from __future__ import annotations
 import html
 import re
 
+import pytest
+
 from ap_coder.bench import jde_company, jde_group
 from ap_coder.bench import jde_exports as made
 from ap_coder.coding import companies
@@ -157,6 +159,131 @@ def test_the_company_box_says_how_its_company_was_decided_and_only_a_persons_pic
     assert Draft.from_form({"company": "00310"}, Draft.stored(inv["ai_output"])).company_how == "picked"
     assert Draft.from_form({"company": "00230"}, Draft.stored(final)).company_how == "picked"
     assert Draft.from_form({"company": "00230", "company_how": ""}, Draft.stored(final)).company_how == ""
+
+
+SIBLING = jde_group.GroupSupplier(*next(r for r in jde_group.SUPPLIERS if r[0] == 4410900))  # 00220, a supplier too
+KELSO = {"vendor_name": "KELSO READY MIX LTD", "erp_id": "4410101"}
+
+
+def _invoice(store, sender: str, billed: str, number: str, gst: str = "") -> int:
+    """A made-up invoice of ``sender`` to ``billed``, read and coded by the pipeline as one dropped in: its id."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from tests.pdfs import text_pdf
+    from tests.webclient import web_settings
+
+    items = [(50, 50, sender, 14), (50, 68, "1180 Marine Drive, Kamloops, BC V2C 1A4"), (400, 50, "INVOICE", 14),
+             (400, 70, f"Invoice #: {number}"), (400, 84, "Invoice Date: 2026-10-14"), (400, 98, "Terms: Net 30"),
+             (400, 112, f"GST/HST No. {gst}" if gst else ""), (50, 120, "Bill To:"), (50, 134, billed),
+             (50, 148, "410 Elm Street, Edmonton, AB T5J 0N3"), (50, 220, "Description"), (400, 220, "Qty"),
+             (500, 220, "Amount"), (50, 236, "Project management, October"), (400, 236, "1"), (500, 236, "2,000.00"),
+             (400, 300, "Subtotal"), (500, 300, "2,000.00"), (400, 314, "GST 5%"), (500, 314, "100.00"),
+             (400, 328, "Total"), (500, 328, "2,100.00")]  # fmt: skip
+    path = text_pdf(store.path.parent / f"{number}.pdf", [i for i in items if i[2]])
+    return InvoicePipeline(web_settings(), store.reference_data(), store=store).process(path).invoice_id
+
+
+def _vendor_box(client, invoice_id: int) -> str:
+    page = html.unescape(client.get(f"/review/{invoice_id}").text)
+    return page.split('data-field="vendor_name"', 1)[1].split("</details>", 1)[0]
+
+
+def test_an_intercompany_invoice_offers_the_company_of_the_group_that_sent_it_and_its_pick_decides_the_company(
+    client, store
+):
+    """B-2790 (D-298): with report 9 loaded, an invoice of one company of the group to another (Maple Ridge
+    Constructors Ltd., 00220, a supplier too, to Maple Ridge Holdings Ltd., 00210) lost its supplier when the vendor
+    master has no GST/HST number for it: its name, never read as the supplier, was said nowhere, and the invoice was
+    held with no supplier and no company. The vendor box offers it with one click, never filled; picked, the company
+    billed is decided. Its number in the vendor master names it as before, and an outside supplier's invoice to a
+    company of the group never offers that company."""
+    load_sample_setup(store)
+    _card(client, jde_group.companies_xlsx())
+    store.import_vendor_master([{"vendor_name": SIBLING.name, "erp_id": str(SIBLING.number)}, KELSO], by_erp_id=True)
+    invoice_id = _invoice(store, "Maple Ridge Constructors Ltd.", "Maple Ridge Holdings Ltd.", "IC-2611",
+                          SIBLING.tax_id)  # fmt: skip
+    box = _vendor_box(client, invoice_id)
+    assert 'name="vendor_name" value=""' in box  # offered, never put in
+    assert ("Maple Ridge Constructors Ltd. is a company of the group and a supplier: if it billed this invoice, pick "
+            "it.") in box  # fmt: skip
+    assert f'data-help-use="{SIBLING.name}">Use {SIBLING.name}</button>' in box
+    data = {**Draft.stored(store.get_invoice(invoice_id)["ai_output"]).header}
+    assert "MISSING_VENDOR" in html.unescape(client.post(f"/review/{invoice_id}/check", data=data,
+                                                         headers=PAGE).json()["sections"]["checks"])  # fmt: skip
+    picked = client.post(f"/review/{invoice_id}/check", data={**data, "vendor_name": SIBLING.name},
+                         headers=PAGE).json()  # fmt: skip
+    assert picked["header"]["values"]["company"] == "00210" and "vendor_name" not in picked["header"]["help"]
+    assert "Pick the company" not in html.unescape(picked["sections"]["checks"])
+    # its GST/HST number in the vendor master: the number names it, the company billed decided, nothing to offer
+    store.import_vendor_master([{"vendor_name": SIBLING.name, "erp_id": str(SIBLING.number), "gst": SIBLING.tax_id},
+                                KELSO], by_erp_id=True)  # fmt: skip
+    by_number = _invoice(store, "Maple Ridge Constructors Ltd.", "Maple Ridge Holdings Ltd.", "IC-2612",
+                         SIBLING.tax_id)  # fmt: skip
+    read = store.get_invoice(by_number)["ai_output"]
+    assert (read["vendor_name"], read["company"]) == (SIBLING.name, "00210")
+    assert "data-help-use" not in _vendor_box(client, by_number)
+    # an outside supplier's invoice to the company of the group that is a supplier too: never offered
+    outside = _invoice(store, "Kelso Ready Mix Ltd.", "Maple Ridge Constructors Ltd.", "KR-4410")
+    read = store.get_invoice(outside)["ai_output"]
+    assert (read["vendor_name"], read["company"]) == ("Kelso Ready Mix Ltd.", "00220")
+    assert "data-help-use" not in _vendor_box(client, outside)
+    cleared = {**Draft.stored(read).header, "vendor_name": ""}
+    answer = client.post(f"/review/{outside}/check", data=cleared, headers=PAGE).json()
+    assert answer["header"]["help"]["vendor_name"]["actions"] == [  # the page's own reading, never the company billed
+        {"label": "Use Kelso Ready Mix Ltd. from the page", "value": "Kelso Ready Mix Ltd."}
+    ]
+
+
+@pytest.fixture
+def browser(chromium, store):
+    """The dashboard on ``store`` served on this computer and a Chromium to open it: (browser, base URL)."""
+    from ap_coder.web.app import create_app
+    from tests.browser import browser_on
+    from tests.webclient import web_settings
+
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as opened:
+        yield opened
+
+
+def test_in_a_browser_the_company_of_the_group_offered_is_put_in_with_one_click_and_the_company_billed_follows(
+    browser, client, store
+):
+    """D-298 on the screen: the offer under the vendor box (B-2790; the box had no place for it, B-2791) puts the
+    supplier in with one click, and the screen, drawn again for the company the check then decides, keeps it."""
+    load_sample_setup(store)
+    _card(client, jde_group.companies_xlsx())
+    store.import_vendor_master([{"vendor_name": SIBLING.name, "erp_id": str(SIBLING.number)}, KELSO], by_erp_id=True)
+    invoice_id = _invoice(store, "Maple Ridge Constructors Ltd.", "Maple Ridge Holdings Ltd.", "IC-2611")
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": 1366, "height": 768})
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base}/review/{invoice_id}")
+    page.wait_for_selector(".iv-sheet:not(.loading)")
+    offer = page.locator("[data-field=vendor_name] > [data-help]")
+    offer.locator("[data-help-use]").wait_for()
+    assert "is a company of the group and a supplier: if it billed this invoice, pick it." in offer.inner_text()
+    assert page.locator("[form=inv][name=company]").input_value() == ""
+    offer.locator("[data-help-use]").click()
+    assert page.locator("#vendor-name").input_value() == SIBLING.name
+    page.wait_for_function("document.querySelector('[form=inv][name=company]').value === '00210'")
+    page.wait_for_selector(".iv-sheet:not(.loading)")
+    assert page.locator("#vendor-name").input_value() == SIBLING.name and not offer.is_visible()
+    assert "Maple Ridge Holdings Ltd. is named on the invoice" in page.locator("[data-company-source]").inner_text()
+    assert errors == []
+
+
+def test_settings_review_lists_the_companies_names_of_report_9_as_never_read_as_a_supplier(client, store):
+    """D-298: report 9's names are the company's own names too, never read as the supplier, but Settings → Review's
+    "Your company's names" showed only the ones typed there: a pilot tester could not see why a company of the group
+    was never read as its invoices' supplier. They are listed under the box, read-only, said where they come from."""
+    page = html.unescape(client.get("/settings/review").text)
+    assert "From JD Edwards' companies" not in page
+    _card(client, jde_group.companies_xlsx())
+    page = html.unescape(client.get("/settings/review").text)
+    listed = page.split("From JD Edwards' companies", 1)[1].split("</p>", 1)[0]
+    assert "00210 Maple Ridge Holdings Ltd." in listed and "00410 Maple Ridge Caribbean Ltd." in listed
+    assert 'name="our_names"' in page and "Maple Ridge Holdings" not in page.split('name="our_names"', 1)[1].split(
+        "</textarea>", 1)[0]  # fmt: skip
 
 
 def test_a_name_written_for_a_company_the_companies_report_does_not_list_is_not_saved(client, store):

@@ -32,6 +32,11 @@
         With several JD Edwards companies, a name written <b>name = company</b> (Maple Ridge Civil = 00210) tells
         which company an invoice addressed to it is for; each company's own name counts already. A name of three
         letters or fewer (MRC) counts only printed in capitals as a word of its own.{% endif %}</p>
+      {% if company_names %}{# report 9's names, never read as a supplier either (D-298) #}
+      <p class="muted" data-company-names>From JD Edwards' companies (JD Edwards files, card 9), your company's names
+        too, never read as a supplier: when one of them bills another, the review screen offers it under the vendor
+        box for you to pick.<br>{{ company_names | join(" · ") }}</p>
+      {% endif %}
       {% if uses_cost_centers or site_provinces %}
       {% set unit = "business unit" if chart else "cost center" %}{# a chart's lines carry a business unit (D-209) #}
       <label class="field">Sites in other provinces, by {{ unit }} (optional)

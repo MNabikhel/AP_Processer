@@ -157,6 +157,35 @@ def test_a_companys_name_inside_the_suppliers_own_never_decides(group, reference
     assert output["company"] == "00230"
 
 
+def test_a_company_of_the_group_printed_as_the_sender_is_offered_to_pick_never_the_one_billed(group, ground_truth):
+    """B-2790 (D-298): report 9's names are never read as the supplier, so an intercompany invoice (Maple Ridge
+    Constructors Ltd., 00220, a supplier too, billing Maple Ridge Holdings Ltd.) was left with no supplier and no
+    company, nothing said of who sent it. A company of the group printed outside the page's bill-to and ship-to that
+    is a supplier in the vendor master is offered for a person to pick: never the company billed, the one decided, the
+    supplier chosen, or a company that is no supplier."""
+    suppliers = (("MAPLE RIDGE CONSTRUCTORS LTD", "4410900"), ("MAPLE RIDGE HOLDINGS LTD", "4410901"),
+                 ("KELSO READY MIX LTD", "4410101"))  # fmt: skip
+    group.import_vendor_master([{"vendor_name": n, "erp_id": e} for n, e in suppliers], by_erp_id=True)
+    page = ("Maple Ridge Constructors Ltd.\n1180 Marine Drive, Kamloops, BC V2C 1A4\nInvoice #: IC-2611\nBill To:\n"
+            "Maple Ridge Holdings Ltd.\n410 Elm Street, Edmonton, AB T5J 0N3\nDescription Qty Amount\n"
+            "Crane time for Fraser Bend Civil Ltd., job 2403 1 2,000.00\n")  # fmt: skip
+    unread = _coding(ground_truth, vendor_name="")
+    sender = ("Maple Ridge Constructors Ltd.", "MAPLE RIDGE CONSTRUCTORS LTD")  # (report 9's name, the vendor list's)
+    assert companies.group_suppliers(group, page, unread) == [sender]
+    assert companies.group_suppliers(group, page, _coding(ground_truth, vendor_name="Kelso Ready Mix Ltd.")) == [sender]
+    for coding in (_coding(ground_truth, vendor_name="", company="00220"),  # the company it is for
+                   _coding(ground_truth, vendor_name="MAPLE RIDGE CONSTRUCTORS LTD")):  # fmt: skip
+        assert companies.group_suppliers(group, page, coding) == []
+    # an outside supplier's invoice to a company of the group (a supplier too) and shipped to another
+    page = (
+        "Kelso Ready Mix Ltd.\n88 Industrial Way, Calgary, AB T2E 7H1\nBill to: Maple Ridge Constructors Ltd.\n"
+        "1180 Marine Drive, Kamloops, BC V2C 1A4\nShip To:\nMaple Ridge Holdings Ltd., Kelso Bridge yard\n"
+    )
+    assert companies.group_suppliers(group, page, unread) == []
+    group.set_setting(companies.COMPANIES_SETTING, '{"00220": {"name": "Maple Ridge Constructors Ltd."}}')
+    assert companies.group_suppliers(group, "Maple Ridge Constructors Ltd.\nBill to: Someone\n", unread) == []
+
+
 def test_a_short_name_decides_only_printed_as_a_word_of_its_own_in_capitals(group, reference, ground_truth):
     """B-2690: a name of three letters or fewer in Settings → Review ("Art = 230", "MRB = 310") was read in any word
     of the page, whatever its case: "Art supplies" or "art" in a description decided the invoice was 00230's. Such a

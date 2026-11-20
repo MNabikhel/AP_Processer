@@ -660,7 +660,14 @@ CHECKS: dict[str, CheckHelp] = {
         "No line items were read from the document.",
         "Add the lines by hand, or reject the file if it is not an invoice.",
     ),
-    "MISSING_VENDOR": CheckHelp(TOTALS, "No vendor", "The vendor name is empty.", "Type the vendor name."),
+    "MISSING_VENDOR": CheckHelp(
+        TOTALS, "No vendor",
+        "The vendor name is empty: none was read, or the name read is one of your company's own (Settings → Review, "
+        "and with JD Edwards' companies loaded, each company's name), which is never taken as the supplier.",
+        "Pick the vendor from the vendor list, as the page names it. An invoice one company of your group sends "
+        "another: the vendor box offers that company when it is a supplier in the vendor list; check the page and "
+        "pick it.",
+    ),
     "MISSING_INVOICE_NUMBER": CheckHelp(
         TOTALS, "No invoice number", "The invoice number is empty, so duplicates cannot be detected.",
         "Type the invoice number from the document. A utility bill or statement that prints none: type its account "

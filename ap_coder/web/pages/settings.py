@@ -199,6 +199,8 @@ def review_context(request: Request, stamped: bool = True) -> dict[str, Any]:
         "our_province": store.our_province(),
         "our_names": "\n".join(store.our_names()),
         "several_companies": companies.several(store),  # (a name may then name its company, D-267)
+        # report 9's names: the company's own too, never read as a supplier, shown read-only (D-298)
+        "company_names": [f"{c.code} {c.name}" for c in companies.companies(store).values() if c.name],
         "why_after": lessons.why_after(store),
         "why_surprise": lessons.asks_why(store),
         "site_provinces": store.get_setting("site_provinces"),
