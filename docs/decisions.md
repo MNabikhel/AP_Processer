@@ -7296,3 +7296,24 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     were worked out for another company, so it is not approved without a person, its notes saying why
     (`still_touchless`). Approving the coding worked out again under the new company was not chosen: nobody, the
     reviewer included, would have looked at that coding.
+- **D-325** · **Parallel branches are combined by `scripts/combine.py`: a conflict in a doc is settled only where the
+  two sides changed different lines, a number both took goes anew to the later branch's entry, code goes to a person**
+  (the owner's to-do).
+  - **Why:** some twenty helper branches merged by hand in one night, each with a number block of its own, conflicted
+    almost only at the end of BUGS.md and decisions.md and the top of WHATS_NEW.md, where both sides had added. Keeping
+    both sides blindly (the night's own script) left B-2892 in the log twice: its line, and that line edited on one
+    side. With git's merge base between the markers (`merge.conflictstyle=diff3`), what each side changed is known: an
+    edit and an addition beside it both stay, a line both sides added stays once. Replayed on 21 of that night's
+    merges, the script gave the hand merge's result 18 times, B-2892 once where the hand merge has it twice, and
+    stopped at the one code conflict and the one criss-cross history.
+  - **How:** each branch in order, `git merge --no-commit`. A doc under docs/ in conflict is settled when no line of the
+    base was changed by both sides (`merge_hunk`); otherwise it, any file outside docs/, a file added on both sides and
+    a merge base git made of two (criss-cross) stop the script, the merge left in progress, the files listed. The logs'
+    newest entries are then sorted by number (the last line holds the newest: `tests/meta/test_agent_friendly.py`). A
+    number given to a new entry on both sides, the two entries unlike (`ALIKE`), goes to the later branch's entry as
+    the next number no branch given uses; its mentions change only in the lines that branch changed (`git diff -U0`
+    from the merge base), on a commit on top of the branch, the branch itself left as it was. Each merge is committed,
+    never pushed; then the meta tests and `scripts/check.py` on the files the merges changed.
+  - *Not chosen:* settling a code conflict (never guessed); a number's mentions changed across the whole tree (the
+    other branch's mentions of it would move too); each bug and decision numbered as its branch is merged (the to-do
+    "No more number clashes in the logs", a bigger change still to do).

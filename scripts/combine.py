@@ -1,0 +1,443 @@
+"""Combine parallel branches into one (D-325): each branch given is merged in order, the logs' conflicts settled, a
+bug or decision number two branches both took given anew to the later branch's entry, and the result checked.
+
+    python scripts/combine.py BRANCH [BRANCH ...]    merge them into the current branch
+    --onto REF                                       into a new branch from REF instead (combined-<date>)
+    --no-check                                       skip the checks at the end
+
+A conflict in a doc under docs/ is settled when the two sides changed different lines: both added entries at the end
+of BUGS.md or decisions.md (both kept, then sorted by number), both added a section to WHATS_NEW.md (both kept),
+each took a different item off TODO.md. Two changes to the same line, and any conflict in code, stop the script with
+the merge left in progress and the files that need a person listed. A B- or D- number that the branch being merged
+and the ones merged before it each gave to a new entry of their own is given anew to the branch's entry (the next
+number no branch given uses), with its mentions in the lines that branch changed (code, tests, docs), in a commit on
+top of the branch; the branch itself is left as it was. Each merge is committed; nothing is pushed. The checks: the
+meta tests (``python -m pytest -q -m "" tests/meta``), then ``python scripts/check.py`` on the files the merges
+changed. Exit code 0 when all is merged and checked, 1 when something needs a person, 2 when nothing was done.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import difflib
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+LOGS = {"B": "docs/BUGS.md", "D": "docs/decisions.md"}  # each kind of number and the log its entries are in
+MENTION = re.compile(r"(?<![A-Za-z0-9_])([BD])-(\d+)(?!\d)")
+ALIKE = 0.6  # two entries of one number this alike (words) are one entry, edited on a side: not two that clash
+
+
+class Stop(Exception):
+    """What the script can't settle: said, and left for a person."""
+
+
+def run_git(args: list[str], data: bytes | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-c", "core.quotePath=false", *args], input=data, env=env, capture_output=True)
+
+
+def git(*args: str, data: bytes | None = None, env: dict | None = None) -> str:
+    done = run_git(list(args), data, env)
+    if done.returncode:
+        said = (done.stdout + done.stderr).decode("utf-8", "replace").strip()
+        raise Stop(f"git {' '.join(args)} failed:\n{said}")
+    return done.stdout.decode("utf-8", "replace").strip()
+
+
+def show(rev: str, path: str) -> str:
+    """The file at a commit ("" where it has none)."""
+    done = run_git(["show", f"{rev}:{path}"])
+    return done.stdout.decode("utf-8", "replace") if done.returncode == 0 else ""
+
+
+def read(path: str) -> str:
+    return Path(path).read_bytes().decode("utf-8")  # bytes: its line endings kept as they are
+
+
+def write(path: str, text: str) -> None:
+    Path(path).write_bytes(text.encode("utf-8"))
+    git("add", "--", path)
+
+
+# The logs: an entry is a line "- **B-12** · ..." and the indented lines under it.
+
+
+def entries(text: str, prefix: str) -> list[tuple[int, str]]:
+    head = re.compile(rf"- \*\*{prefix}-(\d+)\*\*")
+    found: list[tuple[int, list[str]]] = []
+    current = None
+    for line in text.split("\n"):
+        if m := head.match(line):
+            current = [line]
+            found.append((int(m[1]), current))
+        elif current is not None and line.startswith("  "):
+            current.append(line)
+        else:
+            current = None
+    return [(n, "\n".join(lines)) for n, lines in found]
+
+
+def numbers(text: str, prefix: str) -> set[int]:
+    return {n for n, _ in entries(text, prefix)}
+
+
+def doubled(text: str, prefix: str) -> set[int]:
+    """The numbers two different entries have."""
+    seen: dict[int, set[str]] = {}
+    for n, entry in entries(text, prefix):
+        seen.setdefault(n, set()).add(entry)
+    return {n for n, texts in seen.items() if len(texts) > 1}
+
+
+def alike(a: str, b: str) -> bool:
+    """Whether two entries of one number are one written twice: their words after the number."""
+    a_words, b_words = a.split()[3:], b.split()[3:]  # (after "- **B-12** ·")
+    return difflib.SequenceMatcher(None, a_words, b_words, autojunk=False).ratio() >= ALIKE
+
+
+def clashes(base: str, ours: str, theirs: str, prefix: str) -> list[int]:
+    """The numbers both sides gave to a new entry (a number the merge base has not), each a different entry."""
+    before = numbers(show(base, LOGS[prefix]), prefix)
+
+    def new(rev: str) -> dict[int, list[str]]:
+        found: dict[int, list[str]] = {}
+        for n, entry in entries(show(rev, LOGS[prefix]), prefix):
+            if n not in before:
+                found.setdefault(n, []).append(entry)
+        return found
+
+    mine, yours = new(ours), new(theirs)
+    return sorted(n for n in mine.keys() & yours.keys() if not any(alike(a, b) for a in mine[n] for b in yours[n]))
+
+
+def highest(rev: str, prefix: str) -> int:
+    """The highest number of this kind its log mentions (the archive's are older: tests/meta/test_agent_friendly.py)."""
+    return max((int(n) for kind, n in MENTION.findall(show(rev, LOGS[prefix])) if kind == prefix), default=0)
+
+
+def sort_newest(text: str, prefix: str, start: int) -> str | None:
+    """The log with its entries from the first numbered ``start`` or more sorted by number, an entry there twice
+    word for word kept once; None when something other than entries comes after them."""
+    lines = text.split("\n")
+    head = re.compile(rf"- \*\*{prefix}-(\d+)\*\*")
+    first = next((i for i, line in enumerate(lines) if (m := head.match(line)) and int(m[1]) >= start), None)
+    if first is None:
+        return text
+    found: list[tuple[int, list[str]]] = []
+    end = len(lines)
+    for i in range(first, len(lines)):
+        if m := head.match(lines[i]):
+            found.append((int(m[1]), [lines[i]]))
+        elif lines[i].startswith("  "):
+            found[-1][1].append(lines[i])
+        elif not lines[i].strip():
+            end = i
+            break
+        else:
+            return None
+    if any(line.strip() for line in lines[end:]):
+        return None
+    kept = list({"\n".join(entry): (n, entry) for n, entry in found}.values())  # (in order, the first of each kept)
+    kept.sort(key=lambda e: e[0])
+    return "\n".join(lines[:first] + [line for _, entry in kept for line in entry] + lines[end:])
+
+
+# Conflicts in a doc: git's markers with the merge base between them (merge.conflictstyle=diff3).
+
+
+def _changes(base: list[str], side: list[str]) -> list[tuple[int, int, list[str]]]:
+    """What a side changed of the base: (from, to, the lines put there); an addition has from == to."""
+    matcher = difflib.SequenceMatcher(None, base, side, autojunk=False)
+    return [(i1, i2, side[j1:j2]) for tag, i1, i2, j1, j2 in matcher.get_opcodes() if tag != "equal"]
+
+
+def merge_hunk(base: list[str], ours: list[str], theirs: list[str]) -> list[str] | None:
+    """A conflict's lines with both sides' changes, when no line of the base was changed by both (None if one was).
+    What both sides add at one place is kept, ours first; a line theirs adds that ours added too, once."""
+    mine = _changes(base, ours)
+    yours = [c for c in _changes(base, theirs) if c not in mine]  # the same change on both sides: once
+    for a1, a2, _ in mine:
+        for b1, b2, _ in yours:
+            if max(a1, b1) < min(a2, b2) or a1 < b1 < a2 or b1 < a1 < b2:
+                return None
+    added = {line for _, _, lines in mine for line in lines if line.strip()}
+    changes = [(i1, i2, lines, 0) for i1, i2, lines in mine]
+    changes += [(i1, i2, [x for x in lines if i1 < i2 or not (x.strip() and x in added)], 1) for i1, i2, lines in yours]
+    out: list[str] = []
+    at = 0
+    for i1, i2, lines, _ in sorted(changes, key=lambda c: (c[0], c[0] < c[1], c[3])):
+        out += base[at:i1] + lines
+        at = max(at, i2)
+    return out + base[at:]
+
+
+def settle(text: str) -> str | None:
+    """A doc's text with each conflict settled by ``merge_hunk``; None when one can't be."""
+    out: list[str] = []
+    hunk: list[list[str] | None] | None = None  # ours, the base, theirs
+    part = 0
+    for line in text.split("\n"):
+        mark = line.rstrip("\r")
+        if hunk is None:
+            if mark.startswith("<<<<<<<"):
+                hunk, part = [[], None, []], 0
+            else:
+                out.append(line)
+        elif mark.startswith("|||||||") and part == 0:
+            hunk[1], part = [], 1
+        elif mark == "=======" and part in (0, 1):
+            part = 2
+        elif mark.startswith(">>>>>>>") and part == 2:
+            merged = None if hunk[1] is None else merge_hunk(hunk[1], hunk[0], hunk[2])
+            if merged is None:
+                return None
+            out += merged
+            hunk = None
+        else:
+            hunk[part].append(line)
+    return None if hunk is not None else "\n".join(out)
+
+
+def settle_file(path: str) -> str | None:
+    """Settles a conflicted file the script may settle; else why a person is needed."""
+    if not (path.startswith("docs/") and path.endswith(".md")):
+        return "a conflict in code (or a file outside docs/), never settled by the script"
+    stages = {line.split()[2] for line in git("ls-files", "-u", "--", path).splitlines()}
+    if stages != {"1", "2", "3"}:
+        return "added on both sides, or deleted on one"
+    try:
+        text = read(path)
+    except UnicodeDecodeError:
+        return "not text in UTF-8"
+    if re.search(r"^(<{8}|>{8}|\|{8})", text, re.M):  # git's markers in the base it made of two (criss-cross)
+        return "the branches have more than one merge base, and git's merge of those conflicts here"
+    settled = settle(text)
+    if settled is None:
+        return "both sides changed the same lines"
+    write(path, settled)
+    return None
+
+
+# A branch's numbers given anew: in the lines it changed since the merge base, on a commit of its own.
+
+
+def changed_lines(base: str, tip: str) -> dict[str, set[int]]:
+    """The lines (from 1) of each file the branch added or changed since the merge base."""
+    diff = git("diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", base, tip)
+    found: dict[str, set[int]] = {}
+    path, header = None, False
+    for line in diff.split("\n"):
+        if line.startswith("diff --git "):
+            path, header = None, True
+        elif header and line.startswith("+++ "):
+            path = line[6:] if line.startswith("+++ b/") else None
+        elif line.startswith("@@") and (m := re.match(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)):
+            header = False
+            if path:
+                start = int(m[1])
+                found.setdefault(path, set()).update(range(start, start + int(m[2] or 1)))
+    return found
+
+
+def renumbered(tip: str, base: str, given: dict[tuple[str, int], int], message: str) -> tuple[str, list[str]]:
+    """A commit on top of the branch with its numbers given anew in the lines it changed: the commit and the files."""
+
+    def anew(m: re.Match) -> str:
+        return f"{m[1]}-{given.get((m[1], int(m[2])), m[2])}"
+
+    files = []
+    with tempfile.TemporaryDirectory() as folder:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(folder) / "index")}
+        git("read-tree", tip, env=env)
+        for path, lines in sorted(changed_lines(base, tip).items()):
+            try:
+                text = run_git(["show", f"{tip}:{path}"]).stdout.decode("utf-8")
+            except UnicodeDecodeError:
+                continue  # not text
+            old = text.split("\n")
+            new = [MENTION.sub(anew, line) if n in lines else line for n, line in enumerate(old, 1)]
+            if new != old:
+                blob = git("hash-object", "-w", "--stdin", data="\n".join(new).encode("utf-8"))
+                mode = git("ls-tree", tip, "--", path).split()[0]
+                git("update-index", "--cacheinfo", f"{mode},{blob},{path}", env=env)
+                files.append(path)
+        tree = git("write-tree", env=env)
+    return git("commit-tree", tree, "-p", tip, "-m", message), files
+
+
+def give_anew(base: str, head: str, tip: str, later: list[str]) -> dict[tuple[str, int], int]:
+    """The branch's numbers the branches merged before it gave to entries of their own, and the number each is given:
+    the next one that neither these nor the branches still to merge use."""
+    given = {}
+    for prefix in LOGS:
+        top = max(highest(rev, prefix) for rev in [head, tip, *later])
+        given |= {(prefix, n): top + k for k, n in enumerate(clashes(base, head, tip, prefix), 1)}
+    return given
+
+
+# One merge.
+
+
+def tidy_logs(head: str, notes: list[str], person: list[str]) -> None:
+    """After a merge: each log's newest entries sorted by number, a number newly written twice differently given to
+    a person, and the bug log's last number checked to be its newest."""
+    for prefix, path in LOGS.items():
+        if not Path(path).is_file() or "<<<<<<<" in (text := read(path)):
+            continue
+        before = show(head, path)
+        added = numbers(text, prefix) - numbers(before, prefix)
+        tidy = sort_newest(text, prefix, min(added)) if added else text
+        if tidy is None:
+            person.append(f"{path}: its newest entries could not be sorted by number (something other than entries "
+                          "comes after them)")  # fmt: skip
+        elif tidy != text:
+            write(path, tidy)
+            notes.append(f"Sorted the newest entries of {path} by number.")
+            print(f"  {notes[-1]}")
+            text = tidy
+        twice = sorted(doubled(text, prefix) - doubled(before, prefix))
+        if twice:
+            said = ", ".join(f"{prefix}-{n}" for n in twice)
+            person.append(f"{path}: {said} written twice, differently (one side edited it): keep the right one")
+        said = [int(n) for kind, n in MENTION.findall(text) if kind == prefix]
+        if prefix == "B" and said and said[-1] != max(said):
+            print(f"  To look at: the last line of {path} mentions B-{said[-1]} after its own number, but the "
+                  "log's last number must be its newest (tests/meta/test_agent_friendly.py): reword it.")  # fmt: skip
+
+
+def merge(branch: str, later: list[str]) -> bool:
+    """Merges one branch into the current one and commits it; whether there was anything to merge. Raises Stop
+    when something needs a person, the merge left in progress."""
+    head, tip = git("rev-parse", "HEAD"), git("rev-parse", f"{branch}^{{commit}}")
+    if run_git(["merge-base", "--is-ancestor", tip, head]).returncode == 0:
+        print("  Already in this branch: nothing to merge.")
+        return False
+    if run_git(["merge-base", head, tip]).returncode:
+        raise Stop(f"  {branch} has no history in common with this branch: not merged.")
+    base = git("merge-base", head, tip)
+    current = git("branch", "--show-current")
+    title = f"Merge {branch} into {current}" if current else f"Merge {branch}"
+    notes: list[str] = []
+    given = give_anew(base, head, tip, later)
+    if given:
+        olds = ", ".join(f"{p}-{n}" for p, n in given)
+        said = ", ".join(f"{p}-{n} is {p}-{new} now" for (p, n), new in given.items())
+        tip, files = renumbered(tip, base, given, f"Number {branch}'s entries anew: {said} (scripts/combine.py)\n\n"
+                                f"The branches merged before it gave {olds} to entries of their own; the mentions "
+                                "in the lines this branch changed follow.")  # fmt: skip
+        notes.append(f"{branch}'s {said}: the branches merged before it use {olds} (in {', '.join(files)}).")
+        print(f"  {notes[-1]} The branch itself is left as it was.")
+    done = run_git(["-c", "merge.conflictstyle=diff3", "merge", "--no-commit", "--no-edit", "-m", title, tip])
+    if run_git(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).returncode:
+        if git("rev-parse", "HEAD") == tip:
+            print("  Fast-forwarded: the branch had all this branch has.")
+            return True
+        raise Stop("  git could not merge it:\n" + (done.stdout + done.stderr).decode("utf-8", "replace").strip())
+    person = []
+    for path in git("diff", "--name-only", "--diff-filter=U").splitlines():
+        why = settle_file(path)
+        if why:
+            person.append(f"{path}: {why}")
+        else:
+            notes.append(f"Kept both sides of {path}.")
+            print(f"  {path}: the two sides changed different lines: kept both.")
+    tidy_logs(head, notes, person)
+    message = "\n\n".join([f"{title} (scripts/combine.py)", "\n".join(notes)]).strip()
+    if person:
+        Path(git("rev-parse", "--git-path", "MERGE_MSG")).write_bytes(message.encode("utf-8") + b"\n")
+        listed = "\n".join(f"    {line}" for line in person)
+        raise Stop(f"  Stopped: these need a person:\n{listed}\n  The merge of {branch} is left in progress: fix "
+                   "them, then git add the files and git commit --no-edit (git merge --abort undoes it).")  # fmt: skip
+    git("commit", "-q", "-m", message)
+    print(f"  Merged and committed ({git('rev-parse', '--short', 'HEAD')}).")
+    return True
+
+
+# The run.
+
+
+def prepare(branches: list[str], onto: str | None) -> str:
+    """Checks the checkout and the branches, makes the --onto branch; the commit the merges start from."""
+    if run_git(["rev-parse", "--show-toplevel"]).returncode:
+        raise Stop("Not in a git checkout: run it from the AP Coder folder.")
+    os.chdir(git("rev-parse", "--show-toplevel"))
+    if run_git(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).returncode == 0:
+        raise Stop("A merge is in progress: commit it (or git merge --abort) first.")
+    if git("status", "--porcelain", "--untracked-files=no"):
+        raise Stop("There are changes not committed: commit or stash them first.")
+    unknown = [b for b in [*branches, *([onto] if onto else [])]
+               if run_git(["rev-parse", "-q", "--verify", f"{b}^{{commit}}"]).returncode]  # fmt: skip
+    if unknown:
+        raise Stop(f"No branch or commit named {', '.join(unknown)}: nothing done.")
+    if onto:
+        name = f"combined-{datetime.date.today():%Y-%m-%d}"
+        taken = set(git("branch", "--list", "--format=%(refname:short)").splitlines())
+        name = next(n for n in [name, *(f"{name}-{k}" for k in range(2, 1000))] if n not in taken)
+        git("checkout", "-q", "-b", name, onto)
+        print(f"On a new branch, {name}, from {onto} (git branch -m NEW-NAME renames it).")
+    elif not git("branch", "--show-current"):
+        raise Stop("Not on a branch (a detached HEAD): switch to one first, or give --onto REF.")
+    else:
+        print(f"On the branch {git('branch', '--show-current')}.")
+    return git("rev-parse", "HEAD")
+
+
+def run_step(command: list[str]) -> bool:
+    print("$ " + " ".join(f'"{c}"' if not c or " " in c else c for c in command), flush=True)
+    return subprocess.run(command).returncode == 0
+
+
+def check(start: str) -> bool:
+    """The meta tests, then scripts/check.py on the files the merges changed."""
+    files = git("diff", "--name-only", start, "HEAD").splitlines()
+    if not files:
+        print("\nNothing changed: no check needed.")
+        return True
+    print(f"\nChecking: the meta tests, then the {len(files)} files the merges changed.", flush=True)
+    meta = run_step([sys.executable, "-m", "pytest", "-q", "-m", "", "tests/meta"])
+    changed = run_step([sys.executable, "scripts/check.py", *files])
+    print("Checks: OK." if meta and changed else "Checks: FAILED: see above; the merges are committed, not pushed.")
+    return meta and changed
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("branches", nargs="+", metavar="BRANCH", help="the branches to merge, in this order")
+    parser.add_argument("--onto", metavar="REF", help="merge into a new branch from REF (combined-<date>)")
+    parser.add_argument("--no-check", action="store_true", help="skip the meta tests and scripts/check.py")
+    args = parser.parse_args(argv)
+    try:
+        start = prepare(args.branches, args.onto)
+    except Stop as stop:
+        print(stop)
+        return 2
+    merged = []
+    for k, branch in enumerate(args.branches):
+        print(f"\nMerging {branch} ({k + 1} of {len(args.branches)})...", flush=True)
+        try:
+            if merge(branch, args.branches[k + 1 :]):
+                merged.append(branch)
+        except Stop as stop:
+            print(stop)
+            rest = args.branches[k + 1 :]
+            if rest:
+                print(f"  Not merged yet: {', '.join(rest)}. Once this merge is committed: "
+                      f"python scripts/combine.py {' '.join(rest)}")  # fmt: skip
+            if not args.no_check:
+                print(f"  Not checked: once all is merged, python -m pytest -q -m \"\" tests/meta, and "
+                      f"python scripts/check.py on the files of git diff --name-only {start[:10]} HEAD.")  # fmt: skip
+            return 1
+    print(f"\nMerged {len(merged)} of {len(args.branches)} branches: {', '.join(merged) or 'none'}. Nothing pushed.")
+    if args.no_check:
+        print("Checks skipped (--no-check).")
+        return 0
+    return 0 if check(start) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
