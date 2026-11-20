@@ -203,8 +203,7 @@ CACHES: dict[str, Kept] = {
     "ap_coder.core.store.review_queue:_KEPT": Kept(16 * MB, "KEPT_MOST: the queue's lists and facts of 2 "
                                                           "databases, about 1.1 KB an invoice in the queue (5.4 MB "
                                                           "for 100,000 invoices' 3,036 and 2,122)"),
-    "ap_coder.web.pages.review:_PAYS": Kept(6 * MB, "PAYS_KEPT Pay from texts decoded (360 B each), then all let "
-                                                    "go"),
+    "ap_coder.coding.bulk:_PAYS": Kept(6 * MB, "PAYS_KEPT Pay from texts decoded (360 B each), then all let go"),
     "ap_coder.coding.bulk:_FOUND": Kept(4 * MB, "FOUND_KEPT findings texts"),
     "ap_coder.capture.table_finder:_found": Kept(4 * MB, "FOUND_KEPT documents' tables", web=False),
     "ap_coder.core.store._base:_METRICS": Kept(1 * MB, "one count a database"),
