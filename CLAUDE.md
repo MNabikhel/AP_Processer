@@ -127,6 +127,6 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
   skip it.
 - Test: `python -m pytest -q` runs all but the slow tests (about 7 minutes; serially, no xdist). The whole suite with
   the browser tests, `python -m pytest -q -m ""`, takes about 28 minutes (docs/REFERENCE.md): CI runs it on pull requests
-  (Ubuntu 3.12 and Windows 3.14 only; every Python and the Mac jobs on main after a merge and nightly, D-260), so leave
+  (Ubuntu 3.12, Windows 3.12 and 3.14; every Python and the Mac jobs on main after a merge and nightly, D-330), so leave
   it to CI.
 - Lint: `ruff check ap_coder tests scripts` and `ruff format --check ap_coder tests scripts`.
