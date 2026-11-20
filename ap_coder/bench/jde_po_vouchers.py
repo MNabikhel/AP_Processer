@@ -584,8 +584,8 @@ class ProgressCase:
 
 
 def progress_cases(truth: Truth) -> list[ProgressCase]:
-    """The cases of ``PROGRESS_NAMES``, in that order: the made-up subcontractor's billings on four subcontracts of
-    the made-up company (each line holding back 10%), one billing released later."""
+    """The cases of ``PROGRESS_NAMES``, in that order: the made-up subcontractor's billings on five subcontracts of
+    the made-up company (each line holding back 10%), the last one done and its holdback released."""
     company = truth.company.number
     repairs, equipment = "0021061022.7330.3207", "0021061010.7540.5421"
     for account in (repairs, equipment):
@@ -605,6 +605,7 @@ def progress_cases(truth: Truth) -> list[ProgressCase]:
     mechanical = contract(41202, ("1", "MECHANICAL ROUGH-IN", "400000", "120000"))
     site = contract(41203, ("1", "SITE WORK", "100000", "0"), ("2", "CONCRETE FOUNDATIONS", "150000", "0"))
     electrical = contract(41204, ("1", "ELECTRICAL ROUGH-IN", "180000", "40000"))
+    roofing = contract(41205, ("1", "ROOFING REPLACEMENT", "120000", "120000"))  # (done: all of it vouchered)
     ten, five = Decimal(10), Decimal(5)
     made = [
         ProgressCase("first_billing", "a first application for payment (G702-style), 10% held back", builder, "AB",
@@ -623,10 +624,10 @@ def progress_cases(truth: Truth) -> list[ProgressCase]:
                      "WBS-P-0104", 2, day, 41204, APPLICATION,
                      (Billed("Electrical rough-in", Decimal(60000), "1.000"),), electrical, ten, tax_on=NET,
                      previous=Decimal(40000)),
-        ProgressCase("holdback_release", "a holdback release: the 10% held back paid out (held for a person)",
-                     builder, "AB", "WBS-P-0105", 9, day, 41201, PROGRESS_INVOICE,
-                     (Billed("Holdback release - office renovation, phase 1", Decimal(25000), "1.000"),), renovation,
-                     ten, release=True),
+        ProgressCase("holdback_release", "a holdback release: the roofing's 10% paid out (held for a person)",
+                     builder, "AB", "WBS-P-0105", 5, day, 41205, PROGRESS_INVOICE,
+                     (Billed("Holdback release - roofing replacement", Decimal(12000), "1.000"),), roofing, ten,
+                     release=True),
     ]  # fmt: skip
     assert tuple(c.name for c in made) == PROGRESS_NAMES
     return made

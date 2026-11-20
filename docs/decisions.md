@@ -6756,11 +6756,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     order (its Default option) and may be typed over; how a holdback release is keyed.
   - **The test set** (`bench/jde_po_vouchers.py`: `PROGRESS_NAMES`, `progress_cases`, `write_progress`; the
     `po-vouchers` command writes them beside D-265's): five made-up billings of the made-up company's building
-    subcontractor on four subcontracts (10% each): a first G702-style application, a third progress invoice (Ontario's
+    subcontractor on five subcontracts (10% each): a first G702-style application, a third progress invoice (Ontario's
     HST, 120,000.00 vouchered before), a billing of two lines holding back 5%, an application charging the GST on the
-    work less the holdback, and a holdback release; their lines as report 6 (`jde_exports.po_lines_report_xlsx`) and
-    the rows expected (`progress_billings.json`) under both setups and both tax settings; read end to end from their
-    PDFs (`tests/bench/test_jde_po_vouchers.py`).
+    work less the holdback, and the release of a finished subcontract's holdback; their lines as report 6
+    (`jde_exports.po_lines_report_xlsx`) and the rows expected (`progress_billings.json`) under both setups and both
+    tax settings; read end to end from their PDFs (`tests/bench/test_jde_po_vouchers.py`).
   - *Not chosen:* the Z-files' match rows (F0411Z1T, unchanged, D-264); a subcontract order type setting (OS is JD
     Edwards' own; another type is a subcontract by its lines' percents); the retainage at the PO's percent whatever
     the invoice holds back (the payment would not be the invoice's amount due).
