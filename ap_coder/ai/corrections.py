@@ -284,13 +284,15 @@ def _supplier(item: dict[str, Any], text: str, store: Any, out: dict[str, Any]) 
         return "no supplier list"
     name = " ".join(str(item.get("label") or "").split())
     number = norm_gst(str(item.get("gst_hst") or ""))
+    numbered = ""
     if number:
         if number not in {norm_gst(n) for n, *_ in find_gst_numbers(text)}:
             return f"GST/HST number {item.get('gst_hst')} is not printed on the page"
         one = store.supplier_of_tax_number(number)
         if one is None:
             return f"no one supplier in the supplier list has GST/HST number {item.get('gst_hst')}"
-        name = with_number(one) if store.vendors_sharing(one["display_name"]) else str(one["display_name"])
+        name = str(one["display_name"])
+        numbered = with_number(one) if store.vendors_sharing(name) else ""  # (one of the suppliers of its name)
     elif not name or _plain_words(name) not in _plain_words(text):
         return f"{name or 'the supplier'} is not printed on the page"
     else:
@@ -298,8 +300,9 @@ def _supplier(item: dict[str, Any], text: str, store: Any, out: dict[str, Any]) 
         if found is None or not found.get("in_master") or store.vendors_sharing(name):
             return f"{name} is not one supplier in the supplier list"
         name = str(found["display_name"])
-    if vendor_key(name) in our_name_keys(store):
+    if vendor_key(name) in our_name_keys(store):  # (its name as the list has it, never "... #2004": B-2801)
         return f"{name} is your company's own name"
+    name = numbered or name
     if vendor_key(name) == vendor_key(out.get("vendor_name") or ""):
         return f"{name} is the supplier already"
     return name, number

@@ -24,7 +24,7 @@ from ap_coder.core.store import APPROVED, REVIEW
 from ap_coder.ops.help import help_for
 from tests.ai.test_local_llm import REAL_FETCH, FakeLMStudio, chat_reply, local_settings
 from tests.ai.test_uniform_reading import _settings, store, touchless  # noqa: F401 - fixtures
-from tests.pdfs import ONE_ROW_GST, ONE_ROW_SUPPLIER, one_row_totals
+from tests.pdfs import ONE_ROW_CUSTOMER, ONE_ROW_GST, ONE_ROW_SUPPLIER, one_row_totals
 
 GEMMA = "gemma-4-12b"
 
@@ -340,3 +340,34 @@ def test_an_amount_is_printed_only_as_money_never_as_digits_of_a_phone_number_a_
         _, said, refused = corrections.apply_items(_short(), [_fix("charge", "150.00", "Freight")], page,
                                                    store=None, setup=None, supplier_wanted=False)  # fmt: skip
         assert said and said[0] == "added Freight 150.00 as line 2" and not refused, (printed, refused)
+
+
+@pytest.mark.parametrize("own", ["Settings", "report 9"])
+def test_a_supplier_found_by_its_gst_number_is_never_the_companys_own_under_a_name_two_supplier_numbers_share(
+    store,  # noqa: F811
+    own,
+):
+    """B-2801: the company's own name, in the supplier list under two supplier numbers, came back as "MAPLE RIDGE
+    HOLDINGS LTD. #2004" when the AI reviewer named the customer's GST/HST number (printed in the bill-to block): that
+    name was no longer the company's own name as written, so the invoice's supplier became the company itself. Its own
+    names are Settings' and JD Edwards' companies' (report 9). A GST/HST number two suppliers have is neither's."""
+    from tests.coding.test_companies import _load_group
+
+    if own == "Settings":
+        store.set_setting("our_names", ONE_ROW_CUSTOMER)
+    else:
+        _load_group(store)  # (00210 is Maple Ridge Holdings Ltd.)
+    store.import_vendor_master([{"vendor_name": ONE_ROW_CUSTOMER.upper(), "erp_id": "2004", "gst": ONE_ROW_GST},
+                                {"vendor_name": ONE_ROW_CUSTOMER.upper(), "erp_id": "2005"},
+                                {"vendor_name": "Two Of One Number Ltd", "erp_id": "3001", "gst": "888777666RT0001"},
+                                {"vendor_name": "Another Of It Ltd", "erp_id": "3002", "gst": "888777666RT0001"},
+                                {"vendor_name": ONE_ROW_SUPPLIER, "erp_id": "4471001"}], by_erp_id=True)  # fmt: skip
+    page = (f"Prairie Promo\nInvoice 118204\nBill to: {ONE_ROW_CUSTOMER.upper()} GST# {ONE_ROW_GST[:9]} "
+            f"{ONE_ROW_GST[9:]}\nAlso 888777666 RT0001\nTotal 105.00")  # fmt: skip
+    for number, why in ((f"{ONE_ROW_GST[:9]} {ONE_ROW_GST[9:]}", "your company's own name"),
+                        ("888777666 RT0001", "no one supplier")):  # fmt: skip
+        out, said, refused = corrections.apply_items({"vendor_name": "Unknown Supplies"},
+                                                     [_fix("supplier", label="", gst_hst=number)], page, store=store,
+                                                     setup=None, supplier_wanted=True)  # fmt: skip
+        assert said == [] and out["vendor_name"] == "Unknown Supplies", (number, said)
+        assert refused and why in refused[0], refused
