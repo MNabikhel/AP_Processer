@@ -1003,6 +1003,8 @@ def review_final_approve(request: Request, invoice_id: int, approval: str | None
             f"Not done: checked again now, this invoice has to be fixed first: {'; '.join(blocked)}. Send it back "
             "to the review queue to fix it there, or reject it."
         )
+    elif inv and (who := store.second_approver_refused(invoice_id, reviewer(), login())) is not None:
+        said = f"Not done: {who}."  # (before what it says since: the first approver may not approve it at all, B-2726)
     elif new and (override != override_key(new) or not why):
         said = (f"Not done: since its first approval, checked again, it says what its first approver did not see: "
                 f"{'; '.join(_title(i.code) for i in new)}. Open the invoice to give the final approval anyway, "
