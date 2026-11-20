@@ -87,6 +87,23 @@ def _text(value: Any) -> str:
     return text[:-2] if re.fullmatch(r"\d+\.0", text) else text
 
 
+# Report 9's country as it may be written (the address book's, typed by people): CA, CAN or Canada; US, USA or United
+# States; letters only, any case (B-2689).
+_CANADA, _UNITED_STATES = {"CA", "CAN", "CANADA"}, {"US", "USA", "UNITEDSTATES", "UNITEDSTATESOFAMERICA"}
+
+
+def _country(value: Any) -> str:
+    """A country of report 9 as compared: "CA" (CAN, Canada, " ca "), "US" (USA, United States, U.S.), any other its
+    first three letters in capitals."""
+    letters = re.sub(r"[^A-Z]", "", _text(value).upper())
+    return "CA" if letters in _CANADA else "US" if letters in _UNITED_STATES else letters[:3]
+
+
+def _currency(value: Any) -> str:
+    """A currency code of report 9 as compared: its letters in capitals (" cad ", "C AD": CAD)."""
+    return re.sub(r"[^A-Z]", "", _text(value).upper())[:3]
+
+
 def company_table(records: list[dict[str, Any]], columns: dict[str, str]) -> tuple[dict[str, dict[str, str]], int]:
     """({company: {"name", "currency", "country"}}, rows left out) of report 9's rows (``columns``: {field: the
     file's column}). A row with no company or name is left out, and JD Edwards' default company (00000), no
@@ -101,8 +118,8 @@ def company_table(records: list[dict[str, Any]], columns: dict[str, str]) -> tup
         if not code or not name or code == DEFAULT_COMPANY:
             left += 1
             continue
-        table[code] = {"name": name, "currency": _text(record.get(columns.get("currency", ""))).upper()[:3],
-                       "country": _text(record.get(columns.get("country", ""))).upper()[:3]}  # fmt: skip
+        table[code] = {"name": name, "currency": _currency(record.get(columns.get("currency", ""))),
+                       "country": _country(record.get(columns.get("country", "")))}  # fmt: skip
     return table, left
 
 
@@ -113,8 +130,8 @@ def _table(text: str) -> tuple[Company, ...]:
         return ()
     if not isinstance(data, dict):
         return ()
-    return tuple(Company(company_code(code), str(row.get("name") or ""), str(row.get("currency") or "").upper(),
-                         str(row.get("country") or "").upper())
+    return tuple(Company(company_code(code), str(row.get("name") or ""), _currency(row.get("currency")),
+                         _country(row.get("country")))
                  for code, row in sorted(data.items()) if isinstance(row, dict))  # fmt: skip
 
 

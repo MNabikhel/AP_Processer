@@ -228,3 +228,28 @@ def test_a_us_company_has_every_check_but_the_canadian_tax_ones_and_always_goes_
     assert us["US_TAX_NOT_CHECKED"].message == ("Company 00320 is not checked for Canadian tax (currency USD): its tax "
                                                 "is not checked here, confirm it is right")  # fmt: skip
     assert "US_TAX_NOT_CHECKED" in ALWAYS_A_PERSON and "COMPANY_UNKNOWN" in ALWAYS_A_PERSON
+
+
+def test_report_9s_country_and_currency_are_read_however_they_are_written(tmp_path):
+    """B-2689: report 9's country was taken as its first three letters: "CAN" and "Canada" were no "CA", so a
+    Canadian company in CAD lost its Canadian tax checks (and "United States" read as "UNI"); its currency likewise
+    with a space inside. Now CA, CAN, Canada (any case, spaces) are CA; US, USA, United States, U.S. are US."""
+    store = Store(tmp_path / "ap.db")
+    rows = [list(jde_group.TITLES["build"]), ["00210", "Maple Ridge Holdings Ltd.", " cad ", "CAN"],
+            ["00220", "Maple Ridge Constructors Ltd.", "C AD", "canada "], ["00230", "Fraser Bend Civil Ltd.", "CAD",
+            " ca "], ["00310", "Maple Ridge Builders Inc.", "usd", "USA"], ["00320", "Cascade Line Contractors Inc.",
+            "USD", "United States"], ["00330", "Cascade Line West Inc.", "USD", "U.S."],
+            ["00410", "Maple Ridge Caribbean Ltd.", "USD", "Barbados"]]  # fmt: skip
+    _load_group(store, rows)
+    table = companies.companies(store)
+    assert {code: (c.currency, c.country) for code, c in table.items()} == {
+        "00210": ("CAD", "CA"), "00220": ("CAD", "CA"), "00230": ("CAD", "CA"), "00310": ("USD", "US"),
+        "00320": ("USD", "US"), "00330": ("USD", "US"), "00410": ("USD", "BAR")}  # fmt: skip
+    assert [companies.canadian(store, code)[0] for code in table] == [True, True, True, False, False, False, False]
+    # report 9 as an older load kept it: read the same way
+    store.set_setting(companies.COMPANIES_SETTING, json.dumps({"00210": {"name": "A", "currency": "cad ",
+                                                                         "country": "CAN"},
+                                                               "00310": {"name": "B", "currency": "USD",
+                                                                         "country": "us"}}))  # fmt: skip
+    assert companies.canadian(store, "00210") == (True, "CA and CAD")
+    assert companies.companies(store)["00310"].country == "US"
