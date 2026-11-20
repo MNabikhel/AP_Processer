@@ -884,7 +884,7 @@ def _fold_in(store: Any, inv: dict[str, Any], capture: Any, rows: list[dict[str,
         # person may have approved it with corrections and reopened it while Azure read it.
         output = inv.get("ai_output")
         if (folded and held and rows and untouched and not differ and not untrusted and output
-                and still_touchless(store, capture, output, invoice_id=iid)):  # fmt: skip
+                and (output := still_touchless(store, capture, output, invoice_id=iid)) is not None):  # fmt: skip
             try:
                 store.approve_invoice(iid, output, AUTONOMOUS_REVIEWER, login="ap-coder")
                 approved = True

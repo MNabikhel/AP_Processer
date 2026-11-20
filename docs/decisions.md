@@ -7188,6 +7188,19 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     held does); whether R04110ZA works out a use tax from the area with the tax amount blank, or wants it sent; how a
     PO-matched voucher's sales tax is to be matched; and whether the US companies want use tax accrued on every
     invoice charging none (an out-of-state supplier) or only on some.
+- **D-321** · **What the second approver is told is new since the first approval: what the first approver's screen
+  neither showed nor settled** (D-286, B-2695; B-2929).
+  - The second approval's check runs the approved coding's checks again (`review.second_check`) and compares each
+    warning, by its code and line, with what the first approval kept (its `open_issues`: the errors and warnings
+    showing as it was approved, those approved anyway among them). Its wording, or an error approved over that is a
+    warning now, does not make it new.
+  - A warning the review screen settles is no longer said new: the line-numbering gap of a line the first approver
+    deleted, and what asks for a field the coding leaves blank (the GST/HST or QST number), said as "Not on this
+    invoice" says it. Both are worked out from the approved coding and the AI's reading, which give that warning as
+    they gave it on the first approver's screen; nothing more is kept with the approval, so a first approval made
+    before is checked the same way.
+  - *Left as it is:* a company's Canadian tax checks turned on since the first approval give its other tax warnings
+    as new; a missing GST/HST or QST number among them is not said again.
 - **D-322** · **A company's own JD Edwards values (D-301) stay on Settings → JD Edwards E1 while they are kept,
   whatever report 9 lists** (B-2937).
   - **Why:** the companies' table was shown only while report 9 named two or more companies, but a company's own open

@@ -354,6 +354,53 @@ def test_second_approval_and_send_back(client, store, me):
     )
 
 
+def _settled_on_screen(client, store, settled: str) -> tuple[int, dict[str, Any]]:
+    """An invoice of the queue and its form, approvable once its screen settled a warning its checks give: its
+    GST/HST number blank and marked "Not on this invoice" (``settled`` "absent"), or its second line deleted, its
+    amount moved onto the first (the line numbers left 1, 3…)."""
+    import json
+
+    def drop_second(rows):
+        rows[0]["amount"] = round(float(rows[0].get("amount") or 0) + float(rows[1].get("amount") or 0), 2)
+        return [r for i, r in enumerate(rows) if i != 1]
+
+    for inv in store.list_invoices(REVIEW):
+        ai = store.get_invoice(inv["id"])["ai_output"] or {}
+        if settled == "absent":
+            if not {t.get("tax_type") for t in ai.get("tax_lines") or []} & {"GST", "HST"}:
+                continue
+            data = form_of(store, inv["id"], gst_hst_registration_number="")
+            data["from_vendor"] = json.dumps({"vendor": store.get_invoice(inv["id"])["vendor_key"], "fields": {}})
+            shown = check(client, inv["id"], data)["sections"]["checks"]
+            data["absent"] = json.dumps(["gst_hst_registration_number"])
+            if "registration number not found" in shown and check(client, inv["id"], data)["allow"]:
+                return inv["id"], data
+        elif len(ai.get("line_items") or []) >= 3:
+            data = form_of(store, inv["id"], lines=drop_second)
+            if check(client, inv["id"], data)["allow"]:
+                return inv["id"], data
+    raise AssertionError(f"no demo invoice to settle ({settled})")
+
+
+@pytest.mark.parametrize("settled", ["absent", "line deleted"])
+def test_a_warning_the_first_approvers_screen_settled_is_not_new_at_the_second_approval(client, store, me, settled):
+    """B-2929: the second approval's check (B-2695) gave as new since the first approval, "what its first approver
+    did not see", a warning the first approver's screen had settled: the GST/HST number they marked "Not on this
+    invoice" (GST_HST_NUMBER_MISSING), the line numbering's gap of a line they deleted (LINE_NUMBERING). Nothing had
+    changed, yet it was refused but approved anyway, with a reason. It is checked as their screen settled it."""
+    from ap_coder.web.pages import review
+    from tests.webclient import web_settings
+
+    store.set_setting("approval_limit", "1")
+    inv_id, data = _settled_on_screen(client, store, settled)
+    assert client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE).json().get("ok") is not False
+    assert store.get_invoice(inv_id)["status"] == PENDING
+    assert review.second_check(store, web_settings(), store.get_invoice(inv_id)) == ([], [])
+    me.update(name="Sam Rivera", login="srivera")
+    client.post(f"/review/{inv_id}/final-approve", data={"approval": store.latest_approval_id(inv_id)}, headers=PAGE)
+    assert store.get_invoice(inv_id)["status"] == APPROVED
+
+
 def test_an_approved_invoice_can_be_reopened_for_correction_and_its_pdf_downloaded(client, store):
     inv_id = clean_invoice(client, store)
     client.post(f"/review/{inv_id}/approve", data=form_of(store, inv_id), headers=PAGE)

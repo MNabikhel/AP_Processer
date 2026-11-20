@@ -169,14 +169,15 @@ def payloads(store: Any, batch: int) -> tuple[dict[int, dict[str, Any]], dict[in
 def _payloads(store: Any, batch: int) -> tuple[dict[int, dict[str, Any]], dict[int, list[str]],
                                                list[dict[str, Any]], dict[str, Any]]:  # fmt: skip
     """``payloads``, and what they were made with (for the dry run's report: not read or prepared again): {"settings",
-    "lookup", "on", "fx_rates", "site", "vouchers": {invoice: (AN8, voucher)}}."""
+    "lookup", "on", "fx_rates", "site", "prior" (``jde.batch_prior``), "vouchers": {invoice: (AN8, voucher)}}."""
     known = _batch(store, batch)
     settings, lookup, fx_rates = jde_settings.load(store), store.vendor_ids(), store.fx_rates()
     invoices = store.get_invoices(store.batch_invoice_ids(batch))
     blocking = jde_settings.settings_problems(settings)
     on = dt.date.fromisoformat(known["created_at"][:10])
     prepared = jde_voucher._vouchers(invoices, settings, lookup, on)
-    problems = jde.validate(invoices, settings, lookup, prepared=prepared)
+    prior = jde.batch_prior(store, invoices)  # (the batch's own per-company rule: B-2925)
+    problems = jde.validate(invoices, settings, lookup, prior, prepared=prepared)
     installation, site = installation_id(store), jde_zfiles.batch_site(known, invoices)
     # (a PO-matched voucher's match as its keying sheet keys it, D-284)
     matches = jde_keying.po_matches(store, invoices, settings.charge_account) if settings.po_matched else {}
@@ -198,7 +199,7 @@ def _payloads(store: Any, batch: int) -> tuple[dict[int, dict[str, Any]], dict[i
                           "matches": match_rows, "_expect": _expect(inv, headers, settings),
                           "_timeout": settings.voucher_timeout, "_vendor": inv.get("vendor_key") or "",
                           "_moved": jde_settings.moved_note(day, moved) if moved else ""}  # fmt: skip
-    made = {"settings": settings, "lookup": lookup, "on": on, "fx_rates": fx_rates, "site": site,
+    made = {"settings": settings, "lookup": lookup, "on": on, "fx_rates": fx_rates, "site": site, "prior": prior,
             "vouchers": {inv["id"]: pv for inv, pv in zip(invoices, prepared, strict=True)}}  # fmt: skip
     return out, problems, invoices, made
 
@@ -470,9 +471,9 @@ def dry_run(store: Any, batch: int, actor: str | None = None,
     found, problems, invoices, made = _payloads(store, batch)
     going = [i for i in invoices if i["id"] in found]
     rows = {i: (p["pay_items"], p["gl_lines"], p["matches"]) for i, p in found.items()}
-    report = jde.dry_run(going, made["settings"], made["lookup"], batch=batch, fx_rates=made["fx_rates"],
-                         on=made["on"], prepared=[made["vouchers"][i["id"]] for i in going], rows=rows,
-                         site=made["site"])  # fmt: skip
+    report = jde.dry_run(going, made["settings"], made["lookup"], prior=made["prior"], batch=batch,
+                         fx_rates=made["fx_rates"], on=made["on"], prepared=[made["vouchers"][i["id"]] for i in going],
+                         rows=rows, site=made["site"])  # fmt: skip
     already = {p["invoice_id"]: p for p in postings(store, batch)}
     jde_note = ""
     own = client is None

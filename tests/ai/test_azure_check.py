@@ -475,6 +475,42 @@ def test_a_spot_checked_invoice_waits_for_azure_then_goes_touchless(store, monke
     assert inv["status"] == APPROVED and inv["reviewer"] == AUTONOMOUS_REVIEWER
 
 
+def _companies_loaded(store):
+    """JD Edwards' made-up companies (report 9, ``jde_group``)."""
+    from ap_coder.bench import jde_group
+    from ap_coder.coding import companies
+    from ap_coder.core.headers import match_columns
+
+    rows = jde_group.companies_rows()
+    titles = list(jde_group.TITLES["build"])
+    table, _ = companies.company_table([dict(zip(titles, r, strict=True)) for r in rows[1:]],
+                                       match_columns(titles, companies.COMPANY_ALIASES))  # fmt: skip
+    store.set_setting(companies.COMPANIES_SETTING, json.dumps(table))
+
+
+def test_azure_agreeing_approves_it_under_the_company_its_checks_decided(store, monkeypatch):
+    """B-2926: held for a spot-check under the company its supplier's history gave, then a Settings → Review name line
+    said the bill-to printed is another company's: Azure agreeing approved it without a person under the company it
+    was processed with, though the checks it passed decided the other. It is approved under the one they decided."""
+    _companies_loaded(store)
+    store.import_erp_vouchers([{"key": "00210-PV-700101-001", "vendor_name": "Northwind IT Solutions Inc.",
+                                "invoice_number": "NW-2025-0001", "total": 100.0, "invoice_date": "2025-01-02",
+                                "an8": "", "document": "700101"}])  # fmt: skip
+    _turn_on(store, monkeypatch, rate=100)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)
+    result = _process(store)
+    assert (result.output["company"], result.output["company_how"]) == ("00210", "history")
+    _code_the_lines(store, result.invoice_id)
+    _touchless_vendor(store, result.output)
+    store.update_after_check(result.invoice_id, None, None, (azure_check.ISSUE_CODE,),
+                             {"capture": {"state": AUTONOMOUS, "azure_hold": True}})  # fmt: skip
+    store.set_setting("our_names", "Fabrikam Canada = 220")  # the bill-to printed: 00220's
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(_raw_from(result.capture)))
+    assert outcome.approved is True
+    final = store.get_invoice(result.invoice_id)["final_output"]
+    assert (final["company"], final["company_how"]) == ("00220", "name")
+
+
 def _code_the_lines(store, invoice_id):
     """Each line of the invoice's proposal given an account and a cost center (the local model is off here, so it
     leaves them unassigned, and an invoice with a line to code is never approved without a person)."""
