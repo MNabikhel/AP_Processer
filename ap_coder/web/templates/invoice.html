@@ -558,9 +558,13 @@
     <p class="muted small">{% if same %}You approved it first, so someone else gives the final approval,{% else %}It takes another person than the first approver,{% endif %}
       a colleague with an account of their own: on one laptop one person can't give both, so share this laptop with them (the pilot guide says how) and they sign in to give it. Not going ahead? Send back returns it to the review queue.</p></div>
     {% endif %}
+    {% if second_new %}<div class="second-new second-over"><b>Since its first approval, checked again, it says what {{ inv.reviewer }} did not see:</b>
+      <ul>{% for w in second_new.said %}<li>{{ w }}</li>{% endfor %}</ul>
+      {% if can("/review/1/final-approve") and not same %}<label class="check"><input type="checkbox" name="override" value="{{ second_new.key }}" form="final-approve" required> Approve anyway: I checked {{ "it" if second_new.said | length == 1 else "them" }}</label>
+      <label class="field">Why<input type="text" name="override_reason" form="final-approve" maxlength="300" required placeholder="e.g. keyed to the other company by mistake, reversed there"></label>{% endif %}</div>{% endif %}
     {% if can("/review/1/final-approve") %}
     <div class="row end">
-      <form method="post" action="/review/{{ inv.id }}/final-approve">
+      <form method="post" action="/review/{{ inv.id }}/final-approve" id="final-approve">
         <button class="btn primary" type="submit"{% if same %} disabled title="You approved it first ({{ 'the same account' if account else 'same name or computer login' }}): someone else gives the second approval"{% endif %}>
           <span class="ms" aria-hidden="true">how_to_reg</span>Final approval</button><input type="hidden" name="approval" value="{{ approval }}"></form>
       <details class="pop">

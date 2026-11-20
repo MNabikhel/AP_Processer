@@ -70,6 +70,52 @@ def test_the_company_box_holds_an_invoice_until_a_company_is_picked(client, stor
     assert "Company 00310 is not checked for Canadian tax (currency USD)" in html.unescape(picked["sections"]["checks"])
 
 
+def test_a_warning_new_since_the_first_approval_is_shown_to_the_second_approver_and_approved_only_anyway(
+    chart_company, chart_company_client, monkeypatch
+):
+    """B-2695: a warning the first approver never saw (here a bill of the same number loaded since under another
+    company, DUPLICATE_OTHER_COMPANY) passed the second approval with nothing said: only errors kept it. It is shown on
+    the invoice waiting for its second approval, and the second approval takes "Approve anyway" with a reason, kept
+    with it; without them it is refused, the warning said. The approved company stays the one approved (D-286)."""
+    from ap_coder.core import audit
+    from ap_coder.core.store import APPROVED, PENDING
+    from tests.web.test_chart_eligible import _first_approval, _one_line, _two_companies
+    from tests.webclient import post
+
+    store, client = chart_company.store, chart_company_client
+    _two_companies(store)
+    page, _courier = _one_line(chart_company, client)
+    _first_approval(store, monkeypatch, page)
+    final = store.get_invoice(page.id)["final_output"]
+    assert final["company"] == "00210"
+    store.import_erp_vouchers([{"key": "00310-PV-700901-001", "vendor_name": final["vendor_name"],
+                                "invoice_number": final["invoice_number"], "total": final["grand_total"],
+                                "invoice_date": final["invoice_date"], "an8": "", "document": "700901"}])  # fmt: skip
+    monkeypatch.setenv("AP_REVIEWER", "Kim")
+    for name in ("LOGNAME", "USER", "LNAME", "USERNAME"):
+        monkeypatch.setenv(name, "kim")
+    approval = store.latest_approval_id(page.id)
+    shown = html.unescape(follow(client, post(client, f"/review/{page.id}/final-approve", {"approval": approval})))
+    assert store.get_invoice(page.id)["status"] == PENDING
+    assert "Not done: since its first approval, checked again, it says what its first approver did not see: " \
+           "Already entered under another company" in shown  # fmt: skip
+    screen = html.unescape(client.get(f"/review/{page.id}").text)
+    card = screen.split('class="second-new', 1)[1].split("</div>", 1)[0]
+    assert "is already in the ERP under company 00310" in card and 'name="override_reason"' in card
+    key = re.search(r'name="override" value="([0-9a-f]+)"', card).group(1)
+    data = {"approval": approval, "override": key, "override_reason": ""}
+    assert "say why" in html.unescape(follow(client, post(client, f"/review/{page.id}/final-approve", data)))
+    assert store.get_invoice(page.id)["status"] == PENDING
+    data["override_reason"] = "Keyed to 00310 by mistake, reversed there"
+    follow(client, post(client, f"/review/{page.id}/final-approve", data))
+    assert store.get_invoice(page.id)["status"] == APPROVED
+    event = next(iter(store.events(page.id, ["final_approved"], limit=1)))
+    assert event["detail"]["open_issues"] == [{"code": "DUPLICATE_OTHER_COMPANY", "severity": "warning", "line": None,
+                                               "override_reason": data["override_reason"]}]  # fmt: skip
+    assert "approved anyway over a warning new since the first approval (Already entered under another company): " \
+           "“Keyed to 00310 by mistake, reversed there”" in audit.describe(event)  # fmt: skip
+
+
 def _box(client, invoice_id: int) -> str:
     page = html.unescape(client.get(f"/review/{invoice_id}").text)
     return page.split('data-field="company"', 1)[1].split("</label>", 1)[0]
@@ -126,7 +172,8 @@ def test_a_name_written_for_a_company_the_companies_report_does_not_list_is_not_
     assert refused.status_code == 400 and store.our_names() == []
     assert html.unescape(refused.json()["error"]) == (
         "Not saved: “Cascade Line = 330”, “Yard 9 =” name no company of the companies report (JD Edwards files, card "
-        "9). Write each name, = and the number of one of its companies, e.g. Maple Ridge Holdings Ltd. = 00210.")  # fmt: skip
+        "9). Write each name, = and the number of one of its companies, e.g. Maple Ridge Holdings Ltd. = 00210."
+    )
     assert follow(client, client.post("/settings/review", data={"our_names": typed.replace("330", "320")
                                                                 .replace("\nYard 9 =", "")}, headers=PAGE))  # fmt: skip
     assert companies.name_variations(store)["cascade line"] == "00320"

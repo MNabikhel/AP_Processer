@@ -857,11 +857,14 @@ class InvoicesMixin:
             ).fetchone()
         return dict(row) if row is not None else None
 
-    def final_approve(self, invoice_id: int, approver: str, login: str = "", *, shown: str | None) -> None:
+    def final_approve(self, invoice_id: int, approver: str, login: str = "", *, shown: str | None,
+                      over: list[dict[str, Any]] | None = None) -> None:  # fmt: skip
         """The second approval: by someone other than the first approver (another name and, when the
         dashboard records it, another computer login; in server mode another account, ``same_approver``, not one the
         first approver added or reset within ``VOUCH_DAYS`` days). ``shown``, always given: the approval the page
-        showed (``latest_approval_id``): approved again since, or none, it is refused (``ApprovedAgain``, B-654)."""
+        showed (``latest_approval_id``): approved again since, or none, it is refused (``ApprovedAgain``, B-654).
+        ``over``: the warnings new since the first approval it is approved anyway over, each with why (B-2695), kept
+        with it as the first approval keeps its ``open_issues``."""
         inv = self.get_invoice(invoice_id)
         if inv is None or inv["status"] != PENDING:
             raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
@@ -897,6 +900,7 @@ class InvoicesMixin:
                 "first_approver": inv["reviewer"], "total": (inv["final_output"] or {}).get("grand_total"),
                 **({"second_reason": reason} if reason else {}), **({"login": login} if login else {}),
                 **({"user_id": account_of(login)} if account_of(login) is not None else {}),
+                **({"open_issues": over} if over else {}),
             })  # fmt: skip
 
     def send_back(self, invoice_id: int, actor: str, reason: str = "") -> None:
