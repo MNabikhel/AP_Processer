@@ -34,8 +34,8 @@ count). They are of `ap_coder/` on 7 November 2026, after the seam went in.
   look whatever the version. A port starts PostgreSQL at the latest schema and carries on the numbering: step 28 and
   after are written once, with `dialect.columns` and `add_column`, for both.
 - **Migrated equals fresh** (`tests/core/test_migrations.py`): the database each release made, from PR #1 (schema 2,
-  the oldest an update starts from) to PR #99 (schema 27), and the versions on the way that no release had (20 to
-  26): 22 databases, each made by that release's own code (`scripts/old_schemas.py`, kept as SQL in
+  the oldest an update starts from) to PR #158 (schema 32), and the versions on the way that no release had (20 to
+  26): 32 databases, each made by that release's own code (`scripts/old_schemas.py`, kept as SQL in
   `tests/fixtures/old_schemas/`). Each is brought up to date and compared with a new database: tables, columns
   (type, NOT NULL, default, key), foreign keys, indexes, triggers and views. One difference is left, listed with why
   it is harmless (the AI reviewer's queue's columns in another order). It found B-1975 (an index a database at 24 never
