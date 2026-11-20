@@ -46,7 +46,7 @@ from .jde_voucher import (
 )
 
 if TYPE_CHECKING:
-    from ..coding.po import VoucherMatch
+    from ..coding.po import MatchRow, VoucherMatch
 
 HEADER_COLUMNS = [
     "VLEDUS", "VLEDBT", "VLEDTN", "VLEDLN", "VLEDSP", "VLEDTC", "VLEDTR",
@@ -296,10 +296,11 @@ def _match_rows(v: _Voucher, keys: Mapping[str, Any], common: Mapping[str, Any],
     its own, D-265); without its rows (the PO not loaded) the invoice's line number, as before (D-284)."""
     final = v.final
     po = str(final.get("po_number") or "").strip()
-    rows = {r.invoice_line: r for r in matched.rows} if matched is not None and matched.rows else None
+    items = final.get("line_items") or []
+    rows = _line_rows(items, matched.rows) if matched is not None and matched.rows else None
     out = []
-    for li in final.get("line_items") or []:
-        row = rows.get(li.get("line_number")) if rows is not None else None
+    for n, li in enumerate(items):
+        row = rows[n] if rows is not None else None
         on_po = row is not None and row.on_po
         out.append({
             "EDUS": keys["VLEDUS"], "EDBT": keys["VLEDBT"], "EDTN": keys["VLEDTN"], "EDLN": 1,
@@ -308,6 +309,23 @@ def _match_rows(v: _Voucher, keys: Mapping[str, Any], common: Mapping[str, Any],
             "DSC1": _text(li.get("description"), 30), "UORG": _plain(li.get("quantity")),
             "PRRC": _plain(li.get("unit_price"), 4), "AEXP": _amount(_units(li.get("amount")), settings, v.decimals),
             "CRCD": v.currency, "SBL": li.get("subledger") or "", "SBLT": li.get("subledger_type") or ""})  # fmt: skip
+    return out
+
+
+def _line_rows(items: list[dict[str, Any]], rows: list[MatchRow]) -> list[MatchRow | None]:
+    """Each invoice line's row of its voucher match (None: it has none, a line on no PO line). The rows are made from
+    the lines in their order, at most one a line, so a line takes the next row, when made from it (its number and
+    description): never a row found by the line's number alone, which an invoice may repeat (page 2 starting again at
+    1, B-2920)."""
+    out: list[MatchRow | None] = []
+    k = 0
+    for li in items:
+        row = rows[k] if k < len(rows) else None
+        if row is not None and (row.invoice_line, row.description) == (li.get("line_number"), li.get("description")):
+            k += 1
+            out.append(row)
+        else:
+            out.append(None)
     return out
 
 
