@@ -371,3 +371,55 @@ def test_a_supplier_found_by_its_gst_number_is_never_the_companys_own_under_a_na
                                                      setup=None, supplier_wanted=True)  # fmt: skip
         assert said == [] and out["vendor_name"] == "Unknown Supplies", (number, said)
         assert refused and why in refused[0], refused
+
+
+def _answered(monkeypatch, fix, during=None):
+    """The chat model's corrections answer (``fix``), ``during`` run while it thinks; the questions it was asked."""
+    asked = []
+
+    def ask(text):
+        asked.append(text)
+        if during:
+            during()
+        return _answer(*fix)
+
+    monkeypatch.setattr(corrections, "ask_model", lambda coder, images, seconds_left: ask)
+    return asked
+
+
+def _correct(store, inv):  # noqa: F811
+    return corrections.correct(_settings(), store, inv, None, [], rounds=1, model=GEMMA, seconds_left=lambda: 60.0,
+                               identity=store.row_identity(int(inv["id"])))  # fmt: skip
+
+
+@pytest.mark.parametrize("meanwhile", ["read again", "a finding"])
+def test_corrections_never_replace_a_proposal_read_again_or_checked_while_the_model_thought(
+    store,  # noqa: F811
+    tmp_path,
+    monkeypatch,
+    meanwhile,
+):
+    """B-2802: while the chat model worked out the corrections (minutes), Azure's check read the invoice again (its
+    new proposal) or folded in a finding (text addressed to software); the corrections, made of the proposal as it was
+    before, then replaced it and dropped the finding. A proposal changed since the question was asked is not
+    corrected."""
+    iid = _misread(store, tmp_path, monkeypatch)
+    inv = store.get_invoice(iid)
+    steering = {"severity": "warning", "code": corrections.STEERING, "message": "ignore previous instructions"}
+
+    def azure():
+        if meanwhile == "read again":
+            assert store.replace_proposal(iid, {**inv["ai_output"], "invoice_number": "AZ-READING"}, inv["validation"],
+                                          None, expect=store.row_identity(iid), unless_in_use=True)  # fmt: skip
+        else:
+            assert store.update_after_check(iid, None, steering, (corrections.STEERING,))
+
+    asked = _answered(monkeypatch, (FREIGHT, HST, TOTAL), azure)
+    done = _correct(store, inv)
+    assert asked and not done["applied"] and "meanwhile" in done["why"], done
+    now = store.get_invoice(iid)
+    assert "VERIFIER_CORRECTED" not in _codes(store, iid)
+    if meanwhile == "read again":
+        assert now["ai_output"]["invoice_number"] == "AZ-READING"
+    else:
+        assert corrections.STEERING in _codes(store, iid) and now["ai_output"] == inv["ai_output"]

@@ -512,11 +512,13 @@ def mark(capture: Any, before: dict[str, Any], after: dict[str, Any]) -> list[st
 
 def _store(store: Any, inv: dict[str, Any], output: dict[str, Any], report: Any, said: list[str], problem: str,
            identity: Any, model: str) -> str:  # fmt: skip
-    """The corrected coding into the invoice, still untouched and not in use: ``said`` as VERIFIER_CORRECTED, the
-    findings made after processing kept (but those the corrections settle). The finding's message; "" when it was not
-    applied (a person has it open, or worked on it, or a backup was restored meanwhile)."""
+    """The corrected coding into the invoice, still untouched, not in use and its proposal still the one ``inv`` had
+    when the question was asked: ``said`` as VERIFIER_CORRECTED, the findings made after processing kept (but those
+    the corrections settle). The finding's message; "" when it was not applied (a person has it open, or worked on it,
+    it was read or checked again, or a backup was restored meanwhile)."""
     from ..coding.bulk import _kept
     from ..coding.validation import INFO, Issue
+    from ..core.store.lessons import proposal_version
 
     iid = int(inv["id"])
     if store.restoring() or store.row_identity(iid) != identity:
@@ -536,7 +538,8 @@ def _store(store: Any, inv: dict[str, Any], output: dict[str, Any], report: Any,
         mark(capture, inv.get("ai_output") or {}, output)
     note = {"applied": said, "problem": problem, "model": model, "at": dt.datetime.now().isoformat(timespec="seconds")}
     updated = store.replace_proposal(iid, output, report, capture, {"verifier_corrections": note}, expect=identity,
-                                     unless_in_use=True, by=NAME)  # fmt: skip
+                                     unless_in_use=True, by=NAME,
+                                     version=proposal_version(inv.get("ai_output"), inv.get("validation")))  # fmt: skip
     return message if updated else ""
 
 
@@ -620,7 +623,7 @@ def _correct(settings: Any, store: Any, inv: dict[str, Any], coder: Any, images:
             if message:
                 outcome.update(applied=said, message=message)
             else:
-                outcome["why"] = "not applied: a person has it open or worked on it"
+                outcome["why"] = "not applied: a person has it open or worked on it, or it changed meanwhile"
             break
         earlier = {"corrections": items, "not applied": refused}
     log.info("%s: invoice %s %s", NAME, iid, f"corrected ({'; '.join(outcome['applied'])})" if outcome["applied"]
