@@ -328,7 +328,7 @@ GL_PO = (
     "it posts no tax of its own, so the tax would go nowhere: send it without the PO match"
 )
 # A billing that holds part of its total back (D-273, D-274), on a voucher of its own: none of JD Edwards' standard
-# voucher's amounts retains a holdback, so its gross would pay the supplier the holdback too (B-2945).
+# voucher's amounts retains a holdback, so its gross would pay the supplier the holdback too (B-2945, D-323).
 HOLDBACK = "HOLDBACK_BY_HAND"
 # Code B accrues the PST on the whole voucher (B-922).
 PST_MIX = (

@@ -7184,3 +7184,19 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     held does); whether R04110ZA works out a use tax from the area with the tax amount blank, or wants it sent; how a
     PO-matched voucher's sales tax is to be matched; and whether the US companies want use tax accrued on every
     invoice charging none (an out-of-state supplier) or only on some.
+- **D-323** · **A billing holding part of its total back is keyed at the total before its holdback only by Voucher
+  Match, which retains it; on a standard voucher it is keyed by hand, said before approval** (B-2945, B-2946;
+  `jde_voucher._held_back`, `HOLDBACK_BY_HAND`; D-273, D-274).
+  - **Why:** a standard voucher (PO-matched vouchers off, the prototype's settings, or an invoice quoting no PO) has
+    no amount that retains a holdback: its gross, the total the billing is coded at (D-274), would pay the supplier
+    the holdback too. So, whatever the PO-matched setting, a voucher whose progress billing as read holds something
+    back is held from the keying sheet ("Not ready"), the batch files and the dry run, with why: "a billing that holds
+    back 4,500.00: keyed at its gross 47,250.00, the supplier would be paid the holdback too, not the 42,750.00 due.
+    Key it by hand, as JD Edwards keys a holdback".
+  - **On the review screen:** an error approved only anyway, with a reason, not a JD Edwards finding (those are
+    never approved anyway): nothing on the screen fixes it (the holdback as read is not edited, D-274), and the
+    approval keeps who said it is keyed by hand. Its total is held for a person to check, as a total printed above a
+    holdback is (B-2946, D-47).
+  - *Not chosen:* the amount due as the gross (the G/L lines and tax would not add up to it, and the holdback would
+    be lost from the payable); the holdback as a second pay item on hold (how the company keys one outside Voucher
+    Match is the JD Edwards team's to say); a warning only (the batch files would still pay it).

@@ -316,7 +316,7 @@ releases itself) and any billing holding back while the setting is off. The work
 what JD Edwards had vouchered on the lines (and AP Coder's invoices not in it yet): said when they differ. A billing
 holding something back on a standard voucher (PO-matched vouchers off, or no PO) is never keyed at its total before
 the holdback, which would pay the supplier the holdback too: the review screen says it is keyed by hand
-(`HOLDBACK_BY_HAND`, approved only anyway, with a reason) and the keying sheet and batch files hold it (B-2945).
+(`HOLDBACK_BY_HAND`, approved only anyway, with a reason) and the keying sheet and batch files hold it (B-2945, D-323).
 
 ### PO numbers longer than 8 characters
 
