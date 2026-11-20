@@ -20,7 +20,7 @@ from ..memory import ACCEPTED, AUTONOMOUS_REVIEWER, BULK, CODED, CORRECTED, pair
 from ..paths import PROJECT_DIR, find_moved_file
 from ..reference_data import UNASSIGNED
 from ..schema import as_read
-from . import _base
+from . import _base, dialect
 from ._base import (
     _FOUND,
     _HEADER_FIELDS,
@@ -839,6 +839,30 @@ class InvoicesMixin:
             sql = "SELECT MAX(id) FROM events WHERE invoice_id = ? AND action = 'approved'"
             return str(conn.execute(sql, (invoice_id,)).fetchone()[0] or "")
 
+    def approved_over(self, ids: list[int] | None = None) -> dict[int, set[str]]:
+        """{invoice: the codes of the findings showing as it was last approved}: what a person went ahead over (its
+        latest ``approved`` event's ``open_issues``, and those of the second approval given since, B-2695). Of the
+        invoices ``ids`` (None: every one); one approved over nothing is left out."""
+        issues = f"CASE WHEN {dialect.json_valid('e.detail')} THEN {dialect.json_get('e.detail', '$.open_issues')} END"
+        latest = "(SELECT MAX(a.id) FROM events a WHERE a.invoice_id = e.invoice_id AND a.action = 'approved')"
+        sql = (f"SELECT e.invoice_id, {issues} FROM events e WHERE e.action IN ('approved', 'final_approved') "
+               f"AND e.id >= {latest}")  # fmt: skip
+        params: tuple[Any, ...] = ()
+        if ids is not None:
+            sql, params = f"{sql} AND {_in_list('e.invoice_id')}", (json.dumps(sorted(set(ids))),)
+        out: dict[int, set[str]] = {}
+        with self._conn() as conn:
+            for invoice_id, shown in conn.execute(sql, params):
+                try:
+                    found = json.loads(shown) if isinstance(shown, str) else []
+                except ValueError:
+                    found = []
+                listed = found if isinstance(found, list) else []
+                codes = {str(i.get("code") or "") for i in listed if isinstance(i, dict)} - {""}
+                if codes:
+                    out.setdefault(int(invoice_id), set()).update(codes)
+        return out
+
     def coding_revision(self, invoice_id: int) -> int:
         """The invoice's revision: the id of its last event that changed where it stands or its stored coding
         (``REVISION_ACTIONS``; 0 when none), each logged with its change. A review screen drawn at another one is
@@ -857,11 +881,14 @@ class InvoicesMixin:
             ).fetchone()
         return dict(row) if row is not None else None
 
-    def final_approve(self, invoice_id: int, approver: str, login: str = "", *, shown: str | None) -> None:
+    def final_approve(self, invoice_id: int, approver: str, login: str = "", *, shown: str | None,
+                      over: list[dict[str, Any]] | None = None) -> None:  # fmt: skip
         """The second approval: by someone other than the first approver (another name and, when the
         dashboard records it, another computer login; in server mode another account, ``same_approver``, not one the
         first approver added or reset within ``VOUCH_DAYS`` days). ``shown``, always given: the approval the page
-        showed (``latest_approval_id``): approved again since, or none, it is refused (``ApprovedAgain``, B-654)."""
+        showed (``latest_approval_id``): approved again since, or none, it is refused (``ApprovedAgain``, B-654).
+        ``over``: the warnings new since the first approval it is approved anyway over, each with why (B-2695), kept
+        with it as the first approval keeps its ``open_issues``."""
         inv = self.get_invoice(invoice_id)
         if inv is None or inv["status"] != PENDING:
             raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
@@ -897,6 +924,7 @@ class InvoicesMixin:
                 "first_approver": inv["reviewer"], "total": (inv["final_output"] or {}).get("grand_total"),
                 **({"second_reason": reason} if reason else {}), **({"login": login} if login else {}),
                 **({"user_id": account_of(login)} if account_of(login) is not None else {}),
+                **({"open_issues": over} if over else {}),
             })  # fmt: skip
 
     def send_back(self, invoice_id: int, actor: str, reason: str = "") -> None:

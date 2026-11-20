@@ -465,6 +465,16 @@ CHECKS: dict[str, CheckHelp] = {
         "someone who may change the settings adds it to Companies in the pilot (the change is kept in the activity "
         "log); else reject the invoice here and process it in JD Edwards as before.",
     ),
+    "COMPANY_NOT_IN_REPORT": CheckHelp(
+        ERP, "Company not in the companies report",
+        "With JD Edwards' companies loaded (JD Edwards files, card 9), the invoice's company is not one of them: the "
+        "company of its PO or of its business units, or one kept from an earlier load. JD Edwards may not have it, so "
+        "the voucher could be refused or keyed to the wrong books. It is never approved without a person, and only "
+        "with Approve anyway and a reason (kept with the approval).",
+        "Pick the company the invoice is for in the Company box. If the company is right and only missing from the "
+        "report, load the companies report again with it, or have someone who may change the settings name it in "
+        "Companies in the pilot (Settings → JD Edwards E1 → Accounts AP posts to).",
+    ),
     "US_TAX_NOT_CHECKED": CheckHelp(
         TAX, "Tax not checked for this company",
         "The invoice is for a company that is not checked for Canadian tax: only a company whose country is CA and "

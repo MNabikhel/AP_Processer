@@ -254,8 +254,8 @@ class JdeSettings:
     # With several companies (D-267): {company: "on" or "off"}, its Canadian tax checks turned on or off whatever
     # report 9 says (none: worked out, ``companies.canadian``).
     company_tax: dict[str, str] = field(default_factory=dict)
-    # JD Edwards' companies' currencies, {company: currency} (report 9: ``companies.companies``): read with the settings
-    # (``load``), never saved; a company's own is its vouchers' domestic currency (``domestic_of``).
+    # JD Edwards' companies' currencies, {company: currency, "" none given} (report 9: ``companies.companies``): read
+    # with the settings (``load``), never saved; a company's own is its vouchers' domestic currency (``domestic_of``).
     company_currencies: dict[str, str] = field(default_factory=dict)
 
     def to_json(self) -> str:
@@ -356,6 +356,11 @@ class JdeSettings:
         return self.po_charge_account.strip() if self.po_charges == CHARGES_GL else ""
 
     @property
+    def several_companies(self) -> bool:
+        """Report 9 lists two or more companies (``companies.several``): each voucher is keyed under its invoice's."""
+        return len(self.company_currencies) > 1
+
+    @property
     def company_code(self) -> str:
         """VLCO: five characters, zero-padded ("1" → "00001")."""
         text = self.company.strip()
@@ -374,10 +379,19 @@ def domestic_of(final: Mapping[str, Any], settings: JdeSettings) -> str:
 
 
 def load(store: Any) -> JdeSettings:
-    settings = JdeSettings.from_json(store.get_setting(SETTING_KEY))
-    from ..coding.companies import companies
+    from ..coding.companies import COMPANIES_SETTING
 
-    settings.company_currencies = {code: c.currency for code, c in companies(store).items() if c.currency}
+    return from_texts(store.get_setting(SETTING_KEY), store.get_setting(COMPANIES_SETTING))
+
+
+def from_texts(text: str | None, companies: str | None) -> JdeSettings:
+    """The settings saved as ``text``, with JD Edwards' companies of report 9 as loaded (``companies``, the text of
+    its setting): each one's currency. What a check kept for the very texts it read is worked out with (B-2075,
+    B-2697)."""
+    from ..coding.companies import loaded
+
+    settings = JdeSettings.from_json(text)
+    settings.company_currencies = {c.code: c.currency for c in loaded(companies or "")}
     return settings
 
 

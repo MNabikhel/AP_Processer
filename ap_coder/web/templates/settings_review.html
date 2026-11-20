@@ -30,7 +30,8 @@
       <p class="muted">The customer on every invoice, never its supplier: when one of these names is read as the
         supplier, the supplier is the one whose GST/HST number is printed, or left for you to fill.{% if several_companies %}
         With several JD Edwards companies, a name written <b>name = company</b> (Maple Ridge Civil = 00210) tells
-        which company an invoice addressed to it is for; each company's own name counts already.{% endif %}</p>
+        which company an invoice addressed to it is for; each company's own name counts already. A name of three
+        letters or fewer (MRC) counts only printed in capitals as a word of its own.{% endif %}</p>
       {% if uses_cost_centers or site_provinces %}
       {% set unit = "business unit" if chart else "cost center" %}{# a chart's lines carry a business unit (D-209) #}
       <label class="field">Sites in other provinces, by {{ unit }} (optional)

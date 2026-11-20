@@ -76,6 +76,7 @@ from decimal import Decimal
 from typing import Any
 
 from ..coding.vendors import held_index, hold_reason, norm_invoice_number
+from ..core.keys import company_code
 from ..core.memory import vendor_key
 from .jde_accounts import VendorLookup, resolve_an8
 from .jde_formats import _negative, _norm
@@ -115,22 +116,41 @@ UNCONFIRMED = (
 # --- Checks over a batch -----------------------------------------------------------------------------------------
 
 
+# The warnings that a bill of the same supplier and invoice number is another company's (D-267, D-270): approved over
+# the one that said so, it is no duplicate of the batch's (D-287).
+OTHER_IN_ERP, OTHER_INVOICE = "DUPLICATE_OTHER_COMPANY", "DUPLICATE_INVOICE_OTHER_COMPANY"
+
+
 def prior_records(store: Any, exclude_ids: Iterable[int] = (),
                   invoices: list[dict[str, Any]] | None = None) -> dict[str, list[dict[str, Any]]]:  # fmt: skip
-    """What is already out (read-only): invoices in live export batches (not ``exclude_ids``) and the
-    imported ERP invoice register; and the vendors on hold now ("held", ``validate``: B-2340). With ``invoices``:
-    only what has one of their invoice numbers (as compared), all ``duplicate_problems`` reads of it for them, picked
-    by SQLite (D-156): not the year's exports and the whole register read for a day's batch."""
+    """What is already out (read-only): invoices in live export batches (not ``exclude_ids``), each with its company
+    ("company", "" none decided), and the imported ERP invoice register, each bill with the companies JD Edwards has
+    it under ("companies"); the vendors on hold now ("held", ``validate``: B-2340); and the warnings of another
+    company's bill each invoice's latest approval went ahead over ("approved_over": [{"id", "codes"}], D-287). With
+    ``invoices``: only what has one of their invoice numbers (as compared), all ``duplicate_problems`` reads of it for
+    them, picked by SQLite (D-156): not the year's exports and the whole register read for a day's batch."""
     exclude = set(exclude_ids)
     if invoices is None:
         exported = [r for r in store.search_rows(exported=True) if r["id"] not in exclude]
-        return {"exported": exported, "register": store.erp_register(), "held": store.held_vendors()}
-    numbers = sorted({norm_invoice_number((inv.get("final_output") or {}).get("invoice_number")) for inv in invoices}
-                     - {""})  # fmt: skip
-    picked = store.search_rows(where="number_key IN (SELECT value FROM json_each(?))", params=(json.dumps(numbers),),
-                               exported=True) if numbers else []  # fmt: skip
-    exported = [r for r in picked if r["id"] not in exclude]
-    return {"exported": exported, "register": store.erp_register(numbers), "held": store.held_vendors()}
+        register = store.erp_register(companies=True)
+    else:
+        numbers = sorted({norm_invoice_number((inv.get("final_output") or {}).get("invoice_number"))
+                          for inv in invoices} - {""})  # fmt: skip
+        picked = store.search_rows(where="number_key IN (SELECT value FROM json_each(?))",
+                                   params=(json.dumps(numbers),), exported=True) if numbers else []  # fmt: skip
+        exported = [r for r in picked if r["id"] not in exclude]
+        register = store.erp_register(numbers, companies=True)
+    companies = store.invoice_companies([r["id"] for r in exported])
+    exported = [{**r, "company": companies.get(r["id"], "")} for r in exported]
+    # (only another company's bill asks what an approval went over: an invoice with no company has none)
+    coded = None if invoices is None else [
+        *(int(inv.get("id") or 0) for inv in invoices if (inv.get("final_output") or {}).get("company")),
+        *(r["id"] for r in exported if r["company"]),
+    ]  # fmt: skip
+    over = store.approved_over(coded) if coded is None or coded else {}
+    warned = [(n, sorted(codes & {OTHER_IN_ERP, OTHER_INVOICE})) for n, codes in sorted(over.items())]
+    return {"exported": exported, "register": register, "held": store.held_vendors(),
+            "approved_over": [{"id": n, "codes": codes} for n, codes in warned if codes]}  # fmt: skip
 
 
 def duplicate_problems(
@@ -138,9 +158,17 @@ def duplicate_problems(
     prior: Mapping[str, list[dict[str, Any]]] | None = None,
 ) -> dict[int, list[str]]:  # fmt: skip
     """Same supplier (address number or vendor name) and invoice number, within the batch or already
-    exported / in the ERP. A credit note does not duplicate the invoice it reverses."""
+    exported / in the ERP. A credit note does not duplicate the invoice it reverses. Per company (D-287): a bill of
+    another company (both known) is none once a person approved the invoice (or, of AP Coder's own, the other one)
+    over the warning that said so (``OTHER_IN_ERP``, ``OTHER_INVOICE``: ``prior``'s "approved_over"); not approved
+    over it (found since), it holds the invoice, said so."""
     out: dict[int, list[str]] = {}
     prior = prior or {}
+    over = {int(r["id"]): set(r.get("codes") or ()) for r in prior.get("approved_over") or []}
+    reopen = ": reopen it to check its company"
+
+    def seen(code: str, *ids: int) -> bool:  # one of them approved over the warning that another company has it
+        return any(code in over.get(n, ()) for n in ids)
 
     def an8_of(row: dict[str, Any]) -> str:  # by name, else by GST/HST number, as for the invoices themselves
         gst = row.get("gst_hst_registration_number") or ""
@@ -160,34 +188,53 @@ def duplicate_problems(
 
     exported = by_number(prior.get("exported") or [], "grand_total")
     register = by_number(prior.get("register") or [], "total")
-    earlier: list[tuple[tuple[str, str], str, bool, int]] = []
+    earlier: list[tuple[tuple[str, str], str, bool, int, str]] = []
     for inv in invoices:
         final = inv.get("final_output") or {}
         number = norm_invoice_number(final.get("invoice_number"))
         if not number:
             continue
+        inv_id = int(inv.get("id") or 0)
         who = (resolve_an8(final, vendor_lookup, settings), vendor_key(final.get("vendor_name") or ""))
         credit = _negative(final.get("grand_total"))
+        mine = company_code(final.get("company"))
         msgs = []
-        for other_who, other_number, other_credit, other_id in earlier:
+        for other_who, other_number, other_credit, other_id, theirs in earlier:
             if other_number == number and other_credit == credit and same(who, other_who):
-                msgs.append(f"same supplier and invoice number as AP Coder #{other_id} in this batch")
-                break
+                said = f"same supplier and invoice number as AP Coder #{other_id} in this batch"
+                if not (mine and theirs and mine != theirs):
+                    msgs.append(said)
+                    break
+                if not seen(OTHER_INVOICE, inv_id, other_id):
+                    msgs.append(f"{said}, for company {theirs}, not {mine}, and neither was approved over that{reopen}")
+                    break
         for r in exported.get((number, credit), []):
             if same(who, (an8_of(r), vendor_key(r.get("vendor_name") or ""))):
-                msgs.append(f"already exported: AP Coder #{r['id']} in batch {r['export_batch']}")
-                break
+                said, theirs = f"already exported: AP Coder #{r['id']} in batch {r['export_batch']}", r.get("company")
+                if not (mine and theirs and mine != theirs):
+                    msgs.append(said)
+                    break
+                if not seen(OTHER_INVOICE, inv_id, int(r["id"])):
+                    msgs.append(f"{said}, for company {theirs}, not {mine}, and neither was approved over that{reopen}")
+                    break
         for r in register.get((number, credit), []):
             key = r.get("vendor_key") or vendor_key(r.get("vendor_name") or "")
             an8 = str(r.get("an8") or "").strip()  # JD Edwards' voucher list's supplier number (B-2342)
             # as numbers: an override typed "02004" is JD Edwards' 2004 (B-2487); else (no GST/HST number) by name
             if (who[0].lstrip("0") == an8.lstrip("0")) if (who[0] and an8) else same(who, (an8_of(r), key)):
                 when = f", dated {r['invoice_date']}" if r.get("invoice_date") else ""
-                msgs.append(f"already in the ERP (invoice {r.get('invoice_number')}{when})")
-                break
+                theirs = sorted({company_code(c) for c in r.get("companies") or () if str(c or "").strip()})
+                if not (mine and theirs and mine not in theirs):  # (a register file names no company: D-267)
+                    msgs.append(f"already in the ERP (invoice {r.get('invoice_number')}{when})")
+                    break
+                if not seen(OTHER_IN_ERP, inv_id):
+                    msgs.append(f"already in the ERP under company {' and '.join(theirs)} (invoice "
+                                f"{r.get('invoice_number')}{when}), not {mine}, found since it was "
+                                f"approved{reopen}")  # fmt: skip
+                    break
         if msgs:
-            out[int(inv.get("id") or 0)] = msgs
-        earlier.append((who, number, credit, int(inv.get("id") or 0)))
+            out[inv_id] = msgs
+        earlier.append((who, number, credit, inv_id, mine))
     return out
 
 

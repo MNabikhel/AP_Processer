@@ -14,6 +14,7 @@ from typing import Any
 
 from ap_coder.ai.offline_coder import supplier_evidence
 from ap_coder.ai.suggest import by_pairs, suggest_gl
+from ap_coder.coding.companies import PICKED
 from ap_coder.coding.po import LineLeft, PoMatch, match_invoice, orders_named, po_label
 from ap_coder.coding.remark import PERSON, one_line
 from ap_coder.core.chart import join_account
@@ -317,6 +318,8 @@ _BLANK_CODES = {None, "", UNASSIGNED}
 
 def _comparable(output: dict[str, Any], ignore: set[str], cost_centers: bool = True) -> dict[str, Any]:
     out = {k: v for k, v in output.items() if k not in ignore}
+    if "company_how" not in ignore:  # a person's pick is an edit, which of AP Coder's rules decided it not (D-286)
+        out["company_how"] = out.get("company_how") == PICKED
     blank = ("predicted_gl_code", "predicted_cost_center")
     # A remark only a person's: one suggested again (the account changed, the supplier's usual one did) is no edit.
     remark = ("remark", "remark_from")

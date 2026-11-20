@@ -260,20 +260,23 @@ def field_help(store: Store, coding: InvoiceCoding, draft: Draft, capture: Captu
 
 def company_choices(store: Store, header: dict[str, str], report: Any = None) -> dict[str, Any]:
     """The Company box, with several of JD Edwards' companies (D-267; ``any`` False with one): each company as
-    "00210 Maple Ridge Constructors Ltd", the one chosen (the screen's, else the one its check decided), why it was
-    decided ("" picked or none), and a company not checked for Canadian tax said so (``tax``)."""
+    "00210 Maple Ridge Constructors Ltd", the one chosen (as its check decided it, else the screen's), how it was
+    decided (``source``: picked by a person or AP Coder's rule, D-286; ``how`` "picked" for a pick, posted back) and
+    why ("" picked or none), and a company not checked for Canadian tax said so (``tax``)."""
     table = companies.companies(store)
     if len(table) < 2:
         return {"any": False}
     checks = getattr(report, "checks", None) or {}
     decided = checks.get("company") or {}
-    chosen = company_code(header.get("company") or decided.get("company") or "")
+    chosen = company_code(decided["company"] if "company" in decided else header.get("company") or "")
+    how = str(decided.get("how") or "") if chosen else ""
     canadian, why = companies.canadian(store, chosen) if chosen else (True, "")
     options = [(c.code, f"{c.code} {c.name}") for c in table.values()]
     if chosen and chosen not in table:
         options.append((chosen, f"{chosen} (not in JD Edwards' companies)"))
-    return {"any": True, "options": options, "value": chosen,
-            "said": decided.get("said", "") if decided.get("how") not in ("", "picked") else "",
+    return {"any": True, "options": options, "value": chosen, "how": how if how == companies.PICKED else "",
+            "source": companies.SOURCES.get(how, ""),
+            "said": decided.get("said", "") if how not in ("", companies.PICKED) else "",
             "tax": "" if canadian else f"Not checked for Canadian tax ({why})"}  # fmt: skip
 
 
