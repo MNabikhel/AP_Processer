@@ -161,6 +161,28 @@ def test_the_company_box_says_how_its_company_was_decided_and_only_a_persons_pic
     assert Draft.from_form({"company": "00230", "company_how": ""}, Draft.stored(final)).company_how == ""
 
 
+def test_a_persons_company_pick_is_kept_by_a_screen_drawn_while_a_box_cant_be_read(client, store):
+    """B-2927: a company picked, then the screen drawn while a box could not be read (no coding, no check: a reload,
+    or the reload after a pick made then): its hidden field was drawn empty, so the next check took the pick for
+    AP Coder's own company and decided it again, from the supplier's history. A pick stays a pick, said so."""
+    load_sample_setup(store)
+    invoice_id = add_clean(store)
+    _card(client, jde_group.companies_xlsx())
+    inv = store.get_invoice(invoice_id)
+    store.import_erp_vouchers([{"key": "00230-PV-700101-001", "vendor_name": inv["ai_output"]["vendor_name"],
+                                "invoice_number": "N-1", "total": 10.0, "invoice_date": "2026-01-02", "an8": "",
+                                "document": "700101"}])  # fmt: skip
+    picked = {**Draft.stored(inv["ai_output"]).header, "company": "00210", "company_how": "picked"}
+    answer = client.post(f"/review/{invoice_id}/check", data={**picked, "grand_total": "12x.50"}, headers=PAGE).json()
+    assert answer["valid"] is False  # nothing checked: the screen is drawn from the draft alone
+    box = _box(client, invoice_id)
+    assert '<option value="00210" selected>' in box and 'value="picked" data-company-how' in box
+    assert "Picked by a person: kept whatever else the invoice says." in re.sub(r"<[^>]+>", "", box)
+    answer = client.post(f"/review/{invoice_id}/check", data=picked, headers=PAGE).json()  # the box as drawn
+    assert "company" not in answer["header"]["values"]
+    assert '<option value="00210" selected>' in _box(client, invoice_id)
+
+
 SIBLING = jde_group.GroupSupplier(*next(r for r in jde_group.SUPPLIERS if r[0] == 4410900))  # 00220, a supplier too
 KELSO = {"vendor_name": "KELSO READY MIX LTD", "erp_id": "4410101"}
 
