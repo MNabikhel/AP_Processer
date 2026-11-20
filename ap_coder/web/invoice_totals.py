@@ -141,8 +141,9 @@ def stored_summary(inv: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any]:
 # --- The Tax check ------------------------------------------------------------------------------------------------
 
 
-def tax_check(coding: InvoiceCoding, reference: ReferenceData) -> list[dict[str, Any]]:
-    """Each tax line's rate against the official rate, its arithmetic, and the account it posts to."""
+def tax_check(coding: InvoiceCoding, reference: ReferenceData, canadian: bool = True) -> list[dict[str, Any]]:
+    """Each tax line's rate against the official rate, its arithmetic, and the account it posts to. ``canadian``:
+    False for a company not checked for Canadian tax (D-267): its rate is not held against Canada's (B-2873)."""
     try:
         on = dt.date.fromisoformat(coding.invoice_date)
     except ValueError:
@@ -156,8 +157,10 @@ def tax_check(coding: InvoiceCoding, reference: ReferenceData) -> list[dict[str,
         gl = treat.gl_code if treat.needs_gl else "expense lines"
         rows.append({
             "tax": TAX_LABELS.get(t.tax_type, t.tax_type), "province": t.province,
-            "rate_ok": official is not None and abs(official - t.rate) < 1e-6, "rate": f"{t.rate * 100:.3f}%",
-            "official": "not levied" if official is None else f"{official * 100:.3f}%",
+            "rate_ok": (official is not None and abs(official - t.rate) < 1e-6) if canadian else None,
+            "rate": f"{t.rate * 100:.3f}%",
+            "official": ("not checked" if not canadian else "not levied" if official is None
+                         else f"{official * 100:.3f}%"),
             # As TAX_CALC_MISMATCH and the Tax check above it: a unit either way, in the currency's units (B-1908)
             "math_ok": tax_right(t.tax_amount, tax_line_ways(coding, t, places), places),
             "amount": signed(t.tax_amount), "posts_to": gl or "⚠ not mapped",

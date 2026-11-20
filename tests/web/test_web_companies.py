@@ -367,3 +367,20 @@ def test_in_a_browser_the_us_sales_and_use_tax_card_is_filled_in_and_saved(chrom
         js = jde_settings.load(store)
         assert (js.company_us_tax, js.use_tax_rates) == ({"00410": "held"}, {"WA-SPOKANE": 9.1})
         assert page.evaluate("document.documentElement.scrollWidth") <= width + 1 and errors == []
+
+
+def test_a_us_companys_sales_tax_rate_is_never_marked_wrong_by_canadas_rates(client, store):
+    """B-2873: the review screen's Rates and GL accounts marked a US company's sales tax rate wrong (✕), its official
+    rate "not levied": Canada's rate table, though the company is not checked for Canadian tax. Its rate is said not
+    checked, unmarked; a Canadian company's foreign tax is still marked as before."""
+    load_sample_setup(store)
+    _card(client, jde_group.companies_xlsx())
+    shown = {}
+    for company in ("00310", "00210"):
+        invoice_id = add_clean(store, "cascade_US_SalesTax_INV-30981", company=company, company_how="picked")
+        data = Draft.stored(store.get_invoice(invoice_id)["ai_output"]).header
+        answer = client.post(f"/review/{invoice_id}/check", data=data, headers=PAGE).json()
+        rates = html.unescape(answer["sections"]["taxcheck"]).split("Rates and GL accounts", 1)[1]
+        official = re.findall(r'<td class="r">(not [a-z]+)</td>', rates)
+        shown[company] = (re.findall(r'aria-label="(Right|Wrong)"', rates), official)
+    assert shown == {"00310": ([], ["not checked"]), "00210": (["Wrong"], ["not levied"])}

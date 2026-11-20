@@ -381,7 +381,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "reasons": reasons(coding, ai, report, reference),
         "suggestions": suggestions(store, reference, coding),
         "po": po_section(store, coding, inv["id"], po_match),
-        "tax_check": tax_check(coding, reference),
+        "tax_check": tax_check(coding, reference, canadian=COMPANY_TAX not in output),
         "math": (math := math_check(coding, reference.tax)),
         "tax_marks": tax_marks(math, report.issues),
         "split": spend_split(output, reference),

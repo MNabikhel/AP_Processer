@@ -236,7 +236,7 @@
     <thead><tr><th>Tax</th><th class="r">Rate</th><th class="r">Official</th><th class="r">Charged</th><th>Posts to</th></tr></thead>
     <tbody>{% for t in live.tax_check %}
       <tr><td><span class="rq-tax">{{ t.tax }}</span> {{ t.province }}</td>
-        <td class="r"><span class="{{ 'ok' if t.rate_ok else 'bad' }}" aria-label="{{ 'Right' if t.rate_ok else 'Wrong' }}">{{ '✓' if t.rate_ok else '✕' }}</span> {{ t.rate }}</td>
+        <td class="r">{% if t.rate_ok is not none %}<span class="{{ 'ok' if t.rate_ok else 'bad' }}" aria-label="{{ 'Right' if t.rate_ok else 'Wrong' }}">{{ '✓' if t.rate_ok else '✕' }}</span> {% endif %}{{ t.rate }}</td>
         <td class="r">{{ t.official }}</td>
         <td class="r"><span class="{{ 'ok' if t.math_ok else 'bad' }}" aria-label="{{ 'Adds up' if t.math_ok else 'Does not add up' }}">{{ '✓' if t.math_ok else '✕' }}</span> {{ t.amount }}</td>
         <td class="w">{{ t.posts_to }}</td></tr>
