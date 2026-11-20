@@ -6777,3 +6777,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Why a bench:** the misses are small things that show only together, on a group's data; each real one is then
     pinned by a test (B-2720, B-2721). The same seed and day give the same invoices (dated the days before today);
     `--quick` takes under a minute, a full run 4 to 5 minutes on a shared 4-core machine.
+- **D-300** · **A chart refused as cut short can be loaded anyway from its card, by someone who may change the
+  settings** (B-2832; D-272 had the page name the command line's `--anyway`).
+  - **What is refused stays refused for anyone:** a file with no account, or none that may be posted to (it is no
+    chart), and a file without a column the report needs (D-234: the command line keeps its `--anyway`). Only a
+    refresh that *looks* cut short (`ChartCutShort`: a company, or the whole chart, with less than half the accounts
+    it has now; a company found in fewer files than last time) may be loaded anyway: JD Edwards may really have that.
+  - **The card:** the refusal sends the page back to the file's card, which says why (no command named), what the file
+    holds (what the load read, the lines the command line prints), and for a person with the settings permission (on a
+    laptop: everyone) Load anyway behind a box to tick ("This is what JD Edwards has now"); for anyone else who
+    loads files, who can. The server refuses the anyway of anyone without the permission (403). Start over (`whole`)
+    is kept as it was ticked.
+  - **Recorded:** the load's event (`accounts_imported`) keeps `anyway`, why it looked cut short; Activity says
+    "loaded anyway: ...". The command line's `--anyway` records it the same way.

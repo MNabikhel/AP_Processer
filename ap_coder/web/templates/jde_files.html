@@ -185,7 +185,30 @@
   {{ report(specs.chart[0]) }}
   {% if looks.chart %}
   {% call imp.preview(looks.chart, "chart") %}
-    {% if can("/jde-files/chart/load") %}
+    {# A load refused as cut short (D-272): why, what the file holds, and Load anyway for who may change the settings (B-2832). #}
+    {% set refused = looks.chart.refused %}
+    {% if refused and can("/jde-files/chart/load") %}
+    <div class="stack" id="chart-refused">
+    <div class="flash err imp-verdict" tabindex="-1" role="alert"><span class="ms" aria-hidden="true">block</span><div>Not loaded: {{ refused.why }}. The chart was left as it was.</div></div>
+    <p class="muted">What this file holds:</p>
+    <ul>{% for line in refused.said %}<li>{{ line }}</li>{% endfor %}</ul>
+    {% if may_anyway %}
+    <form method="post" action="/jde-files/chart/load" class="stack" data-busy="Loading the chart (10 to 20 seconds)…" data-long data-refusal>
+      <input type="hidden" name="token" value="{{ looks.chart.token }}">
+      {% if refused.whole %}<input type="hidden" name="whole" value="1">{% endif %}
+      <input type="hidden" name="anyway" value="1">
+      <label class="check"><input type="checkbox" name="checked" value="1" required> This is what JD Edwards has now: load it though it looks cut short (the activity log keeps that you did)</label>
+      <div class="row">
+      {% if looks.chart.loading %}{{ being_loaded("chart") }}{% else %}<button class="btn primary" type="submit" data-load="chart"><span class="ms" aria-hidden="true">account_tree</span>Load anyway</button>{% endif %}
+      {{ cancel("chart") }}
+      </div>
+    </form>
+    {% else %}
+    <p>Someone who may change the settings can load it anyway, if this is what JD Edwards has now.</p>
+    <div class="row">{{ cancel("chart") }}</div>
+    {% endif %}
+    </div>
+    {% elif can("/jde-files/chart/load") %}
     <form method="post" action="/jde-files/chart/load" class="stack" data-busy="Loading the chart (10 to 20 seconds)…" data-long data-refusal>
       <input type="hidden" name="token" value="{{ looks.chart.token }}">
       {{ load_then("chart") }}

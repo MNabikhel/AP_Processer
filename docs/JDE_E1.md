@@ -627,7 +627,9 @@ their own while the dashboard keeps working, then put in place of the chart in o
 loaded with both. A company loaded from several files is never refreshed from fewer of them (that would drop the
 other file's accounts): the import is refused, saying which files it came from, unless `--anyway`. So is a refresh
 with less than half the accounts a company has now (a filtered or cut-short export), and a file with no account at
-all; the chart is then left as it was. Every account is kept (its description, and why a line may not use it); only
+all; the chart is then left as it was. On the JD Edwards files page the chart card then says why and what the file
+holds, and someone who may change the settings can tick that it is what JD Edwards has now and click **Load anyway**
+(a file with no account, never); Activity keeps that it was (D-300). Every account is kept (its description, and why a line may not use it); only
 those whose posting edit code AP posts to are offered (Settings → JD Edwards E1 → Accounts AP posts to: blank, L and
 U by default). **The summary** says the rows read, accepted and rejected (each reason with its first rows: a row whose
 cells do not line up with the column names, a blank row, an account given twice...), the accounts by company, and
