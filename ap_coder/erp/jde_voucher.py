@@ -17,7 +17,7 @@ from typing import Any
 from ..coding.line_tax import exempt_of, legacy_basis
 from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES
 from ..coding.terms import terms_key
-from ..core.schema import COMPANY_TAX
+from ..core.schema import COMPANY_TAX, PROGRESS_BILLING
 from .jde_accounts import VendorLookup, account_for, ani, resolve_an8
 from .jde_formats import E1_YEARS, NO_DECIMAL_CURRENCIES, _date, _negative, _norm, _units
 from .jde_settings import (
@@ -327,6 +327,9 @@ GL_PO = (
     "tax on a PO-matched voucher: JD Edwards distributes it from the receipts, and with the tax coded to G/L accounts "
     "it posts no tax of its own, so the tax would go nowhere: send it without the PO match"
 )
+# A billing that holds part of its total back (D-273, D-274), on a voucher of its own: none of JD Edwards' standard
+# voucher's amounts retains a holdback, so its gross would pay the supplier the holdback too (B-2945).
+HOLDBACK = "HOLDBACK_BY_HAND"
 # Code B accrues the PST on the whole voucher (B-922).
 PST_MIX = (
     "PST is owed on some lines and not on others (exempt): with code B JD Edwards would accrue PST on every line. "
@@ -507,8 +510,25 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str, on: dt.date |
             )
         return v
 
+    if why := _held_back(v, final):
+        add(why, HOLDBACK)
     _check_distribution(v, final, settings, dist, recoverable)
     return v
+
+
+def _held_back(v: _Voucher, final: dict[str, Any]) -> str:
+    """Why a voucher of a billing that holds part of its total back (its progress billing as read, D-274) is keyed by
+    hand ("" for any other): its gross is the total before the holdback, which a standard voucher would pay in full.
+    Voucher Match retains it on a subcontract's rows (D-273: ``jde_retainage``), a PO-matched voucher's own check."""
+    progress = final.get(PROGRESS_BILLING) or {}
+    held = _units(progress.get("holdback") or 0, v.decimals)
+    if held <= 0:
+        return ""
+    due = progress.get("amount_due")
+    owed = f", not the {float(due):,.2f} due" if due is not None else ""
+    return (f"a billing that holds back {held / 100:,.2f}: keyed at its gross {v.gross / 100:,.2f}, the supplier would "
+            f"be paid the holdback too{owed}. Key it by hand, as JD Edwards keys a holdback (Voucher Match's Retained "
+            "Amount on its subcontract)")  # fmt: skip
 
 
 def _check_header(v: _Voucher, final: dict[str, Any], settings: JdeSettings, an8: str,

@@ -380,3 +380,72 @@ def test_a_po_matched_invoice_holding_back_part_of_its_total_is_never_keyed_at_i
     rows, check = blocks[case.number]
     assert [(r[3], r[6], r[7]) for r in rows] == [("1.000", 628.8, 62.88), ("2.000", 157, 15.7)]
     assert check[3] == "785.80 - 78.58 + 39.29 = 746.51: balanced"
+
+
+def test_a_billing_holding_back_part_of_its_total_is_never_keyed_at_its_total_on_a_standard_voucher(
+    chart_company, chart_company_client, tmp_path
+):
+    """B-2945: with PO-matched vouchers off (the prototype's settings, docs/PROTOTYPE.md), a first application for
+    payment (45,000.00 of work, a 10% holdback of 4,500.00, the GST 2,250.00, 42,750.00 due) was approved on the
+    review screen with nothing said and keyed on a standard voucher at its total before the holdback, 47,250.00: the
+    supplier was paid the holdback too. The review screen says it is keyed by hand (an error, approved only anyway
+    with a reason), and the keying sheet and the batch files hold it, unless Voucher Match keys it with subcontract
+    progress billings on; a billing that holds nothing back is keyed as before."""
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.erp import jde
+    from ap_coder.web.pages.exports import keying_file
+    from tests.review_page import ReviewPage
+    from tests.webclient import web_settings
+
+    store = chart_company.store
+    folder = tmp_path / "set"
+    made = jde_po_vouchers.write_progress(folder, chart_company.truth)
+    load_pos(store, {jde_po_vouchers.SUBCONTRACT_FILE: (folder / jde_po_vouchers.SUBCONTRACT_FILE).read_bytes()})
+    assert jde_settings.in_use(store) and not jde_settings.load(store).po_matched  # (the prototype's settings)
+    first = made[0]
+    plain = replace(made[1], holdback_pct=Decimal(0))  # (the Ontario billing, holding nothing back)
+    (folder / "plain.pdf").write_bytes(jde_po_vouchers.progress_pdf(plain, chart_company.truth))
+    pipeline = InvoicePipeline(web_settings(), store.reference_data(), store=store)
+    ids = {name: pipeline.process(folder / f"{name}.pdf").invoice_id for name in ("first_billing", "plain")}
+    for name, case, reason in (("first_billing", first, "keyed by hand in Voucher Match"), ("plain", plain, "")):
+        invoice_id = ids[name]
+        page = ReviewPage(chart_company_client, invoice_id)
+        page.set_account(1, case.po_lines[0].account)
+        answer = page.check()
+        if reason:
+            assert not answer["allow"] and "HOLDBACK_BY_HAND" in page.findings, page.findings
+            said = page.findings["HOLDBACK_BY_HAND"]
+            assert "holds back 4,500.00" in said and "47,250.00" in said and "42,750.00" in said, said
+            assert "redirect" in page.approve(anyway=reason)
+        else:
+            assert answer["allow"] and "HOLDBACK_BY_HAND" not in page.findings, page.findings
+            assert "redirect" in page.approve()
+        assert store.get_invoice(invoice_id)["status"] == "approved", name
+    batch = store.create_export_batch(list(ids.values()), jde_keying.FORMAT, actor="Pat Tester")
+
+    def sheet():
+        book = openpyxl.load_workbook(io.BytesIO(keying_file(store, batch)[0]))
+        rows = [list(r) for r in book["Keying sheet"].iter_rows(values_only=True)]
+        return rows, {r[3].value: r[-1].value for r in book["Not ready"].iter_rows(min_row=2)}
+
+    rows, held = sheet()
+    assert list(held) == [first.number] and held[first.number].startswith("a billing that holds back 4,500.00")
+    numbers = [r[3] for r in rows if r[2] == "Invoice number"]
+    assert numbers == [plain.number] and ["Currency", "CAD", "Gross amount", 90400] in [r[:4] for r in rows]
+    invoices = [store.get_invoice(i) for i in ids.values()]
+    found = jde.validate(invoices, jde_settings.load(store), store.vendor_ids())
+    assert list(found) == [ids["first_billing"]] and found[ids["first_billing"]][0].startswith(
+        "a billing that holds back 4,500.00")  # fmt: skip
+    # PO-matched: held while subcontract progress billings are off, as before; on, keyed with its Retained Amount
+    jde_settings.save(store, settings_of(PILOT, jde_settings.load(store)))
+    rows, held = sheet()
+    assert held[first.number].startswith("a subcontract's progress billing (order 41201 OS)")
+    jde_settings.save(store, jde_po_vouchers.subcontract_settings(jde_settings.load(store)))
+    rows, held = sheet()
+    assert first.number not in held
+    rows_of, check = _retained_blocks(rows)[first.number]
+    assert [(r[6], r[7]) for r in rows_of] == [(45000, 4500)]
+    assert check[3] == "45,000.00 - 4,500.00 + 2,250.00 = 42,750.00: balanced"

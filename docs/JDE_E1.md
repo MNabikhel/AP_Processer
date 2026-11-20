@@ -312,7 +312,10 @@ due*. The tax is worked out on the whole amount matched (the holdback in it, as 
 GST) or on it less the retained, as Voucher Match's Retainage tab says (*Tax on a subcontract row that retains a
 holdback*); a billing charged the other way is held, so is a **holdback release** (it pays out a retainage JD Edwards
 releases itself) and any billing holding back while the setting is off. The work billed before is compared with
-what JD Edwards had vouchered on the lines (and AP Coder's invoices not in it yet): said when they differ.
+what JD Edwards had vouchered on the lines (and AP Coder's invoices not in it yet): said when they differ. A billing
+holding something back on a standard voucher (PO-matched vouchers off, or no PO) is never keyed at its total before
+the holdback, which would pay the supplier the holdback too: the review screen says it is keyed by hand
+(`HOLDBACK_BY_HAND`, approved only anyway, with a reason) and the keying sheet and batch files hold it (B-2945).
 
 ### PO numbers longer than 8 characters
 

@@ -204,6 +204,15 @@ CHECKS: dict[str, CheckHelp] = {
         "Something JD Edwards needs on the voucher is missing or not valid.",
         "Read the message, fix it on the invoice, or ask the pilot tester.",
     ),
+    "HOLDBACK_BY_HAND": CheckHelp(
+        ERP, "Holdback keyed by hand",
+        "The invoice holds part of its total back (a progress billing's holdback or retainage). It is coded at its "
+        "total before the holdback, but a standard voucher of that total would pay the supplier the holdback too. So "
+        "it is not on the keying sheet or in the batch files: it is on the keying sheet's Not ready list.",
+        "Approve it anyway, with a reason, and key it in JD Edwards by hand, as JD Edwards keys a holdback (Voucher "
+        "Match's Retained Amount on its subcontract). With PO-matched vouchers and subcontract progress billings on "
+        "(Settings → JD Edwards E1), the keying sheet keys a subcontract's billing with its Retained Amount.",
+    ),
     # --- Dates and currency typed on the review screen (web/invoice_fields.py) -------------------------------------
     "INVOICE_DATE_INVALID": CheckHelp(
         TOTALS, "Invoice date to fix",
