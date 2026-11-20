@@ -110,6 +110,7 @@ A block follows the screen's order: the header, the pay item, the G/L distributi
 | PO number | as text, with its leading zeros; a note says when it is longer than the field's 8 characters | the purchase order, on the G/L distribution |
 | Tax explanation code, Tax rate/area | from the province of supply (*Province → tax area*) | *Tax Ex*, *Tax Rate/Area* |
 | Tax amount, Taxable amount | the tax on the pay item: what JD Edwards posts or is told (the notes say what it holds) | *Tax Amount*, *Taxable Amount* |
+| Pay status, Business unit | only when set, as the batch files send them (VLPST, VLMCU): Settings → JD Edwards E1's pay status when it is not A (approved), and the header business unit (a company's own, D-301) | the pay item's *Pay Status*, *Business Unit* |
 | Account number | `BU.Object.Subsidiary`, typed as it is, without padding | G/L Distribution: *Account Number* |
 | Account description | the GL account's name in AP Coder, to compare with what JD Edwards shows | not typed |
 | Amount | the line's amount net of the tax JD Edwards posts; a tax left in the expense is inside it | *Amount* |
