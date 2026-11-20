@@ -120,3 +120,51 @@ def test_an_invoice_that_holds_nothing_back_is_no_progress_billing():
     assert read_progress([*plain, "Holdback   0.00"]) is None
     assert read_progress([*plain, "Holdback of 10% is payable within 60 days of completion."]) is None
     assert read_progress([*plain, "The holdback release will be invoiced at substantial performance."]) is None
+
+
+def test_a_scans_tax_rows_with_the_spaces_lost_are_read(tmp_path):
+    """B-2890: a scan's OCR runs a tax's name into its rate ("9.GST5%on45,000.00", "HST13%on80,000.00"): each is still
+    the billing's tax, so it adds up and its amounts are used (it read no tax, and the billing was coded at nothing)."""
+    application = ["4.Totalcompleted todate   45,000.00", "5.Less previous applications   0.00",
+                   "6.Workcompleted thisperiod   45,000.00", "7.Lessholdback10%   (4,500.00)",
+                   "8.Net amount thisperiod   40,500.00", "9.GST5%on45,000.00   2,250.00",
+                   "10.Current payment due   42,750.00"]  # fmt: skip
+    read = read_progress(application)
+    assert (read["taxes"], read["adds_up"]) == ({"GST": 2250.0}, True)
+    invoice = ["Mechanical rough-in-work thisperiod   80,000.00", "Subtotal   80,000.00",
+               "Lessholdback 10%   (8,000.00)", "HST13%on80,000.00   10,400.00", "Amountdue   82,400.00"]  # fmt: skip
+    read = read_progress(invoice)
+    assert (read["taxes"], read["amount_due"], read["adds_up"]) == ({"HST": 10400.0}, 82400.0, True)
+
+
+def test_the_total_of_a_billing_holding_back_is_held_for_a_person_to_check(tmp_path):
+    """B-2946: an application for payment prints no total before its holdback (its work this period, the holdback,
+    the GST, the payment due), so the coding's total, the one before the holdback (D-274), was no value read: nothing
+    held it for a person, though B-2492 holds the total of any invoice taking something off before the amount to pay
+    (D-47). The capture's total is the one coded, to check, saying why; a total read above a holdback keeps its
+    reading, one that holds nothing back stays as it is."""
+    from ap_coder.capture import analyze
+
+    taken_off = "something is taken off before the amount to pay (a deposit, a holdback, a commission)"
+    items = list(HEAD)
+    for n, (label, amount) in enumerate(APPLICATION):
+        items += [(50, 200 + 16 * n, label), (480, 200 + 16 * n, amount)]
+    total = analyze(text_pdf(tmp_path, items, name="application.pdf"), tables=False).fields["grand_total"]
+    assert (total.value, total.status) == (78750.0, "check")
+    assert any(r.startswith(taken_off) for r in total.reasons), total.reasons
+    printed = [("Subtotal", "550.00"), ("HST 13%", "71.50"), ("Total", "621.50"), ("Less 10% holdback", "(100.00)"),
+               ("Balance Due", "521.50")]  # fmt: skip
+    items = list(HEAD)
+    for n, (label, amount) in enumerate(printed):
+        items += [(330, 300 + 16 * n, label), (480, 300 + 16 * n, amount)]
+    total = analyze(text_pdf(tmp_path, items, name="printed.pdf"), tables=False).fields["grand_total"]
+    assert (total.value, total.status, sum(r.startswith(taken_off) for r in total.reasons)) == (621.5, "check", 1)
+    assert total.boxes  # (as read)
+    nothing = [("Billed to date", "200,000.00"), ("Previously billed", "120,000.00"), ("Subtotal", "80,000.00"),
+               ("HST 13% on 80,000.00", "10,400.00"), ("Amount due", "90,400.00")]  # fmt: skip
+    items = list(HEAD)
+    for n, (label, amount) in enumerate(nothing):
+        items += [(330, 300 + 16 * n, label), (480, 300 + 16 * n, amount)]
+    total = analyze(text_pdf(tmp_path, items, name="nothing.pdf"), tables=False).fields["grand_total"]
+    assert (total.value, total.status) == (90400.0, "verified") and not any(r.startswith(taken_off)
+                                                                           for r in total.reasons)  # fmt: skip

@@ -71,6 +71,22 @@ def test_the_pos_coding_is_applied_on_the_review_screen(client, store, setup_dem
     assert store.get_invoice(invoice_id)["final_output"]["line_items"][0]["predicted_gl_code"] == "1510"
 
 
+def test_the_pos_coding_goes_on_its_own_line_when_lines_number_again_from_1(client, store, setup_demo_template):
+    """B-2923: "Use the PO's coding" coded every grid row of the number of a line whose coding differs from its PO
+    line's, so on an invoice numbering its lines again from 1 (page 2) the design consultation (line 1 of page 2, its
+    PO line's 6110) was coded to the desk's 1510 with the desk (line 1 of page 1). Only the desk's row is now."""
+    fill_from(store, setup_demo_template)
+    invoice_id = next(i for i in store.list_invoices() if i["vendor_name"].startswith("Red River"))["id"]
+
+    def page_2_again(rows):  # the desk, the chair; then the consultation and the delivery numbered 1 and 2 again
+        for row, n in zip(rows, (1, 2, 1, 2), strict=True):
+            row["line_number"] = n
+        return rows
+
+    answer = post(client, f"/review/{invoice_id}/po-coding", form_of(store, invoice_id, page_2_again)).json()
+    assert answer["ok"] and _selected(answer["lines"]) == ["1510", "1510", "6110", "6800"]
+
+
 def test_the_po_match_shows_what_is_left_to_expense_and_over_it_still_approves(client, store, tmp_path):
     """Each PO line's left to expense (its GL account and cost center beside it) and the whole PO's: over it is said in
     amber, never as an error, and the invoice is approved as before."""

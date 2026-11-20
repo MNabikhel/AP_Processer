@@ -26,7 +26,7 @@ from ..memory import AUTONOMOUS_REVIEWER, CODED, CORRECTED, VENDOR_KEY_RULES, ve
 from ..reference_data import UNASSIGNED
 from . import dialect
 from ._base import SCHEMA_VERSION, _due, _forget_learning, _now
-from .chart import _count, _lists
+from .chart import ACTIVE_KEY, HASH_KEY, _count, _lists, _lists_rule, _lists_worked_out
 from .folder import add_register_keys, fill_seen_files
 from .old_readings import reading_as_d89
 from .register import add_jde_register, build_register_search
@@ -279,28 +279,29 @@ def _po_retainage(store: Any, conn: sqlite3.Connection) -> None:
         dialect.add_column(conn, "po_lines", "retainage", "REAL")
 
 
-# The business units' statuses that take postings (``chart.ACTIVE``) the GL accounts and cost centers were last worked
-# out with (settings.chart_active, JSON); a database without it had them worked out with ACT and blank alone (D-290).
-CHART_ACTIVE_KEY = "chart_active"
+# The business units' statuses that took postings before D-290 (K closed): what the GL accounts and cost centers were
+# worked out with when nothing recorded says otherwise (a release before B-2750, an older build since: B-2752).
 ACTIVE_BEFORE = ("ACT", "")
 
 
 def _chart_active(store: Any, conn: sqlite3.Connection) -> None:
-    """The GL accounts and cost centers worked out again, once, when a business unit has a status that takes postings
-    now and did not when they were (B-2750: a job at K, budget locked, D-290): the chart's answers read the statuses
-    as they are, so its accounts were offered and a line coded to one was CC_UNKNOWN. Recorded as
-    settings.chart_active; no version of its own: an older AP Coder leaves the lists be."""
-    row = conn.execute("SELECT value FROM settings WHERE key = ?", (CHART_ACTIVE_KEY,)).fetchone()
-    now = json.dumps(list(ACTIVE))
-    if row is not None and row["value"] == now:
+    """The GL accounts and cost centers worked out again when what they were worked out with (``ACTIVE_KEY``) is not
+    this build's statuses at the chart's mark now, and a business unit has a status that takes postings now and did
+    not before (B-2750: a job at K, budget locked, D-290; the chart's answers read the statuses as they are, so its
+    accounts were offered and a line coded to one was CC_UNKNOWN). An older build records nothing: lists it worked
+    out since (a business units report loaded again there) have another mark (B-2752). No version of its own; one
+    settings read at an open when nothing changed."""
+    saved = {r[0]: r[1] for r in conn.execute(f"SELECT key, value FROM settings WHERE {dialect.in_list('key')}",
+                                              (json.dumps([ACTIVE_KEY, HASH_KEY]),))}  # fmt: skip
+    if saved.get(ACTIVE_KEY) == _lists_rule(saved.get(HASH_KEY, "")):
         return
-    opened = sorted(set(ACTIVE) - set(json.loads(row["value"]) if row is not None else ACTIVE_BEFORE))
+    opened = sorted(set(ACTIVE) - set(ACTIVE_BEFORE))
     if opened and conn.execute(f"SELECT 1 FROM business_units WHERE {dialect.in_list('status')} LIMIT 1",
                                (json.dumps(opened),)).fetchone() and _count(conn):  # fmt: skip
         given = _lists(conn)
         result = store._rebuild_account_lists(conn, given[0], given)
         store._chart_changed(conn, "chart_accounts", {"rows": _count(conn), **result}, None)
-    _put_setting(conn, CHART_ACTIVE_KEY, now)
+    _lists_worked_out(conn)
 
 
 def _chart_company(store: Any, conn: sqlite3.Connection) -> None:

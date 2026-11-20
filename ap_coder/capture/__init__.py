@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .confidence import LABELS, TAX_FIELDS, fuse
+from .confidence import LABELS, TAKEN_OFF_REASON, TAX_FIELDS, fuse
 from .instructions import addressed_to_software
 from .layout import IMAGE_EXTENSIONS, CannotRead, build_layout, ocr_available, read_pages
 from .locate import locate
@@ -31,6 +31,7 @@ from .reader import (
     read_line_items,
     without_account_rows,
 )
+from .reader.progress import layout_rows, read_progress
 from .types import (
     AMOUNT_FIELDS,
     CHECK,
@@ -669,6 +670,23 @@ def _cross_read(path: Path, layout: DocLayout) -> dict[str, list[Reading]]:
     return read_fields(ocr_layout)
 
 
+def _held_back_total(layout: DocLayout, fields: dict[str, FieldResult]) -> None:
+    """The total of a progress billing holding part of it back that adds up as read (``reader.progress``): the total
+    before the holdback, the work this period and its taxes, which the coding takes (D-274), printed or not. Whether it
+    or the amount due after the holdback is posted is AP's call, so a person checks it, as a total printed above a
+    holdback is (D-47, B-2492, B-2946). One read as that keeps its reading."""
+    progress = read_progress(layout_rows(layout))
+    if not progress or not progress["adds_up"] or progress["release"] or not (progress["holdback"] or 0) > 0:
+        return
+    total = round(progress["this_period"] + sum(progress["taxes"].values()), 2)
+    fr = fields.get("grand_total")
+    if fr is None or not isinstance(fr.value, (int, float)) or abs(fr.value - total) >= 0.005:
+        fr = fields["grand_total"] = FieldResult("grand_total", total, 0.6, CHECK)
+    if TAKEN_OFF_REASON not in fr.reasons:
+        fr.status, fr.confidence = CHECK, min(fr.confidence, 0.6)
+        fr.reasons.append(TAKEN_OFF_REASON)
+
+
 def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values: dict[str, Any] | None = None,
             template: Any = None, vendor: dict[str, Any] | None = None, ocr: str | bool = "auto",
             cross_read: bool = False, layout: DocLayout | None = None, second_read: bool = True,
@@ -772,6 +790,7 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
             if positive and fr.status not in (CHECK, MISSING):
                 fr.status, fr.confidence = CHECK, min(fr.confidence, 0.6)
                 fr.reasons.append("read as a positive amount on a credit note: check its sign on the page")
+    _held_back_total(layout, fields)
     not_invoice = "" if credit else not_an_invoice(layout, fields, items)
     return CaptureResult(fields=fields, line_items=items, checks=checks, layout_source=layout.source,
                          page_count=len(layout.pages) + layout.pages_left_out,

@@ -475,6 +475,72 @@ def test_a_spot_checked_invoice_waits_for_azure_then_goes_touchless(store, monke
     assert inv["status"] == APPROVED and inv["reviewer"] == AUTONOMOUS_REVIEWER
 
 
+def _companies_loaded(store):
+    """JD Edwards' made-up companies (report 9, ``jde_group``)."""
+    from ap_coder.bench import jde_group
+    from ap_coder.coding import companies
+    from ap_coder.core.headers import match_columns
+
+    rows = jde_group.companies_rows()
+    titles = list(jde_group.TITLES["build"])
+    table, _ = companies.company_table([dict(zip(titles, r, strict=True)) for r in rows[1:]],
+                                       match_columns(titles, companies.COMPANY_ALIASES))  # fmt: skip
+    store.set_setting(companies.COMPANIES_SETTING, json.dumps(table))
+
+
+def test_azure_agreeing_leaves_an_invoice_whose_company_was_decided_again_for_a_person(store, monkeypatch):
+    """B-2930: B-2926 approved a held invoice under the company its checks decided again, but with the rest of its
+    coding as worked out under the other: its PO-matched voucher (``VOUCHER_MATCH``, D-284) went out keyed under 00220
+    and matched against 00210's order of the same number, which always goes to a person (D-285). An invoice whose
+    company changed while it was held is not approved without a person (the AI reviewer's case says why: below)."""
+    from ap_coder.core.memory import vendor_key
+    from ap_coder.core.schema import VOUCHER_MATCH
+    from ap_coder.erp import jde_settings
+
+    vendor = "Northwind IT Solutions Inc."
+    items = [("Dell Latitude 7450 laptop, 32GB RAM", 3, 1450.0), ("Dell PowerEdge R760 rack server - datacentre", 1,
+             8900.0), ("Microsoft 365 E3 licences - monthly", 25, 32.0),
+             ("Implementation consulting - endpoint rollout (hours)", 12, 150.0),
+             ("Delivery & handling", 1, 95.0)]  # fmt: skip
+
+    def order(company, first):  # PO-88213 as JD Edwards numbers it in ``company``
+        return [{"po_number": "PO-88213", "vendor_name": vendor, "supplier_number": "", "order_type": "OP",
+                 "order_company": company, "line_number": n + 1, "erp_line": f"{first + n * 10}.000",
+                 "description": d, "quantity": q, "unit_price": p, "amount": q * p, "received_quantity": q,
+                 "gl_code": "", "cost_center": "", "status": "open", "currency": "CAD"}
+                for n, (d, q, p) in enumerate(items)]  # fmt: skip
+
+    _companies_loaded(store)
+    store.import_erp_vouchers([{"key": "00210-PV-700101-001", "vendor_name": vendor, "invoice_number": "NW-2025-0001",
+                                "total": 100.0, "invoice_date": "2025-01-02", "an8": "",
+                                "document": "700101"}])  # fmt: skip
+    store.import_purchase_orders(order("00210", 1) + order("00220", 100))
+    js = jde_settings.load(store)
+    js.user, js.company, js.default_bu, js.use_default_rule = "APCODER", "00001", "HQ", True
+    js.amount_mode, js.po_matched = jde_settings.AMOUNT_TAX, True
+    js.po_charges, js.po_charge_account = jde_settings.CHARGES_GL, "HQ.6010"
+    js.an8_overrides = {vendor_key(vendor): "10023"}
+    jde_settings.save(store, js)
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
+    _turn_on(store, monkeypatch, rate=100)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)
+    result = _process(store)
+    held = result.output
+    assert (held["company"], {r["order_company"] for r in held[VOUCHER_MATCH]["rows"]}) == ("00210", {"00210"})
+    _code_the_lines(store, result.invoice_id)
+    _touchless_vendor(store, result.output)
+    store.update_after_check(result.invoice_id, None, None, (azure_check.ISSUE_CODE,),
+                             {"capture": {"state": AUTONOMOUS, "azure_hold": True}})  # fmt: skip
+    store.set_setting("our_names", "Fabrikam Canada = 220")  # the bill-to printed: 00220's
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(_raw_from(result.capture)))
+    assert outcome.status == "done" and outcome.approved is False
+    inv = store.get_invoice(result.invoice_id)
+    assert inv["status"] == REVIEW and not inv["final_output"]
+    # then read again with Azure's reading (D-245): its proposal all 00220's, its PO match too, for what decides next
+    now = inv["ai_output"]
+    assert (now["company"], {r["order_company"] for r in now[VOUCHER_MATCH]["rows"]}) == ("00220", {"00220"})
+
+
 def _code_the_lines(store, invoice_id):
     """Each line of the invoice's proposal given an account and a cost center (the local model is off here, so it
     leaves them unassigned, and an invoice with a line to code is never approved without a person)."""

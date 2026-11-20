@@ -315,3 +315,33 @@ def test_the_lists_of_a_database_loaded_before_budget_locked_jobs_took_postings_
     assert not found & {"CC_UNKNOWN", "GL_UNKNOWN", "BU_INACTIVE"}, found
     version = store.chart_version()
     assert Store(db).chart_version() == version  # (once: opened again, nothing is worked out)
+
+
+def test_the_lists_worked_out_again_by_an_older_build_are_worked_out_again_at_the_next_open(tmp_path, monkeypatch):
+    """B-2752: B-2750's rebuild was recorded once (settings.chart_active); a trip back to an older build that loaded
+    the business units again worked the lists out with K closed and recorded nothing, so the next open of this build
+    left the K job out of the cost centers again, its lines CC_UNKNOWN. What the lists were worked out with is
+    recorded with the chart's mark of that time: lists another build worked out since are worked out again."""
+    from ap_coder.core.chart import BuRow, ChartRow
+    from ap_coder.core.store import chart as chart_store
+
+    units = [BuRow("100001", "Tower job", "00100", "JB", ""), BuRow("100002", "Bridge job", "00100", "JB", "K")]
+    store = Store(tmp_path / "ap_coder.db")
+    store.import_business_units(units)
+    rows = (("100001", "", "Tower job", 3), ("100001", "5110", "Labour", 7), ("100002", "", "Bridge job", 3),
+            ("100002", "5300", "Rebar", 7))  # fmt: skip
+    store.import_chart([ChartRow(bu, obj, "", said, lod, "", "", "00100") for bu, obj, said, lod in rows])
+    assert [r["code"] for r in store.list_accounts("cost_centers")] == ["100001", "100002"]
+    with closing(sqlite3.connect(store.path)) as conn:
+        recorded = conn.execute("SELECT value FROM settings WHERE key = 'chart_active'").fetchone()[0]
+    with monkeypatch.context() as older:  # (the older build: K closed, and nothing recorded of it)
+        older.setattr(chart_store, "ACTIVE", ("ACT", ""))
+        Store(store.path).import_business_units([*units, BuRow("100003", "Yard", "00100", "JB", "")])
+    with closing(sqlite3.connect(store.path)) as conn, conn:
+        conn.execute("UPDATE settings SET value = ? WHERE key = 'chart_active'", (recorded,))
+        assert [r[0] for r in conn.execute("SELECT code FROM cost_centers ORDER BY code")] == ["100001"]
+    again = Store(store.path)
+    assert [r["code"] for r in again.list_accounts("cost_centers")] == ["100001", "100002"]
+    assert [r["code"] for r in again.list_accounts("gl_accounts")] == ["5110", "5300"]
+    version = again.chart_version()
+    assert Store(store.path).chart_version() == version  # (then nothing more: one settings read an open)

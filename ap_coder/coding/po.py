@@ -29,6 +29,7 @@ screen shows), ``rows_from_records`` and ``map_columns`` (the import), ``billed_
 
 from __future__ import annotations
 
+import bisect
 import math
 import re
 import threading
@@ -493,21 +494,68 @@ def share_out(po_lines: list[dict[str, Any]], invoices: list[tuple[list[dict[str
 
 
 def _shared(po_lines: list[dict[str, Any]], invoices: list[tuple[list[dict[str, Any]], bool]],
-            choices: list[list[tuple[int, ...]]]) -> list[list[int | Alike | None]]:  # fmt: skip
-    """``share_out`` of ``invoices`` whose lines' ``po_line_choices`` are ``choices``. What is taken of a line's room
-    counts the invoices not exported yet where the ERP gave what it has open on the line (it has counted the exported
-    ones, D-280), every invoice where it gave none."""
-    if all(len(found) <= 1 for mine in choices for found in mine):  # (no lines alike: no room to count)
-        return [[found[0] if found else None for found in mine] for mine in choices]
+            choices: list[list[tuple[int, ...]]], keyed: list[list[int | None] | None] | None = None,
+            approved: list[Any] | None = None) -> list[list[int | Alike | None]]:  # fmt: skip
+    """``share_out`` of ``invoices`` whose lines' ``po_line_choices`` are ``choices``; ``keyed``: of each, the PO line
+    each of its lines is keyed on (an approved invoice's kept voucher match, ``_keyed_lines``), None when not: those
+    are never shared out again. The others are shared out over the room left in order (D-320), after the invoices
+    before them and the kept matches after them that were there first: every one for an invoice in review, those
+    approved before it for one ``approved`` (when; None: not approved) with no match kept (B-2915). What is taken of a
+    line's room counts the invoices not exported yet where the ERP gave what it has open on the line (it has counted
+    the exported ones, D-280), every invoice where it gave none; an exported invoice's own room is what was ordered,
+    less every invoice before it (the ERP's open has it off already)."""
+    keyed = keyed or [None] * len(invoices)
+    approved = approved or [None] * len(invoices)
+    if all(k is None for k in keyed) and all(len(found) <= 1 for mine in choices for found in mine):
+        return [[found[0] if found else None for found in mine] for mine in choices]  # (no lines alike: no room)
     by_number = {int(pl["line_number"]): pl for pl in po_lines}
     taken: dict[int, float] = {}
+    every: dict[int, float] = {}  # (every invoice's, exported or not)
+    # What each kept match takes: [(its PO line, how much, whether of the room ``taken`` counts)], by position
+    gives = {i: [(n, _taking(li, by_number[n]), not (exported and _by_open(by_number[n])))
+                 for li, n in zip(lines, fixed, strict=True) if n is not None]
+             for i, ((lines, exported), fixed) in enumerate(zip(invoices, keyed, strict=True))
+             if fixed is not None}  # fmt: skip
+    kept_at = sorted(gives)  # (their positions, and from each on the earliest of their approvals)
+    first: list[Any] = [None] * len(kept_at)
+    for k in range(len(kept_at) - 1, -1, -1):
+        at, after = approved[kept_at[k]], first[k + 1] if k + 1 < len(kept_at) else None
+        first[k] = at if after is None or (at is not None and at < after) else after
+
+    def seen(i: int, exported: bool) -> dict[int, float]:
+        """What an invoice not kept, at ``i``, finds taken: the invoices before it and the kept matches after it
+        approved before it (or, in review, every one)."""
+        mine, at, k = every if exported else taken, approved[i], bisect.bisect_right(kept_at, i)
+        if k == len(kept_at) or (at is not None and not (first[k] is not None and first[k] < at)):
+            return mine  # (none after it, or none of them approved before it)
+        later = [j for j in kept_at[k:] if at is None or (approved[j] is not None and approved[j] < at)]
+        out = dict(mine)
+        for j in later:
+            for n, need, of_room in gives[j]:
+                if exported or of_room:
+                    out[n] = out.get(n, 0.0) + need
+        return out
+
+    def take(li: dict[str, Any], n: int, exported: bool) -> None:
+        need = _taking(li, by_number[n])
+        every[n] = every.get(n, 0.0) + need
+        if not (exported and _by_open(by_number[n])):
+            taken[n] = taken.get(n, 0.0) + need
+
     out: list[list[int | Alike | None]] = []
-    for (lines, exported), mine in zip(invoices, choices, strict=True):
+    for i, ((lines, exported), mine, fixed) in enumerate(zip(invoices, choices, keyed, strict=True)):
+        if fixed is not None:
+            for li, n in zip(lines, fixed, strict=True):
+                if n is not None:
+                    take(li, n, exported)
+            out.append(list(fixed))
+            continue
         shared: list[int | Alike | None] = []
         for li, found in zip(lines, mine, strict=True):
-            n = found[0] if len(found) == 1 else _told(li, found, by_number, taken) if found else None
-            if isinstance(n, int) and not (exported and _by_open(by_number[n])):
-                taken[n] = taken.get(n, 0.0) + _taking(li, by_number[n])
+            n = (found[0] if len(found) == 1 else _told(li, found, by_number, seen(i, exported), exported)
+                 if found else None)  # fmt: skip
+            if isinstance(n, int):
+                take(li, n, exported)
             shared.append(n)
         out.append(shared)
     return out
@@ -517,13 +565,13 @@ _WORD = re.compile(r"[a-z0-9]+")
 
 
 def _told(li: dict[str, Any], alike: tuple[int, ...], by_number: dict[int, dict[str, Any]],
-          taken: dict[int, float]) -> int | Alike:  # fmt: skip
+          taken: dict[int, float], ordered: bool = False) -> int | Alike:  # fmt: skip
     """Which of the PO lines ``alike`` an invoice line bills (``share_out``): the one it points to, else the one of
-    those with room left for it; ``Alike`` when that tells none."""
+    those with room left for it (``ordered``: in what was ordered, ``_has_room``); ``Alike`` when that tells none."""
     pointed = _pointed(li, alike, by_number)
     if len(pointed) == 1:
         return pointed[0]
-    fits = tuple(n for n in pointed if _has_room(li, by_number[n], taken.get(n, 0.0)))
+    fits = tuple(n for n in pointed if _has_room(li, by_number[n], taken.get(n, 0.0), ordered))
     return fits[0] if len(fits) == 1 else Alike(fits, True) if fits else Alike(pointed, False)
 
 
@@ -559,16 +607,17 @@ def _taking(li: dict[str, Any], pl: dict[str, Any]) -> float:
     return matched_quantity(li)
 
 
-def _has_room(li: dict[str, Any], pl: dict[str, Any], taken: float) -> bool:
-    """Whether a PO line, ``taken`` of it already, has room left for an invoice line: what was ordered (or what the
-    ERP has open on it), 2% and a cent more on a line billed by amount; a credit, as much billed on it to give back."""
+def _has_room(li: dict[str, Any], pl: dict[str, Any], taken: float, ordered: bool = False) -> bool:
+    """Whether a PO line, ``taken`` of it already, has room left for an invoice line: what was ordered (or, not
+    ``ordered``, what the ERP has open on it), 2% and a cent more on a line billed by amount; a credit, as much billed
+    on it to give back."""
     need = _taking(li, pl)
     if need < 0:
         return taken + need >= -1e-6
     if pl.get("amount_only"):
-        room = pl["amount"] if pl.get("open_amount") is None else pl["open_amount"]
+        room = pl["amount"] if ordered or pl.get("open_amount") is None else pl["open_amount"]
         return taken + need <= room * (1 + TOTAL_TOLERANCE) + 0.01
-    room = pl["quantity"] if pl.get("open_quantity") is None else pl["open_quantity"]
+    room = pl["quantity"] if ordered or pl.get("open_quantity") is None else pl["open_quantity"]
     return taken + need <= room + 1e-6
 
 
@@ -1037,11 +1086,12 @@ def matched_quantity(li: dict[str, Any]) -> float:
 
 def unprinted_quantity(amount: float, unit_cost: float) -> tuple[float, str]:
     """(the quantity a goods line printed with none matches on a PO line of ``unit_cost``, how: ``LineMatch.
-    quantity_from``): its amount at that cost when it comes out a whole number, the cost within its tolerance to the
-    cent (``_same_price``); else 1 (-1 on a credit), as before (D-283)."""
+    quantity_from``): its amount at that cost when it comes out a whole number, the cost within its tolerance
+    (``_same_price``; not rounded to the cent first: a cost of a fraction of a cent, 0.045, has less tolerance than
+    that, B-2910); else 1 (-1 on a credit), as before (D-283)."""
     sign = -1.0 if amount < 0 else 1.0
     count = math.floor(abs(amount / unit_cost) + 0.5) if unit_cost else 0
-    if count >= 1 and _same_price(round(abs(amount) / count, 2), unit_cost):
+    if count >= 1 and _same_price(abs(amount) / count, unit_cost):
         return sign * count, "amount"
     return sign, "one"
 
@@ -1165,6 +1215,30 @@ def kept_voucher_match(final: dict[str, Any]) -> VoucherMatch | None:
     return VoucherMatch(rows=rows)
 
 
+def kept_as_loaded(matched: VoucherMatch, store: Store) -> VoucherMatch:
+    """A kept voucher match (``kept_voucher_match``) with each row's PO line's own tax (Y/N, explanation code,
+    rate/area), and its account when it kept none, as the purchase orders loaded now give them: what a keying sheet
+    holding the match says to give the PO line in JD Edwards and load again (B-2911). The PO line each row matches, its
+    quantity and its amount stay as kept (D-284); a line the purchase orders loaded now don't have, or give none of
+    them, keeps its own."""
+    loaded: dict[tuple[str, str, str], dict[str, dict[str, Any]]] = {}
+    rows = []
+    for row in matched.rows:
+        order = (row.order_number, row.order_type, row.order_company)
+        if row.on_po and order not in loaded:
+            heads = [o for o in store.orders_numbered(po_key(row.order_number))
+                     if ((o.get("order_type") or ""), (o.get("order_company") or "")) == order[1:]]  # fmt: skip
+            po = store.purchase_order(heads[0]["po_key"]) if len(heads) == 1 else None
+            loaded[order] = {str(pl.get("erp_line") or ""): pl for pl in (po or {}).get("lines") or []}
+        pl = loaded[order].get(row.line) if row.on_po and row.line else None
+        if pl is not None:
+            tax = (pl.get("tax_flag") or "", pl.get("tax_code") or "", pl.get("tax_area") or "")
+            row = replace(row, tax=tax if any(tax) else row.tax,
+                          account=row.account or join_account(pl.get("cost_center"), pl.get("gl_code")))  # fmt: skip
+        rows.append(row)
+    return replace(matched, rows=rows)
+
+
 def billed_by_line(
     po: dict[str, Any], invoices: list[dict[str, Any]], positive_only: bool = False, amounts: bool = False,
     matched: dict[Any, tuple[int, ...]] | None = None,
@@ -1191,13 +1265,25 @@ class PoBilling:
     (``po_billing``), what each bills on the PO's lines (``_billed``): kept rows are every caller's, read them, don't
     change them. A PO read at each ask has instead its lines' matches kept (``_matched``: (where it is kept, the PO's
     lines as matched, this ask's own copy of them)). ``alike``: whether a line of theirs could bill several PO lines
-    alike (kept: as worked out then; else not known yet), then shared out among them all in order (``shares``)."""
+    alike (kept: as worked out then; else not known yet), then shared out among them all in order (``shares``);
+    ``kept``: when those of them approved were and what their lines are keyed on (``Store.approved_matches``), asked
+    then of the invoices with lines alike, once (``_kept_of``)."""
 
     def __init__(self, rows: list[dict[str, Any]], billed: dict[int, Any] | None = None,
                  matched: tuple[Any, Any, dict[Any, tuple[int, ...]]] | None = None,
-                 alike: bool = True) -> None:  # fmt: skip
-        self.rows, self._billed, self._matched, self._alike = rows, billed, matched, alike
+                 alike: bool = True, kept: Callable[[list[int]], dict[int, Any]] | None = None) -> None:  # fmt: skip
+        self.rows, self._billed, self._matched, self._alike, self._kept = rows, billed, matched, alike, kept
         self._shares: dict[int, list[int | Alike | None]] | None = None
+        self._keyed: dict[int, Any] = {}
+
+    def _kept_of(self, ids: list[int]) -> dict[int, Any]:
+        """{id: (when it was approved, what its lines are keyed on), (None, None) when not approved} of these invoices
+        (some of ``rows``), each asked once."""
+        todo = [n for n in ids if n not in self._keyed]
+        if todo:
+            found = self._kept(todo) if self._kept is not None else {}
+            self._keyed.update((n, found.get(n) or (None, None)) for n in todo)
+        return self._keyed
 
     def billed(self, po: dict[str, Any], invoices: list[dict[str, Any]], amounts: bool = False,
                matched: dict[Any, tuple[int, ...]] | None = None) -> dict[int, float]:  # fmt: skip
@@ -1236,10 +1322,10 @@ class PoBilling:
 
     def shares(self, po: dict[str, Any], matched: dict[Any, tuple[int, ...]] | None = None,
                ) -> dict[int, list[int | Alike | None]]:  # fmt: skip
-        """Each of ``rows``' lines' PO line by invoice id, shared out among them all in order (``share_out``), when a
-        line of theirs could bill several PO lines alike (D-282); empty when none could (each bills the one it most
-        resembles: ``billed`` adds them up as before), or when one's lines can't be read so (worked out as before,
-        failing where it did)."""
+        """Each of ``rows``' lines' PO line by invoice id, shared out among them all in order (``share_out``; those of
+        an approved invoice the ones its kept voucher match keys, ``_keyed_lines``, D-320), when a line of theirs could
+        bill several PO lines alike (D-282); empty when none could (each bills the one it most resembles: ``billed``
+        adds them up as before), or when one's lines can't be read so (worked out as before, failing where it did)."""
         if self._shares is None:
             self._shares = {}
             if self._alike:
@@ -1254,7 +1340,13 @@ class PoBilling:
                 finally:
                     self._kept_again(before)
                 if any(len(found) > 1 for mine in choices for found in mine):
-                    shared = _shared(po["lines"], lines_of, choices)
+                    kept = self._kept_of([row["id"] for row, mine in zip(self.rows, choices, strict=True)
+                                          if any(len(found) > 1 for found in mine)])  # fmt: skip
+                    by_erp = _by_erp_line(po["lines"])
+                    of = [kept.get(row["id"]) or (None, None) for row in self.rows]
+                    keyed = [_keyed_lines(theirs, lines, by_erp)
+                             for (_, theirs), (lines, _) in zip(of, lines_of, strict=True)]  # fmt: skip
+                    shared = _shared(po["lines"], lines_of, choices, keyed, [at for at, _ in of])
                     self._shares = {row["id"]: mine for row, mine in zip(self.rows, shared, strict=True)}
         return self._shares
 
@@ -1262,15 +1354,45 @@ class PoBilling:
                    matched: dict[Any, tuple[int, ...]] | None = None) -> list[int | Alike | None]:  # fmt: skip
         """Each of ``lines``' PO line (an invoice's: ``invoice_id``, None when not stored yet; ``exported``), shared out
         after the PO's invoices before it in order (``share_out``): all of ``rows`` but itself when it is none of them
-        yet."""
+        yet; and after every approved invoice's kept voucher match (D-320). Its own kept match, approved, is its."""
         mine = po_line_choices(lines, po["lines"], matched)
         if all(len(found) <= 1 for found in mine):
             return [found[0] if found else None for found in mine]
+        by_erp = _by_erp_line(po["lines"])
+        own: Any = None  # (when it was approved; None: in review, or not one of them)
+        if invoice_id is not None and any(row["id"] == invoice_id for row in self.rows):
+            own, theirs = self._kept_of([invoice_id])[invoice_id]
+            if (fixed := _keyed_lines(theirs, lines, by_erp)) is not None:
+                return list(fixed)
         known = self._matched[2] if self._matched is not None else {} if matched is None else matched
-        before = [(row["coding"].get("line_items") or [], row["export_batch"] is not None) for row in self.rows
-                  if invoice_id is None or row["id"] < invoice_id]  # fmt: skip
-        choices = [po_line_choices(earlier, po["lines"], known) for earlier, _ in before]
-        return _shared(po["lines"], [*before, (lines, exported)], [*choices, mine])[-1]
+        others = [row for row in self.rows if row["id"] != invoice_id]
+        lines_of = [(row["coding"].get("line_items") or [], row["export_batch"] is not None) for row in others]
+        choices = [po_line_choices(earlier, po["lines"], known) for earlier, _ in lines_of]
+        kept = self._kept_of([row["id"] for row, theirs in zip(others, choices, strict=True)
+                              if any(len(found) > 1 for found in theirs)])  # fmt: skip
+        of = [kept.get(row["id"]) or (None, None) for row in others]
+        keyed = [_keyed_lines(theirs, earlier, by_erp) for (_, theirs), (earlier, _) in zip(of, lines_of, strict=True)]
+        approved = [when for when, _ in of]
+        at = sum(1 for row in others if invoice_id is None or row["id"] < invoice_id)  # (its place in order)
+        return _shared(po["lines"], [*lines_of[:at], (lines, exported), *lines_of[at:]],
+                       [*choices[:at], mine, *choices[at:]], [*keyed[:at], None, *keyed[at:]],
+                       [*approved[:at], own, *approved[at:]])[at]  # fmt: skip
+
+
+def _by_erp_line(po_lines: list[dict[str, Any]]) -> dict[str, int]:
+    """A PO's lines' line_numbers by their line number as JD Edwards names them ("2.000")."""
+    return {str(pl["erp_line"]): int(pl["line_number"]) for pl in po_lines if pl.get("erp_line")}
+
+
+def _keyed_lines(keyed: Any, lines: list[dict[str, Any]], by_erp: dict[str, int]) -> list[int | None] | None:
+    """The PO line (its line_number; None: none of those loaded, ``by_erp``) each of an approved invoice's ``lines`` is
+    keyed on, by position, from what its kept voucher match keys (``keyed``: ``Store.approved_matches``', D-284),
+    which the sharing out counts first and never shares again (D-320). None when it has none, or not a row for each
+    of its lines."""
+    if not keyed or len(keyed) != len(lines) or any(
+            n != li.get("line_number") for (n, _), li in zip(keyed, lines, strict=True)):  # fmt: skip
+        return None
+    return [by_erp.get(line) if line else None for _, line in keyed]
 
 
 def _added(invoices: list[dict[str, Any]], shares: dict[int, list[int | Alike | None]],
@@ -1378,13 +1500,13 @@ def po_billing(store: Store, key: str, po: dict[str, Any]) -> PoBilling:
         kept = _KEPT.get(where)
     changes = store.po_invoices_since(key, kept.stamp if kept else None, kept.vendors if kept else None)
     if changes is None:
-        return PoBilling(store.po_invoices(key))
+        return PoBilling(store.po_invoices(key), kept=store.approved_matches)
     read = changes.read
     if kept is not None and not read and lines == kept.lines and changes.quoting == list(kept.vendors):
         if changes.stamp != kept.stamp:  # (only other invoices changed since: these kept as of now)
             with _KEPT_LOCK:
                 _KEPT[where] = replace(kept, stamp=changes.stamp)
-        return PoBilling(kept.rows, kept.billed, alike=kept.alike)
+        return PoBilling(kept.rows, kept.billed, alike=kept.alike, kept=store.approved_matches)
     rows_of = {row["id"]: row for row in kept.rows} if kept is not None else {}
     vendors: dict[int, Any] = {}
     rows: list[dict[str, Any]] = []
@@ -1397,7 +1519,8 @@ def po_billing(store: Store, key: str, po: dict[str, Any]) -> PoBilling:
             _KEPT.pop(where, None)
             known = _MATCHED.get(where)
         # (a copy of its own: a kept one is never changed, another thread may be copying or measuring it)
-        return PoBilling(rows, matched=(where, lines, dict(known[1]) if known and known[0] == lines else {}))
+        return PoBilling(rows, matched=(where, lines, dict(known[1]) if known and known[0] == lines else {}),
+                         kept=store.approved_matches)  # fmt: skip
     # (a copy: a kept PO is never changed, another thread may be reading or measuring it; every invoice read: anew)
     texts = dict(kept.texts) if kept is not None and len(read) < len(changes.quoting) else {}
     _share_texts((row for _, row in read.values()), texts)
@@ -1410,7 +1533,7 @@ def po_billing(store: Store, key: str, po: dict[str, Any]) -> PoBilling:
     entry = replace(entry, size=size_of(entry))
     with _KEPT_LOCK:
         _KEPT[where] = entry
-    return PoBilling(rows, billed, alike=alike)
+    return PoBilling(rows, billed, alike=alike, kept=store.approved_matches)
 
 
 def positive_lines(invoices: Iterable[dict[str, Any]]) -> list[tuple[Any, float, float]]:

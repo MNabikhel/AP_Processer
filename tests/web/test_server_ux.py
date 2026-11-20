@@ -19,6 +19,7 @@ from ap_coder.ops import offline
 from ap_coder.web import access, core, files, identity
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import learning
+from tests.browser import settle
 from tests.conftest import SAMPLES, chromium_path
 from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
 from tests.webclient import PAGE, add_clean, enrol, post, sign_in
@@ -340,7 +341,7 @@ def test_in_a_browser_no_page_breaks_the_content_security_policy(store, server_o
             for path in dict.fromkeys(paths):
                 response = page.goto(f"http://127.0.0.1:{port}{path}")
                 assert response is not None and "content-security-policy" in response.headers
-                page.wait_for_load_state("networkidle")
+                settle(page)
                 if path.startswith("/review/"):
                     page.wait_for_selector(".iv-sheet:not(.loading)")
                 assert page.evaluate("typeof window.getComputedStyle") == "function"

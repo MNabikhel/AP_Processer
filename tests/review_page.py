@@ -188,6 +188,14 @@ class ReviewPage:
         if not reason[1].startswith(FIRST_OFFER):
             reason[1] = f"{FIRST_OFFER} {reason[1]}".strip()
 
+    def confirm_tax(self, line: int) -> None:
+        """Line ``line``'s tax code (the first is 1) confirmed as it is, as picking it in its dropdown confirms it: an
+        exemption inferred from the other lines recorded as confirmed in its reason (as invoice.js writes it)."""
+        from ap_coder.coding.line_tax import confirm_line
+
+        reason = self._cells("line_reason")[line - 1]
+        reason[1] = confirm_line(reason[1] or "", self._cells(LINE_TAX_CODE)[line - 1][1])
+
     @property
     def form(self) -> dict[str, list[str]]:
         """The form as the page posts it: every control's value under its name, in page order."""

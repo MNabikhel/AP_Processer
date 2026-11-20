@@ -180,7 +180,9 @@ def unknown_variations(store: Any, text: str) -> list[str]:
     """The lines of "Your company's names" (``text``, as typed) written "name = company" whose company report 9 does
     not list, nor the pilot (D-272), each as typed: none without report 9 loaded (B-2694)."""
     table = companies(store)
-    pilot = store.chart_settings().pilot if table else ()
+    if not table:  # (B-2928)
+        return []
+    pilot = store.chart_settings().pilot
     return [line.strip() for line in text.splitlines() if "=" in line and line.rpartition("=")[0].strip()
             and company_code(line.rpartition("=")[2]) not in (*table, *pilot)]  # fmt: skip
 

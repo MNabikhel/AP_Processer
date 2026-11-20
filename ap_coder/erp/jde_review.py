@@ -23,6 +23,7 @@ from .jde_settings import (
     settings_problems,
 )
 from .jde_voucher import (
+    HOLDBACK,
     TERMS_CREDIT,
     TERMS_DEFAULT,
     TERMS_TABLE,
@@ -98,6 +99,8 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
             out.append((ERROR, "JDE_MEALS_GROSS", f"JD Edwards: {problem}, or ask the pilot tester", None))
         elif code in SAID_AS_IS:
             out.append((ERROR, code, f"JD Edwards: {problem}", None))
+        elif code == HOLDBACK:  # keyed by hand: approved anyway, with a reason (B-2945)
+            out.append((ERROR, "HOLDBACK_BY_HAND", f"JD Edwards: {problem}", None))
         else:
             out.append((ERROR, "JDE_VOUCHER", f"JD Edwards: {problem}", line))
     if said := not_recovered(v):  # a GST/HST the Tax setup keeps in the expense: meant, or a slip (B-2150)

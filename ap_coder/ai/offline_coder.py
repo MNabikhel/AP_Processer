@@ -26,7 +26,7 @@ from ..capture.confidence import apply_supplier_record, reading_confidence
 from ..capture.reader import us_address
 from ..capture.reader.patterns import OUR_NAMES
 from ..capture.reader.progress import PROGRESS_LINE, layout_rows, read_progress
-from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout, Line
+from ..capture.types import LIKELY, QUANTITY_NOTE, VERIFIED, CaptureResult, DocLayout, Line
 from ..capture.workflow import (
     apply_header_lessons,
     apply_line_memory,
@@ -105,6 +105,16 @@ _PROVINCE_AT = re.compile(
     r"(?:\(|\b)(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)"
     rf"(?:(?:\)|\b)\s*,?\s*{_POSTAL}|(?={_POSTAL}(?![A-Za-z0-9])){_POSTAL})"
 )
+# A scan's postal code with one of its last three characters lost too ("Regina,SKS4P48" for S4P 4K8, B-2891): a city's
+# name and its comma, the province code, its postal district (a letter that is the province's own, ``_POSTAL_LETTERS``,
+# a digit, a letter) and two more characters, one a digit; never words ("ON NOV 12", B-2893). Read only in a labelled
+# address's block when nothing stronger is (``_cut_province``).
+_PROVINCE_CUT = re.compile(
+    r"[^\W\d_]{3}\.?\s*,\s*(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)\s*([A-Z])\d[A-Z]\s?(?:\d[A-Z\d]|[A-Z]\d)"
+    r"(?![A-Za-z0-9])"
+)
+_POSTAL_LETTERS = {"NL": "A", "NS": "B", "PE": "C", "NB": "E", "QC": "GHJ", "ON": "KLMNP", "MB": "R", "SK": "S",
+                   "AB": "T", "BC": "V", "NT": "X", "NU": "X", "YT": "Y"}  # fmt: skip
 # A province spelled out or abbreviated after a city's comma or in brackets, then its postal code or the line's end:
 # "Toronto, Ontario M5V 2T6", "Burnaby, British Columbia", "Québec (Québec) G1V 2M2", "Vancouver, B.C.", "Regina,
 # Sask." (``schema.province_named`` says which). A bare code ("Vancouver, BC") still needs its postal code, and with
@@ -304,6 +314,10 @@ def addresses(text: str, ours: frozenset[str] = frozenset()) -> tuple[str, str, 
         pending = [(kind, at) for kind, at in pending if n - at <= ADDRESS_BLOCK_LINES]
         where = _province_of(line, named=False)
         named = "" if where else _province_of(line)
+        if not where and not named and pending and not table:
+            end = pending[0][1] + ADDRESS_BLOCK_LINES
+            if not any(_PROVINCE_AT.search(r) for r in rows[n + 1 : end + 1]):  # (a full postal code comes first)
+                where = _cut_province(line)
         if not where and not named:
             continue
         if not supplier and not after_label:
@@ -400,6 +414,18 @@ def _block_province(label: Line, lines: list[Line], labels: list[Line], width: f
         found = _province_of(ln.text)
         if found:
             return found
+    for text in ("" if named else after, *(ln.text for _, ln in sorted(block, key=lambda item: item[0]))):
+        found = _cut_province(text)  # (only when no address of the block is read whole)
+        if found:
+            return found
+    return ""
+
+
+def _cut_province(text: str) -> str:
+    """The province of an address on ``text`` whose postal code a scan cut short (``_PROVINCE_CUT``); "" if none."""
+    for m in _PROVINCE_CUT.finditer(text or ""):
+        if m.group(2) in _POSTAL_LETTERS[m.group(1)]:
+            return m.group(1)
     return ""
 
 
@@ -662,11 +688,12 @@ def kept_offered(found: list[Candidate], reference: ReferenceData) -> list[Candi
 
 
 def _coded_line(number: int, reading: tuple[str, float, float, float], ev: _Evidence, printed: str,
-                hints: dict[int, str], offered: dict[int, list[Candidate]]) -> LineItem:  # fmt: skip
+                hints: dict[int, str], offered: dict[int, list[Candidate]], worked: str = "") -> LineItem:  # fmt: skip
     """One line of the invoice: coded when the evidence is strong enough (``Candidate.auto``), else left for a
     person with why, and the accounts offered kept with it (D-212). ``printed``: the text printed, when the line is
     described as AP approved it before. The weak match of a line left goes in ``hints``; with whole account strings
-    (``suggest.by_pairs``) every account offered goes in ``offered``, for the chat model to choose among."""
+    (``suggest.by_pairs``) every account offered goes in ``offered``, for the chat model to choose among.
+    ``worked``: how its quantity was worked out when it was not read (``LineReading.quantity_from``)."""
     description, quantity, unit_price, amount = reading
     reference = ev.reference
     found = candidates(description, ev.vendor, ev.feedback, reference, OFFERED, ev.default_gl, ev.key, ev.prior,
@@ -685,6 +712,8 @@ def _coded_line(number: int, reading: tuple[str, float, float, float], ev: _Evid
         why = not_sure(top) if top is not None else NO_HISTORY
     if printed:
         why = f"{why}; {RENAMED} (read “{printed}”)"
+    if worked:
+        why = f"{why}; quantity {quantity:g} worked out from {worked}: {QUANTITY_NOTE}"
     kept = [] if best is not None else [
         {**c.kept(), "name": c.name or account_name(reference, c.business_unit, c.code)}
         for c in kept_offered(found, reference)
@@ -831,8 +860,9 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     evidence = _Evidence(vendor, feedback, reference, default_gl, key, prior, units, addressed_to(text))
     hints: dict[int, str] = {}
     offered: dict[int, list[Candidate]] = {}
+    worked = [li.quantity_from for li in readings]
     lines = [_coded_line(number, reading, evidence, printed_as[number - 1] if number <= len(printed_as) else "",
-                         hints, offered)
+                         hints, offered, worked[number - 1] if number <= len(worked) else "")
              for number, reading in enumerate(readings_data, 1)]  # fmt: skip
     # Which taxes each line carries: the codes printed beside the lines, else the lines that make each tax charged
     # add up (not every tax on every line: a delivery or a service is often exempt from the provincial tax).
@@ -882,9 +912,9 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
 
 def _progress_values(values: dict[str, Any], layout: DocLayout | None) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """(the reading's values, the progress billing read): a progress billing's own when it is one that adds up as
-    printed (``reader.progress``, no release): the work this period the subtotal, each tax as printed, the total the
-    one before the holdback (the work and the taxes), whatever totals the reader chose (its amount due is net of the
-    holdback)."""
+    printed (``reader.progress``, no release): the work this period the subtotal, each tax as printed and no other
+    (it adds up without one: a supplier's template reading another layout's spot, B-2949), the total the one before
+    the holdback (the work and the taxes), whatever totals the reader chose (its amount due is net of the holdback)."""
     progress = read_progress(layout_rows(layout)) if layout is not None else None
     if not progress or not progress["adds_up"] or progress["release"]:
         return values, None
@@ -894,6 +924,8 @@ def _progress_values(values: dict[str, Any], layout: DocLayout | None) -> tuple[
     for field, tax_type in _TAXES:
         if tax_type in taxes:
             out[field] = taxes[tax_type]
+        else:
+            out.pop(field, None)
     out.pop("other_charges", None)
     return out, progress
 

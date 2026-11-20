@@ -235,8 +235,8 @@ def test_exports_activity_and_automation_show_on_the_seed_what_they_showed_befor
                           else memo(self, name, compute, *a, **k))  # fmt: skip
                 m.setattr(Store, "shared_answer", lambda self, name, compute, *a, **k: compute() if name in mine
                           else shared(self, name, compute, *a, **k))  # fmt: skip
-                m.setattr(exports_page, "ready_problems",
-                          lambda s, ids: exports_page.problem_rows(s, exports_page.jde_check(s, ids)[1]))  # fmt: skip
+                m.setattr(exports_page, "ready_problems", lambda s, ids, files=True: exports_page.problem_rows(
+                    s, exports_page.jde_check(s, ids, files=files)[1]))  # fmt: skip
                 return shown()  # (the controls tiles as drawn before: tests/web/test_web_analytics.py, B-2073)
 
         last: list[dict[str, str]] = []

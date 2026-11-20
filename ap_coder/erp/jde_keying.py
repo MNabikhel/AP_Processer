@@ -2,8 +2,8 @@
 
 For the approved invoices of an export batch, one block per voucher, in the order the screen asks: the header
 (supplier, company, invoice number, dates, currency), the pay item (gross amount, payment terms code, remark, due date,
-tax explanation code, tax rate/area, tax and taxable amounts; the G/L bank account once bank accounts are entered,
-D-220), then its G/L distribution (the account string as it is
+tax explanation code, tax rate/area, tax and taxable amounts; the pay status and business unit when Settings set them;
+the G/L bank account once bank accounts are entered, D-220), then its G/L distribution (the account string as it is
 typed, ``BU.Object.Subsidiary``; the account's description; the amount, net of the tax JD Edwards posts itself, a
 tax left in the expense inside it; the remark), a check line (G/L lines + recovered tax = gross) and, in words, what
 a person would otherwise work out: a tax that is not recovered, what the tax amount holds, the meals' half, a
@@ -70,6 +70,7 @@ RETAINED = "Retained Amount"  # a subcontract's row's, after its Amount Matched 
 MATCH_WIDTHS = [16, 6, 10, 26, 10, 9, 10, 32, 10, 8]
 NOT_ON_PO = "Not on the PO"  # a voucher match's G/L line of its own, in its Order Number column (D-265)
 STANDARD_TYPE = "PV"  # Standard Voucher Entry's own document type: any other is said (B-2621)
+APPROVED = "A"  # the pay status JD Edwards gives a voucher typed in: any other set is said (B-2948)
 CREDIT_TERMS = "none (a credit)"  # a credit memo's Payment terms: none is typed, as the files send none (B-896)
 # Rows of a printed page under the column names (upright Letter or A4 at full size; fewer than fit, to be safe): a
 # voucher that would run over the page starts on the next one.
@@ -127,6 +128,8 @@ class Voucher:
     po_matched: bool = False  # no G/L lines: JD Edwards distributes it from the receipts
     bank: tuple[str, str] | None = None  # (the G/L bank account as typed, its name); None: no bank account entered
     doc_type: str = STANDARD_TYPE  # the document type (VLDCT): said on the sheet when it is not PV (B-2621)
+    pay_status: str = ""  # Settings' pay status (VLPST) when it is not A, approved; "": not said (B-2948)
+    business_unit: str = ""  # the header business unit (VLMCU, its company's own: D-301); "": none set
     lines: list[Line] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -242,6 +245,8 @@ def vouchers(
             tax=None if tax is None else tax / 100, taxable=None if taxable is None else taxable / 100,
             recovered=v.recoverable / 100, po_matched=v.po_matched, bank=bank,
             doc_type=jde_zfiles._doc_type(v, settings) or STANDARD_TYPE,
+            pay_status="" if settings.pay_status.strip() in ("", APPROVED) else settings.pay_status.strip(),
+            business_unit=jde_zfiles.header_bu(final, settings),
             lines=[Line(jde_accounts.ani(e["account"]),
                         str((gl_names or {}).get(str(e.get("gl_code") or "").strip()) or ""),
                         e["cents"] / 100, jde_remarks.line_remark(e), *_ledger(e, li))
@@ -268,9 +273,10 @@ def _ledger(entry: dict[str, Any], line: dict[str, Any] | None) -> tuple[str, st
 
 def po_matches(store: Any, invoices: list[dict[str, Any]], charge_account: str = "") -> dict[int, po_mod.VoucherMatch]:
     """{invoice: its voucher match} of the ``invoices`` that quote a PO: the one kept with it at its approval
-    (``po.kept_voucher_match``, D-284), else each line paired with its PO line as the purchase orders loaded have it
-    (``po.match_invoice``, the invoice's own lines left out of what was billed before); ``charge_account``: where a
-    charge the PO has no line for goes (``JdeSettings.charge_account``, D-265)."""
+    (``po.kept_voucher_match``, D-284; its PO lines' tax as loaded now, ``po.kept_as_loaded``), else each line paired
+    with its PO line as the purchase orders loaded have it (``po.match_invoice``, the invoice's own lines left out of
+    what was billed before); ``charge_account``: where a charge the PO has no line for goes (``JdeSettings.
+    charge_account``, D-265)."""
     from ..core.schema import InvoiceCoding
 
     out: dict[int, po_mod.VoucherMatch] = {}
@@ -278,7 +284,7 @@ def po_matches(store: Any, invoices: list[dict[str, Any]], charge_account: str =
         final = inv.get("final_output") or {}
         number = str(final.get("po_number") or "").strip()
         if number and (kept := po_mod.kept_voucher_match(final)) is not None:
-            out[int(inv.get("id") or 0)] = kept
+            out[int(inv.get("id") or 0)] = po_mod.kept_as_loaded(kept, store)
         elif number:
             coding = InvoiceCoding.model_validate({k: x for k, x in final.items() if k != "gl_distribution"})
             invoice_id = int(inv.get("id") or 0)
@@ -306,7 +312,8 @@ def _match_said(matched: po_mod.VoucherMatch | None, warnings: list[str], notes:
         key = (row.order_number, row.order_type, row.order_company, row.line)
         if row.no_quantity and (row.retainage or row.order_type.upper() == po_mod.SUBCONTRACT):
             continue  # (a subcontract's lump sum: matched by its amount alone, D-273)
-        count, cost = po_mod._qty(row.quantity or 0), f"{row.unit_cost or 0:,.2f}"
+        count, cost = po_mod._qty(row.quantity or 0), f"{row.unit_cost or 0:,.4f}"
+        cost = cost[:-2] + cost[-2:].rstrip("0")  # (to the cent, or the 4 decimals JD Edwards keeps: 0.045, B-2910)
         if row.quantity_from == "amount":  # a line printed with no quantity (D-283)
             notes.append(f"{where}: the invoice prints no quantity; Quantity Matched is {count}, its amount "
                          f"({row.amount:,.2f}) at the PO line's unit cost {cost}.")  # fmt: skip
@@ -436,6 +443,10 @@ def _head(v: Voucher, title: str) -> list[Row]:
                                        (v.bank[1], PLAIN)]]  # fmt: skip
     kind = [] if v.doc_type == STANDARD_TYPE else [[("Document type", LABEL), (v.doc_type, TEXT), ("", PLAIN),
                                                     ("", PLAIN)]]  # fmt: skip
+    # The pay item's pay status and business unit, as the batch files send them, when Settings set them (B-2948)
+    pay = [*([("Pay status", LABEL), (v.pay_status, TEXT)] if v.pay_status else []),
+           *([("Business unit", LABEL), (v.business_unit, TEXT)] if v.business_unit else [])]  # fmt: skip
+    pay += [("", PLAIN)] * (4 - len(pay)) if pay else []
     return [
         [(title, TITLE), (f"AP Coder invoice {v.invoice_id}", TITLE), ("", TITLE), ("", TITLE)],
         [("Supplier number", LABEL), (v.supplier_number, TEXT), ("Supplier name", LABEL), (v.supplier_name, PLAIN)],
@@ -447,6 +458,7 @@ def _head(v: Voucher, title: str) -> list[Row]:
         [("Due date", LABEL), (v.due, DATE), ("PO number", LABEL), (v.po_number, TEXT)],
         [("Tax explanation code", LABEL), (v.tax_code, TEXT), ("Tax rate/area", LABEL), (v.tax_area, TEXT)],
         [("Tax amount", LABEL), (v.tax, MONEY), ("Taxable amount", LABEL), (v.taxable, MONEY)],
+        *([pay] if pay else []),
         *bank,
         *([[("Retained (held back)", LABEL), (v.retained, MONEY), ("Amount due now", LABEL), (v.amount_due, MONEY)]]
           if v.amount_due is not None else []),

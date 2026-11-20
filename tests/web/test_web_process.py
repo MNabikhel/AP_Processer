@@ -860,3 +860,36 @@ def test_getting_started_asks_no_business_unit_for_the_tax_account_jd_edwards_po
     with using_store(store):
         state, _, text = next(s for s in pilot_steps(store) if s[1] == JDE_STEP)
     assert "2420" not in text and state == "ok", text
+
+
+def test_getting_started_counts_each_companys_own_default_business_unit(store):
+    """B-2938: with several companies, each with its own Default BU (D-301) and Settings' blank, every voucher has its
+    accounts, but Getting started said every account "has no JD Edwards business unit: set a Default BU". Each company
+    is asked with its own settings; one without a business unit is named."""
+    import json
+
+    from ap_coder.bench import jde_group
+    from ap_coder.erp import jde_settings
+    from ap_coder.web.core import using_store
+    from ap_coder.web.pages.process import JDE_STEP, pilot_steps
+
+    store.set_setting("jde_companies", json.dumps({c[0]: {"name": c[1], "currency": c[2], "country": c[3]}
+                                                   for c in jde_group.GROUP[:2]}))  # fmt: skip
+    own = {"00210": {"default_bu": "21000"}, "00220": {"default_bu": "22000"}}
+
+    def save(values: dict) -> None:
+        jde_settings.save(store, jde_settings.JdeSettings(company="00210", user="AP", bu_from_cost_center=False,
+                                                          default_bu="", company_values=values))  # fmt: skip
+
+    save(own)
+    jde_settings.show(store, True)
+
+    def step() -> tuple[str, str]:
+        with using_store(store):
+            state, _, text = next(s for s in pilot_steps(store) if s[1] == JDE_STEP)
+        return state, text
+
+    assert step() == ("ok", "company 00210, Default BU 21000, 22000")
+    save({"00210": own["00210"]})  # 00220 without one of its own
+    state, text = step()
+    assert state == "todo" and "no JD Edwards business unit for company 00220: set a Default BU" in text, text

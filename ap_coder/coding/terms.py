@@ -148,6 +148,10 @@ def _add_months(day: dt.date, months: int) -> dt.date:
     return dt.date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
 
 
+# The most a term is read as: more net days, or a discount for more days or of a larger rate, is not read.
+NET_DAYS_MOST, DISCOUNT_DAYS_MOST, DISCOUNT_PCT_BELOW = 180, 60, 20
+
+
 def _net_days(text: str, *, outside_interest: bool = False) -> int | None:
     """``outside_interest``: days in a late-payment clause ("2% per month on accounts over 30 days") are left out:
     they say when interest starts, which is the net days only when nothing else says when it is due."""
@@ -156,7 +160,7 @@ def _net_days(text: str, *, outside_interest: bool = False) -> int | None:
             if outside_interest and pattern is not _NET[0][0] and _INTEREST.search(_clause(text, m.start(), m.end())):
                 continue
             n = int(next(g for g in m.groups() if g is not None))
-            if 0 <= n * unit <= 180:
+            if 0 <= n * unit <= NET_DAYS_MOST:
                 return n * unit
     return None
 
@@ -279,7 +283,7 @@ def _read_terms(text: str) -> Terms:
                 net = _net_days(text[: m.start()] + " " + text[m.end() :])
             if net is None and eom:  # "2/10 EOM": 2% by the 10th after month end, the net 20 days later
                 net = days + EOM_NET_AFTER_DISCOUNT
-            if 0 < pct < 20 and 0 < days <= 60:
+            if 0 < pct < DISCOUNT_PCT_BELOW and 0 < days <= DISCOUNT_DAYS_MOST:
                 in_months = months if months and net == 30 * months else None
                 return Terms(net_days=net, discount_pct=pct, discount_days=days, eom=eom, net_months=in_months)
     # Before "on receipt": "Net 30 days upon receipt of invoice" is net 30. "Due on receipt, 2% per month on accounts
@@ -539,7 +543,8 @@ def jde_unsupported(row: dict[str, Any]) -> str:
     """Why AP Coder does not work out a code's due date as JD Edwards does ("" when it does, D-302): it works out a
     discount and net days, a fixed due date alone, a proximate date alone of a day of the next month or the end of
     the invoice's month, and split payments some days apart (the first at the net days); not two of these together,
-    nor a fixed or proximate date with net days or a discount."""
+    nor a fixed or proximate date with net days or a discount, nor more net days or a longer or larger discount than
+    a term is read as (B-2939)."""
     net, pct, fixed = row.get("net_days") or 0, row.get("discount_pct") or 0, str(row.get("due_date") or "")
     month, day, splits, apart = (row.get(name) or 0 for name in ("prox_month", "prox_day", "splits", "split_days"))
     rules = [rule for rule, given in (("a fixed due date", fixed), ("a proximate date", month or day),
@@ -554,6 +559,12 @@ def jde_unsupported(row: dict[str, Any]) -> str:
         return f"proximate month {month}, day {day}"
     if splits > 1 and apart <= 0:
         return f"{splits} split payments with no days between them"
+    if net > NET_DAYS_MOST:
+        return f"net {net} days: AP Coder reads {NET_DAYS_MOST} at most"
+    if pct and (row.get("discount_days") or 0) > DISCOUNT_DAYS_MOST:
+        return f"a discount for {row['discount_days']} days: AP Coder reads {DISCOUNT_DAYS_MOST} at most"
+    if pct >= DISCOUNT_PCT_BELOW:
+        return f"a discount of {pct:g}%: AP Coder reads less than {DISCOUNT_PCT_BELOW}%"
     return ""
 
 

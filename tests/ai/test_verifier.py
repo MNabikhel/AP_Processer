@@ -443,6 +443,37 @@ def test_the_guards_below_are_not_vacuous_the_reviewer_agreeing_approves_a_coded
     assert done.status == verifier.AGREED and done.approved and store.get_invoice(iid)["status"] == "approved"
 
 
+@pytest.mark.parametrize("meanwhile", ["named", "companies loaded"])
+def test_the_reviewer_agreeing_leaves_one_whose_company_changed_for_a_person(store, touchless, monkeypatch, meanwhile):  # noqa: F811
+    """B-2926, B-2930: held for the AI reviewer under the company its supplier's history gave, then its company was
+    decided otherwise while it waited (a Settings → Review name line saying whose the bill-to printed is), or JD
+    Edwards' companies loaded (it had none): the reviewer agreeing approved it without a person under the company it
+    was processed with (or none, later held at the batch), though the checks it passed decided another; then under the
+    one decided, with its PO match and taxes worked out under the other. Its coding is another company's than its
+    checks decide: it is left for a person, said why."""
+    from tests.ai.test_azure_check import _companies_loaded
+
+    store.import_erp_vouchers([{"key": "00210-PV-700101-001", "vendor_name": "Harbourview Professional Services LLP",
+                                "invoice_number": "HPS-2025-0001", "total": 100.0, "invoice_date": "2025-01-02",
+                                "an8": "", "document": "700101"}])  # fmt: skip
+    if meanwhile == "named":
+        _companies_loaded(store)
+    iid = _held_for_the_reviewer(store, monkeypatch, coded=True)
+    held = store.get_invoice(iid)["ai_output"]
+    assert (held.get("company"), held.get("company_how")) == (("00210", "history") if meanwhile == "named" else
+                                                              (None, None))  # fmt: skip
+    if meanwhile == "named":
+        store.set_setting("our_names", "Fabrikam Canada = 220")  # the bill-to printed: 00220's
+    else:
+        _companies_loaded(store)
+    done = verifier.verify_one(_settings(), store, coder=FakeCoder(_answer()))
+    assert done.status == verifier.AGREED and not done.approved
+    inv = store.get_invoice(iid)
+    assert inv["status"] == REVIEW and not inv["final_output"]
+    was, now = ("00210", "00220") if meanwhile == "named" else ("none", "00210")
+    assert f"its company was decided again while it waited ({was}, now {now})" in inv["meta"]["capture"]["reason"]
+
+
 def test_a_review_another_reader_took_over_is_not_folded_in(store, touchless, monkeypatch):  # noqa: F811
     """The AI reviewer paused past the stale time (a VM saved): another reader took the review. As the first woke, its
     end of the review was refused (B-787), but it folded its answer in all the same, and approved the invoice held

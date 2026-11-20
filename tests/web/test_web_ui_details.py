@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 
 from ap_coder.core.store import PENDING, REVIEW
+from tests.browser import settle
 from tests.web.test_web_invoice import PAGE, check, clean_invoice, form_of
 from tests.web.test_web_review_signoff import _id, _open, _review, browser, demo_db, me, store
 
@@ -70,7 +71,7 @@ def test_in_a_browser_ctrl_z_undoes_the_approval_from_the_box_the_next_invoice_f
     page = _review(browser, store, "Pacific")
     page.keyboard.press("Control+Enter")
     page.wait_for_selector(".flash form[action$='/undo-approve']")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     _autofocused(page)
     page.wait_for_timeout(300)
     at = page.evaluate("""() => [document.activeElement.getBoundingClientRect().top,
@@ -89,7 +90,7 @@ def test_in_a_browser_ctrl_z_in_a_box_typed_in_stays_the_boxs_own(browser, store
     page = _review(browser, store, "Pacific")
     page.keyboard.press("Control+Enter")
     page.wait_for_selector(".flash form[action$='/undo-approve']")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     _autofocused(page)
     url = page.url
     page.keyboard.type("x")
@@ -424,7 +425,7 @@ def test_in_a_browser_enter_in_the_why_box_approves_anyway(browser, store):
     page.locator("[data-live=bar] [name=override]").check()
     page.wait_for_selector("[data-override-reason]:not([hidden])")
     page.locator("[data-override-reason]").fill("Credit promised by email")
-    page.wait_for_timeout(900)
+    settle(page)
     page.locator("[data-override-reason]").press("Enter")
     page.wait_for_url(lambda url: not url.endswith(f"/review/{invoice_id}"), timeout=10000)
     assert store.get_invoice(invoice_id)["status"] in ("approved", PENDING)

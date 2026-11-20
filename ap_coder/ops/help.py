@@ -76,7 +76,8 @@ CHECKS: dict[str, CheckHelp] = {
         ERP, "PO number too long for JD Edwards",
         "JD Edwards' PO field (VLPO) holds 8 characters. Sent as a reference, a longer PO is kept in AP Coder (and in "
         "the voucher's remark when it fits) and not sent: a warning, the invoice can be approved. With PO-matched "
-        "vouchers on, the PO must be JD Edwards' order number, so it holds the invoice back.",
+        "vouchers on, the PO must be JD Edwards' order number, so it holds the invoice back, unless it matched an "
+        "order of the purchase orders loaded: the order's number is sent then.",
         "Nothing to do for a reference. For a PO-matched voucher, type the PO number as JD Edwards has it (its order "
         "number, 8 characters or fewer).",
     ),
@@ -203,6 +204,15 @@ CHECKS: dict[str, CheckHelp] = {
         ERP, "JD Edwards would refuse the voucher",
         "Something JD Edwards needs on the voucher is missing or not valid.",
         "Read the message, fix it on the invoice, or ask the pilot tester.",
+    ),
+    "HOLDBACK_BY_HAND": CheckHelp(
+        ERP, "Holdback keyed by hand",
+        "The invoice holds part of its total back (a progress billing's holdback or retainage). It is coded at its "
+        "total before the holdback, but a standard voucher of that total would pay the supplier the holdback too. So "
+        "it is not on the keying sheet or in the batch files: it is on the keying sheet's Not ready list.",
+        "Approve it anyway, with a reason, and key it in JD Edwards by hand, as JD Edwards keys a holdback (Voucher "
+        "Match's Retained Amount on its subcontract). With PO-matched vouchers and subcontract progress billings on "
+        "(Settings → JD Edwards E1), the keying sheet keys a subcontract's billing with its Retained Amount.",
     ),
     # --- Dates and currency typed on the review screen (web/invoice_fields.py) -------------------------------------
     "INVOICE_DATE_INVALID": CheckHelp(
@@ -638,9 +648,10 @@ CHECKS: dict[str, CheckHelp] = {
         "Information only: no due date and no payment terms AP Coder understands were read, and the supplier's JD "
         "Edwards terms code has a rule AP Coder does not work out as JD Edwards does (JD Edwards files → Payment "
         "terms): a proximate date other than a day of the next month or the end of the invoice's month, a fixed or "
-        "proximate due date with net days or a discount, split payments with no days between them, or a code not in "
-        "the table (an advanced payment term). So the due date is the invoice date plus the days to pay in Settings → "
-        "Review; JD Edwards works out its own from the code.",
+        "proximate due date with net days or a discount, split payments with no days between them, more than 180 net "
+        "days, a discount for more than 60 days or of 20% or more, or a code not in the table (an advanced payment "
+        "term). So the due date is the invoice date plus the days to pay in Settings → Review; JD Edwards works out "
+        "its own from the code.",
         "Check the due date against the supplier's terms; type it in Due date if it matters, or the terms in Payment "
         "terms (e.g. Net 45).",
     ),
@@ -669,6 +680,12 @@ CHECKS: dict[str, CheckHelp] = {
         TOTALS, "Quantity × price ≠ amount",
         "On this line, quantity times unit price differs from the amount (by more than rounding).",
         "Correct the quantity, unit price or amount to match the document.",
+    ),
+    "QUANTITY_WORKED_OUT": CheckHelp(
+        READING, "Quantity worked out",
+        "This line's quantity was not read (a scan can lose a short number): it is the line's amount divided by its "
+        "unit price, a whole number of them. Nothing is held for it.",
+        "Look at the quantity on the document and change it if it differs.",
     ),
     "LINE_NUMBERING": CheckHelp(
         TOTALS, "Line numbers out of order",

@@ -6,7 +6,7 @@ import bisect
 import json
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -223,13 +223,15 @@ class _LineFeedback:
     cost_centers: bool = False  # whether the company keeps a cost center list (none to keep otherwise, B-562)
 
 
-def _ledger(suggestion: dict[str, Any] | None, li: dict[str, Any]) -> tuple[str, str, float | None, str]:
+def _ledger(suggestion: dict[str, Any] | None, li: dict[str, Any],
+            filled: tuple[str, str, float | None] | None) -> tuple[str, str, float | None, str]:  # fmt: skip
     """An approved line's subledger, its type and its units (an account with posting edit code L or U keeps them,
-    D-268), and "person" when they are not what was proposed: a person typed them (B-2830)."""
+    D-268), and "person" when they are neither what was proposed nor what AP Coder filled in under the line on the
+    review screen (``filled``, B-2935): a person typed them (B-2830)."""
     final = (str(li.get("subledger") or ""), str(li.get("subledger_type") or ""), li.get("units") or None)
     proposed = (str((suggestion or {}).get("subledger") or ""), str((suggestion or {}).get("subledger_type") or ""),
                 (suggestion or {}).get("units") or None)  # fmt: skip
-    return *final, "person" if final != proposed and any(final) else ""
+    return *final, "person" if any(final) and final not in (proposed, filled) else ""
 
 
 class LearningMixin:
@@ -712,9 +714,11 @@ class LearningMixin:
         }
 
     def _line_feedback(self, invoice_id: int, inv: dict[str, Any], final_output: dict[str, Any], key: str,
-                       reviewer: str, now: str, bulk: bool) -> _LineFeedback:  # fmt: skip
+                       reviewer: str, now: str, bulk: bool,
+                       filled: Mapping[int, tuple[str, str, float | None]] | None = None) -> _LineFeedback:  # fmt: skip
         """What each approved line says about the coding proposed: its outcome (accepted, corrected, coded by
-        hand), counted, and its feedback row (the coding memory and the tax code it is remembered with)."""
+        hand), counted, and its feedback row (the coding memory and the tax code it is remembered with).
+        ``filled``: what AP Coder filled in under each line on the review screen (``Store.approve_invoice``)."""
         ai = inv["ai_output"] or {"line_items": []}
         vendor_name = final_output.get("vendor_name", "")
         out = _LineFeedback(counts={ACCEPTED: 0, CORRECTED: 0, CODED: 0, **({BULK: 0} if bulk else {})})
@@ -798,7 +802,7 @@ class LearningMixin:
                     missing,
                     " ".join(str(li.get("remark") or "").split()),  # the remark it is keyed with (D-213)
                     str(li.get("remark_from") or ""),
-                    *_ledger(suggestion, li),
+                    *_ledger(suggestion, li, (filled or {}).get(li["line_number"])),
                 )  # fmt: skip
             )
         return out

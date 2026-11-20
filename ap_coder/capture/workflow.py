@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from ..ai.extraction import TEXT_EXTENSIONS
+from ..core.keys import company_code
 from ..core.memory import AUTONOMOUS_REVIEWER  # noqa: F401  (its name here too)
 from ..core.schema import as_read
 from ..core.ui import FIELD_WORDS
@@ -492,36 +493,47 @@ def checks_today(store: Any, invoice_id: int, output: dict[str, Any], settings: 
 
 
 def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str, Any],
-                    invoice_id: int | None = None, settings: Any = None) -> bool:  # fmt: skip
-    """Whether an invoice touchless processing passed earlier but held back (for the Azure check, the AI reviewer)
-    may still be approved without a person now: the switch is still on, its supplier still touchless (not suspended
-    or kept supervised by an AP lead meanwhile) and its total still within the touchless and approval limits. With
-    ``invoice_id``: the invoice as stored now is also ``still_untouched``, and its checks done again now
-    (``checks_today``) find nothing a person must see: no error, no warning, nothing that always goes to a person and
-    no review flag (B-951)."""
+                    invoice_id: int | None = None, settings: Any = None) -> dict[str, Any] | None:  # fmt: skip
+    """The coding to approve without a person now (``output``, as it was checked and reviewed), of an invoice
+    touchless processing passed earlier but held back (for the Azure check, the AI reviewer); None when it may no
+    longer be: the switch is still on, its supplier still touchless (not suspended or kept supervised by an AP lead
+    meanwhile) and its total still within the touchless and approval limits. With ``invoice_id``: the invoice as
+    stored now is also ``still_untouched``, and its checks done again now (``checks_today``) find nothing a person
+    must see: no error, no warning, nothing that always goes to a person and no review flag (B-951), and decide the
+    company ``output`` was worked out under: decided again otherwise (D-286), its PO match, taxes and place of supply
+    are another company's, so a person looks, said why in its notes (B-2926, B-2930, D-321)."""
     if store is None or not store.touchless_enabled():
-        return False
+        return None
     report = None
     if invoice_id is not None:
         if not still_untouched(store, invoice_id, output):
-            return False
+            return None
         from ..coding.bulk import needs_a_person
 
         report = checks_today(store, invoice_id, output, settings)
         if report is None or report.requires_review:
-            return False
+            return None
         if any(needs_a_person(i.severity, i.code) for i in report.issues):
-            return False
+            return None
+        decided = report.checks.get("company")
+        was = company_code(output.get("company"))
+        if decided and company_code(decided["company"]) != was:
+            why = (f"not approved without a person: its company was decided again while it waited ({was or 'none'}, "
+                   f"now {decided['company']}), so its coding is checked under it by a person")  # fmt: skip
+            notes = ((store.get_invoice(invoice_id) or {}).get("meta") or {}).get("capture") or {}
+            store.update_after_check(invoice_id, None, None, (), {"capture": {**notes, "reason": why}})
+            log.info("invoice %s: %s", invoice_id, why)
+            return None
     key, _ = supplier_for(store, output)
     if not key:
-        return False
+        return None
     store.sync_autonomy(key)
     profile = store.get_supplier_profile(key) or {}
     policy = store.autonomy_policy()
     state, _, _ = autonomy_status(store.supplier_stats(key, policy.window), policy, profile.get("state") or SUPERVISED,
                                   profile.get("autonomous_since"), touchless_on=True,
                                   suspended_at=profile.get("suspended_at"))  # fmt: skip
-    return state == AUTONOMOUS and not invoice_gates(store, capture, report, output)
+    return output if state == AUTONOMOUS and not invoice_gates(store, capture, report, output) else None
 
 
 NOT_READERS = ("computed", "vendor master", VENDOR_ALIAS, AP_LESSON)  # a field's sources that did not read the page

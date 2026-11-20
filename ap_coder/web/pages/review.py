@@ -945,15 +945,17 @@ def second_check(store: Store, settings: Any, inv: dict[str, Any]) -> tuple[list
     it was approved under (D-286), for what changed since (the supplier put on hold, the invoice found in the ERP, a
     duplicate approved, the period closed). An error the first approver approved anyway, with their reason, stays
     approved over unless "Approve anyway" never covers it (``is_hard``); a warning the first approver saw too (or
-    an approval with none, in bulk or touchless) is approved with it."""
+    an approval with none, in bulk or touchless), or their screen settled (``_settled_as_on_screen``), is approved
+    with it."""
     reference = reference_or_none(store)
     found = bulk._recheck(store, reference, settings, inv, approved=True) if reference is not None else None
     first = next(iter(store.events(inv["id"], ["approved"], limit=1)), None)
     seen = [i for i in ((first or {}).get("detail") or {}).get("open_issues") or [] if isinstance(i, dict)]
     over = {(i.get("code"), i.get("line")) for i in seen if i.get("severity") == "error"}
     shown = {(i.get("code"), i.get("line")) for i in seen}
-    errors = [Issue(**i) for i in found or [] if i["severity"] == "error"]
-    new = [Issue(**i) for i in found or [] if i["severity"] == "warning" and (i["code"], i["line_number"]) not in shown]
+    issues = _settled_as_on_screen(inv, [Issue(**i) for i in found]) if found else []
+    errors = [i for i in issues if i.severity == "error"]
+    new = [i for i in issues if i.severity == "warning" and (i.code, i.line_number) not in shown]
     reasons = hard_reasons([i for i in errors if is_hard(i) or (i.code, i.line_number) not in over])
     from ap_coder.coding import companies
 
@@ -962,6 +964,24 @@ def second_check(store: Store, settings: Any, inv: dict[str, Any]) -> tuple[list
         # check above took it for (D-267, B-2685)
         reasons.append("its company was not decided when it was approved (JD Edwards' companies were loaded since)")
     return reasons, new
+
+
+def _settled_as_on_screen(inv: dict[str, Any], issues: list[Issue]) -> list[Issue]:
+    """``issues``, the checks of an invoice's approved coding, as its first approver's screen settled them (B-2929,
+    D-321): no line-numbering gap left by a line they deleted (``invoice_view.numbers_deleted``), and what asks for a
+    field the coding leaves blank said as "Not on this invoice" says it (``settle_absent``). Neither is kept with the
+    approval, nor needs to be: the coding alone gives that warning, so it was on their screen, showing (in its
+    ``open_issues``) or settled so; an approval made before is checked alike."""
+    from ap_coder.core.schema import InvoiceCoding
+    from ap_coder.web.invoice_findings import settle_absent
+    from ap_coder.web.invoice_form import ABSENT_FIELDS
+    from ap_coder.web.invoice_view import numbers_deleted
+
+    coded = inv.get("final_output") or inv.get("ai_output") or {}
+    coding = InvoiceCoding.model_validate({k: v for k, v in coded.items() if k != "gl_distribution"})
+    if numbers_deleted(coding, inv.get("ai_output") or {}):
+        issues = [i for i in issues if i.code != "LINE_NUMBERING"]
+    return settle_absent(issues, [name for name in ABSENT_FIELDS if not str(coded.get(name) or "").strip()])
 
 
 def new_warnings(issues: list[Issue]) -> dict[str, Any] | None:

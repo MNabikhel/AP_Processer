@@ -88,6 +88,7 @@ from .jde_voucher import (
     _Voucher,
     _vouchers,
     accrues_use_tax,
+    files_held,
     terms_code,
     terms_unmapped,
 )
@@ -150,10 +151,25 @@ def prior_records(store: Any, exclude_ids: Iterable[int] = (),
         *(int(inv.get("id") or 0) for inv in invoices if (inv.get("final_output") or {}).get("company")),
         *(r["id"] for r in exported if r["company"]),
     ]  # fmt: skip
-    over = store.approved_over(coded) if coded is None or coded else {}
-    warned = [(n, sorted(codes & {OTHER_IN_ERP, OTHER_INVOICE})) for n, codes in sorted(over.items())]
     return {"exported": exported, "register": register, "held": store.held_vendors(),
-            "approved_over": [{"id": n, "codes": codes} for n, codes in warned if codes]}  # fmt: skip
+            "approved_over": _approved_over(store, coded)}  # fmt: skip
+
+
+def _approved_over(store: Any, ids: list[int] | None) -> list[dict[str, Any]]:
+    """[{"id", "codes"}]: the warnings of another company's bill the latest approval of each of ``ids`` (None: all)
+    went ahead over (D-287)."""
+    over = store.approved_over(ids) if ids is None or ids else {}
+    warned = [(n, sorted(codes & {OTHER_IN_ERP, OTHER_INVOICE})) for n, codes in sorted(over.items())]
+    return [{"id": n, "codes": codes} for n, codes in warned if codes]
+
+
+def batch_prior(store: Any, invoices: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """What a batch already made is checked against again (its API dry run and post, its ZIP's lists): the warnings
+    of another company's bill its invoices' approvals went over (``prior_records``' "approved_over"), for the
+    per-company rule within the batch as it was made (B-2925). Not what is out or in the ERP: its own vouchers are
+    (B-2149)."""
+    coded = [int(inv.get("id") or 0) for inv in invoices if (inv.get("final_output") or {}).get("company")]
+    return {"approved_over": _approved_over(store, coded)}
 
 
 def duplicate_problems(
@@ -244,12 +260,13 @@ def duplicate_problems(
 def validate(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None,
     prior: Mapping[str, list[dict[str, Any]]] | None = None, *, prepared: list[tuple[str, _Voucher]] | None = None,
-    on: dt.date | None = None,
+    on: dt.date | None = None, files: bool = True,
 ) -> dict[int, list[str]]:  # fmt: skip
     """{invoice id: blocking problems} for the invoices that cannot go out (the others are fine). ``prepared``: the
     invoices' vouchers already prepared (``_vouchers``); ``on``: the batch's day (else today). A voucher whose vendor
     is on hold now (``prior``'s "held", here or in JD Edwards) is held too: approved before the hold, it is not typed
-    or loaded (B-2340)."""
+    or loaded (B-2340). ``files``: for the batch files (and the API), which can't carry what only the keying sheet
+    keys (a Retained Amount, ``files_held``); False: for the keying sheet."""
     out: dict[int, list[str]] = {}
     if prepared is None:
         prepared = _vouchers(invoices, settings, vendor_lookup, on)
@@ -257,6 +274,8 @@ def validate(
     for inv, (an8, v) in zip(invoices, prepared, strict=True):
         if v.problems:
             out[int(inv.get("id") or 0)] = _accounts_once(v)
+        if files and (why := files_held(v)):
+            out.setdefault(int(inv.get("id") or 0), []).append(why)
         if why := hold_reason(held, inv.get("vendor_key"), an8):
             out.setdefault(int(inv.get("id") or 0), []).append(why)
     for inv_id, msgs in duplicate_problems(invoices, settings, vendor_lookup, prior).items():
@@ -370,16 +389,16 @@ def build_zip(
     batch: int | str = "", fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None,
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
     left_invoices: list[dict[str, Any]] = (), no_undo: str = "", check_now: bool = False, site: str = "",
-    po_matches: Mapping[int, VoucherMatch] | None = None,
+    po_matches: Mapping[int, VoucherMatch] | None = None, prior: Mapping[str, list[dict[str, Any]]] | None = None,
 ) -> tuple[bytes, str, str]:  # fmt: skip
     """(ZIP bytes, file name, mime type): the CSVs and a README.txt. ``left_invoices``: the invoices of ``left_out``,
     for their vendor, number and date in DRY_RUN.txt (B-1197); ``no_undo``: why it can't be undone (``readme``);
     ``check_now``: ``to_check`` is what ``validate`` now finds in ``invoices`` (each voucher prepared once for all);
     ``site``: the batch's code in VLEDBT (``batch_site``); ``po_matches``: the PO-matched vouchers' voucher matches
-    (``jde_keying.po_matches``, D-284)."""
+    (``jde_keying.po_matches``, D-284); ``prior``: what the checks and the dry run read (``batch_prior``)."""
     vouchers = _vouchers(invoices, settings, vendor_lookup, on)
     if check_now:
-        to_check = validate(invoices, settings, vendor_lookup, prepared=vouchers)
+        to_check = validate(invoices, settings, vendor_lookup, prior, prepared=vouchers)
     files = export_batch(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers,
                          site=site, po_matches=po_matches)  # fmt: skip
     buf = io.BytesIO()
@@ -387,8 +406,8 @@ def build_zip(
         for name, data in files.items():
             zf.writestr(name, data)
         zf.writestr("README.txt", readme(files, settings, batch, invoices, left_out, to_check, no_undo, site))
-        report = dry_run(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers,
-                         site=site, po_matches=po_matches)  # fmt: skip
+        report = dry_run(invoices, settings, vendor_lookup, prior=prior, batch=batch, fx_rates=fx_rates, on=on,
+                         prepared=vouchers, site=site, po_matches=po_matches)  # fmt: skip
         for h in report["held"]:
             if h["id"] in (to_check or {}):  # the files hold it: it passed the checks when the batch was made
                 h["reasons"] = ["it IS in this batch's files (checked when the batch was made): check it before "

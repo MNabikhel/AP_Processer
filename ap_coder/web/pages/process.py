@@ -353,18 +353,27 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
         problems = jde_settings.settings_problems(jde_settings.load(store)) if saved else []
         settings = jde_settings.load(store)
         posts = taxes_jde_posts(store)  # (posted by JD Edwards from the pay item: no account of ours, B-2597)
-        missing = jde_accounts.accounts_without_bu(
-            settings, [a["code"] for a in store.list_accounts("gl_accounts")],
-            [t.gl_code for tax_type, t in store.tax_treatments().items()
-             if t.needs_gl and t.gl_code and tax_type not in posts],
-            bool(store.list_accounts("cost_centers")),
-        ) if saved and not problems else []  # fmt: skip
+        # Settings' company, then each of report 9's, with its own settings (its Default BU, D-301; B-2938)
+        companies = dict.fromkeys([settings.company_code, *(settings.company_currencies
+                                                            if settings.several_companies else ())])  # fmt: skip
+        gl_codes = [a["code"] for a in store.list_accounts("gl_accounts")]
+        tax_codes = [t.gl_code for tax_type, t in store.tax_treatments().items()
+                     if t.needs_gl and t.gl_code and tax_type not in posts]  # fmt: skip
+        cost_centers = bool(store.list_accounts("cost_centers"))
+        missing, company = [], settings.company_code
+        if saved and not problems:
+            for company in companies:
+                missing = jde_accounts.accounts_without_bu(jde_settings.of_company(settings, company), gl_codes,
+                                                           tax_codes, cost_centers)  # fmt: skip
+                if missing:
+                    break
         if missing:  # the export would hold back every invoice posting to them (B-1300)
             shown = ", ".join(missing[:4]) + (f" and {len(missing) - 4} more" if len(missing) > 4 else "")
             verb = "has" if len(missing) == 1 else "have"
+            whose = f" for company {company}" if company != settings.company_code else ""
             steps.append(("todo", JDE_STEP, f"company {settings.company_code} saved, but "
-                          f"{ui.plural(len(missing), 'account')} ({shown}) {verb} no JD Edwards business unit: set a "
-                          "Default BU, or map them, in Settings → JD Edwards E1"))  # fmt: skip
+                          f"{ui.plural(len(missing), 'account')} ({shown}) {verb} no JD Edwards business unit{whose}: "
+                          "set a Default BU, or map them, in Settings → JD Edwards E1"))  # fmt: skip
         elif saved and not problems and (offer := _company_offer(store)):  # (card 2 offers it: B-2440)
             steps.append(("todo", JDE_STEP, f"company {settings.company_code} saved, but every business unit loaded "
                           f"is company {offer}: use it on JD Edwards files (2. Business units), or set yours in "
@@ -374,8 +383,10 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
                           "with: load the business units on JD Edwards files (2. Business units), or set yours in "
                           "Settings → JD Edwards E1"))  # fmt: skip
         elif saved and not problems:
-            mapped = f"Default BU {settings.default_bu.strip()}" if settings.use_default_rule and \
-                settings.default_bu.strip() else ui.plural(len(settings.gl_map), "account") + " mapped"  # fmt: skip
+            units = list(dict.fromkeys(bu for c in companies if (bu := jde_settings.of_company(settings, c)
+                                                                 .default_bu.strip())))  # fmt: skip
+            mapped = f"Default BU {', '.join(units)}" if settings.use_default_rule and units else \
+                ui.plural(len(settings.gl_map), "account") + " mapped"  # fmt: skip
             steps.append(("ok", JDE_STEP, f"company {settings.company_code}, {mapped}"))
         else:
             steps.append(("todo", JDE_STEP, problems[0] if problems else

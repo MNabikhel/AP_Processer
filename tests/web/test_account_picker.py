@@ -7,7 +7,7 @@ import pytest
 from ap_coder.core import chart
 from ap_coder.core.store import APPROVED, REVIEW
 from ap_coder.web.app import create_app
-from tests.browser import browser_on, wait_until
+from tests.browser import browser_on, settle, wait_until
 from tests.webclient import web_settings
 
 pytestmark = pytest.mark.slow
@@ -29,7 +29,7 @@ def _review(browser, chart_company, name: str):
     page.on("pageerror", lambda e: errors.append(str(e)))
     with page.expect_response(lambda r: "/review/accounts.json" in r.url):  # the list, fetched as the screen opens
         page.goto(f"{base}/review/{chart_company.invoices[name][1]}")
-    page.wait_for_load_state("networkidle")  # the opening check has answered
+    settle(page)  # the opening check has answered
     return page, errors
 
 
@@ -196,8 +196,7 @@ def test_after_picking_each_account_one_ctrl_enter_approves_with_the_suggested_r
         page.keyboard.type(part.account)
         page.wait_for_timeout(200)
         page.keyboard.press("Enter")
-    page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(800)  # the check after the last account has answered: each remark follows its account
+    settle(page)  # the check after the last account has answered: each remark follows its account
     suggested = page.eval_on_selector_all("input[data-remark-box].is-suggested", "els => els.map((e) => e.value)")
     assert len(suggested) == 4 and all(suggested)  # none looked at
     page.keyboard.press("Control+Enter")
@@ -287,11 +286,10 @@ def test_a_remark_cleared_stays_empty_through_the_check_and_is_approved_as_the_p
     page.click(REMARK)
     page.keyboard.press("Control+a")
     page.keyboard.press("Delete")
-    page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(800)  # the check after the edit has answered
+    settle(page)  # the check after the edit has answered
     assert page.input_value(REMARK) == "" and page.inner_text(COUNT) == "0 / 30"
     page.reload()  # the draft kept: still empty
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert page.input_value(REMARK) == "" and "is-suggested" not in page.get_attribute(REMARK, "class")
     page.click("[data-approve]")
     wait_until(page, lambda: store.get_invoice(invoice_id)["status"] == APPROVED, 10)
@@ -309,7 +307,7 @@ def test_ctrl_z_on_the_next_invoice_once_edited_never_undoes_the_approval_before
     page.click("[data-approve]")
     page.wait_for_url(lambda url: f"/review/{first}" not in url, timeout=10000)
     page.wait_for_selector("#flashes form.flash-undo")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     after = page.url
     if how == "tax code chosen":
         select = '[data-grid="lines"] [data-row]:nth-child(1) select[name="line_tax_code"]'
@@ -325,7 +323,7 @@ def test_ctrl_z_on_the_next_invoice_once_edited_never_undoes_the_approval_before
         page.wait_for_timeout(200)
         page.keyboard.press("Enter")
         page.evaluate("document.activeElement.blur()")  # a click away
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.keyboard.press("Control+z")
     page.wait_for_timeout(1000)
     assert store.get_invoice(first)["status"] != REVIEW and page.url == after  # the approval stays; the page too
@@ -345,8 +343,7 @@ def test_an_account_half_typed_is_not_flagged_until_the_box_is_left(browser, cha
     page.keyboard.type("00")
     page.wait_for_timeout(1200)  # longer than the wait before a check
     page.keyboard.type("21")
-    page.wait_for_timeout(1200)
-    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(1200)  # (no settle: the page holds the check while the box is typed in, by design)
     assert "is not an account" not in page.inner_text("body")
     assert page.query_selector(LIST)  # still typing, the list open
     page.keyboard.press("Tab")  # left: "0021" names no single account, so it stays and is checked
@@ -367,7 +364,7 @@ def test_a_chart_too_big_to_send_is_searched_as_the_box_is_typed_in(browser, cha
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(f"{base}/review/{invoice_id}")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     wanted = invoice.parts[0].account
     unit, code = chart.split_account(wanted)
     page.click(FIRST)
@@ -394,7 +391,7 @@ def test_a_chart_searched_as_typed_asks_once_typing_stops_and_an_empty_box_lists
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(f"{base}/review/{invoice_id}")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     asked: list[str] = []
     page.on("request", lambda r: asked.append(r.url) if "/review/accounts.json" in r.url else None)
     (account,) = [part.account for part in invoice.parts]
@@ -408,7 +405,7 @@ def test_a_chart_searched_as_typed_asks_once_typing_stops_and_an_empty_box_lists
     page.fill(FIRST, "")
     page.keyboard.type(code.replace(".", ""), delay=15)
     wait_until(page, lambda: any("q=" in u for u in asked))
-    page.wait_for_load_state("networkidle")
+    wait_until(page, lambda: account in _options(page))  # its answer drawn (the box still typed in: its check held)
     assert account in _options(page)
     typed = [u for u in asked if "q=" in u]
     assert len(typed) == 1 and typed[0].endswith(f"q={code.replace('.', '')}") and not errors
@@ -427,7 +424,7 @@ def test_another_company_picked_draws_the_screen_again_for_that_companys_account
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(f"{base}/review/{chart_company.invoices['one_line'][1]}")  # (one company's of several: searched as typed)
-    page.wait_for_load_state("networkidle")
+    settle(page)
 
     def seed() -> str:
         return page.eval_on_selector("#account-seed", "e => e.textContent")
@@ -435,7 +432,7 @@ def test_another_company_picked_draws_the_screen_again_for_that_companys_account
     assert "company=00210" in seed() and "Not checked for Canadian tax" not in page.inner_text(".inv-company")
     with page.expect_navigation():
         page.select_option("select[data-company]", "00310")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert page.input_value("select[data-company]") == "00310" and "company=00310" in seed()
     assert "Not checked for Canadian tax (currency USD)" in page.inner_text(".inv-company")
     assert not errors

@@ -234,21 +234,26 @@ def us_tax_context(store: Store, js: jde_settings.JdeSettings) -> dict[str, Any]
             "use_code": js.use_tax_code, "rates": rates}  # fmt: skip
 
 
+NOT_LISTED = "(not in report 9 now)"  # a company with values of its own report 9 no longer lists
+
+
 def company_values(store: Store, js: jde_settings.JdeSettings) -> list[dict[str, Any]]:
     """With several of JD Edwards' companies (D-301): each with its own open period, default and header business units
     and, for each bank account in use, its G/L bank account (VLGLBA), then any code mapped that is no longer one, as
-    kept ("" where it takes Settings' value); [] with one."""
-    table = companies.companies(store)
-    if len(table) < 2:
+    kept ("" where it takes Settings' value); [] with one, unless a company has values of its own: they key its
+    vouchers, so they stay shown, a company report 9 no longer lists too (D-322)."""
+    table = {code: c.name for code, c in companies.companies(store).items()}
+    if len(table) < 2 and not js.company_values:
         return []
+    table.update({code: NOT_LISTED for code in js.company_values if code not in table})
     accounts = bank_rows(store, jde_settings.JdeSettings())  # (each bank account in use, none mapped)
     rows = []
-    for code, c in table.items():
+    for code, name in table.items():
         own = js.company_values.get(code, {})
         mapped = {k.upper(): v for k, v in (own.get("bank_glba") or {}).items()}
         banks = [{"code": a["code"], "glba": mapped.pop(a["code"].upper(), "")} for a in accounts]
         banks += [{"code": k, "glba": v} for k, v in mapped.items()]
-        rows.append({"code": code, "name": c.name, **{name: own.get(name, "") for name in jde_settings.COMPANY_OWN},
+        rows.append({"code": code, "name": name, **{k: own.get(k, "") for k in jde_settings.COMPANY_OWN},
                      "banks": banks})  # fmt: skip
     return rows
 

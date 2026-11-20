@@ -6980,8 +6980,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **A database loaded before:** its GL accounts and cost centers were worked out with K closed, while the chart's
     answers read the statuses as they are: a K job's accounts were offered and a line coded to one CC_UNKNOWN
     (B-2750). Its lists are worked out again once when a business unit has a status that takes postings now and did
-    not then (`migrations._chart_active`, settings.chart_active: the statuses they were worked out with; 5 s at
-    3,370,000 accounts). No schema version of its own: an older AP Coder still opens the database.
+    not then (`migrations._chart_active`, settings.chart_active: the statuses they were worked out with and the
+    chart's mark then, recorded with each change of the chart; 5 s at 3,370,000 accounts). No schema version of its
+    own: an older AP Coder still opens the database, and lists it works out again there (a report loaded) have
+    another mark, so the next open here works them out again (B-2752).
 - **D-295** · **The AI reviewer's corrections, reviewed** (D-263, D-184; an adversarial review, 20 Nov 2026; B-2800 to
   B-2806).
   - **An amount printed on the page** is one printed as money: with its cents, or a currency sign or code right
@@ -6989,6 +6991,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     number, a date, a postal code), nor a rate; a receipt's tax flag after its cents ("4.50GP") and a French "$" after
     it ("75 $ 150 $") are its own (B-2808). A whole-dollar amount printed bare ("Freight 150") is not taken: the
     correction is refused and nothing changes, as for any amount not printed. A tax no line can carry is refused.
+    number, a date, a postal code), nor a rate. A whole-dollar amount printed bare ("Freight 150") is not taken: the
+    correction is refused and nothing changes, as for any amount not printed.
   - **A supplier** is never the company's own: its name is compared with Settings' names and JD Edwards' companies'
     as the supplier list has it, before a supplier number is added ("NAME #2004"). Its name printed on the page is
     whole words; only a name of several words may have them run together, as a scan reads it.
@@ -7053,6 +7057,29 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     reader's bill-to blocks miss a customer printed without a label, an envelope's window: B-2720, and a wrong
     supplier passes where an empty one is held); taking report 9's names out of the own names when they are
     suppliers (every one is).
+- **D-299** · **A browser test waits for the page to have done with an action by the page's own word: never a
+  fixed time, never Playwright's "networkidle"** (B-2850 to B-2857: CI's browser tests failed at random every few
+  runs, and passed when run again).
+  - **The page says it is at work with aria-busy:** the review screen's form (`#inv`) from an edit until its check
+    has answered and the answer is drawn (`showChecking`, invoice.js), as a line action's button, a file being read
+    and a slow page's link did already. (The form holds only hidden boxes: a screen reader reads nothing otherwise.)
+  - **`settle(page)`** (tests/browser.py): until nothing on the page says it is busy (`BUSY`) and none of its
+    requests is unanswered (the `chromium` fixture counts each page's: `Counted`), 0.1 s in a row; at most 15 s, then
+    it fails saying what was still under way. After an edit or a line action, before the next action or an assert
+    on what the page drew; or the outcome itself is waited for (`wait_until`, Playwright's `wait_for_*`).
+  - **Not networkidle:** it comes once a page, so asked for again after an action it returns at once, whatever is
+    under way (B-2851). `tests/meta/test_browser_harness.py` refuses `wait_for_load_state("networkidle")` in the
+    tests.
+  - **A state a slow server gives is made, not raced to:** the test holds the page's request (a route kept, then let
+    through) rather than act before the answer comes (B-2853). A time window is never shorter than the test's own
+    steps inside it (`AP_ARMED_MS`, B-2852), and a deadline is tested on Playwright's clock paused, moved on only by
+    the test (B-2854). A pace is timed by the page itself, not as the test's side of Playwright sees it (B-2856); a
+    page that reloads itself once a job is done is waited for before the test goes elsewhere (B-2857).
+  - **How the races were found:** the browser tests run with Chrome's CPU throttling (DevTools'
+    `Emulation.setCPUThrottlingRate`, 4 times slower) and each request to the test's server held back up to 0.6 s
+    at random, on one busy processor: the flaky tests failed most runs so, and none fails since.
+  - *Left as it is:* a fixed wait before an assert that something did *not* happen (it can pass wrongly on a slow
+    runner, never fail), and the waits for the page viewer's smooth scrolls and zoom.
 - **D-300** · **A chart refused as cut short can be loaded anyway from its card, by someone who may change the
   settings** (B-2832; D-272 had the page name the command line's `--anyway`).
   - **What is refused stays refused for anyone:** a file with no account, or none that may be posted to (it is no
@@ -7184,3 +7211,109 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     held does); whether R04110ZA works out a use tax from the area with the tax amount blank, or wants it sent; how a
     PO-matched voucher's sales tax is to be matched; and whether the US companies want use tax accrued on every
     invoice charging none (an out-of-state supplier) or only on some.
+- **D-320** · **An approved invoice bills the PO lines its kept Voucher Match rows key: when PO lines alike are
+  shared out, those count first, on those lines, and are never shared out again; the other invoices are shared out
+  over the room they leave, in invoice order** (`coding/po.py` `PoBilling.shares` and `share_with`, `_shared`,
+  `_keyed_lines`; `Store.approved_matches`; B-2912, B-2913, B-2914, B-2915). This amends D-282 (shared out by invoice
+  order alone) and D-284 (the kept rows were the keying sheet's and the Z-files' alone).
+  - **Why:** D-282 shared lines alike out again at each ask over every invoice in review or approved, by id, and
+    D-284 keyed an approved invoice's kept rows: the two disagreed once an earlier invoice dropped out or came back.
+    An 80 before it rejected, an approved 50 kept on job 1200's line of 50 was shared out again as billing neither
+    line (the PO page 0 on both), and the next 50 on that line passed with PO_MATCHED: 100 keyed on a line of 50. A
+    rejected 60 reopened took the line an approved 80 was keyed on: 140 on a line of 100, nothing said. And once the
+    POs were loaded again, an exported invoice was checked for room against an open quantity that had it off already:
+    it billed neither line, or moved to the other job's.
+  - **What:** an invoice approved (or approved once, waiting for a second approver) with a voucher match kept bills
+    the PO line each of its rows keys, by position (a row for each of its lines, as kept); its own match (its review
+    screen, the second approval) is those lines too. The PO's billing, the other invoices' checks (PO_QTY_OVER, what
+    was billed before, what is left to expense) and the Purchase orders page count them first for an invoice in
+    review, which is shared out over the room left after them and the invoices before it in id order, as D-282 says.
+    One approved with no match kept (approved before matches were kept, or held) is shared out after the invoices
+    before it and the kept matches approved before it alone, in the order of the approvals (their "approved" events):
+    a later invoice approved over its PO_QTY_OVER never takes its line, it is over itself (B-2915). So is a keying
+    sheet's match made afresh. A reopened invoice is in review again: shared out, its match made again at its next
+    approval. An exported invoice with no match kept is
+    checked for room against what was ordered, less every invoice before it: what JD Edwards has open has it off
+    already once the POs are loaded again (D-280); two lines it fits as well are not guessed between.
+  - **Read only where it tells:** the kept rows are read (`Store.approved_matches`) only when lines alike are shared
+    out, and only of the invoices with a line alike: read with every invoice (`Store.po_invoices`), the kept matches
+    doubled a PO's read (900 approved invoices of 8 lines: 23 ms, 46 ms), and most POs have no lines alike.
+  - *Not chosen:* kept rows on a PO without lines alike (each line has the one PO line it resembles, the one kept
+    unless the PO's lines changed); a keying sheet checking a voucher's rows against what the other vouchers' kept
+    rows match on its PO line in other batches (whether JD Edwards' open quantity at the last load has them is not
+    known: D-280's window); an exported invoice with no match kept checked against what JD Edwards has vouchered on a
+    line (what was ordered less what is open): between its export and the next load it is in neither. Two invoices may
+    still be keyed on one line when the second is approved over its PO_QTY_OVER.
+- **D-321** · **What the second approver is told is new since the first approval: what the first approver's screen
+  neither showed nor settled; what AP Coder approves after a check that held it: the coding that check reviewed**
+  (D-286, B-2695; B-2926, B-2929, B-2930).
+  - The second approval's check runs the approved coding's checks again (`review.second_check`) and compares each
+    warning, by its code and line, with what the first approval kept (its `open_issues`: the errors and warnings
+    showing as it was approved, those approved anyway among them). Its wording, or an error approved over that is a
+    warning now, does not make it new.
+  - A warning the review screen settles is no longer said new: the line-numbering gap of a line the first approver
+    deleted, and what asks for a field the coding leaves blank (the GST/HST or QST number), said as "Not on this
+    invoice" says it. Both are worked out from the approved coding and the AI's reading, which give that warning as
+    they gave it on the first approver's screen; nothing more is kept with the approval, so a first approval made
+    before is checked the same way.
+  - *Left as it is:* a company's Canadian tax checks turned on since the first approval give its other tax warnings
+    as new; a missing GST/HST or QST number among them is not said again.
+- **D-322** · **A company's own JD Edwards values (D-301) stay on Settings → JD Edwards E1 while they are kept,
+  whatever report 9 lists** (B-2937).
+  - **Why:** the companies' table was shown only while report 9 named two or more companies, but a company's own open
+    period, business units and bank accounts saved in a group kept keying its vouchers once report 9 was loaded again
+    with one company (or without that one): a voucher held in a period the page no longer showed, with no way to
+    change it. Kept on the page rather than no longer applied with fewer than two companies: what keys a voucher is
+    always where it is changed, and loading report 9 again never drops or revives values unseen.
+  - **How:** `settings_jde.company_values` lists the table while report 9 names two or more companies or any company
+    has values of its own; a company report 9 no longer lists has its row too, "(not in report 9 now)". Emptying its
+    boxes and saving removes them, and with one company the table goes.
+- **D-323** · **A billing holding part of its total back is keyed at the total before its holdback only by Voucher
+  Match, which retains it; on a standard voucher it is keyed by hand, said before approval** (B-2945, B-2946;
+  `jde_voucher._held_back`, `HOLDBACK_BY_HAND`; D-273, D-274).
+  - **Why:** a standard voucher (PO-matched vouchers off, the prototype's settings, or an invoice quoting no PO) has
+    no amount that retains a holdback: its gross, the total the billing is coded at (D-274), would pay the supplier
+    the holdback too. So, whatever the PO-matched setting, a voucher whose progress billing as read holds something
+    back is held from the keying sheet ("Not ready"), the batch files and the dry run, with why: "a billing that holds
+    back 4,500.00: keyed at its gross 47,250.00, the supplier would be paid the holdback too, not the 42,750.00 due.
+    Key it by hand, as JD Edwards keys a holdback".
+  - **On the review screen:** an error approved only anyway, with a reason, not a JD Edwards finding (those are
+    never approved anyway): nothing on the screen fixes it (the holdback as read is not edited, D-274), and the
+    approval keeps who said it is keyed by hand. Its total is held for a person to check, as a total printed above a
+    holdback is (B-2946, D-47).
+  - **The batch files** (and their dry run, and the API) can't carry a Retained Amount: F0411Z1T has no column for
+    one until the JD Edwards team confirms how (D-273's list), so loaded, a PO-matched billing would pay its holdback
+    too. Such a voucher (PO-matched, its billing holding something back) is held from them, said ("retains 4,500.00:
+    the batch files can't carry the Retained Amount yet …: key it from the keying sheet"; `jde_voucher.files_held`,
+    `jde.validate(files=True)`), and keyed from the keying sheet with its Retained Amount; the Exports page lists it
+    as not ready for the batch files only (B-2950).
+  - *Not chosen:* the amount due as the gross (the G/L lines and tax would not add up to it, and the holdback would
+    be lost from the payable); the holdback as a second pay item on hold (how the company keys one outside Voucher
+    Match is the JD Edwards team's to say); a warning only (the batch files would still pay it).
+  - **Approved without a person after a check that held it** (the AI reviewer, the Azure check: B-2926, B-2930):
+    the coding approved is the one reviewed and checked, as it is kept. Its company decided again otherwise while
+    it waited (D-286: a name line, a PO list, JD Edwards' companies loaded), its PO match, taxes and place of supply
+    were worked out for another company, so it is not approved without a person, its notes saying why
+    (`still_touchless`). Approving the coding worked out again under the new company was not chosen: nobody, the
+    reviewer included, would have looked at that coding.
+- **D-325** · **Parallel branches are combined by `scripts/combine.py`: a conflict in a doc is settled only where the
+  two sides changed different lines, a number both took goes anew to the later branch's entry, code goes to a person**
+  (the owner's to-do).
+  - **Why:** some twenty helper branches merged by hand in one night, each with a number block of its own, conflicted
+    almost only at the end of BUGS.md and decisions.md and the top of WHATS_NEW.md, where both sides had added. Keeping
+    both sides blindly (the night's own script) left B-2892 in the log twice: its line, and that line edited on one
+    side. With git's merge base between the markers (`merge.conflictstyle=diff3`), what each side changed is known: an
+    edit and an addition beside it both stay, a line both sides added stays once. Replayed on 21 of that night's
+    merges, the script gave the hand merge's result 18 times, B-2892 once where the hand merge has it twice, and
+    stopped at the one code conflict and the one criss-cross history.
+  - **How:** each branch in order, `git merge --no-commit`. A doc under docs/ in conflict is settled when no line of the
+    base was changed by both sides (`merge_hunk`); otherwise it, any file outside docs/, a file added on both sides and
+    a merge base git made of two (criss-cross) stop the script, the merge left in progress, the files listed. The logs'
+    newest entries are then sorted by number (the last line holds the newest: `tests/meta/test_agent_friendly.py`). A
+    number given to a new entry on both sides, the two entries unlike (`ALIKE`), goes to the later branch's entry as
+    the next number no branch given uses; its mentions change only in the lines that branch changed (`git diff -U0`
+    from the merge base), on a commit on top of the branch, the branch itself left as it was. Each merge is committed,
+    never pushed; then the meta tests and `scripts/check.py` on the files the merges changed.
+  - *Not chosen:* settling a code conflict (never guessed); a number's mentions changed across the whole tree (the
+    other branch's mentions of it would move too); each bug and decision numbered as its branch is merged (the to-do
+    "No more number clashes in the logs", a bigger change still to do).

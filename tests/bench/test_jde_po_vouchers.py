@@ -81,6 +81,62 @@ def test_each_case_is_keyed_with_the_rows_expected_and_adds_up_to_its_gross(tmp_
     assert not any(w for v in ready for w in v.warnings), [(v.invoice_number, v.warnings) for v in ready]
 
 
+TYPED = ("PO {}", "PO-{}", "PO{}", "PO#{}", " #{} ", "PO# {}")  # how a PO is printed; the last over VLPO's 8
+
+
+@pytest.mark.parametrize("setup", SETUPS)
+def test_the_z_files_name_the_order_and_its_lines_as_the_keying_sheet_does_whatever_the_po_typed(tmp_path, setup):
+    """B-2921 (D-284): the Z-files sent the PO number as typed in VLPO and F0411Z1T's DOCO ("PO-41101", "PO 41106"),
+    while the keying sheet keys the order it is matched to (41101): DOCO is JD Edwards' order number, and "PO-41101"
+    names none. Every case of the set, its PO typed with a prefix, a "#" or spaces, now goes with the matched order's
+    number, type and company, each row on the PO line the sheet keys; one typed longer than VLPO's 8 characters
+    ("PO# 41105") is held by both, to be typed as JD Edwards has it (JDE_PO_LONG), no voucher match being kept with
+    it (approved on the review screen, one is: B-2951)."""
+    from ap_coder.erp import jde, jde_zfiles
+
+    made = jde_po_vouchers.cases(TRUTH)
+    store = Store(tmp_path / "ap.db")
+    load_pos(store, jde_po_vouchers.po_files(made))
+    js = settings_of(setup)
+    tax = _setup(QST=TaxTreatment("QST", "expense_to_line")) if setup == PILOT else _setup()
+    invoices = []
+    for n, case in enumerate(made, 1):
+        final = {**case.coding(), "po_number": TYPED[n % len(TYPED)].format(case.po)}
+        final["gl_distribution"] = build_gl_distribution(InvoiceCoding.model_validate(final), tax)
+        invoices.append({"id": n, "final_output": final})
+    numbers = {case.coding()["vendor_name"]: str(case.supplier.number) for case in made}
+
+    def lookup(final):
+        return numbers[final["vendor_name"]]
+
+    matches = jde_keying.po_matches(store, invoices, js.charge_account)
+    ready, held = jde_keying.vouchers(invoices, js, lookup, po_matches=matches)
+    left_out = jde.validate(invoices, js, lookup)
+    long = [inv["id"] for inv in invoices if len(inv["final_output"]["po_number"].strip()) > 8]
+    assert long and [h.invoice_id for h in held] == long == sorted(left_out)
+    assert all(why[0].endswith("is longer than 8 characters (VLPO)") for why in left_out.values())
+    files = jde_zfiles.export_batch([inv for inv in invoices if inv["id"] not in left_out], js, lookup,
+                                    po_matches=matches)  # fmt: skip
+    heads = {h["VLEDTN"].split("-")[0]: h for h in _csv(files[jde_zfiles.HEADER_FILE])}
+    sent: dict[str, list[dict]] = {}
+    for m in _csv(files[jde_zfiles.MATCH_FILE]):
+        sent.setdefault(m["EDTN"].split("-")[0], []).append(m)
+    assert len(ready) == len(heads) == len(made) - len(long)
+    for v in ready:
+        head, rows = heads[f"APC{v.invoice_id}"], sent[f"APC{v.invoice_id}"]
+        (order,) = {(m.order_number, m.order_type, m.order_company) for m in v.matches if m.on_po}
+        assert (head["VLPO"], head["VLPDCT"], head["VLPKCO"]) == order, v.invoice_number
+        keyed_rows = [(m.order_number, m.order_type, m.order_company, m.line) for m in v.matches if m.on_po]
+        assert [(m["DOCO"], m["DCTO"], m["KCOO"], m["LNID"]) for m in rows if m["LNID"]] == keyed_rows, v.invoice_number
+        assert {(m["DOCO"], m["DCTO"], m["KCOO"]) for m in rows} == {order}, v.invoice_number
+
+
+def _csv(data: bytes) -> list[dict]:
+    import csv
+
+    return list(csv.DictReader(io.StringIO(data.decode("utf-8"))))
+
+
 def test_the_set_read_from_its_pdfs_is_keyed_on_the_exports_pages_sheet_as_expected(chart_company, tmp_path):
     """D-265, end to end on the made-up company (its supplier list, chart and JD Edwards set up as the prototype's):
     the set written as the command writes it, its PO files loaded, each PDF read by the pipeline (no chat model, no
@@ -380,3 +436,230 @@ def test_a_po_matched_invoice_holding_back_part_of_its_total_is_never_keyed_at_i
     rows, check = blocks[case.number]
     assert [(r[3], r[6], r[7]) for r in rows] == [("1.000", 628.8, 62.88), ("2.000", 157, 15.7)]
     assert check[3] == "785.80 - 78.58 + 39.29 = 746.51: balanced"
+
+
+def test_a_billing_holding_back_part_of_its_total_is_never_keyed_at_its_total_on_a_standard_voucher(
+    chart_company, chart_company_client, tmp_path
+):
+    """B-2945: with PO-matched vouchers off (the prototype's settings, docs/PROTOTYPE.md), a first application for
+    payment (45,000.00 of work, a 10% holdback of 4,500.00, the GST 2,250.00, 42,750.00 due) was approved on the
+    review screen with nothing said and keyed on a standard voucher at its total before the holdback, 47,250.00: the
+    supplier was paid the holdback too. The review screen says it is keyed by hand (an error, approved only anyway
+    with a reason), and the keying sheet and the batch files hold it, unless Voucher Match keys it with subcontract
+    progress billings on; a billing that holds nothing back is keyed as before."""
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.erp import jde
+    from ap_coder.web.pages.exports import keying_file
+    from tests.review_page import ReviewPage
+    from tests.webclient import web_settings
+
+    store = chart_company.store
+    folder = tmp_path / "set"
+    made = jde_po_vouchers.write_progress(folder, chart_company.truth)
+    load_pos(store, {jde_po_vouchers.SUBCONTRACT_FILE: (folder / jde_po_vouchers.SUBCONTRACT_FILE).read_bytes()})
+    assert jde_settings.in_use(store) and not jde_settings.load(store).po_matched  # (the prototype's settings)
+    first = made[0]
+    plain = replace(made[1], holdback_pct=Decimal(0))  # (the Ontario billing, holding nothing back)
+    (folder / "plain.pdf").write_bytes(jde_po_vouchers.progress_pdf(plain, chart_company.truth))
+    pipeline = InvoicePipeline(web_settings(), store.reference_data(), store=store)
+    ids = {name: pipeline.process(folder / f"{name}.pdf").invoice_id for name in ("first_billing", "plain")}
+    for name, case, reason in (("first_billing", first, "keyed by hand in Voucher Match"), ("plain", plain, "")):
+        invoice_id = ids[name]
+        page = ReviewPage(chart_company_client, invoice_id)
+        page.set_account(1, case.po_lines[0].account)
+        answer = page.check()
+        if reason:
+            assert not answer["allow"] and "HOLDBACK_BY_HAND" in page.findings, page.findings
+            said = page.findings["HOLDBACK_BY_HAND"]
+            assert "holds back 4,500.00" in said and "47,250.00" in said and "42,750.00" in said, said
+            assert "redirect" in page.approve(anyway=reason)
+        else:
+            assert answer["allow"] and "HOLDBACK_BY_HAND" not in page.findings, page.findings
+            assert "redirect" in page.approve()
+        assert store.get_invoice(invoice_id)["status"] == "approved", name
+    batch = store.create_export_batch(list(ids.values()), jde_keying.FORMAT, actor="Pat Tester")
+
+    def sheet():
+        book = openpyxl.load_workbook(io.BytesIO(keying_file(store, batch)[0]))
+        rows = [list(r) for r in book["Keying sheet"].iter_rows(values_only=True)]
+        return rows, {r[3].value: r[-1].value for r in book["Not ready"].iter_rows(min_row=2)}
+
+    rows, held = sheet()
+    assert list(held) == [first.number] and held[first.number].startswith("a billing that holds back 4,500.00")
+    numbers = [r[3] for r in rows if r[2] == "Invoice number"]
+    assert numbers == [plain.number] and ["Currency", "CAD", "Gross amount", 90400] in [r[:4] for r in rows]
+    invoices = [store.get_invoice(i) for i in ids.values()]
+    found = jde.validate(invoices, jde_settings.load(store), store.vendor_ids())
+    assert list(found) == [ids["first_billing"]] and found[ids["first_billing"]][0].startswith(
+        "a billing that holds back 4,500.00")  # fmt: skip
+    # PO-matched: held while subcontract progress billings are off, as before; on, keyed with its Retained Amount
+    jde_settings.save(store, settings_of(PILOT, jde_settings.load(store)))
+    rows, held = sheet()
+    assert held[first.number].startswith("a subcontract's progress billing (order 41201 OS)")
+    jde_settings.save(store, jde_po_vouchers.subcontract_settings(jde_settings.load(store)))
+    rows, held = sheet()
+    assert first.number not in held
+    rows_of, check = _retained_blocks(rows)[first.number]
+    assert [(r[6], r[7]) for r in rows_of] == [(45000, 4500)]
+    assert check[3] == "45,000.00 - 4,500.00 + 2,250.00 = 42,750.00: balanced"
+
+
+def test_every_invoice_of_the_set_is_approved_on_the_review_screen_and_keyed_as_expected(
+    chart_company, chart_company_client, tmp_path
+):
+    """B-2947: README.txt's steps (the made-up company, PO-matched vouchers on, both PO files loaded, the PDFs dropped
+    in, each approved, the keying sheet made) could not be followed: 6 of the 13 invoices were billed by a supplier
+    record on hold (a "DNU" one, one whose payments JD Edwards holds), so the review screen refused them, even
+    approved anyway. Each is billed by an active record of the supplier: approved on the screen, each line on its PO
+    line's account as a person picks it, every one is keyed with the Voucher Match rows expected."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from tests.review_page import ReviewPage
+    from tests.webclient import follow, post, web_settings
+
+    store = chart_company.store
+    folder = tmp_path / "set"
+    made = jde_po_vouchers.write(folder, chart_company.truth)
+    load_pos(store, {name: (folder / name).read_bytes()
+                     for name in (jde_po_vouchers.OPEN_PO_FILE, jde_po_vouchers.ORDER_DETAILS_FILE)})  # fmt: skip
+    jde_settings.save(store, settings_of(PILOT, jde_settings.load(store)))
+    pipeline = InvoicePipeline(web_settings(), store.reference_data(), store=store)
+    ids = {case.name: pipeline.process(folder / f"{case.name}.pdf").invoice_id for case in made}
+    refused = {}
+    for case in made:
+        page = ReviewPage(chart_company_client, ids[case.name])
+        for n, li in enumerate(case.coding()["line_items"], 1):
+            page.set_account(n, f"{li['predicted_cost_center']}.{li['predicted_gl_code']}")
+            page.confirm_tax(n)  # (the zero-rated line's PST: exempt, as the screen asks)
+        answer = page.approve() if page.check()["allow"] else {"error": page.not_ready or page.findings}
+        if "redirect" not in answer:
+            refused[case.name] = answer.get("error")
+    assert refused == {}
+    follow(chart_company_client, post(chart_company_client, "/exports/create",
+                                      {"fmt": jde_keying.FORMAT, "ids": list(ids.values())}))  # fmt: skip
+    batch = store.export_batches()[0]["id"]
+    answer = chart_company_client.get(f"/exports/batches/{batch}/download?fmt={jde_keying.FORMAT}")
+    book = openpyxl.load_workbook(io.BytesIO(answer.content))
+    assert [r[3].value for r in book["Not ready"].iter_rows(min_row=2)] == []
+    blocks = _match_blocks([list(r) for r in book["Keying sheet"].iter_rows(values_only=True)])
+    for case in made:
+        rows, check = blocks[case.number]
+        assert rows == [_cells(row) for row in case.expected(PILOT)], case.name
+        assert check[3].endswith(": balanced"), case.name
+
+
+def test_the_next_billing_of_a_subcontractor_is_read_with_only_the_taxes_it_prints(
+    chart_company, chart_company_client, tmp_path
+):
+    """B-2949: the subcontractor's first application for payment approved on the review screen (its supplier's
+    template learning where its GST is printed), its next billing, an invoice laid out otherwise (Ontario's HST), was
+    read with a GST of 82,400.00 at 100% beside its HST: the template's reading at that spot, a check value, kept by
+    the billing's coding, which takes each tax its rows print. A billing that adds up as printed is coded with its own
+    taxes only, so it is coded as it should be and its review screen says nothing of the GST."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from tests.review_page import ReviewPage
+    from tests.webclient import web_settings
+
+    store = chart_company.store
+    folder = tmp_path / "set"
+    first, later = jde_po_vouchers.write_progress(folder, chart_company.truth)[:2]
+    load_pos(store, {jde_po_vouchers.SUBCONTRACT_FILE: (folder / jde_po_vouchers.SUBCONTRACT_FILE).read_bytes()})
+    pipeline = InvoicePipeline(web_settings(), store.reference_data(), store=store)
+    page = ReviewPage(chart_company_client, pipeline.process(folder / "first_billing.pdf").invoice_id)
+    page.set_account(1, first.po_lines[0].account)
+    page.check()
+    assert "redirect" in page.approve(anyway="keyed by hand in Voucher Match")
+    invoice_id = pipeline.process(folder / "later_billing.pdf").invoice_id
+    read = store.get_invoice(invoice_id)["ai_output"]
+    want = later.coding()
+    assert [(t["tax_type"], t["rate"], t["taxable_amount"], t["tax_amount"]) for t in read["tax_lines"]] == [
+        (t["tax_type"], t["rate"], t["taxable_amount"], t["tax_amount"]) for t in want["tax_lines"]]  # fmt: skip
+    assert (read["subtotal"], read["tax_total"], read["grand_total"]) == (80000.0, 10400.0, 90400.0)
+    page = ReviewPage(chart_company_client, invoice_id)
+    page.set_account(1, later.po_lines[0].account)
+    page.check()
+    assert not {"TAX_LINES_TOTAL_MISMATCH", "POSTING_UNBALANCED", "TAX_RATE_NONSTANDARD"} & set(page.findings)
+
+
+def test_a_po_matched_billing_that_retains_a_holdback_is_held_from_the_batch_files_and_keyed_from_the_sheet(
+    chart_company, chart_company_client, tmp_path
+):
+    """B-2950: with PO-matched vouchers on, a progress billing whose Voucher Match rows retain its holdback (4,500.00,
+    subcontract progress billings on) was sent in the batch files with no Retained Amount: F0411Z1T carries none, so
+    loaded, the voucher would pay the holdback too. Until the JD Edwards team confirms how it carries one (D-273), it
+    can't go in the batch files, their dry run or the API, said; the keying sheet keys it with its Retained Amount."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.erp import jde
+    from ap_coder.web.pages.exports import jde_check
+    from tests.webclient import follow, post, web_settings
+
+    store = chart_company.store
+    folder = tmp_path / "set"
+    jde_po_vouchers.write_progress(folder, chart_company.truth)
+    load_pos(store, {jde_po_vouchers.SUBCONTRACT_FILE: (folder / jde_po_vouchers.SUBCONTRACT_FILE).read_bytes()})
+    jde_settings.save(store, jde_po_vouchers.subcontract_settings(jde_settings.load(store)))
+    invoice_id = InvoicePipeline(web_settings(), store.reference_data(), store=store).process(
+        folder / "first_billing.pdf").invoice_id  # fmt: skip
+    store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], "Pat Tester")
+    js, inv = jde_settings.load(store), store.get_invoice(invoice_id)
+    (why,) = jde.validate([inv], js, store.vendor_ids())[invoice_id]
+    assert why.startswith("retains 4,500.00: the batch files can't carry the Retained Amount yet") and why.endswith(
+        "key it from the keying sheet")  # fmt: skip
+    assert [h["reasons"] for h in jde.dry_run([inv], js, store.vendor_ids())["held"]] == [[why]]
+    assert jde_check(store, [invoice_id])[0] == [] and jde_check(store, [invoice_id], files=False)[0] == [invoice_id]
+    refused = post(chart_company_client, "/exports/create", {"fmt": jde_settings.FORMAT, "ids": [invoice_id]}).json()
+    assert "None of the ticked invoices can go to JD Edwards yet" in refused["error"] and store.export_batches() == []
+    assert "retains 4,500.00" in chart_company_client.get(f"/exports?fmt={jde_settings.FORMAT}").text
+    assert "retains 4,500.00" not in chart_company_client.get(f"/exports?fmt={jde_keying.FORMAT}").text
+    follow(chart_company_client, post(chart_company_client, "/exports/create",
+                                      {"fmt": jde_keying.FORMAT, "ids": [invoice_id]}))  # fmt: skip
+    batch = store.export_batches()[0]["id"]
+    answer = chart_company_client.get(f"/exports/batches/{batch}/download?fmt={jde_keying.FORMAT}")
+    book = openpyxl.load_workbook(io.BytesIO(answer.content))
+    assert [r[0].value for r in book["Not ready"].iter_rows(min_row=2)] == []
+    rows, check = _retained_blocks([list(r) for r in book["Keying sheet"].iter_rows(values_only=True)])["WBS-P-0101"]
+    assert [(r[6], r[7]) for r in rows] == [(45000, 4500)] and check[3].endswith("= 42,750.00: balanced")
+    jde_settings.save(store, jde_po_vouchers.pilot_settings(jde_settings.load(store)))  # (subcontract billings off)
+    assert jde.validate([inv], jde_settings.load(store), store.vendor_ids())[invoice_id] == [why]
+
+
+def test_a_po_typed_longer_than_vlpo_that_matched_an_order_goes_with_the_orders_number(
+    chart_company, chart_company_client, tmp_path
+):
+    """B-2951: a PO typed longer than VLPO's 8 characters ("PO# 41105") was held back (JDE_PO_LONG) even when it
+    matched an order (41105), though the batch files send the matched order's number in VLPO (B-2921) and the keying
+    sheet keys it. Matched, the order's number is what must fit: approved on the review screen, it is keyed and sent
+    as 41105; a long PO that matches no order is still held, to be typed as JD Edwards has it."""
+    from ap_coder.core.schema import VOUCHER_MATCH
+    from ap_coder.erp import jde, jde_zfiles
+    from tests.review_page import ReviewPage
+
+    store = chart_company.store
+    load_pos(store, jde_po_vouchers.po_files(jde_po_vouchers.cases(chart_company.truth)))
+    jde_settings.save(store, settings_of(PILOT, jde_settings.load(store)))
+    case = next(c for c in jde_po_vouchers.cases(chart_company.truth) if c.po == 41105)
+    found = {}
+    for n, typed in enumerate(("PO# 41105", "PO# 99999")):
+        final = {**case.coding(), "po_number": typed, "gst_hst_registration_number": "814275533RT0001",
+                 "invoice_number": f"{case.number}-{n}"}  # fmt: skip
+        invoice_id = store.add_invoice(chart_company.folder / f"{typed}.pdf", final, {"requires_review": True})
+        page = ReviewPage(chart_company_client, invoice_id)
+        for n, li in enumerate(case.coding()["line_items"], 1):
+            page.set_account(n, f"{li['predicted_cost_center']}.{li['predicted_gl_code']}")
+        found[typed] = (page.check()["allow"], set(page.findings), invoice_id, page)
+    allow, codes, invoice_id, page = found["PO# 41105"]
+    assert allow and "JDE_PO_LONG" not in codes, codes
+    assert "redirect" in page.approve()
+    inv = store.get_invoice(invoice_id)
+    assert inv["final_output"][VOUCHER_MATCH]["rows"][0]["order_number"] == "41105"
+    js = jde_settings.load(store)
+    assert jde.validate([inv], js, store.vendor_ids()) == {}
+    matches = jde_keying.po_matches(store, [inv], js.charge_account)
+    (head,) = _csv(jde_zfiles.export_batch([inv], js, store.vendor_ids(), po_matches=matches)[jde_zfiles.HEADER_FILE])
+    assert head["VLPO"] == "41105"
+    ready, held = jde_keying.vouchers([inv], js, store.vendor_ids(), po_matches=matches)
+    assert held == [] and {m.order_number for m in ready[0].matches if m.on_po} == {"41105"}
+    allow, codes, _, _ = found["PO# 99999"]
+    assert not allow and "JDE_PO_LONG" in codes

@@ -10,7 +10,7 @@ import re
 from ap_coder.core import memory
 from ap_coder.core.store import APPROVED, REVIEW
 from ap_coder.erp import jde_settings
-from tests.browser import wait_until
+from tests.browser import settle, wait_until
 from tests.web.test_web_invoice import PAGE, check, form_of
 from tests.web.test_web_review_signoff import _id, _jde_on, _open, _overlap, _review, browser, demo_db, me, store
 
@@ -88,7 +88,7 @@ def test_in_a_browser_ctrl_z_after_approving_undoes_the_approval(browser, store)
     page = _review(browser, store, "Pacific")
     page.keyboard.press("Control+Enter")
     page.wait_for_selector(".flash form[action$='/undo-approve']")
-    page.wait_for_load_state("networkidle")
+    settle(page)
     assert store.get_invoice(invoice_id)["status"] in (APPROVED, "pending")
     undo = page.locator(".flash form[action$='/undo-approve'] button")
     assert "Ctrl+Z" in (undo.get_attribute("title") or "") and undo.get_attribute("aria-keyshortcuts") == "Control+Z"
@@ -231,16 +231,16 @@ def test_in_a_browser_alt_up_to_the_queue_focuses_the_invoice_left(browser, stor
     page.evaluate("document.activeElement.blur()")
     page.keyboard.press("Alt+ArrowUp")
     page.wait_for_url(re.compile(r"/review(\?|$)"))
-    page.wait_for_load_state("networkidle")
+    settle(page)
     wait_until(page, lambda: page.evaluate("document.activeElement.getAttribute('href')") == f"/review/{invoice_id}")
     assert page.evaluate("document.activeElement.getAttribute('href')") == f"/review/{invoice_id}"
     assert page.errors == []
     store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], "Jordan Lee")
     page.goto(page.url.split("/review")[0] + f"/review/{invoice_id}")  # approved since: its view, then the queue
-    page.wait_for_load_state("networkidle")
+    settle(page)
     page.keyboard.press("Alt+ArrowUp")
     page.wait_for_url(re.compile(r"/review(\?|$)"))
-    page.wait_for_load_state("networkidle")
+    settle(page)
     wait_until(page, lambda: page.evaluate("document.activeElement.matches('.rq-list a.rq-row')"))
     assert page.evaluate("document.activeElement.matches('.rq-list a.rq-row')")  # no longer listed: the first row
 
