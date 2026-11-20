@@ -64,7 +64,8 @@ def test_every_test_named_by_hand_is_there():
 
 def test_a_changed_doc_runs_the_rules_every_doc_is_held_to_and_the_tests_that_open_it():
     rules = [t for t in check.DOC_RULES if (ROOT / t).is_file()]  # (test_log_entries.py: once it is there)
-    assert check.tests_for(["docs/BUGS.md"]) == rules == check.tests_for(["docs/decisions/D-329.md"])
+    for log in ("docs/BUGS.md", "docs/decisions.md", "docs/bugs/README.md", "docs/decisions/D-329.md", ".ignore"):
+        assert check.tests_for([log]) == rules, log
     for doc in ("docs/WHATS_NEW.md", "docs/QUICK_START.md"):  # what the Help page shows
         assert {*rules, "tests/web/test_web_help.py"} <= set(check.tests_for([doc])), doc
     assert "tests/meta/test_how_it_runs_doc.py" in check.tests_for(["docs/HOW_IT_RUNS.md"])

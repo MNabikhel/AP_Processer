@@ -49,8 +49,9 @@ SHARED = {"tests/conftest.py", "tests/webclient.py", "tests/pdfs.py", "tests/scr
 # added), so any change to the app, the scripts or the tests runs them all: about 30 seconds.
 RULES = ("tests/meta", "tests/offline/test_offline_guard.py", "tests/core/test_store_package.py",
          "tests/ops/test_help.py", "tests/web/test_roles.py", "tests/web/test_role_permissions.py")  # fmt: skip
-# The rules every doc is held to (docs/, CLAUDE.md, README.md, .claude/agents/): its lines, the log entries' numbers
-# (the second one only once it is there): a changed doc runs them, and the tests that open it by its path.
+# The rules every doc is held to (docs/, CLAUDE.md, README.md, .claude/agents/, and .ignore): its lines, the log
+# entries' numbers (the second one only once it is there): a changed doc runs them, and the tests that open it by its
+# path.
 DOC_RULES = ("tests/meta/test_agent_friendly.py", "tests/meta/test_log_entries.py")
 # The tests of a file that its name and imports miss (named otherwise, reached through a page's address or a command,
 # a doc the Help page shows): these, in place of those its name finds (a doc's: besides the rules every doc is held to).
@@ -127,7 +128,9 @@ def quickest(users: list[Path], mirror: Path, times: dict[str, list[float]]) -> 
 
 
 def is_doc(f: str) -> bool:
-    return f.endswith(".md") and (f.startswith(("docs/", ".claude/agents/")) or f in ("CLAUDE.md", "README.md"))
+    """A doc, or .ignore (which of the logs a search skips)."""
+    md = f.endswith(".md") and (f.startswith(("docs/", ".claude/agents/")) or f in ("CLAUDE.md", "README.md"))
+    return md or f == ".ignore"
 
 
 def doc_tests(f: str, test_texts: dict[Path, str]) -> set[Path]:
