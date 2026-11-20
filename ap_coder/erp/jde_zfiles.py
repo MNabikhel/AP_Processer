@@ -150,8 +150,7 @@ def voucher_rows(
     typed = settings.remarks == REMARKS_TYPED  # VNEXR: the line's remark, not the invoice number (D-210)
     rate = _rate(fx_rates, v.currency, domestic_of(final, settings)) if v.foreign else None
     common = {
-        **keys, "VLDCT": doc_type, "VLCO": company_of(final, settings),
-        "VLMCU": for_voucher(final, settings).header_bu.strip(),  # (its company's, D-301)
+        **keys, "VLDCT": doc_type, "VLCO": company_of(final, settings), "VLMCU": header_bu(final, settings),
         "VLAN8": str(vendor_an8 or "").strip(), "VLVINV": str(final.get("invoice_number") or "").strip()[:25],
         "VLDIVJ": julian(invoice_date), "VLDGJ": julian(gl_date), "VLDSVJ": julian(invoice_date),
         "VLTXA1": v.tax_area, "VLEXR1": v.tax_code, "VLCRRM": "F" if v.foreign else "D", "VLCRCD": v.currency,
@@ -333,6 +332,11 @@ def _entry_taxes(entries: list[dict[str, Any]], items: list[dict[str, Any]]) -> 
     from .exports import entry_lines
 
     return [set((li or {}).get("taxes_applied") or []) for li in entry_lines(entries, items)]
+
+
+def header_bu(final: dict[str, Any], settings: JdeSettings) -> str:
+    """VLMCU of an invoice: the header business unit of its company (D-301), else Settings'."""
+    return for_voucher(final, settings).header_bu.strip()
 
 
 def glba(final: dict[str, Any], settings: JdeSettings) -> str:
