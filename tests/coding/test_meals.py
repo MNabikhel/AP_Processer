@@ -455,6 +455,28 @@ def test_the_pst_owed_on_a_voucher_leaves_out_the_tips_the_posting_does():
     assert (jde_voucher.pst_owed(cards), jde_voucher.pst_owed(tip)) == (jde_voucher.SOME_OWED, jde_voucher.ALL_OWED)
 
 
+def test_a_voucher_match_keys_the_tip_the_posting_leaves_untaxed_with_no_tax():
+    """B-2862: a staff dinner on PO 4100, all on the meals account: the posting and the review screen take its
+    gratuity for a tip (D-310), but the voucher match read the lines with a Tax setup of no meals account, so the
+    gratuity took 52.00 of the HST and was keyed Tax Y. The match takes the meals accounts the posting halved."""
+    from ap_coder.coding.po import MatchRow, VoucherMatch
+    from ap_coder.erp import jde_match
+
+    doc = _on([(1625.0, MEALS, "Set menu"), (480.0, MEALS, "Beverages"), (400.0, MEALS, "Gratuity")], 273.65)
+    doc["line_items"][0].update(quantity=25, unit_price=65.0)
+    doc["tax_lines"][0]["taxable_amount"] = 2105.0
+    doc.update(vendor_name="Cedarline Kitchen & Bar", po_number="4100")
+    coding = InvoiceCoding.model_validate(doc)
+    final = {**coding.model_dump(), "gl_distribution": build_gl_distribution(coding, _setup())}
+    settings = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX)
+    voucher = jde_voucher._prepare({"id": 1, "final_output": final}, settings, "10023")
+    rows = [MatchRow(n, li["description"], "4100", "OP", "00001", f"{n}.000", None, "", li["amount"], "100.6320",
+                     None, tax=("Y", "", "")) for n, li in enumerate(final["line_items"], 1)]  # fmt: skip
+    keyed = jde_match.keyed_match(voucher, VoucherMatch(rows=rows), settings)
+    assert [(row.amount, row.taxed) for row in keyed.rows] == [(1625.0, "Y"), (480.0, "Y"), (400.0, "N")]
+    assert keyed.tax == 27365 and keyed.warnings == []
+
+
 def test_the_excel_and_csv_lines_carry_the_meals_half():
     inv = _jde_invoice()
     rows = exports.line_rows([inv])
