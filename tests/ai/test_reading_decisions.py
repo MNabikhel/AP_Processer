@@ -368,6 +368,27 @@ def test_a_form_of_bare_labels_never_makes_the_customer_the_supplier(tmp_path, r
         assert "MISSING_VENDOR" in {i.code for i in result.report.issues}
 
 
+def test_a_customer_id_in_the_customers_block_keeps_the_place_of_supply(tmp_path, reference):
+    """B-2785: "Cust. ID 10045" under the customer's name was read as a US address (Idaho and its ZIP code): an Ontario
+    supplier's GST and PST on a supply to Regina were checked as a supply outside Canada, four warnings for nothing
+    (HST not charged, the tax for another province, the tax regime twice)."""
+    from tests.pdfs import text_pdf
+
+    pipe, _store = _offline(tmp_path, reference)
+    result = pipe.process(text_pdf(tmp_path / "id.pdf", [
+        (50, 50, "Great Lakes Mechanical Inc.", 14), (50, 68, "645 King St W, Toronto, ON M5V 2T6"),
+        (50, 82, "GST/HST No. 123456782 RT0001"), (400, 50, "INVOICE", 14), (400, 70, "Invoice #: 118204"),
+        (400, 84, "Invoice Date: 2026-09-14"), (50, 130, "Sold To:"), (50, 144, "Kestrel Foods Ltd."),
+        (50, 158, "Cust. ID 10045"), (50, 172, "5609 Industrial Pkwy"), (50, 186, "Regina, SK S4P 3Y2"),
+        (50, 260, "Description"), (500, 260, "Amount"), (50, 276, "Service call"), (500, 276, "100.00"),
+        (400, 340, "Subtotal"), (500, 340, "100.00"), (400, 354, "GST 5%"), (500, 354, "5.00"), (400, 368, "PST 6%"),
+        (500, 368, "6.00"), (400, 382, "Total"), (500, 382, "111.00"),
+    ]))  # fmt: skip
+    assert result.output["ship_to_province"] == "SK"
+    codes = {i.code for i in result.report.issues}
+    assert not codes & {"HST_NOT_CHARGED", "TAX_PROVINCE_DIFFERS", "TAX_REGIME_MISMATCH"}, codes
+
+
 def test_the_freight_of_a_totals_table_of_one_row_is_a_jd_edwards_line_of_its_own(tmp_path, reference):
     """B-2639: the freight of "Line-Item Total | Freight Amount | ... | Amount Due:" over one row of amounts was not
     read, so it was on no line and JD Edwards would get 656.50 taxed. It is a line of its own, taxed with the goods:
