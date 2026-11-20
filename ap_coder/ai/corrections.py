@@ -265,6 +265,15 @@ def _printed_money(text: str) -> list[float]:
     return found
 
 
+def _carrying(lines: list[dict[str, Any]], tax: str) -> tuple[list[dict[str, Any]], bool]:
+    """(the lines ``tax`` is on, whether none was): a tax no line carries is on every line that is not zero-rated or
+    exempt from it (none when each is)."""
+    marked = [li for li in lines if tax in (li.get("taxes_applied") or [])]
+    if marked:
+        return marked, False
+    return [li for li in lines if not li.get("tax_status") and tax not in (li.get("tax_exempt") or [])], True
+
+
 def _which_lines(some: list[dict[str, Any]], lines: list[dict[str, Any]]) -> str:
     """ "every line", "line 2", "lines 1, 2 and 4": ``some`` of the invoice's ``lines``."""
     numbers = [str(li.get("line_number")) for li in some]
@@ -409,10 +418,10 @@ def apply_items(output: dict[str, Any], items: list[dict[str, Any]], text: str, 
             if len(same) > 1:
                 refused.append(f"{what}: the invoice has {tax} at more than one rate")
                 continue
-            marked = [li for li in lines if tax in (li.get("taxes_applied") or [])]
-            newly = not marked
-            if newly:  # a tax no line carries: on every line that is not exempt from it
-                marked = [li for li in lines if not li.get("tax_status") and tax not in (li.get("tax_exempt") or [])]
+            marked, newly = _carrying(lines, tax)
+            if not marked:
+                refused.append(f"{what}: no line can carry it (each is zero-rated or exempt from {tax})")
+                continue
             base = add_up(li["amount"] for li in marked)
             rate = _rate(item.get("rate"), amount, base, len(marked), out, setup)
             if rate is None:

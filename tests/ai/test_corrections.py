@@ -504,3 +504,22 @@ def test_a_tax_correction_that_puts_the_tax_on_the_lines_says_so(store):  # noqa
     assert [li["taxes_applied"] for li in out["line_items"]] == [["GST"], ["GST"]] and not refused
     assert "GST on every line (no line had it)" in said, said
     assert _adds_up(out)
+
+
+@pytest.mark.parametrize("how", ["zero-rated", "exempt"])
+def test_a_tax_correction_no_line_can_carry_is_refused_with_why(store, how):  # noqa: F811
+    """B-2807: a tax correction of an invoice whose every line is zero-rated or exempt from that tax (no line could
+    carry it) stopped on an IndexError naming the lines it was put on: the whole answer was dropped, as if nothing had
+    been asked, and no round after it was asked. It is refused with why, the other corrections taken as they are."""
+    untaxed = {"tax_status": "zero_rated"} if how == "zero-rated" else {"tax_exempt": ["GST"]}
+    line = {"line_number": 1, "description": "Bread", "quantity": 1.0, "unit_price": 140.0, "amount": 140.0,
+            "taxes_applied": [], **untaxed}  # fmt: skip
+    output = {"line_items": [line], "tax_lines": [{"tax_type": "GST", "rate": 0.05, "taxable_amount": 140.0,
+                                                   "tax_amount": 7.0}],
+              "subtotal": 140.0, "tax_total": 7.0, "grand_total": 147.0, "invoice_date": "2026-11-02"}  # fmt: skip
+    page = "Bread 140.00\nSubtotal 140.00\nGST 7.00\nTotal 152.00"
+    fixes = [_fix("tax", "7.00", "GST", rate=0.05), _fix("grand_total", "152.00")]
+    out, said, refused = corrections.apply_items(output, fixes, page, store=store, setup=store.reference_data().tax,
+                                                 supplier_wanted=False)  # fmt: skip
+    assert refused == ["GST 7.00: no line can carry it (each is zero-rated or exempt from GST)"], refused
+    assert said == ["total 152.00 (was 147.00)"] and out["line_items"][0]["taxes_applied"] == []
