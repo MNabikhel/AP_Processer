@@ -13,6 +13,7 @@ python -m ap_coder.bench seed --out DIR --invoices 12000 [--register 600000] [--
 python -m ap_coder.bench volume --data DIR [--out bench_volume] [--roles admin,clerk]
 python -m ap_coder.bench adversarial [--quick] [--repeats 3] [--obedient]   (text addressed to software: adversarial.py)
 python -m ap_coder.bench po-vouchers --out DIR   (PO-matched invoices for JD Edwards' Voucher Match: jde_po_vouchers.py)
+python -m ap_coder.bench pilotday [--quick] [--seed 1] [--scanned 0.1]   (the pilot tester's day, scored: pilot_day.py)
 
 --quick on run, learn, lines, speed, coding and triage: a small run to check a change (sizes in ``QUICK``)."""
 
@@ -46,11 +47,13 @@ def _add_parts(sub: Any) -> Any:
         di_compare,
         jde_po_vouchers,
         load,
+        pilot_day,
         seed,
         volume,
     )
 
-    for part in (load, seed, volume, coding_journal, di_compare, adversarial, jde_po_vouchers, companies_speed):
+    parts = (load, seed, volume, coding_journal, di_compare, adversarial, jde_po_vouchers, companies_speed, pilot_day)
+    for part in parts:
         part.add_parser(sub)
     return load
 

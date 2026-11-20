@@ -57,6 +57,8 @@ class ExtractionResult:
     low_confidence_word_count: int = 0
     invoice_fields: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] | None = None
+    # A progress billing's amounts read off its pages (``capture.reader.progress``, D-274); None: none read
+    progress: dict[str, Any] | None = None
 
     def to_prompt_payload(self, max_chars: int | None = None) -> str:
         """Render the extraction as the user-message payload for the LLM."""
@@ -151,15 +153,17 @@ def result_from_raw(source: str | Path, raw: dict[str, Any]) -> ExtractionResult
 
 def kept_extraction(inv: dict[str, Any]) -> ExtractionResult:
     """What was read of a stored invoice, as its checks read it again (``validate_coding``'s ``extraction``): its
-    words' confidence and Azure's fields, kept in its ``meta`` (``pipeline._meta``), not its text. The review screen,
-    bulk approval and the queue's Ready check it alike (B-2611)."""
+    words' confidence and Azure's fields, kept in its ``meta`` (``pipeline._meta``), and its text (``extraction_md``:
+    the companies' names on its page decide its company, D-267, B-2681). The review screen, bulk approval and the
+    queue's Ready check it alike (B-2611)."""
     kept = (inv.get("meta") or {}).get("extraction") or {}
     return ExtractionResult(
         source=str(inv.get("source_path") or ""),
         model_id=kept.get("model_id", ""),
-        content="",
+        content=str(inv.get("extraction_md") or ""),
         mean_word_confidence=kept.get("mean_word_confidence"),
         invoice_fields=kept.get("invoice_fields") or {},
+        progress=kept.get("progress") or None,
     )
 
 

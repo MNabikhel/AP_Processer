@@ -950,7 +950,14 @@ def _not_approvable_now(store: Store, settings: Any, inv: dict[str, Any]) -> lis
     over = {(i.get("code"), i.get("line")) for i in ((first or {}).get("detail") or {}).get("open_issues") or []
             if i.get("severity") == "error"}  # fmt: skip
     errors = [Issue(**i) for i in found or [] if i["severity"] == "error"]
-    return hard_reasons([i for i in errors if is_hard(i) or (i.code, i.line_number) not in over])
+    reasons = hard_reasons([i for i in errors if is_hard(i) or (i.code, i.line_number) not in over])
+    from ap_coder.coding import companies
+
+    if companies.several(store) and not companies.company_code((inv.get("final_output") or {}).get("company")):
+        # Approved while one company was known: its voucher would be keyed under Settings', whatever company the
+        # check above took it for (D-267, B-2685)
+        reasons.append("its company was not decided when it was approved (JD Edwards' companies were loaded since)")
+    return reasons
 
 
 @router.post("/review/{invoice_id}/final-approve")

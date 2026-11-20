@@ -34,7 +34,7 @@ from ..capture.layout import PDF_LOCK, CannotRead
 from ..capture.workflow import AUTONOMOUS_REVIEWER, WAITING_FOR_PAGE_READER, autonomy_decision, capture_invoice
 from ..coding import banks, companies, posting_edits
 from ..coding.claim import claim_findings
-from ..coding.po import po_findings
+from ..coding.po import match_invoice, po_findings, voucher_match
 from ..coding.remark import fill_remarks
 from ..coding.rules import apply as apply_rules
 from ..coding.tax import PLACE_OF_SUPPLY, SUPPLY_OURS, SUPPLY_SITE, build_gl_distribution, supply_source
@@ -44,7 +44,7 @@ from ..coding.vendors import vendor_findings
 from ..core.config import Settings
 from ..core.memory import compare_patterns, compare_with_history, format_examples, select_examples, vendor_key
 from ..core.reference_data import ReferenceData, short_name
-from ..core.schema import COMPANY_TAX, InvoiceCoding, decided
+from ..core.schema import COMPANY_TAX, PROGRESS_BILLING, InvoiceCoding, decided
 from ..core.store.imports import ClaimLost
 from ..core.store.joined import CLAIM
 from ..core.store.reports import anywhere_in
@@ -220,6 +220,38 @@ def duplicates_known(store: Store, others: list[int], invoice_id: int | None) ->
     return known
 
 
+def _company_checks(store: Store | None, coding: InvoiceCoding, extraction: ExtractionResult | None,
+                    js: Any) -> tuple[list[tuple[str, str, str]], bool, companies.Decision | None]:  # fmt: skip
+    """Which of JD Edwards' companies it is ours under, with several (D-267): decided (``coding.company``) before the
+    checks that read it (its PO, the duplicates, its voucher); none decided holds it for a person. A company not
+    checked for Canadian tax (a US one) has every check but those, and a warning that its tax was not checked. With
+    fewer than two, a voucher is keyed under Settings' company (``js``: JD Edwards in use), or one the coding kept from
+    when several were known: asked of the pilot too (B-2683). Returns (what is said, whether the Canadian tax checks
+    apply, the decision: None with fewer than two companies)."""
+    said: list[tuple[str, str, str]] = []
+    if store is None or not companies.several(store):
+        kept = companies.company_code(coding.company)
+        outside = (companies.pilot_finding(store, kept or js.company_code, settings_company=not kept)
+                   if store is not None and js is not None else None)  # fmt: skip
+        return ([outside] if outside is not None else []), True, None
+    decision = companies.decide(store, coding, extraction.content if extraction is not None else "")
+    coding.company = companies.company_code(coding.company or decision.company)
+    if not coding.company.strip():
+        return [companies.unknown_finding(decision, store)], True, decision
+    outside = companies.pilot_finding(store, coding.company)  # (D-272: held, whoever approves it)
+    if outside is not None:
+        said.append(outside)
+    canadian_tax, why = companies.canadian(store, coding.company)
+    if not canadian_tax:
+        said.append(companies.us_tax_finding(companies.company_code(coding.company), why))
+    return said, canadian_tax, decision
+
+
+def _progress_billing(extraction: ExtractionResult | None) -> dict[str, Any]:
+    """What is kept beside the coding of a progress billing: its amounts as printed (D-274); nothing for another."""
+    return {PROGRESS_BILLING: extraction.progress} if extraction is not None and extraction.progress else {}
+
+
 def finalise_coding(
     coding: InvoiceCoding,
     reference: ReferenceData,
@@ -258,23 +290,6 @@ def finalise_coding(
         if store is not None
         else None
     )
-    # Which of JD Edwards' companies it is ours under, with several (D-267): decided before the checks that read it
-    # (its PO, the duplicates, its voucher); none decided holds it for a person. A company not checked for Canadian
-    # tax (a US one) has every check but those, and a warning that its tax was not checked.
-    company_said: list[tuple[str, str, str]] = []
-    canadian_tax, decision = True, None
-    if store is not None and companies.several(store):
-        decision = companies.decide(store, coding, extraction.content if extraction is not None else "")
-        coding.company = companies.company_code(coding.company or decision.company)
-        if not coding.company.strip():
-            company_said.append(companies.unknown_finding(decision, store))
-        else:
-            outside = companies.pilot_finding(store, coding.company)  # (D-272: held, whoever approves it)
-            if outside is not None:
-                company_said.append(outside)
-            canadian_tax, why = companies.canadian(store, coding.company)
-            if not canadian_tax:
-                company_said.append(companies.us_tax_finding(companies.company_code(coding.company), why))
     # The bank account it is paid from (ours, D-66): the vendor's last one, else the currency's default, when none is
     # chosen yet; checked once our accounts are set up.
     bank_findings: list[tuple[str, str, str]] = []
@@ -291,9 +306,10 @@ def finalise_coding(
     # is imported, or the remarks go to JD Edwards as typed; any other install stores its invoices as before.
     js = None
     if store is not None:
-        from ..erp import jde_accounts, jde_review, jde_settings
+        from ..erp import jde_review, jde_settings
 
         js = jde_settings.load(store) if jde_settings.in_use(store) else None
+    company_said, canadian_tax, decision = _company_checks(store, coding, extraction, js)
     remarks_typed = js is not None and js.remarks == jde_settings.REMARKS_TYPED
     fill_remarks(coding, store, reference, wanted=reference.pairs is not None or remarks_typed)
     posting_edits.fill(coding, store, reference, exclude_invoice_id)  # an account's subledger or units (D-268)
@@ -306,11 +322,10 @@ def finalise_coding(
             output[PLACE_OF_SUPPLY] = place
     if not canadian_tax:  # a US company's voucher: its tax area from the PO line or the supplier (D-267)
         output[COMPANY_TAX] = companies.voucher_tax(store, coding)
+    output.update(_progress_billing(extraction))
     output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
     # JD Edwards in use: what its batch would hold back, asked before approval (D-75).
-    erp_findings: list[tuple[str, str, str, int | None]] = []
-    if js is not None:
-        erp_findings = jde_review.voucher_findings(output, js, jde_accounts.resolve_an8(output, store.vendor_ids(), js))
+    erp_findings, po_match = _erp_findings(coding, output, js, store, exclude_invoice_id)
     report = validate_coding(
         coding,
         reference,
@@ -327,7 +342,7 @@ def finalise_coding(
             vendor_terms=store.vendor_terms(key or vendor_key(coding.vendor_name)) if store is not None else "",
             received=received,
         ),
-        po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
+        po_findings=po_findings(coding, store, exclude_invoice_id, po_match) if store is not None else None,
         erp_findings=erp_findings,
         remarks_typed=remarks_typed,
         erp_posts_tax=jde_review.taxes_e1_posts(output, js) if js is not None else frozenset(),
@@ -339,6 +354,25 @@ def finalise_coding(
     if store is not None and exclude_invoice_id is not None:  # the receipts of one expense claim say so (D-216)
         claim_findings(report, store.joined_files(invoice_id=exclude_invoice_id), coding)
     return output, report
+
+
+def _erp_findings(coding: InvoiceCoding, output: dict[str, Any], js: Any, store: Store | None,
+                  exclude_invoice_id: int | None) -> tuple[list[tuple[str, str, str, int | None]], Any]:  # fmt: skip
+    """(what JD Edwards' batch would hold back of the voucher ``output``, ``jde_review.voucher_findings``; with
+    PO-matched vouchers, the invoice's PO match, None without one): what holds its voucher match rows back from the
+    keying sheet too (``jde_review.match_findings``, B-2667), its PO match made once for the PO checks as well. None
+    and nothing to say without JD Edwards in use (``js`` None)."""
+    if js is None or store is None:
+        return [], None
+    from ..erp import jde_accounts, jde_review
+
+    an8 = jde_accounts.resolve_an8(output, store.vendor_ids(), js)
+    found = jde_review.voucher_findings(output, js, an8)
+    quoted = coding.po_number.strip()
+    if not (js.po_matched and quoted):
+        return found, None
+    match = match_invoice(coding, store, exclude_invoice_id)  # (its voucher match rows, as the sheet keys them)
+    return found + jde_review.match_findings(output, js, an8, voucher_match(match, quoted, js.charge_account)), match
 
 
 def _say_on(lines: dict[int, Any], said: str | dict[int, str]) -> None:
@@ -1153,6 +1187,7 @@ def _meta(result: PipelineResult) -> dict[str, Any]:
             "mean_word_confidence": result.extraction.mean_word_confidence,
             "low_confidence_word_count": result.extraction.low_confidence_word_count,
             "invoice_fields": result.extraction.invoice_fields,
+            **({"progress": result.extraction.progress} if result.extraction.progress else {}),
         }
     if result.coding:
         meta["inference"] = {

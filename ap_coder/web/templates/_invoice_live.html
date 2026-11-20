@@ -358,11 +358,15 @@
   {% if j.match %}{% set first = (j.match | selectattr('on_po') | first) or j.match[0] %}
   <div class="table-wrap" data-jde-match><table class="apc-table inv-jde-match">
     <caption class="small">Voucher match: order {{ first.order_number }} {{ first.order_type }} {{ first.order_company }}</caption>
-    <thead><tr><th>Line</th><th class="r">Quantity matched</th><th class="r">Amount matched</th><th>Account</th><th>Tax</th></tr></thead>
+    <thead><tr><th>Line</th><th class="r">Quantity matched</th><th class="r">Amount matched</th>{% if j.retainage %}<th class="r">Retained</th>{% endif %}<th>Account</th><th>Tax</th></tr></thead>
     <tbody>{% for m in j.match %}
-      <tr{% if m.remark %} title="{{ m.remark }}"{% endif %}><td>{% if m.on_po %}{{ m.line }}{% else %}<strong>Not on the PO</strong>{% endif %}</td><td class="r">{{ m.quantity_text }} {{ m.uom }}</td><td class="r">{{ m.amount_text }}</td><td>{{ m.account or '—' }}</td><td>{{ m.taxed }} · {{ m.tax_code or 'blank' }} · {{ m.tax_area or 'no tax area' }}</td></tr>
+      <tr{% if m.remark %} title="{{ m.remark }}"{% endif %}><td>{% if m.on_po %}{{ m.line }}{% else %}<strong>Not on the PO</strong>{% endif %}</td><td class="r">{{ m.quantity_text }} {{ m.uom }}</td><td class="r">{{ m.amount_text }}</td>{% if j.retainage %}<td class="r">{{ m.retained_text }}</td>{% endif %}<td>{{ m.account or '—' }}</td><td>{{ m.taxed }} · {{ m.tax_code or 'blank' }} · {{ m.tax_area or 'no tax area' }}</td></tr>
     {% endfor %}</tbody>
   </table></div>
+  {% if j.retainage %}{# a subcontract's progress billing (D-273): the holdback retained, what is paid now #}
+  <p class="small" data-jde-retained>Retained (held back): {{ j.retainage.retained }} · amount due now: {{ j.retainage.due }}</p>
+  {% if j.retainage.said %}<ul class="inv-jde-held small" aria-label="About the retained amounts">{% for said in j.retainage.said %}<li>{{ said }}</li>{% endfor %}</ul>{% endif %}
+  {% endif %}
   {% endif %}
   {% if j.match_held %}
   <ul class="inv-jde-held small" data-jde-held aria-label="Why the voucher match is not ready">{% for why in j.match_held %}<li class="rvw-warn">{{ why[0] | upper }}{{ why[1:] }}.</li>{% endfor %}</ul>

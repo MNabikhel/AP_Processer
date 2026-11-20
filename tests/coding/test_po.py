@@ -1194,3 +1194,196 @@ def test_an_account_in_another_format_is_read_from_its_cost_center_object_and_su
     rows, skipped = po_mod.rows_from_records(records, po_mod.map_columns(head))
     assert skipped == 0 and [(r["cost_center"], r["gl_code"]) for r in rows] == [
         ("21061010", "7200.01"), ("21061010", "7210"), ("0021061010", "7410")]  # fmt: skip
+
+
+def test_a_lump_sum_line_jd_edwards_exports_with_a_quantity_and_cost_of_0_is_matched_by_its_open_amount(tmp_path):
+    """B-2660: JD Edwards keeps 0, never blank, for the quantity and unit cost of a PO line entered as an amount (a
+    service, a lump sum), and Open Order Inquiry's export gives it so with its Amount Open alone. The line was read as
+    0 ordered at $0.00: its invoice was warned over the PO price (+100%), over the quantity ordered and over the PO
+    total, and its voucher match row "1 matched, but JD Edwards had 0 open". It is a line of an amount, its open one."""
+    from tests.pdfs import ONE_ROW_PO
+
+    head = ["Order Number", "Or Ty", "Order Co", "Line Number", "Address Number", "Description", "Quantity Ordered",
+            "Quantity Open", "Amount Open", "Unit Cost", "UM", "Account Number", "Cur Cod"]  # fmt: skip
+    records = [dict(zip(head, row, strict=True)) for row in (
+        [ONE_ROW_PO, "OP", "00210", 12.0, 4471001, "LUNCH COOLER BAG NON-WOVEN 2C", 100, 100, 599.0, 5.99, "EA",
+         "0312005561.6420.2210", "CAD"],
+        [ONE_ROW_PO, "OP", "00210", 13.0, 4471001, "COOLER BAG SETUP", 0, 0, 57.5, 0, "", "0312005561.6420.2210",
+         "CAD"],
+        [ONE_ROW_PO, "OP", "00210", 14.0, 4471001, "DELIVERY CHARGE", 1, 1, 32.0, 32.0, "EA", "0312005561.6420.2210",
+         "CAD"])]  # fmt: skip
+    rows, _ = rows_from_records(records, map_columns(head))
+    assert [(r["quantity"], r["unit_price"], r["amount"], r["amount_only"]) for r in rows][1] == (1.0, 57.5, 57.5, True)
+    store = Store(tmp_path / "ap.db")
+    store.import_purchase_orders(rows)
+    match = match_invoice(_freight_invoice(), store)
+    assert [f[1] for f in match.findings] == ["PO_MATCHED"], match.findings
+    matched = po_mod.voucher_match(match, ONE_ROW_PO)
+    assert [(r.line, r.quantity, r.amount, r.no_quantity) for r in matched.rows][1] == ("13.000", 1, 57.5, True)
+
+
+def test_a_po_line_billed_by_amount_is_checked_against_what_jd_edwards_has_open_as_its_left_to_expense_is(tmp_path):
+    """B-2666: the pilot's order details grid as it comes (D-264) gives each open line's Amount To Receive alone: the
+    line is billed by amount, that open amount its only amount. Progress billing (a line billed by several invoices)
+    with the PO loaded again after the first was keyed (JD Edwards' open amount down by it) warned the next one over
+    the line (PO_QTY_OVER "$599.00 billed ... more than the $239.60 ordered") and over the PO (PO_OVER_BILLED): the
+    first invoice was counted again, though JD Edwards' open amount had counted it. Such a line is checked as its left
+    to expense is (D-139): what is open less the invoices not exported yet and this one; the PO likewise."""
+    from ap_coder.bench import jde_exports
+    from ap_coder.erp import jde_keying
+    from ap_coder.web.files import read_sheet
+    from ap_coder.web.invoice_coding import po_section
+    from tests.pdfs import one_row_po_lines
+
+    store = Store(tmp_path / "ap.db")
+
+    def load(*lines):
+        sheet, _ = read_sheet("order_details.xlsx", jde_exports.order_details_xlsx(lines, short=True))
+        store.import_purchase_orders(rows_from_records(sheet.to_dict("records"), map_columns(list(sheet.columns)))[0])
+
+    def bags(quantity, number):
+        coding = _freight_invoice(invoice_number=number)
+        coding.line_items = coding.line_items[:1]
+        coding.line_items[0].quantity, coding.line_items[0].amount = quantity, round(quantity * 5.99, 2)
+        coding.subtotal = coding.line_items[0].amount
+        return coding
+
+    bags_line, setup, freight = one_row_po_lines()
+    load(bags_line, setup, freight)
+    first = store.add_invoice(tmp_path / "a.pdf", bags(60, "118204").model_dump(), {})
+    store.approve_invoice(first, bags(60, "118204").model_dump(), "Pat Tester")
+    before = match_invoice(bags(60, "118205"), store).findings  # (the first not exported yet: it counts)
+    assert [f[1] for f in before] == ["PO_QTY_OVER", "PO_OVER_BILLED"]
+    assert before[1][2] == ("invoices on PO 40917 add up to $718.80 ($359.40 on invoices not exported yet), more "
+                            "than the $688.50 open on the PO")  # fmt: skip
+    store.create_export_batch([first], jde_keying.FORMAT, actor="Pat Tester")  # keyed in JD Edwards
+    load(replace(bags_line, vouchered=60), setup, freight)  # JD Edwards has 40 bags open: 239.60
+    second = bags(40, "118205")
+    match = match_invoice(second, store)
+    assert [f[1] for f in match.findings] == ["PO_MATCHED"], match.findings
+    assert match.left[12].left == 0.0
+    assert po_section(store, second, 0, match)["rows"][0]["qty"] == "239.60 / 239.60"
+    # The Purchase orders list and page say the same: not over-billed
+    from ap_coder.web.pages.purchase_orders import po_detail, status_pill
+
+    (listed,) = store.purchase_orders()
+    assert (listed["by_open"], listed["total"], listed["billed"], status_pill(listed)[0]) == (True, 329.1, 0.0, "Open")
+    assert po_detail(store, listed)["lines"][0]["flag"] is None
+    # (a line billed by amount whose file gives its ordered amount too: the list totals what is open on it)
+    store.import_purchase_orders([{"po_number": "88", "description": "SITE SERVICES", "quantity": 1.0,
+                                   "unit_price": 1000.0, "amount": 1000.0, "amount_only": True, "open_amount": 400.0,
+                                   "status": "open"}])  # fmt: skip
+    assert next(p for p in store.purchase_orders() if p["po_number"] == "88")["total"] == 400.0
+    # A third invoice in review beside it, before the second is exported: over what is open
+    store.add_invoice(tmp_path / "b.pdf", second.model_dump(), {})
+    over = match_invoice(bags(10, "118206"), store)
+    assert over.findings == [("warning", "PO_QTY_OVER", "$299.50 billed on PO 40917 line 12, more than the $239.60 "
+                              "open, $239.60 on invoices not exported yet", 1)]  # fmt: skip
+
+
+def _subcontract_lines():
+    """A made-up subcontract (OS) of two lump-sum lines holding back 10% of each billing, and a PO (OP) line, as the
+    build sheet's report 6 gives them (D-273)."""
+    import datetime as dt
+    from decimal import Decimal
+
+    from ap_coder.bench.jde_exports import OpenPoLine
+
+    def line(order, n, words, amount, kind="OS", retainage="10", billed="0"):
+        return OpenPoLine(order, Decimal(n), 541706, words, Decimal(0), Decimal(0), "", "0021061022.7330.3207",
+                          "00210", vouchered=Decimal(billed), order_type=kind, supplier_name="WESTMEADOW",
+                          order_date=dt.date(2026, 9, 1), lump_sum=Decimal(amount),
+                          retainage=Decimal(retainage) if retainage else None)  # fmt: skip
+
+    return [line(41201, 1, "SITE WORK", "100000"), line(41201, 2, "CONCRETE FOUNDATIONS", "150000", billed="60000"),
+            line(41299, 1, "SNOW CLEARING SEASON", "8000", kind="OP", retainage="")]  # fmt: skip
+
+
+def test_a_subcontracts_lines_and_their_retainage_percent_load_from_the_build_sheets_report():
+    """D-273: report 6 of the build sheet (F4311 in ReportsNow) holds subcontracts (Or Ty OS) beside the purchase
+    orders, each line's retainage percent in its "Retainage %" column (JD Edwards' PDPCRT): read by its own name, none
+    picked by hand, kept with the line; a lump-sum line (no quantity, no unit cost) is matched by its amount, its open
+    amount what JD Edwards has not vouchered of it."""
+    from ap_coder.bench import jde_exports
+    from ap_coder.erp.import_specs import PURCHASE_ORDERS, check
+    from ap_coder.web.files import read_sheet
+
+    sheet, _ = read_sheet("report6.xlsx", jde_exports.po_lines_report_xlsx(_subcontract_lines()))
+    found = check(PURCHASE_ORDERS, list(sheet.columns))
+    assert found.ok and not found.guessed and found.found["retainage"] == "Retainage %"
+    rows, skipped = rows_from_records(sheet.to_dict("records"), found.found)
+    assert skipped == 0
+    assert [(r["order_type"], r["erp_line"], r["amount"], r["open_amount"], r["amount_only"], r["retainage"])
+            for r in rows] == [("OS", "1.000", 100000.0, 100000.0, True, 10.0),
+                               ("OS", "2.000", 150000.0, 90000.0, True, 10.0),
+                               ("OP", "1.000", 8000.0, 8000.0, True, None)]  # fmt: skip
+
+
+def test_a_retainage_percent_is_read_by_any_of_its_names_as_a_percent_and_never_from_a_rule_code(tmp_path):
+    """D-273: "Retainage %", "Retention %", "Holdback %", "Retainage Percent", JD Edwards' PDPCRT (PCRT, F4311.PDPCRT,
+    the header's PHPCRT) name it; 10, 10.000, "10%" and the fraction 0.1 are 10%; nothing, 0, a code (the Retainage
+    Rule, PDRTNR, is no percent and no name of it) or over 100 is none. Kept with the line, it makes the PO a
+    subcontract, as JD Edwards' order type OS does."""
+    for name in ("Retainage %", "Retention %", "Holdback %", "Retainage Percent", "Percent - Retainage", "PDPCRT",
+                 "PCRT", "F4311.PDPCRT", "PHPCRT"):  # fmt: skip
+        assert map_columns(["Order Number", "Description", "Amount", name]).get("retainage") == name, name
+    assert "retainage" not in map_columns(["Order Number", "Description", "Amount", "PDRTNR"])
+    values = [10, "10.000", "10%", 0.1, "5", None, "", 0, "A", 150, -10]
+    records = [{"po": "41", "desc": "Site work", "amount": 1000, "Retainage %": v} for v in values]
+    rows, _ = rows_from_records(records, map_columns(["po", "desc", "amount", "Retainage %"]))
+    assert [r["retainage"] for r in rows] == [10.0, 10.0, 10.0, 10.0, 5.0, None, None, None, None, None, None]
+    store = Store(tmp_path / "ap.db")
+    store.import_purchase_orders(rows[:1] + [{**rows[5], "po_number": "42"}])
+    assert [li["retainage"] for li in store.purchase_order("41")["lines"]] == [10.0]
+    assert po_mod.is_subcontract(store.purchase_order("41"))
+    assert not po_mod.is_subcontract(store.purchase_order("42"))
+    assert po_mod.is_subcontract({"order_type": "OS", "lines": []})
+
+
+def _billing(po_number, *lines):
+    """A progress billing on ``po_number``: each line (description, amount), GST on all."""
+    items = [{"line_number": n, "description": words, "quantity": 1, "unit_price": amount, "amount": amount,
+              "predicted_gl_code": "7330.3207", "predicted_cost_center": "0021061022", "taxes_applied": ["GST"]}
+             for n, (words, amount) in enumerate(lines, 1)]  # fmt: skip
+    subtotal = sum(amount for _, amount in lines)
+    return InvoiceCoding.model_validate({
+        "vendor_name": "Westmeadow Building Services Inc.", "invoice_number": "WBS-P-1", "invoice_date": "2026-10-31",
+        "po_number": po_number, "currency": "CAD", "subtotal": subtotal, "tax_total": round(subtotal * 0.05, 2),
+        "grand_total": round(subtotal * 1.05, 2), "confidence_score": 0.9, "line_items": items})  # fmt: skip
+
+
+def test_a_progress_billing_bills_the_subcontract_line_it_can_be_by_its_amount_and_none_is_guessed(tmp_path):
+    """D-273: a progress billing names the billing ("Progress billing #2"), not the subcontract's line ("SITE WORK"):
+    it bills the subcontract's only line, else the only line open for its amount; a line of the work's words still
+    pairs by them. Several lines open for it, or none: it matches none (held, never guessed). Each match row carries
+    the line's retainage percent and the work billed on it before (JD Edwards' amount less its open amount)."""
+    from ap_coder.bench import jde_exports
+    from ap_coder.erp.import_specs import PURCHASE_ORDERS, check
+    from ap_coder.web.files import read_sheet
+
+    store = Store(tmp_path / "ap.db")
+    sheet, _ = read_sheet("report6.xlsx", jde_exports.po_lines_report_xlsx(_subcontract_lines()))
+    store.import_purchase_orders(
+        rows_from_records(sheet.to_dict("records"), check(PURCHASE_ORDERS, list(sheet.columns)).found)[0]
+    )
+    # (41201: SITE WORK 100,000 open; CONCRETE FOUNDATIONS 150,000, 60,000 vouchered: 90,000 open)
+    by_words = match_invoice(_billing("41201", ("Concrete foundations - this period", 30000.0)), store)
+    assert [m.po_line for m in by_words.lines] == [2]
+    over_concrete = match_invoice(_billing("41201", ("Progress billing #4", 95000.0)), store)
+    assert [m.po_line for m in over_concrete.lines] == [1]  # (only the site work has 95,000 open)
+    either = match_invoice(_billing("41201", ("Progress billing #4", 40000.0)), store)
+    assert [m.po_line for m in either.lines] == [None]
+    assert [m.po_line for m in match_invoice(_billing("41201", ("Progress billing #4", 120000.0)), store).lines] == [
+        None]  # fmt: skip
+    rows = po_mod.voucher_match(by_words, "41201").rows
+    assert [(r.order_type, r.line, r.amount, r.retainage, r.billed_before, r.quantity) for r in rows] == [
+        ("OS", "2.000", 30000.0, 10.0, 60000.0, None)
+    ]  # fmt: skip (a lump sum's: matched by its amount alone)
+    # A one-line subcontract: its line, whatever the billing's words; a PO's (no retainage) never by its amount
+    store.import_purchase_orders([{"po_number": "41202", "description": "ELECTRICAL", "line_number": 1,
+                                   "quantity": 1.0, "unit_price": 50000.0, "amount": 50000.0, "amount_only": True,
+                                   "open_amount": 50000.0, "erp_line": "1.000", "order_type": "OS",
+                                   "order_company": "00210", "retainage": 10.0}])  # fmt: skip
+    assert [m.po_line for m in match_invoice(_billing("41202", ("Progress billing #1", 12000.0)), store).lines] == [1]
+    assert [m.po_line for m in match_invoice(_billing("41299", ("Progress billing #1", 2000.0)), store).lines] == [
+        None]  # fmt: skip

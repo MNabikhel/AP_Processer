@@ -354,3 +354,40 @@ def test_the_freight_of_a_totals_table_of_one_row_is_a_jd_edwards_line_of_its_ow
     assert (v.tax_area, v.taxable, v.tax, v.gross) == ("CDNGST", 688.5, 34.43, 722.93)
     view = jde_review.voucher_view(inv["final_output"], js, "40417")  # the review screen's JD Edwards voucher
     assert (view["taxable"], view["tax"], view["not_ready"]) == (688.5, 34.43, [])
+
+
+def test_the_address_under_the_companys_own_name_unlabelled_is_where_it_is_supplied(tmp_path):
+    """B-2720: the customer's block at the top with no label (an envelope's window: the company's own name over its
+    address in Ontario), the supplier only in the remit-to at the foot: no bill-to was read, so the place of supply
+    fell back to Your province (Alberta) and its 13% HST was said wrong (charged where GST is, an ITC at risk) and
+    the voucher given Alberta's tax area. The address under one of the company's own names is its bill-to."""
+    from ap_coder.core.store import load_sample_setup
+    from tests.pdfs import text_pdf
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    store.set_setting("our_province", "AB")
+    store.set_setting("our_names", "Fraser Bend Civil Ltd.")
+    s = Settings()
+    pipe = InvoicePipeline(replace(s, llm=replace(s.llm, provider="off")), store.reference_data(), store=store)
+    path = text_pdf(tmp_path, [
+        (50, 60, "FRASER BEND CIVIL LTD.", 16), (50, 80, "75 Quarry Road, Sudbury, ON P3A 4R7"),
+        (50, 94, "Attn: Accounts Payable"), (400, 60, "INVOICE", 16), (400, 80, "Invoice No: WA-33889"),
+        (400, 94, "Date: 2026-11-10"), (400, 108, "Terms: Net 30"), (50, 180, "Description"), (330, 180, "Qty"),
+        (400, 180, "Price"), (500, 180, "Amount"), (50, 198, "Copy paper letter size"), (330, 198, "10"),
+        (400, 198, "200.00"), (500, 198, "2,000.00"), (400, 240, "Subtotal"), (500, 240, "2,000.00"),
+        (400, 256, "HST 13%"), (500, 256, "260.00"), (400, 272, "Total"), (500, 272, "2,260.00"),
+        (50, 700, "Please remit to: Wakefield Office Products Inc., 205 Industrial Way, Sudbury ON P3B 1Z3", 8),
+        (50, 712, "GST/HST No. 853937944 RT0001", 8),
+    ], name="window.pdf")  # fmt: skip
+    result = pipe.process(path)
+    codes = {i.code for i in result.report.issues}
+    assert result.output["ship_to_province"] == "ON", result.output["ship_to_province"]
+    assert not codes & {"TAX_REGIME_MISMATCH", "ITC_AT_RISK", "TAX_PROVINCE_DIFFERS"}, codes
+    # A company of the group billing another: its own name over its letterhead is the supplier's, not the bill-to.
+    from ap_coder.ai.offline_coder import provinces
+    from ap_coder.core.memory import vendor_key
+
+    page = ("Maple Ridge Constructors Ltd.\n1180 Marine Drive, Kamloops, BC V2C 1A4\nFRASER BEND CIVIL LTD.\n"
+            "75 Quarry Road, Sudbury, ON P3A 4R7\n")  # fmt: skip
+    assert provinces(page, ours=frozenset({vendor_key("Fraser Bend Civil Ltd.")})) == ("BC", "ON")

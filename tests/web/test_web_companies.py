@@ -127,3 +127,33 @@ def test_a_chart_searched_as_typed_lists_a_business_units_accounts_with_nothing_
     assert found[1] == [f"{cf.HOME}.5410.2210", "Coffee and Refreshments", "Head Office General"]
     assert client.get(f"/review/accounts.json?unit={cf.CLOSED}").json()["list"] == []  # (closed: nothing offered)
     assert client.get("/review/accounts.json?unit=").json()["list"] != []  # (no unit: the whole list, as before)
+
+
+def test_an_invoice_approved_before_report_9_is_sent_back_at_its_second_approval_to_be_given_its_company(
+    chart_company, chart_company_client, monkeypatch
+):
+    """B-2685: approved first while AP Coder knew one company (no company on its coding: its voucher is keyed under
+    Settings → JD Edwards E1's, here 00001), then JD Edwards' companies loaded: its second approval checked it again as
+    the company its page names (00210) and approved the coding without one, to be keyed under 00001. It is refused,
+    said so; sent back, approved again for its company, it passes."""
+    import dataclasses
+
+    from ap_coder.core.store import APPROVED, PENDING
+    from ap_coder.erp import jde_settings
+    from tests.web.test_chart_eligible import _first_approval, _one_line, _second_approval, _two_companies
+
+    store, client = chart_company.store, chart_company_client
+    jde_settings.save(store, dataclasses.replace(jde_settings.load(store), company="00001"))
+    page, _courier = _one_line(chart_company, client)
+    _first_approval(store, monkeypatch, page)
+    _two_companies(store)
+    shown = html.unescape(_second_approval(store, client, monkeypatch, page))
+    assert store.get_invoice(page.id)["status"] == PENDING
+    assert "its company was not decided when it was approved" in shown
+    assert follow(client, client.post(f"/review/{page.id}/send-back", data={"reason": "its company"}, headers=PAGE))
+    for name in ("LOGNAME", "USER", "LNAME", "USERNAME"):  # (Sam on his own computer login again)
+        monkeypatch.setenv(name, "sam")
+    _first_approval(store, monkeypatch, page.open())
+    assert store.get_invoice(page.id)["final_output"]["company"] == "00210"
+    shown = html.unescape(_second_approval(store, client, monkeypatch, page))
+    assert store.get_invoice(page.id)["status"] == APPROVED, shown[shown.find("Not done") :][:300]

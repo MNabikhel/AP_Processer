@@ -203,11 +203,23 @@ def _one(found: Iterable[str]) -> str:
     return codes.pop() if len(codes) == 1 else ""
 
 
+def _at(words: str, key: str) -> list[tuple[int, int]]:
+    """Where ``key``'s words are in ``words`` (its words between spaces): (start, end) of each."""
+    found, start = [], words.find(f" {key} ")
+    while start >= 0:
+        found.append((start, start + len(key) + 2))
+        start = words.find(f" {key} ", start + 1)
+    return found
+
+
 def _named(text: str, names: dict[str, str], supplier: str) -> set[str]:
     """The companies whose names (``names``: {vendor key: company}) are printed in ``text``, the supplier's own left
-    out; of two names one inside the other ("maple ridge" in "maple ridge us"), the longer."""
+    out, and a name printed only inside the supplier's ("fraser bend" in "Fraser Bend Aggregates Ltd.", B-2680); of
+    two names one inside the other ("maple ridge" in "maple ridge us"), the longer."""
     words = f" {' '.join(re.findall(r'[a-z0-9]+', plain(text).replace('&', ' and ')))} "
-    hits = [key for key in names if key and key != supplier and f" {key} " in words]
+    theirs = _at(words, supplier) if supplier else []
+    hits = [key for key in names if key and key != supplier
+            and any(not any(s <= a and b <= e for s, e in theirs) for a, b in _at(words, key))]  # fmt: skip
     longest = [key for key in hits if not any(key != other and f" {key} " in f" {other} " for other in hits)]
     return {names[key] for key in longest}
 
@@ -300,18 +312,22 @@ def unknown_finding(decision: Decision, store: Any) -> tuple[str, str, str]:
     return (ERROR, "COMPANY_UNKNOWN", f"Pick the company this invoice is for{could}: nothing on it decides one")
 
 
-def pilot_finding(store: Any, company: str) -> tuple[str, str, str] | None:
+def pilot_finding(store: Any, company: str, settings_company: bool = False) -> tuple[str, str, str] | None:
     """``COMPANY_NOT_IN_PILOT``: with companies in the pilot (the chart's settings, D-272), an invoice of another one
-    is held, whoever approves it (``invoice_findings.HARD_CODES``); None for one in the pilot, or with no pilot."""
+    is held, whoever approves it (``invoice_findings.HARD_CODES``); None for one in the pilot, or with no pilot.
+    ``settings_company``: the company is Settings → JD Edwards E1's (fewer than two companies: every invoice's,
+    B-2683)."""
     pilot = store.chart_settings().pilot
     code = company_code(company)
     if not pilot or not code or code in pilot:
         return None
     table = companies(store)
     named = f"{code} {table[code].name}" if code in table else code
+    fix = ("set the company of Settings → JD Edwards E1 if it is wrong" if settings_company
+           else "pick the right company if it is wrong")  # fmt: skip
     return (ERROR, "COMPANY_NOT_IN_PILOT", f"Company {named} is not in the pilot (Settings → JD Edwards E1 → "
-            f"Accounts AP posts to: {', '.join(pilot)}), so this invoice can't be approved here: pick the right "
-            "company if it is wrong, or have someone who may change the settings add it to the pilot")  # fmt: skip
+            f"Accounts AP posts to: {', '.join(pilot)}), so this invoice can't be approved here: {fix}, or have "
+            "someone who may change the settings add it to the pilot")  # fmt: skip
 
 
 def us_tax_finding(company: str, why: str) -> tuple[str, str, str]:

@@ -1548,6 +1548,7 @@ ALWAYS_A_PERSON: dict[str, str] = {
             "PO_AMBIGUOUS",
             "PO_CLOSED",
             "PO_VENDOR_MISMATCH",
+            "PO_COMPANY_DIFFERS",
             "PO_LINE_NOT_ON_PO",
             "PO_PRICE_OVER",
             "PO_QTY_OVER",
@@ -1573,8 +1574,8 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
      "checked here (a US company, or one not both CA and CAD)"),
     ("Not in the vendor master", "once a vendor master is imported, a vendor that is not in it"),
     ("A new vendor name", "no invoice under that name approved yet, even with a touchless vendor's GST/HST number"),
-    ("Purchase order exception", "the PO is unknown, closed or another vendor's, or billed beyond what was ordered or "
-     "received"),
+    ("Purchase order exception", "the PO is unknown, closed, another vendor's or another company's, or billed beyond "
+     "what was ordered or received"),
     ("Tax to look at", "a PST or QST exemption learned from earlier approvals, a tax charged that the lines' tax "
      "codes don't add up to, a meals line sharing a tax with other lines, a tax at the wrong rate or of the wrong "
      "kind for the province, a tax due but not charged, or no valid GST/HST number"),

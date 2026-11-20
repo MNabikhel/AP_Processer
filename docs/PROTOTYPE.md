@@ -139,7 +139,7 @@ E1 → Accounts AP posts to, where a code JD Edwards' own list does not have wai
 | 3 | Suppliers (Excel): two exports, loaded one after the other in either order | the supplier master's grid: supplier numbers, names, payment holds; the vendor information list: each supplier's tax ID, currency, payment terms, address and e-mail | supplier master; vendor information list |
 | 4 | Past invoice coding (CSV, or Excel) | what each supplier's lines were coded to, and their remarks, of any period (the more history, the better the suggestions); several files add up | the Transaction Journal, saved as CSV; or the G/L lines of the vouchers (F0911) from ReportsNow |
 | 5 | Invoices already in JD Edwards: the voucher list (Excel) | the duplicate check, and the voucher and batch numbers; several files add up | supplier ledger inquiry, or F0411 from ReportsNow |
-| 6 | Open purchase order lines (Excel) | the lines an invoice quoting a PO is matched to | Work With Order Details, or F4311 from ReportsNow |
+| 6 | Open purchase order lines (Excel) | the lines an invoice quoting a PO is matched to; a subcontract's retainage percent (Retainage %) for its progress billings | Work With Order Details, or F4311 from ReportsNow (order types OP and OS) |
 | 7 | Payment terms (optional) | what each supplier's terms code means (N: Net 30), for the due date | F0014 from ReportsNow |
 | 8 | Tax areas (optional) | JD Edwards' tax areas and rates, compared with the ones Settings gives each province | F4008 from ReportsNow |
 

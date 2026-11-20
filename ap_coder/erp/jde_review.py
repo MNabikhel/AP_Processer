@@ -127,6 +127,20 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
     return [(severity, code, setup_contact(text), line) for severity, code, text, line in out]
 
 
+def match_findings(output: dict[str, Any], settings: JdeSettings, an8: str,
+                   matched: VoucherMatch) -> list[tuple[str, str, str, int | None]]:  # fmt: skip
+    """What holds a PO-matched voucher's Voucher Match rows back from the keying sheet (``jde_match.keyed_match``,
+    ``matched``: its ``po.voucher_match``), as a check before approval, as the rest of the voucher is (D-75, B-2667):
+    ``PO_VOUCHER_MATCH``, a warning (the voucher may be matched in JD Edwards by hand), each reason the PO match's own
+    checks don't say already (``VoucherMatch.said``). None for a voucher not PO-matched."""
+    v = _prepare({"id": 0, "final_output": output}, settings, str(an8 or "").strip())
+    if not v.po_matched:
+        return []
+    held = dict.fromkeys(why for why in keyed_match(v, matched, settings).held if why not in matched.said)
+    return [(WARNING, "PO_VOUCHER_MATCH", f"JD Edwards' voucher match can't be keyed from the keying sheet: {why}",
+             None) for why in held]  # fmt: skip
+
+
 def not_recovered(v: _Voucher) -> str:
     """What to say of a voucher whose GST or HST the Tax setup keeps in the expense under code V ("" otherwise): no
     input tax credit is claimed for it. Nearly every company recovers them, so it is asked, on the review screen and
@@ -267,6 +281,9 @@ def voucher_view(
     else:
         keyed = (f"Keyed on the pay item: G/L date {day} · Tax Ex {v.tax_code} · Tax Rate/Area "
                  f"{v.tax_area or 'blank'} · taxable amount {money(taxable)} · tax amount {money(tax)}")  # fmt: skip
+    retainage = _retainage_said(keyed_rows, money)
+    if retainage and not not_ready:  # a subcontract's progress billing (D-273): what is held back, in sight
+        keyed += f" · retained {retainage['retained']} (held back), {retainage['due']} paid now"
     return {"rows": [{"label": a, "column": b, "value": c, "source": d} for a, b, c, d in rows],
             "settings_url": SETTINGS_URL, "terms_sent": bool(code), "terms_code": code,
             "terms_note": terms_note, "gl_date": day, "tax_code": v.tax_code, "tax_area": v.tax_area,
@@ -274,4 +291,14 @@ def voucher_view(
             "not_ready": not_ready, "keyed": keyed, "match_held": match_held,
             "match": [{**vars(m), "quantity_text": "—" if m.quantity is None
                        else f"{m.quantity:,.4f}".rstrip("0").rstrip("."),
-                       "amount_text": money(round(m.amount * 100))} for m in rows_matched]}  # fmt: skip
+                       "amount_text": money(round(m.amount * 100)),
+                       "retained_text": money(round(m.retained * 100))} for m in rows_matched],
+            "retainage": retainage}  # fmt: skip
+
+
+def _retainage_said(keyed: Any, money: Any) -> dict[str, Any] | None:
+    """A subcontract's progress billing's voucher match (D-273), for the review screen: what its rows retain, the
+    amount due now, and what is said of it; None for any other."""
+    if keyed is None or not keyed.retained or keyed.due is None:
+        return None
+    return {"retained": money(keyed.retained), "due": money(keyed.due), "said": keyed.retainage_said}

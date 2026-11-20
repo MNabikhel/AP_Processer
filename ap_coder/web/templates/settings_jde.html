@@ -176,6 +176,14 @@
         <input type="text" name="po_charge_account" value="{{ js.po_charge_account }}" maxlength="28" placeholder="e.g. your freight in account" aria-label="Account for charges not on the purchase order"></label>
       <small class="muted">On a PO-matched voucher, freight, a fuel surcharge or an environmental fee the purchase order has no line for. Held: the voucher waits on the keying sheet's "Not ready" until a person matches it by hand. Added: each is keyed as its own line in Voucher Match, marked "Not on the PO", on this account, with its tax; JD Edwards' Voucher Match must allow lines that are on no order (its processing options: ask the JD Edwards team).</small>
     </fieldset>
+    <label class="check"><input type="checkbox" name="po_subcontracts" value="1"{% if js.po_subcontracts %} checked{% endif %}>
+      Subcontract progress billings: a subcontract's (order type OS) billing is matched with each row's Retained Amount, the holdback it prints (off: held for a person, until the JD Edwards team confirms how Voucher Match retains it)</label>
+    <fieldset class="st-radios" data-retainage-tax><legend>Tax on a subcontract row that retains a holdback</legend>
+      {% for key, text in retainage_taxes.items() %}
+      <label class="check"><input type="radio" name="retainage_tax" value="{{ key }}"{% if js.retainage_tax == key %} checked{% endif %}> {{ text }}</label>
+      {% endfor %}
+      <small class="muted">As Voucher Match's Retainage tab (its Taxes processing option) works it out. A billing charged its tax the other way is held: most Canadian progress billings charge the GST on the work with the holdback in it. A holdback release is always held for a person.</small>
+    </fieldset>
 
     {{ ui.subhead("Default account rule", "when the GL code is not in the mapping below") }}
     <div class="st-grid three st-end">

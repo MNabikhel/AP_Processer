@@ -133,3 +133,19 @@ def test_the_report_reads_only_the_details_it_lists_and_gives_what_it_gave(tmp_p
     for build in (controls.build, ref.controls_build):
         with pytest.raises(KeyError):
             build(store, dt.date(2026, 3, 1), dt.date(2026, 3, 31))
+
+
+@pytest.mark.parametrize("code", ["DUPLICATE_OTHER_COMPANY", "DUPLICATE_INVOICE_OTHER_COMPANY", "PO_COMPANY_DIFFERS"])
+def test_an_approval_over_another_companys_duplicate_or_order_is_a_signal(tmp_path, code):
+    """B-2687: with several JD Edwards companies (D-267, D-270) a bill already entered, or already in AP Coder, under
+    another company is a warning, no longer the duplicate error it was, so the approvals made while it showed left the
+    report's "approved while a fraud or duplicate signal was showing" (an error's approval is in it, a warning's only
+    when it is a signal); an order of another company likewise (as one of another vendor is)."""
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4 a")
+    coding = {"vendor_name": "Lakeside Steel Ltd", "invoice_number": "LS-881", "grand_total": 113.0}
+    store.approve_invoice(store.add_invoice(pdf, coding, {}), coding, "Jane",
+                          open_issues=[{"code": code, "severity": "warning", "line": None}])  # fmt: skip
+    today = dt.date.today()
+    assert [e["actor"] for e in controls.build(store, today, today)["signals"]] == ["Jane"]

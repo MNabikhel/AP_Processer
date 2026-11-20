@@ -70,6 +70,28 @@ def test_one_supplier_with_the_number_in_two_companies_is_held_until_its_company
     assert {f[1] for f in picked.findings} == {"PO_MATCHED"}
 
 
+def test_an_invoice_of_another_company_than_its_orders_is_said_and_always_goes_to_a_person(store, tmp_path):
+    """B-2686: an invoice given company 00100 (picked on the review screen, or decided by the supplier's history before
+    the POs were loaded) quoting 7001, an order of Prairie Rentals Co alone, of company 00300, was matched to that
+    order and nothing said: approved in bulk, its voucher keyed under 00100 naming an order of 00300."""
+    from ap_coder.capture.supplier import ALWAYS_A_PERSON
+    from ap_coder.ops.help import CHECKS
+
+    picked = match_invoice(InvoiceCoding.model_validate(_invoice("Prairie Rentals Co", "7001", 900.0, "100",
+                                                                 quantity=1)), store)  # fmt: skip
+    assert picked.found and picked.po["order_company"] == "00300"
+    found = {f[1]: f for f in picked.findings}
+    assert found["PO_COMPANY_DIFFERS"][0] == "warning"
+    assert found["PO_COMPANY_DIFFERS"][2] == ("PO 7001 is an order of company 00300, not of 00100, the company this "
+                                              "invoice is for: check the company, or the PO number")  # fmt: skip
+    assert "PO_COMPANY_DIFFERS" in ALWAYS_A_PERSON and CHECKS["PO_COMPANY_DIFFERS"].title == "PO of another company"
+    same = match_invoice(InvoiceCoding.model_validate(_invoice("Prairie Rentals Co", "7001", 900.0, "300",
+                                                               quantity=1)), store)  # fmt: skip
+    assert "PO_COMPANY_DIFFERS" not in {f[1] for f in same.findings}  # (its own company's, or none decided)
+    none = match_invoice(InvoiceCoding.model_validate(_invoice("Prairie Rentals Co", "7001", 900.0, quantity=1)), store)
+    assert "PO_COMPANY_DIFFERS" not in {f[1] for f in none.findings}
+
+
 def test_what_an_invoice_bills_counts_on_its_own_companys_order_only(store, tmp_path):
     store.add_invoice(tmp_path / "a.pdf", _invoice("Lakeside Steel Ltd", "4512", 14.0, "00200"), {})
     store.add_invoice(tmp_path / "b.pdf", _invoice("Lakeside Steel Ltd", "4512", 14.0, invoice="INV-2"), {})  # held
@@ -110,3 +132,35 @@ def test_a_jd_edwards_po_kept_by_its_number_is_kept_again_under_its_company_and_
         store.purchase_order("4512")["po_key"] == "00200-OP-4512" and store.purchase_order("81")["number_key"] == "81"
     )
     assert [o["po_key"] for o in store.orders_numbered("4512")] == ["00200-OP-4512"]
+
+
+def test_a_voucher_match_on_a_po_number_of_two_orders_says_so_not_that_it_is_not_loaded(store):
+    """B-2664: a PO number that is two orders of one supplier, none of them the invoice's company, holds its
+    voucher (no order is guessed), but the keying sheet and the review screen's voucher said "PO 4512 is not in the
+    purchase orders loaded: load its open lines from JD Edwards", which it is, twice. It says which orders it is."""
+    from ap_coder.coding.po import voucher_match
+
+    held = match_invoice(InvoiceCoding.model_validate(_invoice("Lakeside Steel Ltd", "4512", 14.0, "00300")), store)
+    assert voucher_match(held, "4512").held == [
+        "PO 4512 is 2 purchase orders (company 00100 OP, Lakeside Steel Ltd; company 00200 OP, Lakeside Steel Ltd), "
+        "none of them told by the invoice's supplier and company: pick the invoice's company, or match it in JD "
+        "Edwards by hand"]  # fmt: skip
+
+
+def test_a_po_kept_by_its_number_alone_and_loaded_again_with_its_company_and_type_is_one_order(tmp_path):
+    """B-2665: a PO loaded from a file that named no order type or company is kept by its number (D-267). Loaded again
+    from JD Edwards' export, with them, it was a second order of that number beside the first: every invoice quoting
+    it was PO_AMBIGUOUS, matched to neither and billing neither. The order loaded with its company and type replaces
+    the one kept by its number alone."""
+    s = Store(tmp_path / "ap.db")
+    s.import_purchase_orders([{**_line("4512", "", "Lakeside Steel Ltd", "Rebar 15M", 12.0), "order_type": "",
+                               "erp_line": ""}])  # fmt: skip
+    assert [o["po_key"] for o in s.orders_numbered("4512")] == ["4512"]
+    counts = s.import_purchase_orders([_line("4512", "100", "Lakeside Steel Ltd", "Rebar 15M", 12.0)])
+    assert [o["po_key"] for o in s.orders_numbered("4512")] == ["00100-OP-4512"] and counts["updated"] == 1
+    match = match_invoice(InvoiceCoding.model_validate(_invoice("Lakeside Steel Ltd", "4512", 12.0)), s)
+    assert match.found and {f[1] for f in match.findings} == {"PO_MATCHED"}
+    # Another supplier's order of a number kept by it alone is another order: both kept
+    s.import_purchase_orders([{**_line("7001", "", "Harbour Concrete Inc", "Ready mix", 150.0), "order_type": ""}])
+    s.import_purchase_orders([_line("7001", "300", "Prairie Rentals Co", "Scissor lift", 900.0, quantity=1)])
+    assert [o["po_key"] for o in s.orders_numbered("7001")] == ["00300-OP-7001", "7001"]

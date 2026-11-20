@@ -65,6 +65,14 @@ REMARKS = {
 }
 # A PO-matched voucher's charge the PO has no line for (freight, a fuel surcharge, an environmental fee, D-265): held
 # for a person to match by hand (as before), or keyed as a G/L line of its own on an account chosen here.
+# A subcontract's progress billing (D-273): what JD Edwards' Voucher Match works the tax out of on a row that retains
+# part of its amount, as its Retainage tab's Taxes processing option (P4314) has it: the whole amount matched (blank)
+# or the amount less the retained, the tax on the holdback left for its release (1).
+RETAINAGE_TAX_WHOLE, RETAINAGE_TAX_NET = "whole", "net"
+RETAINAGE_TAXES = {
+    RETAINAGE_TAX_WHOLE: "On the whole amount matched, the holdback included (Taxes blank)",
+    RETAINAGE_TAX_NET: "On the amount less the retained: the holdback's tax when it is released (Taxes 1)",
+}
 CHARGES_HOLD, CHARGES_GL = "hold", "gl"
 PO_CHARGES = {
     CHARGES_HOLD: "Hold the voucher for a person to match by hand",
@@ -205,6 +213,10 @@ class JdeSettings:
     send_po_reference: bool = True
     po_charges: str = CHARGES_HOLD  # a charge not on the purchase order (D-265)
     po_charge_account: str = ""  # its account with CHARGES_GL: BU.Object.Subsidiary ("freight in")
+    # A subcontract's progress billing keyed with each row's Retained Amount (D-273): off, it is held for a person,
+    # until the JD Edwards team confirms how Voucher Match is set up for them; and the base its tax is worked out on.
+    po_subcontracts: bool = False
+    retainage_tax: str = RETAINAGE_TAX_WHOLE
     domestic_currency: str = "CAD"
     currencies: list[str] = field(default_factory=lambda: ["CAD", "USD"])
     header_bu: str = ""
@@ -307,6 +319,8 @@ class JdeSettings:
             out.remarks = REMARKS_REFERENCE
         if out.po_charges not in PO_CHARGES:
             out.po_charges = CHARGES_HOLD
+        if out.retainage_tax not in RETAINAGE_TAXES:
+            out.retainage_tax = RETAINAGE_TAX_WHOLE
         out.open_from, out.open_to = (str(_date(d) or "") for d in (out.open_from, out.open_to))
         if out.closed_period not in CLOSED_PERIODS:
             out.closed_period = CLOSED_MOVE

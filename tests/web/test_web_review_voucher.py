@@ -683,3 +683,84 @@ def test_a_po_matched_invoice_shows_each_lines_po_line_and_what_jd_edwards_gets(
     assert "Not ready to key" in page
     held = page[page.index("data-jde-held") :]
     assert "Line 2 “Artwork proof” matches no line of PO 40917 (none is guessed)" in held[: held.index("</ul>")]
+
+
+def test_a_subcontracts_progress_billing_shows_each_rows_retained_amount_and_what_is_paid_now(
+    chart_company, chart_company_client
+):
+    """D-273: a progress billing on a subcontract (report 6's lines, 10% retainage): with subcontract billings on, the
+    JD Edwards voucher block shows each row's Retained Amount beside its amount matched, the holdback retained and
+    the amount due now; with them off (the default), it is not ready, said where the voucher is."""
+    from ap_coder.bench import jde_exports, jde_po_vouchers
+    from tests.bench.test_jde_po_vouchers import load_pos
+
+    store = chart_company.store
+    case = jde_po_vouchers.progress_cases(chart_company.truth)[0]
+    load_pos(store, {jde_po_vouchers.SUBCONTRACT_FILE: jde_exports.po_lines_report_xlsx(case.po_lines)})
+    jde_settings.save(store, jde_po_vouchers.pilot_settings(jde_settings.load(store)))
+    final = {**case.coding(), "progress_billing": case.progress()}  # (as read when it came in: kept in its meta too)
+    invoice_id = store.add_invoice(chart_company.folder / "WBS-P-0101.pdf", final, {"requires_review": True},
+                                   meta={"extraction": {"progress": case.progress()}})  # fmt: skip
+    page = chart_company_client.get(f"/review/{invoice_id}").text
+    assert "Not ready to key" in page and "data-jde-retained" not in page
+    held = page[page.index("data-jde-held") :]
+    assert "subcontract progress billings are off" in held[: held.index("</ul>")]
+
+    jde_settings.save(store, jde_po_vouchers.subcontract_settings(jde_settings.load(store)))
+    page = chart_company_client.get(f"/review/{invoice_id}").text
+    block = page[page.index("data-jde-match") :]
+    table = block[: block.index("</table>")]
+    assert "Voucher match: order 41201 OS 00210" in table and '<th class="r">Retained</th>' in table
+    cells = [re.sub(r"<[^>]+>", "|", row).strip("|").split("||")[:5] for row in re.findall(r"<tr title.*?</tr>", table)]
+    assert cells == [["1.000", "— ", "45,000.00", "4,500.00", "0021061022.7330.3207"]]
+    assert "Retained (held back): 4,500.00 · amount due now: 42,750.00" in block
+    assert "Retainage: each row retains 10% of its amount matched (4,500.00 in all)" in block
+    # Approved on the screen, the billing's amounts as printed stay beside the coding, for the keying sheet
+    data = form_of(store, invoice_id)
+    answer = check(chart_company_client, invoice_id, data)
+    assert answer["allow"], answer
+    assert chart_company_client.post(f"/review/{invoice_id}/approve", data={**data, "why_done": "1"},
+                                     headers=PAGE).json()["ok"]  # fmt: skip
+    assert store.get_invoice(invoice_id)["final_output"]["progress_billing"] == case.progress()
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("width", [1366, 683])
+def test_in_a_browser_a_subcontract_vouchers_retained_amounts_are_in_sight_beside_the_page(
+    chromium, chart_company, width
+):
+    """D-273: the voucher block's match table, with its Retained column, stays within its card at a laptop's width
+    and at half of it, and the screen opens without a script error."""
+    from ap_coder.bench import jde_exports, jde_po_vouchers
+    from ap_coder.web.app import create_app
+    from tests.bench.test_jde_po_vouchers import load_pos
+    from tests.browser import browser_on
+    from tests.webclient import web_settings
+
+    store = chart_company.store
+    case = jde_po_vouchers.progress_cases(chart_company.truth)[2]  # (two lines, a holdback other than the 10%)
+    load_pos(store, {jde_po_vouchers.SUBCONTRACT_FILE: jde_exports.po_lines_report_xlsx(case.po_lines)})
+    jde_settings.save(store, jde_po_vouchers.subcontract_settings(jde_settings.load(store)))
+    invoice_id = store.add_invoice(
+        chart_company.folder / "WBS-P-0103.pdf",
+        {**case.coding()},
+        {"requires_review": True},
+        meta={"extraction": {"progress": case.progress()}},
+    )
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
+        page = browser.new_page(viewport={"width": width, "height": 768})
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/review/{invoice_id}")
+        page.wait_for_selector("[data-jde-retained]", state="attached")
+        page.wait_for_load_state("networkidle")
+        assert "retained 2,500.00 (held back), 50,000.00 paid now" in page.inner_text(".inv-keyed-line")
+        page.click("[data-more-details] > summary")  # (the voucher block is under More details)
+        fits = page.evaluate("""() => { const t = document.querySelector('.inv-jde-match');
+          const card = t.closest('.inv-jde').getBoundingClientRect(); const wrap = t.closest('.table-wrap');
+          return {inside: wrap.getBoundingClientRect().right <= card.right + 1,
+                  columns: [...t.querySelectorAll('thead th')].map((th) => th.textContent)}; }""")
+        assert fits["inside"] and fits["columns"] == ["Line", "Quantity matched", "Amount matched", "Retained",
+                                                      "Account", "Tax"]  # fmt: skip
+        assert "Retained (held back): 2,500.00" in page.inner_text("[data-jde-retained]")
+        assert errors == []

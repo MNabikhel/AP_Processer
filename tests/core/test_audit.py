@@ -22,6 +22,18 @@ def test_approval_records_every_reviewer_change(tmp_path, ground_truth):
     assert [e["action"] for e in store.events(invoice_id)] == ["approved", "processed"]
 
 
+def test_approval_records_the_company_a_person_picked_or_changed(tmp_path, ground_truth):
+    """B-2688: with several JD Edwards companies (D-267), the company a person picked on the review screen for an
+    invoice nothing decided, or changed from the one AP Coder decided, was not among the approval's changes: the audit
+    trail never said under which company's books someone put the bill, nor who changed it."""
+    store = Store(tmp_path / "ap.db")
+    invoice_id = store.add_invoice(tmp_path / "x.pdf", {**ground_truth, "company": "00310"}, {"requires_review": True})
+    store.approve_invoice(invoice_id, {**copy.deepcopy(ground_truth), "company": "00220"}, "jane")
+    approved = store.events(invoice_id, actions=["approved"])[0]
+    assert {"what": "company", "before": "00310", "after": "00220"} in approved["detail"]["changes"]
+    assert "company: 00310 → 00220" in describe(approved)
+
+
 def test_rejections_deletions_and_setup_changes_are_logged(tmp_path, ground_truth):
     store = Store(tmp_path / "ap.db")
     a = store.add_invoice(tmp_path / "a.pdf", ground_truth, {})

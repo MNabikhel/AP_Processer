@@ -7,6 +7,7 @@ compare what is billed with what was ordered (and received):
 * PO_UNKNOWN (warning): the quoted PO is not in the list
 * PO_CLOSED (warning): the PO is closed
 * PO_VENDOR_MISMATCH (warning): the PO was raised for another vendor
+* PO_COMPANY_DIFFERS (warning): the PO is an order of another JD Edwards company than the invoice's (D-267)
 * PO_LINE_NOT_ON_PO (warning): an invoice line matches nothing on the PO
 * PO_PRICE_OVER (warning): unit price above the PO price beyond the tolerance
 * PO_QTY_OVER (warning): billed so far (this and earlier invoices) exceeds the quantity ordered
@@ -118,6 +119,12 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     # code is L requires: the invoice line billing it takes them.
     "subledger": ("subledger", *_pd("SBL")),
     "subledger_type": ("subtype", "subledgertype", *_pd("SBLT")),
+    # Optional, a subcontract's (D-273): the percent of each progress billing on the line held back until the work is
+    # done, JD Edwards' Percent - Retainage (PCRT, of the order header F4301 too); never its Retainage Rule (RTNR, a
+    # code). "Retainage %", "Retention %", "Holdback %".
+    "retainage": ("retainage", "retainagepercent", "retainagepercentage", "retainagepct", "retainagerate",
+                  "percentretainage", "retention", "retentionpercent", "retentionpercentage", "holdback",
+                  "holdbackpercent", "holdbackpercentage", *_pd("PCRT"), *jde_names("F4301", "PH", "PCRT")),
     "status": ("status", "postatus", "state"),
     # Optional, JD Edwards' (NXTR, LTTR): a line whose next status is 999 is closed, one whose last is 980 cancelled.
     "next_status": ("nextstatus", "nextstat", *_pd("NXTR")),
@@ -136,6 +143,7 @@ CLOSED_STATUSES = {"closed", "close", "complete", "completed", "fermé", "ferme"
 # business unit.object.subsidiary, so the line's cost center, object and subsidiary columns are read instead.
 _OTHER_FORMATS = ("*", "/")
 JDE_CLOSED, JDE_CANCELLED = "999", "980"  # a JD Edwards line's next status once closed, last status once cancelled
+SUBCONTRACT = "OS"  # JD Edwards' order type of a subcontract (Subcontract Management, system 44; D-273)
 REQUIRED_COLUMNS = ("po_number", "description")
 TEMPLATE_COLUMNS = (
     "po_number", "vendor_name", "line_number", "description", "quantity", "unit_price", "amount", "open_amount",
@@ -186,6 +194,8 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
                     ("foreign_open_amount", opened),
                 )
             )
+        if amount is None and not qty and not price and opened is not None:  # (JD Edwards keeps 0, not blank, B-2660)
+            qty = price = None
         if qty is None and price is None and amount is None:  # (JD Edwards' order details: what is left to receive)
             amount = opened
         if amount:  # an ERP writes 0 rather than blank for the quantity and price of a lump-sum line
@@ -240,10 +250,28 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
                 "tax_area": _text(get("tax_area")).upper(),
                 "subledger": _text(get("subledger")).upper()[:8],
                 "subledger_type": _text(get("subledger_type")).upper()[:1],
+                "retainage": retainage_percent(get("retainage")),
                 "currency": currency,
             }
         )
     return rows, skipped
+
+
+def retainage_percent(value: Any) -> float | None:
+    """A PO line's retainage as a percent: 10 (JD Edwards' 10.000), "10%", or a fraction 0.1 written so; None for none,
+    0, or what can't be one (over 100, below 0, words: a Retainage Rule's code)."""
+    number = parse_amount(_text(value).replace("%", "").strip()) if not _blank(value) else None
+    if number is None or not math.isfinite(number) or number <= 0 or number > 100:
+        return None
+    return round(number * 100 if number < 1 else number, 4)
+
+
+def is_subcontract(po: dict[str, Any]) -> bool:
+    """Whether a PO (``Store.purchase_order``'s) is a subcontract (D-273): JD Edwards' order type OS, or a line of it
+    holds back a retainage percent of what it bills."""
+    return str(po.get("order_type") or "").upper() == SUBCONTRACT or any(
+        pl.get("retainage") for pl in po.get("lines") or []
+    )
 
 
 def open_lines(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -381,23 +409,58 @@ def po_lines_billed(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str
     the PO line it most resembles (a matching unit price counts in favour); several invoice lines may bill the
     same PO line. By position, so an invoice that repeats a line number (page 2 starting again at 1) still pairs
     every line. ``matched`` keeps each (description, unit price)'s PO line across calls for the same ``po_lines``:
-    the invoices billing a PO repeat its lines (a PO billed by thousands of invoices, D-199)."""
+    the invoices billing a PO repeat its lines (a PO billed by thousands of invoices, D-199). A subcontract's progress
+    billing, its lines named for the billing ("Progress billing #3") and not the work, bills the one line it can be
+    by its amount (``_by_amount``, D-273)."""
     out = []
     for li in invoice_lines:
         description, price = li.get("description", ""), li.get("unit_price")
         key = (description, price) if matched is not None else None
         try:
-            if key is not None and key in matched:  # type: ignore[operator]
-                out.append(matched[key])  # type: ignore[index]
-                continue
+            found = matched[key] if key is not None and key in matched else _UNKNOWN  # type: ignore[index,operator]
         except TypeError:  # (a description or price that can't be a key: worked out each time)
-            key = None
-        found = _po_line(description, po_lines, lambda _, pl, price=price: _same_price(
-            float(price or 0), float(pl.get("unit_price") or 0)))  # fmt: skip
-        if key is not None:
-            matched[key] = found  # type: ignore[index]
-        out.append(found)
+            key, found = None, _UNKNOWN
+        if found is _UNKNOWN:
+            found = _po_line(description, po_lines, lambda _, pl, price=price: _same_price(
+                float(price or 0), float(pl.get("unit_price") or 0)))  # fmt: skip
+            if key is not None:
+                matched[key] = found  # type: ignore[index]
+        out.append(found if found is not None or not _retains(po_lines, matched) else _by_amount(li, po_lines))
     return out
+
+
+_UNKNOWN: Any = object()  # (a line's PO line not worked out yet)
+_RETAINS = ("retains",)  # ``matched``'s entry of whether the PO's lines hold back a percent (its other keys are pairs)
+
+
+def _retains(po_lines: list[dict[str, Any]], matched: dict[Any, int | None] | None) -> bool:
+    """Whether a line of the PO holds back a retainage percent (a subcontract's, D-273): asked of its lines once for
+    all the invoices billing it (kept in ``matched``)."""
+    if matched is not None and _RETAINS in matched:
+        return bool(matched[_RETAINS])
+    found = any(pl.get("retainage") for pl in po_lines)
+    if matched is not None:
+        matched[_RETAINS] = int(found)
+    return found
+
+
+def _by_amount(li: dict[str, Any], po_lines: list[dict[str, Any]]) -> int | None:
+    """The line of a subcontract (its lines holding back a retainage percent, D-273) that an invoice line resembling
+    none of them bills by its amount: the subcontract's only line, else the only one open for as much (its open
+    amount, else its amount, 2% over allowed); None for a charge or a credit, or none or several lines open for it
+    (never guessed)."""
+    amount = float(li.get("amount") or 0)
+    if amount <= 0 or is_charge(str(li.get("description") or "")):
+        return None
+    if len(po_lines) == 1:
+        return int(po_lines[0]["line_number"])
+
+    def room(pl: dict[str, Any]) -> float:
+        opened = pl.get("open_amount")
+        return float(opened if opened is not None else pl.get("amount") or 0)
+
+    fits = [pl for pl in po_lines if amount <= room(pl) * (1 + TOTAL_TOLERANCE) + 0.01]
+    return int(fits[0]["line_number"]) if len(fits) == 1 else None
 
 
 def _po_line(description: Any, po_lines: list[dict[str, Any]], same_price: Callable[[int, dict], bool]) -> int | None:
@@ -442,6 +505,11 @@ class LineMatch:
     po_open_quantity: float | None = None
     po_tax: tuple[str, str, str] = ("", "", "")  # the PO line's own Tax Y/N, explanation code, rate/area ("": none)
     po_subledger: tuple[str, str] = ("", "")  # the PO line's subledger and its type ("": none, D-268)
+    po_retainage: float | None = None  # a subcontract line's percent held back of what it bills (D-273)
+    # What JD Edwards had open on the line at the PO import (None: not in the file). A line billed by amount with one
+    # is checked against it as its left to expense is (D-280: ``billed_before_amount`` then the invoices not exported
+    # yet); without one, against its amount, every invoice.
+    po_open_amount: float | None = None
 
 
 @dataclass
@@ -478,6 +546,8 @@ class PoMatch:
     # then nothing is left to expense either (``left`` empty).
     currencies: str = ""
     orders: list[dict[str, Any]] = field(default_factory=list)  # the orders of its number, none the one (D-267)
+    # What the other invoices not exported yet bill on each PO line (net amounts), with an open amount (D-273)
+    waiting: dict[int, float] = field(default_factory=dict)
 
     @property
     def coding_differs(self) -> list[LineMatch]:
@@ -549,6 +619,7 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     cost_centers = bool(store.list_accounts("cost_centers"))
     po_lines = po["lines"]
     by_line = {pl["line_number"]: pl for pl in po_lines}
+    subcontract = is_subcontract(po)
     live = po_billing(store, key, po)
     others = [o for o in live.rows if o["id"] != exclude_invoice_id]
     result.other_invoices = others
@@ -556,6 +627,12 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     matched: dict[Any, int | None] = {}
     billed_before = live.billed(po, others, matched=matched)
     billed_before_amount = live.billed(po, others, amounts=True, matched=matched)
+    # What the ERP has open has counted the invoices exported to it (D-139): a line billed by amount is checked
+    # against it with the others not exported yet, and this one unless it is exported (D-280)
+    waiting = [o for o in others if o["export_batch"] is None]
+    opened = any(pl["open_amount"] is not None for pl in po_lines)
+    not_exported = result.waiting = live.billed(po, waiting, amounts=True, matched=matched) if opened else {}
+    exported = any(o["id"] == exclude_invoice_id and o["export_batch"] is not None for o in live.rows)
 
     items = [li.model_dump() for li in coding.line_items]
     billed_now: dict[int, float] = {}
@@ -588,27 +665,35 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
         m.po_account = join_account(pl.get("cost_center"), pl.get("gl_code"))
         m.po_tax = (pl.get("tax_flag") or "", pl.get("tax_code") or "", pl.get("tax_area") or "")
         m.po_subledger = (pl.get("subledger") or "", pl.get("subledger_type") or "")
+        m.po_retainage, m.po_open_amount = pl.get("retainage"), pl.get("open_amount")
         if m.amount_only:  # a PO line with no quantity (JD Edwards' order details give amounts only): matched by amount
-            m.matched_quantity = billed_quantity(li) or None
+            # (a subcontract's lump sum by its amount alone, D-273)
+            m.matched_quantity = None if subcontract else billed_quantity(li) or None
+        if m.amount_only and m.po_open_amount is not None:  # against what the ERP has open (D-280)
+            m.billed_before_amount = not_exported.get(m.po_line, 0.0)
         this_invoice[m.po_line] = this_invoice.get(m.po_line, 0.0) + m.amount
         if m.amount_only:
-            _amount_findings(m, li, result, billed_now_amount)
+            _amount_findings(m, li, result, billed_now_amount, counted=not (exported and m.po_open_amount is not None))
         else:
             _line_findings(m, li, result, billed_now)
     if not result.currencies:
-        _left_to_expense(result, po, live, billed_before_amount, this_invoice, exclude_invoice_id)
+        _left_to_expense(result, po, billed_before_amount, not_exported, this_invoice, exported)
 
     subtotal = float(coding.subtotal or 0)
     total = float(po.get("total") or 0)
+    before, said, limit = result.billed_before, "on earlier invoices", f"the PO total {_money(total)}"
+    if po_lines and all(pl.get("amount_only") and pl["open_amount"] is not None for pl in po_lines):  # (D-280)
+        total = round(sum(pl["open_amount"] for pl in po_lines), 2)
+        before, said, limit = (sum(float(o["coding"].get("subtotal") or 0) for o in waiting),
+                               "on invoices not exported yet", f"the {_money(total)} open on the PO")  # fmt: skip
+        subtotal = 0.0 if exported else subtotal
     if subtotal > 0 and total > 0 and not result.currencies:
-        billed = result.billed_before + subtotal
+        billed = before + subtotal
         if billed > total * (1 + TOTAL_TOLERANCE) + 0.01:
-            earlier = f" ({_money(result.billed_before)} on earlier invoices)" if result.billed_before else ""
+            earlier = f" ({_money(before)} {said})" if before else ""
             result.findings.append(
                 (WARNING, "PO_OVER_BILLED",
-                 f"invoices on {po_label(number)} add up to {_money(billed)}{earlier}, "
-                 f"more than the PO total {_money(total)}",
-                 None)
+                 f"invoices on {po_label(number)} add up to {_money(billed)}{earlier}, more than {limit}", None)
             )  # fmt: skip
     if not any(f[0] in (ERROR, WARNING) for f in result.findings):
         matched = sum(1 for m in result.lines if m.po_line is not None)
@@ -624,18 +709,14 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
 def _left_to_expense(
     result: PoMatch,
     po: dict[str, Any],
-    live: PoBilling,
     billed_before: dict[int, float],
+    not_exported: dict[int, float],
     this_invoice: dict[int, float],
-    invoice_id: int | None,
+    exported: bool,
 ) -> None:
     """``result.left``: each PO line's ``LineLeft``, from what the other invoices bill on it (``billed_before``, in
-    amounts) and this one; with an open amount, the invoices exported to the ERP don't count (this one included)."""
-    not_exported: dict[int, float] = {}
-    exported = any(o["id"] == invoice_id and o["export_batch"] is not None for o in live.rows)
-    if any(pl["open_amount"] is not None for pl in po["lines"]):
-        waiting = [o for o in live.rows if o["export_batch"] is None and o["id"] != invoice_id]
-        not_exported = live.billed(po, waiting, amounts=True)
+    amounts) and this one; with an open amount, the invoices exported to the ERP don't count (``not_exported``: what
+    the others not exported yet bill on it; ``exported``: this one is)."""
     for pl in po["lines"]:
         n, opened = pl["line_number"], pl["open_amount"]
         if opened is None:
@@ -676,21 +757,32 @@ def _header_findings(coding: InvoiceCoding, po: dict[str, Any]) -> list[Finding]
                 (WARNING, "PO_VENDOR_MISMATCH",
                  f"{po_label(number)} was raised for {po.get('vendor_name')}, not {coding.vendor_name}", None)
             )  # fmt: skip
+    # The invoice's company picked, or decided before the POs were loaded, another than its order's (B-2686)
+    theirs, mine = company_code(po.get("order_company")), company_code(coding.company)
+    if theirs and mine and theirs != mine:
+        findings.append((WARNING, "PO_COMPANY_DIFFERS", f"{po_label(number)} is an order of company {theirs}, not "
+                         f"of {mine}, the company this invoice is for: check the company, or the PO number",
+                         None))  # fmt: skip
     return findings
 
 
-def _amount_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_now: dict[int, float]) -> None:
-    """A PO line with only an amount (services, a lump sum): what has been billed against the amount."""
+def _amount_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_now: dict[int, float],
+                     counted: bool = True) -> None:  # fmt: skip
+    """A PO line with only an amount (services, a lump sum): what has been billed against the amount, or against what
+    the ERP has open on it (``LineMatch.po_open_amount``, D-280); ``counted``: this invoice's amount counts (not when
+    the ERP's open amount has it, exported)."""
     assert m.po_line is not None and m.po_amount is not None
-    billed_now[m.po_line] = billed_now.get(m.po_line, 0.0) + m.amount
+    billed_now[m.po_line] = billed_now.get(m.po_line, 0.0) + (m.amount if counted else 0.0)
     billed = m.billed_before_amount + billed_now[m.po_line]
-    if m.amount > 0 and not result.currencies and billed > m.po_amount * (1 + TOTAL_TOLERANCE) + 0.01:
-        earlier = f", {_money(m.billed_before_amount)} on earlier invoices" if m.billed_before_amount else ""
+    limit, held, said = (m.po_amount, "ordered", "on earlier invoices") if m.po_open_amount is None else (
+        m.po_open_amount, "open", "on invoices not exported yet")  # fmt: skip
+    if m.amount > 0 and not result.currencies and billed > limit * (1 + TOTAL_TOLERANCE) + 0.01:
+        earlier = f", {_money(m.billed_before_amount)} {said}" if m.billed_before_amount else ""
         m.problems.append("quantity")
         result.findings.append(
             (WARNING, "PO_QTY_OVER",
              f"{_money(billed)} billed on {po_label(result.po_number)} line {m.po_line}, more than the "
-             f"{_money(m.po_amount)} ordered{earlier}", m.invoice_line)
+             f"{_money(limit)} {held}{earlier}", m.invoice_line)
         )  # fmt: skip
     _coding_findings(m, li, result)
 
@@ -747,8 +839,10 @@ def _coding_findings(m: LineMatch, li: dict[str, Any], result: PoMatch) -> None:
         )
 
 
-def po_findings(coding: InvoiceCoding, store: Store, exclude_invoice_id: int | None = None) -> list[Finding]:
-    """The checks for ``validate_coding`` (empty when no purchase orders are loaded)."""
+def po_findings(coding: InvoiceCoding, store: Store, exclude_invoice_id: int | None = None,
+                match: PoMatch | None = None) -> list[Finding]:  # fmt: skip
+    """The checks for ``validate_coding`` (empty when no purchase orders are loaded); ``match``: the invoice's
+    ``match_invoice``, made already."""
     if not store.has_purchase_orders():
         return []
     if not (coding.po_number or "").strip():
@@ -757,7 +851,7 @@ def po_findings(coding: InvoiceCoding, store: Store, exclude_invoice_id: int | N
             listed = ", ".join(po_label(n) for n in open_pos[:3]) + ("…" if len(open_pos) > 3 else "")
             return [(INFO, "PO_NOT_QUOTED", f"no PO number on the invoice; this vendor has open {listed}", None)]
         return []
-    result = match_invoice(coding, store, exclude_invoice_id)
+    result = match if match is not None else match_invoice(coding, store, exclude_invoice_id)
     return result.findings if result else []
 
 
@@ -796,6 +890,11 @@ class MatchRow:
     tax: tuple[str, str, str] = ("", "", "")  # the PO line's own Tax Y/N, explanation code, rate/area ("": none)
     on_po: bool = True  # False: a charge the PO has no line for, keyed as a G/L line of its own on ``account`` (D-265)
     subledger: tuple[str, str] = ("", "")  # the PO line's subledger and its type ("": none, D-268)
+    retainage: float | None = None  # a subcontract line's percent held back of what it bills (D-273)
+    # The work billed on the line before (D-273): what JD Edwards had vouchered of it at the PO import (its amount
+    # less its open amount) and AP Coder's other invoices not in JD Edwards yet; without an open amount, AP Coder's
+    # other invoices on it.
+    billed_before: float = 0.0
 
 
 @dataclass
@@ -805,6 +904,9 @@ class VoucherMatch:
 
     rows: list[MatchRow] = field(default_factory=list)
     held: list[str] = field(default_factory=list)
+    # Of ``held``, what the PO match's own checks say already (a PO not in the list or of several orders, in another
+    # currency, a line on no PO line): not said again before approval (``jde_review.match_findings``, B-2667)
+    said: list[str] = field(default_factory=list)
 
 
 def voucher_match(match: PoMatch | None, number: str, charge_account: str = "") -> VoucherMatch:
@@ -814,13 +916,21 @@ def voucher_match(match: PoMatch | None, number: str, charge_account: str = "") 
     "": such a charge holds the voucher, as any line on no PO line."""
     out = VoucherMatch()
     label = po_label(number)
+    if match is not None and match.orders:  # its number several orders', none the invoice's (B-2664)
+        out.held.append(f"{label} is {len(match.orders)} purchase orders ({orders_named(match.orders)}), none of them "
+                        "told by the invoice's supplier and company: pick the invoice's company, or match it in JD "
+                        "Edwards by hand")  # fmt: skip
+        out.said = list(out.held)  # (PO_AMBIGUOUS)
+        return out
     if match is None or not match.found or match.po is None:
         out.held.append(f"{label} is not in the purchase orders loaded: load its open lines from JD Edwards "
                         "(Purchase orders), then make the keying sheet again")  # fmt: skip
+        out.said = list(out.held) if match is not None else []  # (PO_UNKNOWN; with no POs loaded, no PO check)
         return out
     if match.currencies:
         out.held.append(f"{match.currencies}: a voucher match is keyed in the order's currency, so match it in "
                         "JD Edwards by hand")  # fmt: skip
+        out.said.append(out.held[-1])  # (PO_CURRENCY_DIFFERS)
     po = match.po
     for m in match.lines:
         if m.po_line is None and charge_account and is_extra_charge(m.description):
@@ -831,14 +941,21 @@ def voucher_match(match: PoMatch | None, number: str, charge_account: str = "") 
                 f"line {m.invoice_line} “{_short(m.description)}” matches no line of {label} (none is "
                 "guessed): correct the line or the PO number, or match it in JD Edwards by hand"
             )
+            out.said.append(out.held[-1])  # (PO_LINE_NOT_ON_PO)
         elif not m.po_erp_line:
             out.held.append(f"{label} line {m.po_line} has no JD Edwards line number in the purchase orders loaded: "
                             "load the PO's open lines from JD Edwards again")  # fmt: skip
         else:
+            before = (
+                m.po_amount - m.po_open_amount + match.waiting.get(m.po_line, 0.0)
+                if m.po_amount is not None and m.po_open_amount is not None
+                else m.billed_before_amount
+            )
             out.rows.append(MatchRow(
                 m.invoice_line, m.description, str(po.get("po_number") or number), po.get("order_type") or "",
                 po.get("order_company") or "", m.po_erp_line, m.matched_quantity, m.po_uom, m.amount, m.po_account,
-                m.po_open_quantity, m.amount_only, m.po_tax, subledger=m.po_subledger))  # fmt: skip
+                m.po_open_quantity, m.amount_only, m.po_tax, subledger=m.po_subledger, retainage=m.po_retainage,
+                billed_before=round(before, 2)))  # fmt: skip
     return out
 
 
@@ -968,9 +1085,11 @@ def _share_texts(rows: Iterable[dict[str, Any] | None], texts: dict[str, str]) -
                 lines[n] = {shared(k): shared(v) for k, v in li.items()}  # type: ignore[index]
 
 
-def _matched_to(po: dict[str, Any]) -> tuple[tuple[Any, Any, Any], ...]:
-    """What matching an invoice's lines to ``po``'s reads of each of its lines (``_po_line``), in order."""
-    return tuple((pl.get("description", ""), pl.get("unit_price"), pl.get("line_number")) for pl in po["lines"])
+def _matched_to(po: dict[str, Any]) -> tuple[tuple[Any, Any, Any, Any], ...]:
+    """What matching an invoice's lines to ``po``'s reads of each of its lines (``_po_line``; ``_retains``), in
+    order."""
+    return tuple((pl.get("description", ""), pl.get("unit_price"), pl.get("line_number"), pl.get("retainage"))
+                 for pl in po["lines"])  # fmt: skip
 
 
 def po_billing(store: Store, key: str, po: dict[str, Any]) -> PoBilling:

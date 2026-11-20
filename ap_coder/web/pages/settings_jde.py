@@ -75,6 +75,13 @@ Confirm with your JDE team before the first live load:
   charge not on the purchase order, a PST or QST its tax area does not hold); whether the tax worked out on the
   rows may be typed over when it is a cent off the invoice's; the tax area and code for a line charged part of what
   its area holds (GST only on a GST + PST area).
+- **Subcontracts' progress billings** (order type OS, with a retainage percent: kept off until these are confirmed):
+  your subcontract order types (OS, others?); the retainage percent's column in the open PO lines (F4311's PDPCRT,
+  Percent - Retainage: report 6 of the build sheet, OP and OS); that Voucher Match takes each row's Retained Amount
+  beside its amount matched, the voucher's gross the work and its tax, the supplier paid it less the retained; its
+  Retainage tab's Taxes option (the GST on the work with the holdback in it, as most Canadian billings charge it, or
+  on it less the holdback, its tax deferred to the release); and how a holdback release is keyed (held for a person
+  for now).
 """
 
 # (field, label, max characters, help) of the voucher header and the "More fields" group.
@@ -113,7 +120,7 @@ CHOICES = [
      "Oracle's notes say VNEDLN must match VLEDLN; most loads number the lines 1, 2, 3 under pay item 1."),
 ]  # fmt: skip
 TOGGLES = ["po_matched", "use_default_rule", "bu_from_cost_center", "send_due_date", "send_po_reference",
-           "dist_tax_columns"]  # fmt: skip
+           "dist_tax_columns", "po_subcontracts"]  # fmt: skip
 GL_COLUMNS = [("gl_code", "GL code", 0), ("cost_center", "Cost center", 0), ("bu", "BU", 12), ("obj", "Object", 6),
               ("sub", "Subsidiary", 8), ("sbl", "Subledger", 8), ("sblt", "Subledger type", 1)]  # fmt: skip
 TAX_CODES = ["V", "C", "B", "E", ""]
@@ -133,6 +140,7 @@ def jde_context(store: Store, query: Any = None) -> dict[str, Any]:
         "closed_periods": jde_settings.CLOSED_PERIODS,
         "remarks": jde_settings.REMARKS,
         "po_charges": jde_settings.PO_CHARGES,
+        "retainage_taxes": jde_settings.RETAINAGE_TAXES,
         "currencies": ", ".join(js.currencies),
         "extras": ", ".join(f"{k}={v}" for k, v in js.po_extra_columns.items()),
         "bank_rows": bank_rows(store, js),
@@ -286,6 +294,10 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
             return refuse("Give the account charges not on the purchase order go to as JD Edwards writes it: business "
                           "unit.object.subsidiary, e.g. 0021061010.7420.4207.")  # fmt: skip
         new.po_charges, new.po_charge_account = text("po_charges"), account
+    if "retainage_tax" in form:  # a subcontract's progress billing's tax base (D-273)
+        if text("retainage_tax") not in jde_settings.RETAINAGE_TAXES:
+            return refuse("Choose what Voucher Match works a subcontract row's tax out on.")
+        new.retainage_tax = text("retainage_tax")
     if "remarks" in form:  # (D-210)
         if text("remarks") not in jde_settings.REMARKS:
             return refuse("Choose what the remarks carry.")

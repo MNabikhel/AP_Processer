@@ -145,8 +145,8 @@ def _issues_today(
     stale = [i for i in ids if i in stamps and stamps[i][0] != stamp]
     if not stale:
         return {}
-    rows = store.invoice_columns(("id", "validation", "ai_output", "final_output", "created_at", "meta"),
-                                 ids=stale, decode=False)  # fmt: skip
+    rows = store.invoice_columns(("id", "validation", "ai_output", "final_output", "created_at", "meta",
+                                  "extraction_md"), ids=stale, decode=False)  # fmt: skip
     out: dict[int, list[dict[str, Any]]] = {}
     found = []  # the re-checks made here, kept in one write
     for row in rows:
@@ -330,7 +330,7 @@ def _recheck_batch(store: Store, ids: list[int], stamp: str, reference: Referenc
     what was found in one write: how many."""
     found = []
     for row in store.invoice_columns(("id", "status", "validation", "ai_output", "final_output", "created_at",
-                                      "meta"), ids=ids, decode=False):  # fmt: skip
+                                      "meta", "extraction_md"), ids=ids, decode=False):  # fmt: skip
         seen = row["validation"]
         try:
             validation = json.loads(seen) if seen and row["status"] == REVIEW else None
