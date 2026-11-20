@@ -81,6 +81,61 @@ def test_each_case_is_keyed_with_the_rows_expected_and_adds_up_to_its_gross(tmp_
     assert not any(w for v in ready for w in v.warnings), [(v.invoice_number, v.warnings) for v in ready]
 
 
+TYPED = ("PO {}", "PO-{}", "PO{}", "PO#{}", " #{} ", "PO# {}")  # how a PO is printed; the last over VLPO's 8
+
+
+@pytest.mark.parametrize("setup", SETUPS)
+def test_the_z_files_name_the_order_and_its_lines_as_the_keying_sheet_does_whatever_the_po_typed(tmp_path, setup):
+    """B-2921 (D-284): the Z-files sent the PO number as typed in VLPO and F0411Z1T's DOCO ("PO-41101", "PO 41106"),
+    while the keying sheet keys the order it is matched to (41101): DOCO is JD Edwards' order number, and "PO-41101"
+    names none. Every case of the set, its PO typed with a prefix, a "#" or spaces, now goes with the matched order's
+    number, type and company, each row on the PO line the sheet keys; one typed longer than VLPO's 8 characters
+    ("PO# 41105") is held by both, to be typed as JD Edwards has it (JDE_PO_LONG)."""
+    from ap_coder.erp import jde, jde_zfiles
+
+    made = jde_po_vouchers.cases(TRUTH)
+    store = Store(tmp_path / "ap.db")
+    load_pos(store, jde_po_vouchers.po_files(made))
+    js = settings_of(setup)
+    tax = _setup(QST=TaxTreatment("QST", "expense_to_line")) if setup == PILOT else _setup()
+    invoices = []
+    for n, case in enumerate(made, 1):
+        final = {**case.coding(), "po_number": TYPED[n % len(TYPED)].format(case.po)}
+        final["gl_distribution"] = build_gl_distribution(InvoiceCoding.model_validate(final), tax)
+        invoices.append({"id": n, "final_output": final})
+    numbers = {case.coding()["vendor_name"]: str(case.supplier.number) for case in made}
+
+    def lookup(final):
+        return numbers[final["vendor_name"]]
+
+    matches = jde_keying.po_matches(store, invoices, js.charge_account)
+    ready, held = jde_keying.vouchers(invoices, js, lookup, po_matches=matches)
+    left_out = jde.validate(invoices, js, lookup)
+    long = [inv["id"] for inv in invoices if len(inv["final_output"]["po_number"].strip()) > 8]
+    assert long and [h.invoice_id for h in held] == long == sorted(left_out)
+    assert all(why[0].endswith("is longer than 8 characters (VLPO)") for why in left_out.values())
+    files = jde_zfiles.export_batch([inv for inv in invoices if inv["id"] not in left_out], js, lookup,
+                                    po_matches=matches)  # fmt: skip
+    heads = {h["VLEDTN"].split("-")[0]: h for h in _csv(files[jde_zfiles.HEADER_FILE])}
+    sent: dict[str, list[dict]] = {}
+    for m in _csv(files[jde_zfiles.MATCH_FILE]):
+        sent.setdefault(m["EDTN"].split("-")[0], []).append(m)
+    assert len(ready) == len(heads) == len(made) - len(long)
+    for v in ready:
+        head, rows = heads[f"APC{v.invoice_id}"], sent[f"APC{v.invoice_id}"]
+        (order,) = {(m.order_number, m.order_type, m.order_company) for m in v.matches if m.on_po}
+        assert (head["VLPO"], head["VLPDCT"], head["VLPKCO"]) == order, v.invoice_number
+        keyed_rows = [(m.order_number, m.order_type, m.order_company, m.line) for m in v.matches if m.on_po]
+        assert [(m["DOCO"], m["DCTO"], m["KCOO"], m["LNID"]) for m in rows if m["LNID"]] == keyed_rows, v.invoice_number
+        assert {(m["DOCO"], m["DCTO"], m["KCOO"]) for m in rows} == {order}, v.invoice_number
+
+
+def _csv(data: bytes) -> list[dict]:
+    import csv
+
+    return list(csv.DictReader(io.StringIO(data.decode("utf-8"))))
+
+
 def test_the_set_read_from_its_pdfs_is_keyed_on_the_exports_pages_sheet_as_expected(chart_company, tmp_path):
     """D-265, end to end on the made-up company (its supplier list, chart and JD Edwards set up as the prototype's):
     the set written as the command writes it, its PO files loaded, each PDF read by the pipeline (no chat model, no

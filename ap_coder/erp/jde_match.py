@@ -49,6 +49,7 @@ from .jde_voucher import (
     accrues_use_tax,
     meals_accounts,
 )
+from .jde_zfiles import row_lines
 
 if TYPE_CHECKING:
     from ..coding.po import VoucherMatch
@@ -118,8 +119,8 @@ def row_taxes(v: _Voucher, settings: JdeSettings) -> list[str]:
 
 
 def _line_shares(v: _Voucher) -> dict[int, dict[str, int]]:
-    """{invoice line number: {tax: its share of the tax charged, in cents}}: ``taxmath.invoice_taxes``' amounts, as
-    the review screen's Tax check has them (its tips the posting's: with the meals accounts it halved, D-310)."""
+    """{invoice line's position: {tax: its share of the tax charged, in cents}}: ``taxmath.invoice_taxes``' amounts,
+    as the review screen's Tax check has them (its tips the posting's: with the meals accounts it halved, D-310)."""
     from ..coding.tax import TaxSetup
     from ..coding.taxmath import invoice_taxes
     from ..core.schema import InvoiceCoding
@@ -127,7 +128,7 @@ def _line_shares(v: _Voucher) -> dict[int, dict[str, int]]:
     coding = InvoiceCoding.model_validate({k: x for k, x in v.final.items() if k != "gl_distribution"})
     out: dict[int, dict[str, int]] = {}
     for line in invoice_taxes(coding, TaxSetup(_rates(), {}, meals_gl_codes=meals_accounts(v.final))).lines:
-        mine = out.setdefault(line.line_number, {})
+        mine = out.setdefault(line.position, {})
         for t in line.taxes:
             mine[t.tax_type] = mine.get(t.tax_type, 0) + _units(t.amount, v.decimals)
     return out
@@ -180,7 +181,7 @@ def keyed_match(v: _Voucher, matched: VoucherMatch, settings: JdeSettings) -> Ke
     tax JD Edwards would not work out; and whether it all adds up to the gross (the module's first lines)."""
     out = KeyedMatch(held=list(matched.held))
     final, province = v.final, v.province
-    items = {li.get("line_number"): li for li in final.get("line_items") or [] if isinstance(li, dict)}
+    items = final.get("line_items") or []
     exempt = settings.exempt_code.strip().upper()
     company = settings.po_company.strip()
     company = (company.zfill(5) if company.isdigit() else company) or company_of(final, settings)
@@ -204,10 +205,11 @@ def keyed_match(v: _Voucher, matched: VoucherMatch, settings: JdeSettings) -> Ke
                         f"to recoverable, or give {province} a code that keeps it in the expense (C), in Settings → "
                         "JD Edwards E1 → tax areas")  # fmt: skip
     shares = _line_shares(v)
+    # Each row's own line and its share of the tax: the line it was made from, never one of its number (B-2922)
+    lines = [(items[n], shares.get(n) or {}) if n is not None else ({}, {}) for n in row_lines(items, matched.rows)]
     taxed_rows: list[int] = []
-    for row in matched.rows:
-        li = items.get(row.invoice_line) or {}
-        carried = {t for t, cents in (shares.get(row.invoice_line) or {}).items() if cents} & charged
+    for row, (li, share) in zip(matched.rows, lines, strict=True):
+        carried = {t for t, cents in share.items() if cents} & charged
         mine = carried & set(area)
         flag, po_code, po_area = row.tax
         if area and mine == set(area):
@@ -248,7 +250,7 @@ def keyed_match(v: _Voucher, matched: VoucherMatch, settings: JdeSettings) -> Ke
                              f"{row.account} (Settings → JD Edwards E1 → Charges not on the purchase order), Tax "
                              f"{taxed}. Voucher Match takes a line that is on no order when its processing options "
                              "allow it: ask the JD Edwards team if it refuses one.")  # fmt: skip
-    _apart_lines(v, matched, out, apart - recovered, shares, items, settings)
+    _apart_lines(v, matched, out, apart - recovered, lines, settings)
     if other := _not_canadian(v):  # (a Canadian company's: on no row, nor for JD Edwards to work out, B-2673)
         out.held.append(f"the invoice charges {_money(other)} of a tax that is none of the GST, HST, PST and QST (a "
                         "tax line of type OTHER): JD Edwards works out none of it on a voucher match and it is on no "
@@ -288,11 +290,11 @@ def _retainage(v: _Voucher, matched: VoucherMatch, out: KeyedMatch, settings: Jd
 
 
 def _apart_lines(v: _Voucher, matched: VoucherMatch, out: KeyedMatch, apart: set[str],
-                 shares: dict[int, dict[str, int]], items: dict[Any, dict[str, Any]],
-                 settings: JdeSettings) -> None:  # fmt: skip
+                 lines: list[tuple[dict[str, Any], dict[str, int]]], settings: JdeSettings) -> None:  # fmt: skip
     """The taxes the invoice charges that JD Edwards would not work out on the rows and the Tax setup keeps in the
     expense (``apart``): a G/L line on each PO line's account, with its subledger (an L account's, B-2661), with its
-    lines' share (what is left over of a tax on the largest), Tax N, after the rows."""
+    lines' share (what is left over of a tax on the largest), Tax N, after the rows. ``lines``: each row's own invoice
+    line and its share of the tax (``keyed_match``)."""
     if not apart:
         return
     exempt = settings.exempt_code.strip().upper()
@@ -300,10 +302,9 @@ def _apart_lines(v: _Voucher, matched: VoucherMatch, out: KeyedMatch, apart: set
     by_account: dict[tuple[str, str, str], int] = {}
     for t in (t for t in (*ORDER, "OTHER") if t in apart):
         mine: list[tuple[tuple[str, str, str], int]] = []
-        for row in matched.rows:
-            cents = (shares.get(row.invoice_line) or {}).get(t, 0)
+        for row, (li, share) in zip(matched.rows, lines, strict=True):
+            cents = share.get(t, 0)
             if cents:
-                li = items.get(row.invoice_line) or {}
                 own = account_for(li.get("predicted_gl_code") or "", li.get("predicted_cost_center") or "", keyed)
                 ledger = (row.subledger[0] or str(li.get("subledger") or ""),
                           row.subledger[1] or str(li.get("subledger_type") or ""))  # fmt: skip
