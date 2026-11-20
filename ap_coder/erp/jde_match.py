@@ -35,7 +35,8 @@ from ..core.schema import COMPANY_TAX
 from .jde_accounts import account_for, ani
 from .jde_formats import _date, _units
 from .jde_remarks import line_remark
-from .jde_settings import JdeSettings, company_of
+from .jde_retainage import retained
+from .jde_settings import RETAINAGE_TAX_NET, JdeSettings, company_of
 from .jde_voucher import (
     RECOVERABLE_BY_CODE,
     _area_types,
@@ -74,16 +75,23 @@ class MatchLine:
     on_po: bool = True
     subledger: str = ""  # the PO line's subledger and its type (D-268)
     subledger_type: str = ""
+    # A subcontract's (D-273): the PO line's retainage percent, and the Retained Amount of the row
+    retainage: float | None = None
+    retained: float = 0.0
 
 
 @dataclass
 class KeyedMatch:
     """A PO-matched voucher as keyed (``keyed_match``): its rows, the PO lines' first, then the G/L lines of its own;
     ``tax``: what JD Edwards works out on the rows taxed Y, on top of the amounts matched (cents); ``held``: why it
-    can't be keyed so; ``warnings`` and ``notes``: what is said under it."""
+    can't be keyed so; ``warnings`` and ``notes``: what is said under it. A subcontract's progress billing (D-273):
+    ``retained``, the rows' Retained Amounts (cents), and ``due``, the amount due as printed (the gross less them)."""
 
     rows: list[MatchLine] = field(default_factory=list)
     tax: int = 0
+    retained: int = 0
+    due: int | None = None
+    retainage_said: list[str] = field(default_factory=list)  # (its warnings and notes, in theirs too)
     held: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -219,7 +227,8 @@ def keyed_match(v: _Voucher, matched: VoucherMatch, settings: JdeSettings) -> Ke
             (row.order_company or company) if row.on_po else "", row.line, row.quantity, row.uom, row.amount,
             row.account, taxed, code, at, line_remark(li), on_po=row.on_po,
             subledger=row.subledger[0] or str(li.get("subledger") or ""),
-            subledger_type=row.subledger[1] or str(li.get("subledger_type") or "")))  # fmt: skip
+            subledger_type=row.subledger[1] or str(li.get("subledger_type") or ""),
+            retainage=row.retainage))  # fmt: skip
         if not row.on_po:
             out.notes.append(f"Line {row.invoice_line} “{row.description[:40]}” ({row.amount:,.2f}) is not on "
                              f"PO {str(final.get('po_number') or '').strip()}: it is keyed as a G/L line of its own on "
@@ -228,12 +237,37 @@ def keyed_match(v: _Voucher, matched: VoucherMatch, settings: JdeSettings) -> Ke
                              "allow it: ask the JD Edwards team if it refuses one.")  # fmt: skip
     _apart_lines(v, matched, out, apart - recovered, shares, items, settings)
     out.tax = sum(_charged(v, t) for t in on_rows)
+    _retainage(v, matched, out, settings, area)
     _tax_said(v, settings, out, on_rows, taxed_rows, area)
     if not out.held and out.total + out.tax != v.gross:
         out.held.append(f"the amounts matched ({_money(out.total)}) and the tax JD Edwards works out on them "
                         f"({_money(out.tax)}) add up to {_money(out.total + out.tax)}, not the gross "
                         f"{_money(v.gross)}: check the lines and the taxes against the invoice")  # fmt: skip
+    if not out.held and out.due is not None and out.total - out.retained + out.tax != out.due:
+        out.held.append(f"the amounts matched ({_money(out.total)}) less the retained ({_money(out.retained)}) plus "
+                        f"the tax ({_money(out.tax)}) are {_money(out.total - out.retained + out.tax)}, not the "
+                        f"amount due printed {_money(out.due)}: check the holdback against the invoice")  # fmt: skip
     return out
+
+
+def _area_rate(v: _Voucher, area: list[str]) -> float:
+    """The tax area's taxes' rate together, on the invoice's date where it is supplied."""
+    on = _date(v.final.get("invoice_date"))
+    return sum(_rates().rate_for(t, v.province, on) or 0.0 for t in area)
+
+
+def _retainage(v: _Voucher, matched: VoucherMatch, out: KeyedMatch, settings: JdeSettings, area: list[str]) -> None:
+    """A subcontract's progress billing (``jde_retainage.retained``, D-273): each PO line's row's Retained Amount, the
+    amount due as printed, and what holds it or is said."""
+    taxed = [i for i, row in enumerate(out.rows[: len(matched.rows)]) if row.taxed == "Y"]
+    found = retained(v, matched.rows, settings, out.tax, _area_rate(v, area), taxed)
+    for row, cents in zip(out.rows, found.by_row, strict=False):  # (the PO lines' rows come first)
+        row.retained = cents / 100
+    out.retained, out.due = found.total, found.due
+    out.held += found.held
+    out.warnings += found.warnings
+    out.notes += found.notes
+    out.retainage_said = [*found.warnings, *found.notes]
 
 
 def _apart_lines(v: _Voucher, matched: VoucherMatch, out: KeyedMatch, apart: set[str],
@@ -309,9 +343,9 @@ def _tax_said(v: _Voucher, settings: JdeSettings, out: KeyedMatch, on_rows: set[
     rows = [out.rows[i] for i in taxed_rows]
     if not rows or any((r.tax_code, r.tax_area) != (v.tax_code, v.tax_area) for r in rows):
         return
-    on = _date(v.final.get("invoice_date"))
-    rate = sum(_rates().rate_for(t, province, on) or 0.0 for t in area)
-    works_out = sum(round(_units(r.amount) * rate) for r in rows)
+    rate = _area_rate(v, area)
+    net = settings.retainage_tax == RETAINAGE_TAX_NET  # (a row's retained amount's tax left for its release, D-273)
+    works_out = sum(round((_units(r.amount) - (_units(r.retained) if net else 0)) * rate) for r in rows)
     if rate and abs(works_out - out.tax) > len(rows) + 1:
         out.warnings.append(f"At tax area {v.tax_area}'s {rate * 100:.4g}% ({_names(area, province)}), JD Edwards "
                             f"works out {_money(works_out)} on the rows taxed Y, but the invoice charges "

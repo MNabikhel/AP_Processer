@@ -57,6 +57,8 @@ class ExtractionResult:
     low_confidence_word_count: int = 0
     invoice_fields: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] | None = None
+    # A progress billing's amounts read off its pages (``capture.reader.progress``, D-274); None: none read
+    progress: dict[str, Any] | None = None
 
     def to_prompt_payload(self, max_chars: int | None = None) -> str:
         """Render the extraction as the user-message payload for the LLM."""
@@ -161,6 +163,7 @@ def kept_extraction(inv: dict[str, Any]) -> ExtractionResult:
         content=str(inv.get("extraction_md") or ""),
         mean_word_confidence=kept.get("mean_word_confidence"),
         invoice_fields=kept.get("invoice_fields") or {},
+        progress=kept.get("progress") or None,
     )
 
 

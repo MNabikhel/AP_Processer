@@ -508,7 +508,7 @@ PURCHASE_ORDERS = ImportSpec(
         "foreign_amount": ("Foreign line amount", "Original Ordered Foreign Amount"),
         "tax_flag": ("Taxable", "Tax Y/N"), "tax_code": ("Tax explanation code", "Tax Expl"),
         "tax_area": ("Tax rate/area", "Tax Rate/Area"), "subledger": ("Subledger", "Subledger"),
-        "subledger_type": ("Subledger type", "Sub Type"),
+        "subledger_type": ("Subledger type", "Sub Type"), "retainage": ("Retainage %", "Retainage %"),
     }, {"open_amount": "what is left to expense (alone, without a quantity, price or amount: the line's amount)",
         "received_quantity": "what was received, for the match",
         "gl_code": "the account the line is coded to (JD Edwards' object account)",
@@ -530,7 +530,9 @@ PURCHASE_ORDERS = ImportSpec(
         "tax_code": "the line's tax explanation code, typed on its voucher match row",
         "tax_area": "the line's tax rate/area, typed on its voucher match row",
         "subledger": "the line's subledger, which an account whose posting edit code is L requires",
-        "subledger_type": "the type of the line's subledger"}),
+        "subledger_type": "the type of the line's subledger",
+        "retainage": "a subcontract line's percent held back of each progress billing (JD Edwards' Percent - "
+        "Retainage), for its voucher match's Retained Amount"}),
     find=_matcher(po.COLUMN_ALIASES),
 )  # fmt: skip
 
@@ -795,7 +797,7 @@ ORDER_MARKS = ("Or Ty", "Order Co", "Quantity To Receive", "Amount To Receive", 
                "Original Ordered Amount", "Foreign Amount To Receive", "Next Status", "Last Status",
                *_fields("F4311", "PD", "DOCO", "DCTO", "KCOO", "LNID", "AN8", "DSC1", "DSC2", "LNTY", "UOM", "UORG",
                         "UOPN", "UREC", "PRRC", "AEXP", "AOPN", "ANI", "OMCU", "MCU", "OBJ", "SUB", "TX", "EXR1",
-                        "TXA1", "LTTR", "NXTR", "CRCD", "FRRC", "FAP", "FEA", "TRDJ"),
+                        "TXA1", "LTTR", "NXTR", "CRCD", "FRRC", "FAP", "FEA", "TRDJ", "PCRT"),
                "DOCO", "DCTO", "KCOO", "LNID", "DSC1", "LNTY", "UORG", "UOPN", "UREC", "PRRC", "AEXP", "AOPN",
                "LTTR", "NXTR", "FRRC", "TRDJ", "OMCU")  # fmt: skip
 # The grids of one voucher in JD Edwards, as a message names them.

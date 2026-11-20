@@ -523,7 +523,11 @@ FROM_VENDOR_LIST = "tax_numbers_from_vendor_list"
 # A company not checked for Canadian tax (a US one, D-267): its voucher's tax area and where it came from, worked out
 # beside the coding ({"tax_area", "from"}: ``coding/companies.voucher_tax``) for the JD Edwards voucher.
 COMPANY_TAX = "company_tax"
-WORKED_OUT = (PLACE_OF_SUPPLY, FROM_VENDOR_LIST, COMPANY_TAX)
+# A progress billing's amounts as printed (D-274: the work this period, before and to date, the holdback, the amount
+# due; ``capture.reader.progress``), read off its page when it came in and kept beside the coding, for its voucher's
+# retained amounts.
+PROGRESS_BILLING = "progress_billing"
+WORKED_OUT = (PLACE_OF_SUPPLY, FROM_VENDOR_LIST, COMPANY_TAX, PROGRESS_BILLING)
 
 
 def as_read(final: dict[str, Any], proposed: dict[str, Any]) -> dict[str, Any]:

@@ -265,6 +265,13 @@ def _subledgers(store: Any, conn: sqlite3.Connection) -> None:
             dialect.add_column(conn, table, column, kind)
 
 
+def _po_retainage(store: Any, conn: sqlite3.Connection) -> None:
+    """Each PO line keeps the percent a subcontract holds back of what it bills (``po_lines.retainage``, D-273); NULL
+    for one loaded before (none held back). No version of its own: an older AP Coder leaves it be."""
+    if "retainage" not in dialect.columns(conn, "po_lines"):
+        dialect.add_column(conn, "po_lines", "retainage", "REAL")
+
+
 def _chart_company(store: Any, conn: sqlite3.Connection) -> None:
     """Each account of the chart keeps its company (``chart_accounts.company``, D-267: a chart split by company loads a
     company at a time); '' for one loaded before. No version of its own: an older AP Coder leaves it be."""
@@ -561,6 +568,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (EVERY_TIME, _supplier_tax_area),
     (EVERY_TIME, _chart_company),
     (EVERY_TIME, _subledgers),
+    (EVERY_TIME, _po_retainage),
 )
 MIGRATIONS: dict[int, Step] = {number: step for number, step in STEPS if number is not EVERY_TIME}
 

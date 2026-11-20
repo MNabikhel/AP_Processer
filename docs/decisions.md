@@ -6708,6 +6708,113 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     company, 0.6 s for words found nowhere; the reference data 0.2 s. The database 361 MB. *Left as it is:* the
     staging's 31 s (a row's Python, outside the lock); the swap's 9 to 18 s under the write lock (the dashboard's writes
     wait, up to their 30 s); the search for words found nowhere (a scan, as D-267).
+- **D-273** · **A subcontract's progress billing is keyed in Voucher Match with each row's Retained Amount, the
+  holdback the invoice prints; the check line is amounts matched - retained + the tax on the rows = the amount due;
+  off until the JD Edwards team confirms it** (`erp/jde_retainage.py` `retained`, `jde_match.keyed_match`,
+  `coding/po.py` `is_subcontract`, `_by_amount`; Settings → JD Edwards E1 *Subcontract progress billings* and *Tax on a
+  subcontract row that retains a holdback*; a large Canadian construction group on JD Edwards E1, 19 Nov 2026: report 6
+  was filtered to OP, and a subcontract's billing could not carry its holdback).
+  - **The open PO lines** (report 6, F4311): queried for OP and OS (`jde_exports.BUILD_SHEET_ORDER_TYPES`), each line's
+    retainage percent in a column of its own: the build sheet's "Retainage %", JD Edwards' Percent - Retainage (data
+    item PCRT: PDPCRT, F4311.PDPCRT, the header's PHPCRT), "Retention %", "Holdback %", "Retainage Percent"; or picked
+    on the Purchase orders page, as any optional column. 10, 10.000, "10%" and 0.1 are 10%; 0, words and over 100 none.
+    *Not taken:* PDRTNR, the Retainage Rule, a code (its name in JD Edwards' data dictionary), not a percent. Kept with
+    the line (`po_lines.retainage`, no version of its own); a lump-sum line (no quantity, no unit cost) is matched by
+    its amount, its open amount what JD Edwards has not vouchered. A PO is a subcontract when its type is OS or a line
+    of it holds back a percent.
+  - **The match:** a billing's line pairs with the subcontract line it resembles, as before; one that resembles none
+    ("Progress billing #3") bills the subcontract's only line, else the only one open for its amount (2% over allowed);
+    none or several: it matches none, held (no PO line is guessed, D-264). Quantity Matched is left empty on a
+    subcontract's lump sum (no "check the quantity" note). Each row carries its line's percent and the work billed on
+    it before (JD Edwards' amount less its open amount, and AP Coder's invoices not in it yet).
+  - **The Retained Amount follows the invoice:** its holdback as printed (D-274), each row its line's percent of the
+    amount matched when they agree within a cent a row (the largest row taking the cents), else the holdback shared
+    out as the percents (or the amounts) would share it, warned with the subcontract's percent and what it would retain
+    ("type it in Retained Amount and pay 2,500.00 less than the invoice's amount due"): what a holdback the lien acts
+    require is is a person's call. A billing that holds nothing back on a line with a percent retains nothing, warned.
+    A holdback on a PO with no percent is retained by the rows' amounts, said (B-2700: it was keyed at the total).
+  - **The identity for each tax treatment.** JD Edwards' voucher is the work and its tax (the amounts matched + the
+    tax on the rows = the gross, D-265); the supplier is paid it less the retained, the holdback later by a release.
+    So, whichever base the tax is charged on, amounts matched - retained + tax = the amount due as printed: with the
+    GST on the work (the holdback in it, as most Canadian billings charge it, P4314's Retainage tab Taxes blank) the
+    tax is the rate on the amounts matched; with it on the work less the holdback (Taxes 1: the holdback's tax left
+    for its release, the Excise Tax Act's holdback rule) the rate on them less the retained. Which one the invoice
+    charges is read from its tax (a cent a row either way); the setting says which Voucher Match works out. A billing
+    charged the other way, or neither, is held with the two amounts: never guessed. The keying sheet's block has a
+    Retained Amount column after Amount Matched, "Retained (held back)" and "Amount due now" under the gross, and
+    the check line "45,000.00 - 4,500.00 + 2,250.00 = 42,750.00: balanced"; the review screen's voucher block the same
+    column, and the keyed line "retained 4,500.00 (held back), 42,750.00 paid now".
+  - **Held for a person, with why:** every billing on a subcontract, or holding something back, while the setting is
+    off (the default); a holdback release ("Holdback release - phase 1", "Release of retainage": JD Edwards releases a
+    retainage from Voucher Match itself, not as a new match); a billing whose amounts do not add up as printed. Warned:
+    the work the billing says was billed before, other than JD Edwards' vouchered and AP Coder's waiting.
+  - **To confirm with the JD Edwards team** (also in the settings page's checklist): the subcontract order types (OS,
+    others?); that F4311 carries the percent in PDPCRT (or the header's PHPCRT) and report 6 can add it; that Voucher
+    Match (P4314 for subcontracts, P0411's exit for the pilot) takes each row's Retained Amount beside its amount
+    matched, the voucher's gross being the work and its tax and the payment the gross less the retained (not a pay
+    item of its own the clerk types); its Retainage tab's Taxes option; whether the retainage percent loads from the
+    order (its Default option) and may be typed over; how a holdback release is keyed.
+  - **The test set** (`bench/jde_po_vouchers.py`: `PROGRESS_NAMES`, `progress_cases`, `write_progress`; the
+    `po-vouchers` command writes them beside D-265's): five made-up billings of the made-up company's building
+    subcontractor on five subcontracts (10% each): a first G702-style application, a third progress invoice (Ontario's
+    HST, 120,000.00 vouchered before), a billing of two lines holding back 5%, an application charging the GST on the
+    work less the holdback, and the release of a finished subcontract's holdback; their lines as report 6
+    (`jde_exports.po_lines_report_xlsx`) and the rows expected (`progress_billings.json`) under both setups and both
+    tax settings; read end to end from their PDFs (`tests/bench/test_jde_po_vouchers.py`).
+  - *Not chosen:* the Z-files' match rows (F0411Z1T, unchanged, D-264); a subcontract order type setting (OS is JD
+    Edwards' own; another type is a subcontract by its lines' percents); the retainage at the PO's percent whatever
+    the invoice holds back (the payment would not be the invoice's amount due).
+- **D-274** · **A progress billing is read off its page for its work this period, the work before and to date, its
+  holdback and its amount due; coded at its work this period, its total the one before the holdback, the amounts as
+  printed kept beside the coding** (`capture/reader/progress.py` `read_progress`, `layout_rows`; `ai/offline_coder`
+  `_progress_values`; `schema.PROGRESS_BILLING`, kept in the invoice's `meta` as read, D-273).
+  - **Read by rows:** the page's lines grouped into rows (a label and its amount far to its right are one), each label
+    the row's own words before its last amount ("7. Less holdback 10% (7,500.00)", "Less: Holdback (10%)", "Retenue de
+    garantie 10 %"), so a line item named for one ("Retainage billing - Phase 2") is none; a G702's numbered lines
+    ("4. Total completed to date", "5. Less previous applications", "6. Work completed this period", "8. Net amount
+    this period", "10. Current payment due"), the contract sum to date no work to date; an invoice's "Subtotal",
+    "Billed to date", "Previously billed", a line "... - work this period"; the taxes by their names; French labels.
+    A holdback paid out is a row billing it ("Holdback release - Phase 1"), never a sentence about one.
+  - **One that adds up only:** the work this period (the subtotal, else the rows billing it, else the work to date
+    less the work before) less the holdback plus the taxes is the amount due, and the work to date less the work before
+    is the work this period when both are printed. Then the coding takes its work this period as the subtotal (an
+    application without a line table: one line, "Work completed this period"), each tax as printed (on the work less
+    the holdback when that is what makes it), and the total before the holdback (B-2492 kept the total printed before
+    one; a billing printing none had its amount due as the total, the lines and taxes not adding up to it). The
+    holdback is no charge of the lines (no freight line), no line of its own (it would be coded to retainage payable,
+    a control account: D-269).
+  - **Kept beside the coding** as read (`progress_billing`, worked out at arrival and each read by the page reader,
+    carried by the review screen, bulk approval and the corrections from the invoice's `meta`): never edited on the
+    screen in this version; the voucher's check line says when the coding no longer fits it.
+  - *Not chosen:* a holdback box on the review form (once the pilot tester has tried the billings); the retainage of
+    each line of a G703 continuation sheet (one holdback a billing, shared out by the voucher, D-273); a cumulative
+    G702 (retainage to date, previous certificates net of it): it does not add up as read, so it is held.
+- **D-275** · **A pilot day: the pilot tester's day, end to end through the app, on a made-up construction group,
+  scored against the truth each invoice should end at** (`python -m ap_coder.bench pilotday [--quick]`,
+  `bench/pilot_day.py`; the group's books `jde_group.construction_books`).
+  - **The group:** seven companies (three Canadian ones in Alberta, British Columbia and Ontario, two US ones, a USD
+    company whose address says CA, one with no country), five in the pilot; 42 business units, two closed jobs a
+    company; a chart of 602 accounts with every kind of posting edit code (L and U posted to, Z and Q undecided);
+    26 suppliers, one an old "(DNU)" record of another, one a company of the group; a year of vouchers (the ledger and
+    the past coding, the GST lines kept, subledgers and units on the L and U accounts); 12 open orders of each PO
+    supplier in each of its companies, a freight line on two in three, subledgers on the equipment rentals.
+  - **Loading as the guide says**, in a new laptop data folder (`web.core.first_run`): one master workbook of the
+    build sheet's reports (report 9 titled as ReportsNow titles it by default, long titles wrapped over two lines, the
+    payment terms by JD Edwards' field names), *Load all*; the chart as ReportsNow's Unicode text (UTF-16 with its byte
+    order mark, quotation marks in descriptions, business units right-aligned) by `chart import --chart`; the settings
+    on their pages: the province and the companies' names, PO-matched vouchers, the companies in the pilot, the tax
+    areas (British Columbia's code C: the PST in the expense).
+  - **The day:** 200 invoices (35 with `--quick`) in 24 categories (`CATEGORIES`), 10% scans, chosen 25 at a time on
+    Add invoices; the stand-in LM Studio proposes no account, so what is proposed is AP Coder's own (the past coding,
+    the POs). Each measure per category: the company, the supplier's number, the PO lines matched, the accounts (a
+    wrong one, a closed job, or none where the history or the PO is sure is a miss; none where a person picks is
+    not), the taxes read (the GST and the HST as one: what is recovered), the findings that must and must not appear,
+    Approve open or held as it arrives; then a person's work (blanks filled as the truth says, the company picked, the
+    copies and the bills already in JD Edwards rejected), approved through the routes, and the keying sheet's voucher
+    (supplier, company, gross, tax area and amount, each G/L line or each PO line matched). Every miss is listed.
+  - **Why a bench:** the misses are small things that show only together, on a group's data; each real one is then
+    pinned by a test (B-2720, B-2721). The same seed and day give the same invoices (dated the days before today);
+    `--quick` takes under a minute, a full run 4 to 5 minutes on a shared 4-core machine.
 - **D-280** · **A PO line billed by amount, with what JD Edwards has open on it in the PO file, is checked against
   that open amount as its left to expense is (D-139): the invoices not exported yet and this one; a PO all of such lines
   likewise** (`coding/po.py` `match_invoice`, `LineMatch.po_open_amount`; `Store.purchase_orders` `by_open`; the
@@ -6751,29 +6858,3 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     say later: the rules change as files are loaded, and a person may have picked it. A company not in report 9 is a
     warning (`US_TAX_NOT_CHECKED`), not an error: the pilot may name one (D-272). An invoice approved before report 9
     and not reopened is exported under Settings' company, as approved.
-- **D-275** · **A pilot day: the pilot tester's day, end to end through the app, on a made-up construction group,
-  scored against the truth each invoice should end at** (`python -m ap_coder.bench pilotday [--quick]`,
-  `bench/pilot_day.py`; the group's books `jde_group.construction_books`).
-  - **The group:** seven companies (three Canadian ones in Alberta, British Columbia and Ontario, two US ones, a USD
-    company whose address says CA, one with no country), five in the pilot; 42 business units, two closed jobs a
-    company; a chart of 602 accounts with every kind of posting edit code (L and U posted to, Z and Q undecided);
-    26 suppliers, one an old "(DNU)" record of another, one a company of the group; a year of vouchers (the ledger and
-    the past coding, the GST lines kept, subledgers and units on the L and U accounts); 12 open orders of each PO
-    supplier in each of its companies, a freight line on two in three, subledgers on the equipment rentals.
-  - **Loading as the guide says**, in a new laptop data folder (`web.core.first_run`): one master workbook of the
-    build sheet's reports (report 9 titled as ReportsNow titles it by default, long titles wrapped over two lines, the
-    payment terms by JD Edwards' field names), *Load all*; the chart as ReportsNow's Unicode text (UTF-16 with its byte
-    order mark, quotation marks in descriptions, business units right-aligned) by `chart import --chart`; the settings
-    on their pages: the province and the companies' names, PO-matched vouchers, the companies in the pilot, the tax
-    areas (British Columbia's code C: the PST in the expense).
-  - **The day:** 200 invoices (35 with `--quick`) in 24 categories (`CATEGORIES`), 10% scans, chosen 25 at a time on
-    Add invoices; the stand-in LM Studio proposes no account, so what is proposed is AP Coder's own (the past coding,
-    the POs). Each measure per category: the company, the supplier's number, the PO lines matched, the accounts (a
-    wrong one, a closed job, or none where the history or the PO is sure is a miss; none where a person picks is
-    not), the taxes read (the GST and the HST as one: what is recovered), the findings that must and must not appear,
-    Approve open or held as it arrives; then a person's work (blanks filled as the truth says, the company picked, the
-    copies and the bills already in JD Edwards rejected), approved through the routes, and the keying sheet's voucher
-    (supplier, company, gross, tax area and amount, each G/L line or each PO line matched). Every miss is listed.
-  - **Why a bench:** the misses are small things that show only together, on a group's data; each real one is then
-    pinned by a test (B-2720, B-2721). The same seed and day give the same invoices (dated the days before today);
-    `--quick` takes under a minute, a full run 4 to 5 minutes on a shared 4-core machine.

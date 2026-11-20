@@ -980,15 +980,15 @@ def test_a_po_matched_voucher_is_keyed_as_voucher_match_rows_in_the_screens_orde
         {"order_number": "40917", "order_type": "OP", "order_company": "00210", "line": "12.000", "quantity": 100,
          "uom": "EA", "amount": 599.0, "account": "0312005561.6420.2210", "taxed": "Y", "tax_code": "V",
          "tax_area": area, "remark": "CB-220 Non-Woven Lunch Cooler", "on_po": True, "subledger": "",
-         "subledger_type": ""},
+         "subledger_type": "", "retainage": None, "retained": 0.0},
         {"order_number": "40917", "order_type": "OP", "order_company": "00210", "line": "13.000", "quantity": 1,
          "uom": "EA", "amount": 57.5, "account": "0312005561.6420.2210", "taxed": "Y", "tax_code": "V",
          "tax_area": area, "remark": "SETUP Lunch Cooler Setup", "on_po": True, "subledger": "",
-         "subledger_type": ""},
+         "subledger_type": "", "retainage": None, "retained": 0.0},
         {"order_number": "40917", "order_type": "OP", "order_company": "00210", "line": "14.000", "quantity": 1,
          "uom": "EA", "amount": 32.0, "account": "0312005561.6420.2210", "taxed": "Y", "tax_code": "V",
          "tax_area": area, "remark": "Charges not in the line table", "on_po": True, "subledger": "",
-         "subledger_type": ""},
+         "subledger_type": "", "retainage": None, "retained": 0.0},
     ]  # fmt: skip
     assert area and matched.balanced and jde_keying._check(matched) == "688.50 + 34.43 = 722.93: balanced"
 

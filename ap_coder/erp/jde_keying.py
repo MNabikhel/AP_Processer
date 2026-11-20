@@ -22,7 +22,9 @@ quantity and amount matched, the unit of measure, the PO line's account, the tax
 its open PO line as the purchase orders loaded have it (``coding.po.voucher_match``), each row's tax and the lines of
 its own (a charge not on the PO, a tax its area does not hold) as ``jde_match.keyed_match`` keys them (D-265); its
 check line is the amounts matched + the tax JD Edwards works out on them = the gross. One with a line that matches no
-PO line is not ready, with why: no PO line is guessed.
+PO line is not ready, with why: no PO line is guessed. A subcontract's progress billing (D-273) has each row's
+Retained Amount beside its Amount Matched (``jde_retainage``), the retained and the amount due under the gross, and
+its check line is the amounts matched - the retained + the tax = the amount due as printed.
 
 Entry points: ``vouchers`` (the values), ``po_matches`` (the voucher matches of a batch's invoices), ``build_xlsx``
 and ``build`` (a batch's file), ``keying_batches``.
@@ -64,6 +66,7 @@ LEDGER_COLUMNS = ["Subledger", "Sub Type", "Units"]
 MATCH_COLUMNS = ["Order Number", "Or Ty", "Order Co", "Line Number", "Quantity Matched", "UM", "Amount Matched",
                  "Account Number", "Tax Y/N", "Tax Expl", "Tax Area", "Remark"]  # fmt: skip
 MATCH_LEDGER = ["Subledger", "Sub Type"]
+RETAINED = "Retained Amount"  # a subcontract's row's, after its Amount Matched (D-273)
 MATCH_WIDTHS = [16, 6, 10, 26, 10, 9, 10, 32, 10, 8]
 NOT_ON_PO = "Not on the PO"  # a voucher match's G/L line of its own, in its Order Number column (D-265)
 STANDARD_TYPE = "PV"  # Standard Voucher Entry's own document type: any other is said (B-2621)
@@ -131,6 +134,9 @@ class Voucher:
     # them, on top of the amounts matched (D-265)
     matches: list[jde_match.MatchLine] = field(default_factory=list)
     match_tax: float = 0.0
+    # A subcontract's progress billing (D-273): the rows' Retained Amounts, and the amount due as printed (None: none)
+    retained: float = 0.0
+    amount_due: float | None = None
 
     @property
     def lines_total(self) -> float:
@@ -144,7 +150,8 @@ class Voucher:
 
     @property
     def balanced(self) -> bool:
-        return round(self.lines_total + self.added - self.gross, 2) == 0
+        due = self.amount_due is None or round(self.lines_total - self.retained + self.added - self.amount_due, 2) == 0
+        return round(self.lines_total + self.added - self.gross, 2) == 0 and due
 
 
 @dataclass
@@ -243,6 +250,8 @@ def vouchers(
             warnings=warnings, notes=notes,
             matches=keyed.rows if keyed is not None else [],
             match_tax=keyed.tax / 100 if keyed is not None else 0.0,
+            retained=keyed.retained / 100 if keyed is not None else 0.0,
+            amount_due=keyed.due / 100 if keyed is not None and keyed.due is not None and keyed.retained else None,
         ))  # fmt: skip
     return ready, held
 
@@ -292,6 +301,8 @@ def _match_said(matched: po_mod.VoucherMatch | None, warnings: list[str], notes:
     for row in rows:
         where = f"Order {row.order_number} line {row.line}"
         key = (row.order_number, row.order_type, row.order_company, row.line)
+        if row.no_quantity and (row.retainage or row.order_type.upper() == po_mod.SUBCONTRACT):
+            continue  # (a subcontract's lump sum: matched by its amount alone, D-273)
         if row.no_quantity:
             typed = (f"the invoice's {po_mod._qty(row.quantity)}" if row.quantity is not None
                      else "left empty")  # fmt: skip
@@ -377,8 +388,20 @@ def _check(v: Voucher) -> str:
     them = gross (D-265)."""
     if v.po_matched and not v.matches:
         return "PO-matched voucher: JD Edwards distributes it from the receipts"
+    if v.amount_due is not None:  # a subcontract's progress billing (D-273): what is paid now
+        said = f"{v.lines_total:,.2f} - {v.retained:,.2f} + {v.added:,.2f}"
+        return f"{said} = {v.amount_due:,.2f}: balanced" if v.balanced else f"{said} is not {v.amount_due:,.2f}"
     said = f"{v.lines_total:,.2f} + {v.added:,.2f} = {v.gross:,.2f}"
     return f"{said}: balanced" if v.balanced else f"{v.lines_total:,.2f} + {v.added:,.2f} is not {v.gross:,.2f}"
+
+
+def match_columns(v: Voucher) -> list[str]:
+    """A voucher match's columns on the sheet: Voucher Match's, a subcontract's Retained Amount after Amount Matched
+    (D-273), the subledger's two when its PO lines have one (D-268)."""
+    columns = list(MATCH_COLUMNS)
+    if v.amount_due is not None:
+        columns.insert(columns.index("Amount Matched") + 1, RETAINED)
+    return columns + (MATCH_LEDGER if _match_ledger(v) else [])
 
 
 Row = list[tuple[Any, str]]  # a sheet row: four (value, kind) cells
@@ -403,8 +426,10 @@ def _head(v: Voucher, title: str) -> list[Row]:
         [("Tax explanation code", LABEL), (v.tax_code, TEXT), ("Tax rate/area", LABEL), (v.tax_area, TEXT)],
         [("Tax amount", LABEL), (v.tax, MONEY), ("Taxable amount", LABEL), (v.taxable, MONEY)],
         *bank,
-        *([[("Voucher match", LABEL), ("", PLAIN), ("", PLAIN), ("", PLAIN)], [(name, LABEL) for name in
-           MATCH_COLUMNS + (MATCH_LEDGER if _match_ledger(v) else [])]] if v.matches
+        *([[("Retained (held back)", LABEL), (v.retained, MONEY), ("Amount due now", LABEL), (v.amount_due, MONEY)]]
+          if v.amount_due is not None else []),
+        *([[("Voucher match", LABEL), ("", PLAIN), ("", PLAIN), ("", PLAIN)],
+           [(name, LABEL) for name in match_columns(v)]] if v.matches
           else [[("G/L distribution", LABEL), ("", PLAIN), ("", PLAIN), ("", PLAIN)]]),
     ]  # fmt: skip
 
@@ -412,6 +437,8 @@ def _head(v: Voucher, title: str) -> list[Row]:
 def _tail(v: Voucher) -> list[Row]:
     """The check line, then the warnings and notes, each wrapped over as many rows as it needs."""
     said = "Amounts matched + tax on the rows = gross" if v.matches else "G/L lines + recovered tax = gross"
+    if v.amount_due is not None:
+        said = "Amounts matched - retained + tax on the rows = amount due"
     rows: list[Row] = [[("Check", LABEL), (said, PLAIN), (v.lines_total, MONEY), (_check(v), PLAIN)]]
     for label, texts in (("Warning", v.warnings), ("Note", v.notes)):
         for text in texts:
@@ -437,7 +464,8 @@ def _parts(v: Voucher, n: int, count: int, ledger: bool = False) -> list[list[Ro
     with_ledger = _match_ledger(v)
     lines += [[(m.order_number, TEXT) if m.on_po else (NOT_ON_PO, LABEL), (m.order_type, TEXT),
                (m.order_company, TEXT), (m.line, TEXT),
-               (m.quantity, PLAIN), (m.uom, TEXT), (m.amount, MONEY), (m.account, TEXT), (m.taxed, TEXT),
+               (m.quantity, PLAIN), (m.uom, TEXT), (m.amount, MONEY),
+               *([(m.retained, MONEY)] if v.amount_due is not None else []), (m.account, TEXT), (m.taxed, TEXT),
                (m.tax_code, TEXT), (m.tax_area, TEXT), (m.remark, TEXT),
                *([(m.subledger, TEXT), (m.subledger_type, TEXT)] if with_ledger else [])]
               for m in v.matches]  # fmt: skip

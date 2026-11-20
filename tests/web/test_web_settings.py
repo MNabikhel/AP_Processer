@@ -384,6 +384,26 @@ def test_jde_charges_not_on_the_purchase_order_are_held_until_an_account_is_chos
     assert post(client, "/settings/jde", general_form(po_charges="both")).status_code == 400
 
 
+def test_jde_subcontract_progress_billings_are_off_until_ticked_and_their_tax_base_is_chosen(client, store):
+    """D-273: a subcontract's progress billing is held for a person until "Subcontract progress billings" is ticked
+    (the JD Edwards team confirms them first: the checklist asks); what Voucher Match works a retaining row's tax out
+    on is chosen beside it (the whole amount matched by default), a form without the choice keeps it."""
+    text = client.get("/settings/jde").text
+    assert 'name="po_subcontracts" value="1">' in text and "progress billings</b> (order type OS" in text
+    assert f'name="retainage_tax" value="{jde_settings.RETAINAGE_TAX_WHOLE}" checked' in text
+    assert not jde_settings.load(store).po_subcontracts
+    net = jde_settings.RETAINAGE_TAX_NET
+    follow(client, post(client, "/settings/jde", general_form(po_subcontracts="1", retainage_tax=net)))
+    js = jde_settings.load(store)
+    assert (js.po_subcontracts, js.retainage_tax) == (True, net)
+    text = client.get("/settings/jde").text
+    assert 'name="po_subcontracts" value="1" checked>' in text and f'value="{net}" checked' in text
+    follow(client, post(client, "/settings/jde", general_form()))  # unticked; no choice in the form: kept
+    js = jde_settings.load(store)
+    assert (js.po_subcontracts, js.retainage_tax) == (False, net)
+    assert post(client, "/settings/jde", general_form(retainage_tax="both")).status_code == 400
+
+
 def test_jde_remarks_choice_is_saved_and_a_form_without_it_keeps_it(client, store):
     """D-210: what the vouchers' two remarks carry is chosen on the page; AP Coder's references until it is."""
     assert jde_settings.load(store).remarks == jde_settings.REMARKS_REFERENCE
