@@ -332,12 +332,12 @@ def test_one_file_alone_is_read_as_it_always_was(app, client, store, tmp_path):
 
 # A made-up Vancouver dinner with a 20% terminal tip printed after the GST, and a book: GST only, the PST to
 # self-assess (D-310: neither name nor line says a meal, so the tip is told as a share of its receipt).
-DINNER = ["Cedarline Kitchen & Bar", "410 Harbour Road, Vancouver, BC V5N 2T2", "GST No. 811223344 RT0001", "",
-          "Receipt No: 3391", "Date: 2026-05-05", "", "HALIBUT|38.00", "RIBEYE|52.00", "",
-          "SUBTOTAL|90.00", "GST 5%|4.50", "TIP|18.00", "TOTAL|112.50"]  # fmt: skip
-BOOK = ["Larchwood Books", "88 Alder Street, Vancouver, BC V6E 1A9", "GST No. 897152666 RT0001", "",
-        "Receipt No: 55120", "Date: 2026-05-06", "", "Hardcover book|25.00", "",
-        "Subtotal|25.00", "GST 5%|1.25", "Total|26.25"]  # fmt: skip
+VANCOUVER_DINNER = ["Cedarline Kitchen & Bar", "410 Harbour Road, Vancouver, BC V5N 2T2",
+                    "GST No. 811223344 RT0001", "", "Receipt No: 3391", "Date: 2026-05-05", "", "HALIBUT|38.00",
+                    "RIBEYE|52.00", "", "SUBTOTAL|90.00", "GST 5%|4.50", "TIP|18.00", "TOTAL|112.50"]  # fmt: skip
+VANCOUVER_BOOK = ["Larchwood Books", "88 Alder Street, Vancouver, BC V6E 1A9", "GST No. 897152666 RT0001", "",
+                  "Receipt No: 55120", "Date: 2026-05-06", "", "Hardcover book|25.00", "",
+                  "Subtotal|25.00", "GST 5%|1.25", "Total|26.25"]  # fmt: skip
 
 
 def test_a_claims_receipt_keeps_the_tip_it_found_and_its_voucher_owes_the_pst_on_every_line(app, client, store,
@@ -346,7 +346,7 @@ def test_a_claims_receipt_keeps_the_tip_it_found_and_its_voucher_owes_the_pst_on
     invoice with no supplier named, did not: the tip was no longer the last line and was taken as a share of both
     receipts. The tip, out of scope, beside lines that owe the PST, made the voucher's PST owed on some lines only,
     and JD Edwards' self-assessed code was held. Each receipt's tip is now a share of its own lines."""
-    paths = [receipt(tmp_path, "dinner.pdf", DINNER), receipt(tmp_path, "book.pdf", BOOK)]
+    paths = [receipt(tmp_path, "dinner.pdf", VANCOUVER_DINNER), receipt(tmp_path, "book.pdf", VANCOUVER_BOOK)]
     assert upload(client, paths, voucher="claim").json()["ok"]
     assert finished(app, client)["result"]["ok"] == 1
     (invoice,) = stored(store)
