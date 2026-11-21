@@ -168,7 +168,7 @@ bundle is the one step that downloads). CI's online jobs set it; its offline-bun
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[ocr,dev]"
+pip install -e ".[ocr,dev,parallel]"
 python -m ap_coder doctor --online   # the same checks as a start, as a report to paste (troubleshooting)
 python -m ap_coder serve             # the dashboard: http://127.0.0.1:8501 (or the next free port)
 python scripts/pilot_check.py        # reads the ten samples offline and compares them with their answers

@@ -67,9 +67,9 @@ tag list names commits a route B repository doesn't have). A schema raised needs
 releases from before the handoff, whose history isn't there, keep the files they have.
 
 **Python and packages.** Python 3.11 to 3.14 (3.12 recommended). With a package index reachable:
-`python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"`. `pyproject.toml` asks only for minimum versions;
-the exact set this release was tested with is `docs/tested-packages.txt` (`pip install -c docs/tested-packages.txt
--e ".[ocr,dev]"` when a newer package breaks something).
+`python -m venv .venv`, activate it, `pip install -e ".[ocr,dev,parallel]"`. `pyproject.toml` asks only for minimum
+versions; the exact set this release was tested with is `docs/tested-packages.txt` (`pip install -c
+docs/tested-packages.txt -e ".[ocr,dev,parallel]"` when a newer package breaks something).
 With no internet, use a wheelhouse. The person who handed this over may also have given you the laptop release's
 offline install zip (`APProcessor-offline-0.3.0-<date>.zip` of the release `v0.3.0-pilot9`; Windows, Python
 3.11–3.14): its `wheelhouse/` folder installs everything on Windows with `pip install --no-index --find-links <that
