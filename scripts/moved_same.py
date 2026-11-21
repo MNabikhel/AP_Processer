@@ -160,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("ref", help="the code moved from (a commit, a branch: origin/main)")
     parser.add_argument("--docstrings", action="store_true", help="leave the docstrings out of the comparison")
     parser.add_argument("under", nargs="*", help="only the files under these paths (default: all)")
-    args = parser.parse_args(argv)
+    args = parser.parse_intermixed_args(argv)  # (the paths after --docstrings too: Python 3.11, B-3025)
     keep = not args.docstrings
     try:
         old_files, new_files = changed_files(args.ref, args.under)
