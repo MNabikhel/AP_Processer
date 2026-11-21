@@ -187,13 +187,31 @@ def test_slow_tests_that_take_long_together_are_left_to_ci(monkeypatch, capsys):
     args = check.rules_args(sorted(check.RULES), times)
     assert probe in args and "tests/meta/test_code_rules.py::test_no_sql_placeholders_are_made_one_per_item_of_a_list" \
         not in args  # fmt: skip
-    assert check.estimate(sorted(check.RULES), times, slow=False) < 40
+    assert check.estimate(sorted(check.RULES), times, slow=False, long=check.long_slow(["tests/meta"], times)) < 40
     ran = []
     monkeypatch.setattr(check, "pytest", lambda args: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
     assert check.main(["tests/erp/test_accruals.py", "tests/coding/test_tax.py", "--serial", "--no-walk"]) == 0
     left = [ran[1][i + 1] for i, a in enumerate(ran[1]) if a == "--deselect"]
     assert left and all(t.startswith("tests/erp/test_accruals.py::") for t in left)  # (test_tax.py's: none, 0 s)
     assert "tests/erp/test_accruals.py: its slow tests left to CI (about 49 s)" in capsys.readouterr().out
+
+
+def test_the_estimate_counts_what_runs_a_page_scripts_tests_slow_ones_and_all(monkeypatch, capsys):
+    """B-3027: for a changed page script nothing is left to CI (its browser tests are asked for), yet the estimate
+    dropped a long-slow file's slow seconds: "about 1 s" for a run of 27 and one core. Only the files whose slow tests
+    are really left out are counted without them."""
+    times = {"tests/x/test_a.py": [30.0, 1.0], "tests/x/test_b.py": [3.0, 2.0]}
+    assert check.estimate(["tests/x/test_a.py", "tests/x/test_b.py"], times) == 33.0  # (all of them run)
+    assert check.estimate(["tests/x/test_a.py"], times, long=["tests/x/test_a.py"]) == 1.0  # (its slow ones: CI's)
+    texts, real = check.read_tests()
+    monkeypatch.setattr(check, "read_tests", lambda: (texts, {**real, "tests/web/test_web_invoice.py": [30.0, 1.0]}))
+    ran = []
+    monkeypatch.setattr(check, "pytest", lambda args: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
+    monkeypatch.setattr(check.importlib.util, "find_spec", lambda name: object())  # (as if pytest-xdist were there)
+    monkeypatch.setenv("AP_CHECK_WORKERS", "2")
+    assert check.main(["ap_coder/web/static/js/invoice.js", "--no-walk"]) == 0
+    tests = ran[-1]
+    assert "tests/web/test_web_invoice.py" in tests and "--deselect" not in tests and tests[:2] == ["-n", "2"]
 
 
 def test_a_long_run_goes_on_several_cores(monkeypatch, capsys):

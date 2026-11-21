@@ -365,16 +365,15 @@ def named_tests(names: set[str], test_texts: dict[Path, str]) -> dict[str, set[P
     return found
 
 
-def estimate(tests: list[str], times: dict[str, list[float]], slow: bool = True) -> float:
+def estimate(tests: list[str], times: dict[str, list[float]], slow: bool = True, long: list[str] = ()) -> float:
     """The seconds these test files (or folders) take by tests/test_times.json, with their slow tests or not
-    (tests/meta's always); ``UNTIMED`` each for a file not timed yet."""
+    (tests/meta's always), but for the files ``long`` whose slow tests are left out; ``UNTIMED`` each for a file not
+    timed yet."""
     total = 0.0
     for test in tests:
         whole = slow or test == "tests/meta" or test.startswith("tests/meta/")
-        inside = [both for path, both in times.items() if path == test or path.startswith(test + "/")]
-        total += (
-            sum(both[0 if whole and both[0] - both[1] <= SLOW_SECONDS else 1] for both in inside) if inside else UNTIMED
-        )
+        inside = [(path, both) for path, both in times.items() if path == test or path.startswith(test + "/")]
+        total += sum(both[0 if whole and path not in long else 1] for path, both in inside) if inside else UNTIMED
     return total
 
 
@@ -513,9 +512,11 @@ def run_rules(rules: list[str], times: dict[str, list[float]], serial: bool = Fa
     slow tests too, no browser, none of CI's whole walks (``rules_args``), on several cores when long. Whether they
     passed."""
     print("Rules:", " ".join(rules), flush=True)
-    for path in long_slow([rule for rule in rules if rule.startswith("tests/meta")], times):
+    long = long_slow([rule for rule in rules if rule.startswith("tests/meta")], times)
+    for path in long:
         print(f"  {path}: its slow tests left to CI (about {times[path][0] - times[path][1]:.0f} s)")
-    return not run_tests(rules_args(rules, times), rules, estimate(rules, times, slow=False), serial, retry=False)
+    seconds = estimate(rules, times, slow=False, long=long)
+    return not run_tests(rules_args(rules, times), rules, seconds, serial, retry=False)
 
 
 def main(argv: list[str]) -> int:
@@ -564,7 +565,7 @@ def main(argv: list[str]) -> int:
         long = [] if browser or not tier or picked is None else long_slow(picked, times)
         for path in long:
             print(f"{path}: its slow tests left to CI (about {times[path][0] - times[path][1]:.0f} s)")
-        seconds = estimate(list(times) if picked is None else picked, times, slow=bool(tier))
+        seconds = estimate(list(times) if picked is None else picked, times, slow=bool(tier), long=long)
         left = [test for path in long for test in slow_tests(path)]
         failed |= run_tests(tier, picked or [], seconds, serial, retry=not browser, left=left)
     for warning in near_limits(files):
