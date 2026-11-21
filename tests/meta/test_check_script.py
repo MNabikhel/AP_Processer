@@ -183,7 +183,7 @@ def test_slow_tests_that_take_long_together_are_left_to_ci(monkeypatch, capsys):
     probe = "tests/meta/test_same_behaviour.py::test_the_jde_and_pages_probes_give_the_same_output_each_run"
     whole, fast = times["tests/meta/test_same_behaviour.py"]
     assert whole - fast > check.SLOW_SECONDS  # (53 s measured, 0.7 s of it not slow)
-    assert check.slow_tests("tests/meta/test_same_behaviour.py") == [probe]  # (marked so in the file)
+    assert probe in check.slow_tests("tests/meta/test_same_behaviour.py")  # (marked so, with others: B-3024)
     args = check.rules_args(sorted(check.RULES), times)
     assert probe in args and "tests/meta/test_code_rules.py::test_no_sql_placeholders_are_made_one_per_item_of_a_list" \
         not in args  # fmt: skip
