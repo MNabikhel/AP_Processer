@@ -429,22 +429,48 @@ SUITE_TIMES = {
 }
 
 
+def suite_time_problems(times: dict[str, list[float]]) -> list[str]:
+    """What the places giving the suite's time say that ``times`` (tests/test_times.json's) does not. The default
+    run's figure is its sum within a quarter (it has no browser test: they are all slow); the whole suite's, with the
+    browser tests skipping, is the default run's or more and the whole sum's, a quarter more, or less: refreshed where
+    the browser tests run, that sum has their time too (B-3031)."""
+    fast, whole = sum(t[1] for t in times.values()) / 60, sum(t[0] for t in times.values()) / 60
+    found = []
+    for place, start in SUITE_TIMES.items():
+        text = (CI.parents[2] / place).read_text(encoding="utf-8")
+        if start not in text:
+            found.append(f"{place}: no {start!r}")
+            continue
+        said = text[text.index(start) :][:500]
+        minutes = [int(m) for m in re.findall(r"(\d+) min(?:utes)?\b", said)[:2]]
+        if not (len(minutes) == 2 and abs(minutes[0] - fast) <= fast / 4 and fast <= minutes[1] <= whole * 1.25):
+            found.append(f"{place} says {minutes} minutes: tests/test_times.json, the default run {round(fast)}, the "
+                         f"whole suite {round(whole)} with the time of whichever browser tests ran there")  # fmt: skip
+        if "browser tests included" in said:
+            found.append(f"{place}: the browser tests are in its figure")
+    return found
+
+
+def committed_times() -> dict[str, list[float]]:
+    return json.loads((CI.parents[2] / "tests" / "test_times.json").read_text(encoding="utf-8"))
+
+
 def test_every_place_giving_the_suites_time_gives_what_its_tests_take():
     """B-3015: the docs gave 15 and 37 minutes while pyproject.toml and README.md still said 7 and 28, and HANDOFF and
     REFERENCE.md had the browser tests in the 37, which tests/test_times.json measured with them skipping (their
     files at 0 s: they need Playwright and Chromium). Each place gives the sums of tests/test_times.json, the default
     run's (the fast tier's) and the whole suite's, within a quarter, and none says the browser tests are in them."""
-    whole = json.loads((CI.parents[2] / "tests" / "test_times.json").read_text(encoding="utf-8")).values()
-    measured = (sum(t[1] for t in whole) / 60, sum(t[0] for t in whole) / 60)
-    for place, start in SUITE_TIMES.items():
-        text = (CI.parents[2] / place).read_text(encoding="utf-8")
-        assert start in text, place
-        said = text[text.index(start) :][:500]
-        minutes = [int(m) for m in re.findall(r"(\d+) min(?:utes)?\b", said)[:2]]
-        assert len(minutes) == 2 and all(abs(m - t) <= t / 4 for m, t in zip(minutes, measured, strict=True)), (
-            f"{place} says {minutes} minutes, tests/test_times.json {[round(t) for t in measured]}"
-        )
-        assert "browser tests included" not in said, place
+    assert suite_time_problems(committed_times()) == []
+
+
+def test_the_suites_time_holds_after_a_refresh_made_where_the_browser_tests_run():
+    """B-3031: the documented refresh (``pytest -m "" --junitxml``, then ``python -m tests.times``) on a computer with
+    Playwright and Chromium, as this cloud image, adds the browser tests' time, about 13 minutes, to the whole
+    suite's: the docs' "37 minutes, the browser tests skipping" stay right, and the check must not ask for 50."""
+    refreshed = committed_times()
+    refreshed["tests/web/test_web_picker.py"] = [refreshed["tests/web/test_web_picker.py"][0] + 13 * 60,
+                                                 refreshed["tests/web/test_web_picker.py"][1]]  # fmt: skip
+    assert suite_time_problems(refreshed) == []
 
 
 def test_an_older_versions_test_file_left_in_tests_is_not_run(tmp_path):
@@ -504,7 +530,8 @@ def test_the_nightly_a_run_by_hand_and_a_merge_never_cancel_each_other():
 def test_a_pull_request_runs_the_suite_on_ubuntu_and_the_pilot_laptops_windows_and_main_runs_everything():
     """D-260: a pull request runs the whole suite four times (Ubuntu 3.12, and Windows 3.14 with OCR: the pilot
     laptop's; D-330: Windows 3.12 with OCR too, as Windows before Python 3.13 behaves otherwise; D-334: Ubuntu 3.11,
-    the floor, whose standard library behaves otherwise), every part of each, and the Windows launcher jobs on 3.14
+    the floor, whose standard library behaves as 3.12.0 to 3.12.6's and 3.13.0's do, which no cell runs: each takes
+    its Python's newest patch), every part of each, and the Windows launcher jobs on 3.14
     alone; Mac jobs and the other Pythons run on main (each merge, nightly), where a build is released only once all
     of them passed (.github/workflows/builds.yml)."""
     workflow = yaml.safe_load(CI.read_text(encoding="utf-8"))
