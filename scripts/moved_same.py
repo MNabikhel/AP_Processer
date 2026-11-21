@@ -5,6 +5,7 @@ behaviour, the tests the rest.
 
     python scripts/moved_same.py origin/main               the .py files changed since origin/main (and new ones)
     python scripts/moved_same.py origin/main --docstrings  the same, the docstrings left out (a change of words only)
+    python scripts/moved_same.py origin/main ap_coder      only the files under ap_coder/
 
 A definition is said "changed" (found by its name, its code not the same), "gone" (no longer found), "twice" (found
 more often than before) or "new" (not there before). Exit code 0 when each one is found once and the same and none is
@@ -30,18 +31,20 @@ def git(*args: str) -> str:
     return done.stdout
 
 
-def changed_files(ref: str) -> tuple[list[str], list[str]]:
+def changed_files(ref: str, under: list[str]) -> tuple[list[str], list[str]]:
     """(the .py files the change touched as they were at ``ref``, the same files as this checkout has them, new ones
     and those not yet added to git among them)."""
     before, after = [], []
-    for line in git("diff", "--name-status", "-M", ref, "--").splitlines():
+    for line in git("diff", "--name-status", "-M", ref, "--", *under).splitlines():
         status, *paths = line.split("\t")
         old, new = paths[0], paths[-1]
         if status[0] in "MDR" and old.endswith(".py"):
             before.append(old)
         if status[0] in "MAR" and new.endswith(".py"):
             after.append(new)
-    after += [p for p in git("ls-files", "--others", "--exclude-standard").splitlines() if p.endswith(".py")]
+    after += [
+        p for p in git("ls-files", "--others", "--exclude-standard", "--", *under).splitlines() if p.endswith(".py")
+    ]
     return before, after
 
 
@@ -103,10 +106,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("ref", help="the code moved from (a commit, a branch: origin/main)")
     parser.add_argument("--docstrings", action="store_true", help="leave the docstrings out of the comparison")
+    parser.add_argument("under", nargs="*", help="only the files under these paths (default: all)")
     args = parser.parse_args(argv)
     keep = not args.docstrings
     try:
-        old_files, new_files = changed_files(args.ref)
+        old_files, new_files = changed_files(args.ref, args.under)
         before: dict[str, list[tuple[str, str]]] = {}
         for path in old_files:
             for name, found in definitions(git("show", f"{args.ref}:{path}"), path, keep).items():

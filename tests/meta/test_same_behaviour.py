@@ -124,6 +124,8 @@ def test_a_move_word_for_word_is_the_same_and_a_token_changed_on_the_way_is_said
     (repo / "c.py").write_text('"""C."""\n\n\ndef two(x):\n    return x + 2\n', encoding="utf-8")
     assert moved.main(["HEAD", "--docstrings"]) == 1
     assert "  twice: def two (c.py)\n" in capsys.readouterr().out
+    assert moved.main(["HEAD", "--docstrings", "a.py", "b.py"]) == 0  # only these files
+    capsys.readouterr()
     assert moved.main(["no-such-ref"]) == 2
 
 
