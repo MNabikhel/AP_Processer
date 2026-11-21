@@ -52,10 +52,12 @@ SHARED = {"tests/conftest.py", "tests/webclient.py", "tests/pdfs.py", "tests/scr
           "tests/slow_tests.txt", "tests/stores.py", "pyproject.toml"}  # fmt: skip
 # The rules that check the whole tree (D-329): the code rules (all of tests/meta, its slow tests too, no browser),
 # the offline guard's network touchpoints (its quick tests), the store's parts, a help entry for every check code, a
-# rule for every route and the built-in roles' access. A change far from them breaks them (a module moved, a script
-# added), so any change to the app, the scripts or the tests runs them all: about 30 seconds.
+# rule for every route, the built-in roles' access and an old database for each schema since 27 (that one test: a
+# schema raised in _base.py alone). A change far from them breaks them (a module moved, a script added), so any change
+# to the app, the scripts or the tests runs them all: about 30 seconds.
 RULES = ("tests/meta", "tests/offline/test_offline_guard.py", "tests/core/test_store_package.py",
-         "tests/ops/test_help.py", "tests/web/test_roles.py", "tests/web/test_role_permissions.py")  # fmt: skip
+         "tests/core/test_migrations.py::test_every_schema_since_pr_99s_has_an_old_database", "tests/ops/test_help.py",
+         "tests/web/test_roles.py", "tests/web/test_role_permissions.py")  # fmt: skip
 # The rules every doc is held to (docs/, CLAUDE.md, README.md, .claude/agents/, and .ignore): its lines, the log
 # entries' numbers (the second one only once it is there): a changed doc runs them, and the tests that open it by its
 # path.
@@ -93,7 +95,8 @@ WALK_SECONDS = 2400  # the walk's own waits end it well before; this only stops 
 def changed_files() -> list[str] | None:
     """Changed, new and deleted files since the last commit; None outside a git checkout."""
     try:
-        done = subprocess.run(["git", "status", "--porcelain", "-uall"], cwd=ROOT, capture_output=True, text=True)
+        done = subprocess.run(["git", "status", "--porcelain", "-uall"], cwd=ROOT, capture_output=True,
+                              encoding="utf-8", errors="replace")  # fmt: skip
     except OSError:
         return None
     if done.returncode:
@@ -238,9 +241,11 @@ def is_rule(test: str) -> bool:
 def changed_lines(f: str) -> tuple[set[int], set[int]] | None:
     """The lines of ``f`` the diff since the last commit (``git diff -U0``) touches: of the file as it is, and those
     taken out of it as it was; None for a file git doesn't have yet (all of it new)."""
-    try:
-        known = subprocess.run(["git", "ls-files", "--", f], cwd=ROOT, capture_output=True, text=True)
-        diff = subprocess.run(["git", "diff", "-U0", "HEAD", "--", f], cwd=ROOT, capture_output=True, text=True)
+    try:  # (git writes UTF-8, whatever the code page Windows reads with by default before Python 3.15)
+        known = subprocess.run(["git", "ls-files", "--", f], cwd=ROOT, capture_output=True, encoding="utf-8",
+                               errors="replace")  # fmt: skip
+        diff = subprocess.run(["git", "diff", "-U0", "HEAD", "--", f], cwd=ROOT, capture_output=True,
+                              encoding="utf-8", errors="replace")  # fmt: skip
     except OSError:
         return None
     if known.returncode or diff.returncode or not known.stdout.strip():
@@ -279,7 +284,7 @@ def changed_functions(f: str) -> set[str]:
     lines, taken_out = changed
     names = {node.name for node in now if lines & span(node)}
     if taken_out:
-        was = subprocess.run(["git", "show", f"HEAD:{f}"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+        was = subprocess.run(["git", "show", f"HEAD:{f}"], cwd=ROOT, capture_output=True, encoding="utf-8",
                              errors="replace")  # fmt: skip
         names |= {node.name for node in functions(was.stdout) if taken_out & span(node)}
     return names
@@ -359,8 +364,9 @@ def walk() -> tuple[bool, str]:
 
 def pytest(args: list[str]) -> subprocess.CompletedProcess:
     env = {**os.environ, "AP_TEST_OLD_WINDOWS_CLOCK": "1"} if OLD_WINDOWS_CLOCK else None
+    # (pytest writes a pipe in the code page this reads it with, unlike git and ruff: no encoding; a byte replaced)
     return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *args], cwd=ROOT,
-                          capture_output=True, text=True, env=env)  # fmt: skip
+                          capture_output=True, text=True, errors="replace", env=env)  # fmt: skip
 
 
 def workers(serial: bool) -> int:
@@ -415,8 +421,9 @@ def main(argv: list[str]) -> int:
     failed = False
     python = [f for f in files if f.endswith(".py") and (ROOT / f).is_file()]
     if python:
-        for cmd in (["ruff", "check", "-q", *python], ["ruff", "format", "--check", "-q", *python]):
-            done = subprocess.run([sys.executable, "-m", *cmd], cwd=ROOT, capture_output=True, text=True)
+        for cmd in (["ruff", "check", "-q", *python], ["ruff", "format", "--check", "-q", *python]):  # (in UTF-8)
+            done = subprocess.run([sys.executable, "-m", *cmd], cwd=ROOT, capture_output=True, encoding="utf-8",
+                                  errors="replace")  # fmt: skip
             if done.returncode:
                 failed = True
                 print((done.stdout + done.stderr).strip())
@@ -460,4 +467,5 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(errors="replace")  # (a Windows pipe's code page has no → for ruff's words)
     sys.exit(main(sys.argv[1:]))

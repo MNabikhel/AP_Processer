@@ -125,6 +125,70 @@ def test_a_number_both_branches_took_is_given_anew_to_the_later_branchs_entry_an
     assert git("status", "--porcelain") == ""
 
 
+def test_entry_files_two_branches_add_merge_with_plain_git(repo):
+    """Each entry a file of its own (D-328): what two branches add merges with no conflict, where the same entries
+    added to the end of the bug log conflict."""
+    b12, b13 = "- **B-12** · one · low · `t1`\n", "- **B-13** · two · low · `t2`\n"
+    branch("one", {"docs/bugs/B-12.md": b12, "docs/decisions/D-6.md": "- **D-6** · **Six.**\n  - **Why:** six.\n"})
+    branch("two", {"docs/bugs/B-13.md": b13})
+    branch("log-one", {"docs/BUGS.md": BUGS + b12})
+    branch("log-two", {"docs/BUGS.md": BUGS + b13})
+
+    git("merge", "-q", "--no-edit", "one")
+    git("merge", "-q", "--no-edit", "two")
+    assert (text("docs/bugs/B-12.md"), text("docs/bugs/B-13.md")) == (b12, b13) and git("status", "--porcelain") == ""
+
+    git("checkout", "-q", "log-one")
+    assert subprocess.run(["git", "merge", "-q", "--no-edit", "log-two"], capture_output=True).returncode == 1
+    git("merge", "--abort")
+
+
+def test_two_clones_that_took_one_number_have_the_later_branchs_file_renamed_with_its_mentions(repo, capsys):
+    """Separate clones share no reserved numbers (scripts/new_entry.py): both may write B-12. The later branch's file
+    is given the next number this clone has not reserved, the file renamed and its mentions with it."""
+    here = {"docs/bugs/B-12.md": "- **B-12** · here's · low · `t1`\n",
+            "docs/decisions/D-6.md": "- **D-6** · **Here.**\n"}  # fmt: skip
+    there_bug = "- **B-12** · a quite different failure, found there (D-6) · high · `t9`\n"
+    there_choice = "- **D-6** · **There, unlike.**\n  - **Why:** B-12.\n"
+    branch("here", {**here, "here.py": "RATE = 1  # B-12\n"})
+    branch("there", {"docs/bugs/B-12.md": there_bug, "docs/decisions/D-6.md": there_choice,
+                     "tests/test_there.py": '"""B-12: there\'s test (D-6)."""\n'})  # fmt: skip
+    reserved = Path(".git") / "ap-numbers"
+    reserved.mkdir()
+    (reserved / "B-13").write_text("a worktree of this clone\n")
+
+    assert combine.main(["here", "there", "--onto", "main", "--no-check"]) == 0
+
+    assert text("docs/bugs/B-12.md") == here["docs/bugs/B-12.md"] and text("here.py") == "RATE = 1  # B-12\n"
+    assert text("docs/bugs/B-14.md") == there_bug.replace("B-12", "B-14").replace("D-6", "D-7")
+    assert text("docs/decisions/D-6.md") == here["docs/decisions/D-6.md"]
+    assert text("docs/decisions/D-7.md") == there_choice.replace("B-12", "B-14").replace("D-6", "D-7")
+    assert text("tests/test_there.py") == '"""B-14: there\'s test (D-7)."""\n'
+    assert sorted(p.name for p in reserved.iterdir()) == ["B-13", "B-14", "D-7"]
+    assert git("show", "there:docs/bugs/B-12.md") + "\n" == there_bug  # the branch itself is left as it was
+    said = capsys.readouterr().out
+    assert "there's B-12 is B-14 now, D-6 is D-7 now" in said and "docs/bugs/B-12.md (now docs/bugs/B-14.md)" in said
+    assert git("status", "--porcelain") == ""
+
+
+def test_an_entry_a_branch_made_before_the_cut_over_added_to_a_frozen_log_is_moved_to_its_file(repo, monkeypatch,
+                                                                                               capsys):  # fmt: skip
+    monkeypatch.setattr(combine, "FROZEN", {"B": 11, "D": 5})  # (the logs here stop at B-11 and D-5)
+    old_choice = "- **D-6** · **The old one's.**\n  - **Why:** old.\n"
+    branch("new", {"docs/bugs/B-12.md": "- **B-12** · new · low · `t1`\n"})
+    branch("old", {"docs/BUGS.md": BUGS + "- **B-12** · old, unlike · high · `t2`\n",
+                   "docs/decisions.md": DECISIONS + old_choice})  # fmt: skip
+
+    assert combine.main(["new", "old", "--onto", "main", "--no-check"]) == 0
+
+    assert (text("docs/BUGS.md"), text("docs/decisions.md")) == (BUGS, DECISIONS)
+    assert text("docs/bugs/B-12.md") == "- **B-12** · new · low · `t1`\n"
+    assert text("docs/bugs/B-13.md") == "- **B-13** · old, unlike · high · `t2`\n"  # (B-12 was new's)
+    assert text("docs/decisions/D-6.md") == old_choice
+    assert "Moved B-13 from docs/BUGS.md, which stops at B-11, into files of their own." in capsys.readouterr().out
+    assert git("status", "--porcelain") == ""
+
+
 def test_a_conflict_in_code_stops_with_the_merge_left_for_a_person(repo, capsys):
     branch("one", {"app.py": "RATE = 2\n", "docs/BUGS.md": BUGS + "- **B-13** · one · low · `t3`\n",
                    "docs/GUIDE.md": "Step 1: open it.\n"})  # fmt: skip

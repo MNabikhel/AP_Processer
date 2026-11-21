@@ -62,7 +62,9 @@ the placeholder back before the first commit: `printf '$Format:%%h %%cI$\n' > ap
 The decisions and bugs are written in full in `docs/` (and `docs/archive/`), so the reasons survive route B; the
 commit messages don't. On route B, `doctor` and `/healthz` report the new commit, not the handoff's: the zip's
 checksum (`SHA256SUMS.txt`) is what proves the files are the release's. Drop `.github/workflows/release.yml` (its
-tag list names commits a route B repository doesn't have).
+tag list names commits a route B repository doesn't have). A schema raised needs an old database for each release
+(`tests/core/test_migrations.py` says when): list the release in `RELEASES` of `scripts/old_schemas.py` and run it; the
+releases from before the handoff, whose history isn't there, keep the files they have.
 
 **Python and packages.** Python 3.11 to 3.14 (3.12 recommended). With a package index reachable:
 `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"`. `pyproject.toml` asks only for minimum versions;
@@ -149,7 +151,7 @@ ruff check ap_coder tests scripts && ruff format --check ap_coder tests scripts
 tests on Linux (Python 3.11–3.14) and Windows (3.11–3.14, the slow ones in 3 shards), lint and `pip-audit`, browser
 tests (Chromium), the installer and the double-click launcher on Windows, GitHub's ZIP on Windows, the offline
 bundle on Windows and macOS with the internet cut off (installed with an LM Studio stand-in, then the demo story),
-updates from three older versions on Linux, macOS and Windows. A pull request runs a lean set (D-260): the suite on Linux 3.12 and Windows 3.14, the Windows launcher jobs on 3.14, no Mac; main runs everything after each merge and nightly, and a build is released only once it passed. A second file, `.github/workflows/release.yml`, runs
+updates from three older versions on Linux, macOS and Windows. A pull request runs a lean set (D-260): the suite on Linux 3.12 and on Windows 3.12 and 3.14 (D-330), the Windows launcher jobs on 3.14, no Mac; main runs everything after each merge and nightly, and a build is released only once it passed. A second file, `.github/workflows/release.yml`, runs
 only when it or `.github/release-tags.txt` changes: the release's offline zip on Windows with the real LM Studio
 (models on the CPU: 60 to 90 minutes, once per pilot release: a later run reuses a passed check, D-130), then the
 release tags (D-129). On another CI system (Azure DevOps, GitLab...), port at
@@ -575,12 +577,15 @@ From `CLAUDE.md`, with why:
   connection gets the same treatment: off by default, an Admin switches it on, one named address, a test in
   `tests/offline/` that it reaches nothing else.
 - **No company data in the repository.** It lives in the data folder; keep `.gitignore` as it is.
-- **A bug fix starts with a failing test**, then the fix, then one line at the end of `docs/BUGS.md` (format at its
-  top; the next number is after the last `B-` line). A suspicion that didn't reproduce is an `N-` line.
-- **Significant choices go in `docs/decisions.md`**, one entry each (next `D-` number, lines of 120 characters at
-  most), and are named in the pull request. Never renumber; a reversed decision is marked "replaced by D-NN". Read
-  the decisions before changing something that looks odd: most odd things have a reason there (full texts of D-01 to
-  D-124 in `docs/archive/decisions-2026-10.md`).
+- **A bug fix starts with a failing test**, then the fix, then its entry: `python scripts/new_entry.py B 'what broke ·
+  severity · test'` (single quotes; words holding a ', or on Windows: `--file entry.txt`) takes the next number and
+  writes `docs/bugs/B-NNNN.md` (D-328; the format at the top of `docs/BUGS.md`, which keeps B-1442 to B-2997, frozen).
+  A suspicion that didn't reproduce is an `N-` note: `python scripts/new_entry.py N 'what was suspected · checked'`.
+- **Significant choices get an entry too**, `docs/decisions/D-NNN.md` from `python scripts/new_entry.py D --file
+  entry.md` (the format at the top of `docs/decisions.md`, lines of 120 characters at most), and are named in the pull
+  request. Never renumber; a reversed decision is marked "replaced by D-NN". Read the decisions before changing
+  something that looks odd: most odd things have a reason there (`docs/decisions.md` to D-327, then
+  `docs/decisions/`; full texts of D-01 to D-124 in `docs/archive/decisions-2026-10.md`).
 - **Plain English in what people read** (the dashboard, guides): "pilot tester" for the person running the pilot.
 - **Every check code needs its help** in `ops/help.py` (`tests/ops/test_help.py` enforces it); **every web route
   needs a role rule** in `web/roles.py` (`tests/web/test_roles.py` fails until it has one).

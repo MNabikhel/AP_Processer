@@ -11,20 +11,8 @@ def test_no_doc_line_is_cut_off_when_read():
 
 
 def test_decisions_are_wrapped():
-    for path in [ROOT / "docs" / "decisions.md", *ROOT.glob("docs/archive/decisions-*.md")]:
+    """Also each decision's own file (D-328; the numbers and the frozen logs: tests/meta/test_log_entries.py)."""
+    for path in [ROOT / "docs" / "decisions.md", *ROOT.glob("docs/archive/decisions-*.md"),
+                 *ROOT.glob("docs/decisions/*.md")]:  # fmt: skip
         text = path.read_text(encoding="utf-8")
         assert max(len(line) for line in text.splitlines()) <= 120, path.name
-
-
-def test_the_newest_bug_and_decision_numbers_are_found_in_the_short_files():
-    """``grep -o "B-[0-9]*" docs/BUGS.md | tail -1`` (CLAUDE.md) gives the last number used, the archive's included."""
-    import re
-
-    def last(pattern, *paths):
-        return max(int(n) for p in paths for n in re.findall(pattern, p.read_text(encoding="utf-8")))
-
-    archive = ROOT / "docs" / "archive"
-    bugs = re.findall(r"B-(\d+)", (ROOT / "docs" / "BUGS.md").read_text(encoding="utf-8"))
-    assert int(bugs[-1]) == last(r"B-(\d+)", ROOT / "docs" / "BUGS.md", *archive.glob("bugs-*.md"))
-    assert last(r"D-(\d+)", ROOT / "docs" / "decisions.md") == last(r"D-(\d+)", *archive.glob("decisions-*.md"),
-                                                                     ROOT / "docs" / "decisions.md")  # fmt: skip

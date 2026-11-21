@@ -534,16 +534,36 @@ def test_the_xlsx_export_keeps_formula_like_text_as_text(store):
 # --- 10. No one's own folder in the docs ----------------------------------------------------------------------------
 
 
+def _own_folders_named(root) -> list[str]:
+    """The developers' own folders named in the docs under ``root``: README.md, CLAUDE.md, those in docs/ and the
+    decisions (a file each in docs/decisions/ from D-328). The bugs (docs/BUGS.md, and docs/bugs/ from B-2998, which no
+    glob here reaches) are left out: a bug's line quotes the path it was about (B-1552's ``C:\\Users\\ann\\...``)."""
+    import re
+
+    own = re.compile(r"/home/(?!<)[\w.-]+/|/Users/(?!<|you\b)[\w.-]+/|[A-Z]:\\Users\\(?!<|you\\)[\w.-]+\\")
+    docs = [*root.glob("*.md"), *(root / "docs").glob("*.md"), *(root / "docs" / "decisions").glob("*.md")]
+    return [f"{p.relative_to(root).as_posix()}: {m.group(0)}" for p in docs if p.name != "BUGS.md"
+            for m in own.finditer(p.read_text(encoding="utf-8"))]  # fmt: skip
+
+
 def test_the_docs_name_no_one_s_own_folder():
     """A path in the docs is a generic one (``C:\\Users\\<you>``, ``~/APCoder``), never a developer's own."""
-    import re
     from pathlib import Path
 
-    root = Path(__file__).resolve().parents[2]
-    own = re.compile(r"/home/(?!<)[\w.-]+/|/Users/(?!<|you\b)[\w.-]+/|[A-Z]:\\Users\\(?!<|you\\)[\w.-]+\\")
-    found = [f"{p.relative_to(root)}: {m.group(0)}" for p in [*root.glob("*.md"), *(root / "docs").glob("*.md")]
-             if p.name != "BUGS.md" for m in own.finditer(p.read_text(encoding="utf-8"))]  # fmt: skip
+    found = _own_folders_named(Path(__file__).resolve().parents[2])
     assert not found, found
+
+
+def test_a_decision_in_a_file_of_its_own_is_read_for_an_own_folder_too(tmp_path):
+    """B-3002: from D-328 each decision is a file in docs/decisions/, which the rule never read (the decisions were in
+    docs/decisions.md before): one naming /home/alice/ passed, and would ship in the offline bundle and GitHub's ZIP."""
+    bug = "- **B-2998** · `C:\\Users\\ann\\APCoder` kept whole · low · `t`\n"
+    for path, text in {"docs/decisions.md": "- **D-327** · **A choice.**\n", "docs/bugs/B-2998.md": bug,
+                       "docs/decisions/D-328.md": "- **D-328** · **A probe.** Read from /home/alice/APCoder/notes.\n",
+                       "docs/BUGS.md": bug.replace("2998", "1552")}.items():  # fmt: skip
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text(text, encoding="utf-8")
+    assert _own_folders_named(tmp_path) == ["docs/decisions/D-328.md: /home/alice/"]  # (a bug quotes its path)
 
 
 # --- 11. Going back after an update is written down ----------------------------------------------------------------

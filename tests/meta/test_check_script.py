@@ -1,6 +1,8 @@
 """scripts/check.py picks the tests of what changed; the default run leaves the slow tests to CI."""
 
 import importlib.util
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -52,7 +54,20 @@ def test_any_change_to_the_app_the_scripts_or_the_tests_runs_the_rules_that_chec
         assert set(check.RULES) <= set(check.tests_for([changed])), changed  # (deleted, not Python, new)
     assert not any(t.startswith("tests/meta/") for t in check.tests_for(["tests/meta/test_caches.py"]))  # (in one)
     for path in check.RULES:
-        assert (ROOT / path).exists(), path
+        file, _, name = path.partition("::")  # (a folder, a file or one test of it)
+        assert (ROOT / file).exists(), path
+        assert not name or f"def {name}(" in (ROOT / file).read_text(encoding="utf-8"), path
+
+
+def test_a_schema_raised_runs_the_rule_that_each_schema_since_27_has_an_old_database():
+    """B-2999: SCHEMA_VERSION is in core/store/_base.py, and a schema raised by new tables alone (29's, 2a7ee29:
+    _base.py, the store's __init__.py, roles.py, users.py) ran no tests/core/test_migrations.py: the check said OK and
+    CI failed on "No old database at schema 33"."""
+    rule = "tests/core/test_migrations.py::test_every_schema_since_pr_99s_has_an_old_database"
+    raised = ["ap_coder/core/store/_base.py", "ap_coder/core/store/__init__.py", "ap_coder/core/store/roles.py",
+              "ap_coder/core/store/users.py"]  # fmt: skip
+    assert rule in check.tests_for(raised[:1]) and rule in check.tests_for(raised)
+    assert "tests/core/test_migrations.py" in check.tests_for(["ap_coder/core/store/migrations.py"])  # (all of it)
 
 
 def test_every_test_named_by_hand_is_there():
@@ -117,7 +132,8 @@ def test_the_rules_run_their_slow_tests_but_no_browser_nor_the_offline_guards_wh
     # The files picked run with their slow tests, no browser (--fast: the default run's tests only).
     assert tests[:4] == ["-m", "", "-k", "not in_a_browser"] and "tests/coding/test_terms.py" in tests
     assert not set(check.RULES) & set(tests)
-    assert "Rules: tests/core/test_store_package.py tests/meta " in capsys.readouterr().out
+    migrations = "tests/core/test_migrations.py::test_every_schema_since_pr_99s_has_an_old_database"  # (one test)
+    assert f"Rules: {migrations} tests/core/test_store_package.py tests/meta " in capsys.readouterr().out
     ran.clear()
     assert check.main(["ap_coder/coding/terms.py", "--no-walk", "--serial", "--fast"]) == 0
     assert "-m" not in ran[1] and "tests/coding/test_terms.py" in ran[1]
@@ -199,6 +215,31 @@ def test_a_changed_function_near_the_length_limit_gets_a_warning(monkeypatch, ca
     code, out, _ = _checked(monkeypatch, capsys, ["ap_coder/core/store/summary.py", "--no-walk"])
     assert code == 0 and "near the limit: split before adding: ap_coder/core/store/summary.py" in out
     assert out.rstrip().endswith("check: OK")
+
+
+def test_a_changed_line_the_code_page_cannot_read_still_ends_in_the_verdict(tmp_path):
+    """B-2998: git's and ruff's output were read in the code page (Windows before Python 3.15), so a changed line
+    holding ” (byte 0x9D: no character in cp1252) stopped the check with a traceback, before the NO TESTS RAN check,
+    the walk and the verdict. Here the locale is ASCII and the output a cp1252 pipe, as on Windows."""
+    (tmp_path / "scripts").mkdir()
+    shutil.copy(ROOT / "scripts" / "check.py", tmp_path / "scripts" / "check.py")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "slow_tests.txt").write_text("", encoding="utf-8")
+    module = tmp_path / "ap_coder" / "words.py"
+    module.parent.mkdir()
+    module.write_bytes('WORDS = "the “Add new vendor” button"\n'.encode())
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    for args in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c",
+                 "commit.gpgsign=false", "commit", "-q", "-m", "start"]):  # fmt: skip
+        subprocess.run(["git", *args], cwd=tmp_path, env=env, check=True, capture_output=True)
+    changed = 'import os  # the “Add new vendor” button → here\nWORDS = "the “Add new vendor” button"\n'
+    module.write_bytes(changed.encode())
+    env.update(PYTHONUTF8="0", PYTHONCOERCECLOCALE="0", LC_ALL="C", PYTHONIOENCODING="cp1252")
+    done = subprocess.run([sys.executable, "scripts/check.py", "--no-walk"], cwd=tmp_path, env=env, capture_output=True)
+    out, err = done.stdout.decode("cp1252", "replace"), done.stderr.decode("cp1252", "replace")
+    assert "Traceback" not in err and done.returncode == 1, err
+    assert "F401" in out and "the “Add new vendor” button ? here" in out  # (ruff's words, → as the pipe can write it)
+    assert "NO TESTS RAN FOR ap_coder/words.py" in out and out.rstrip().endswith("check: FAILED")
 
 
 def test_outside_a_git_checkout_it_asks_for_the_files(monkeypatch, capsys):
