@@ -10,17 +10,18 @@
 The tests picked for a changed module are its own (``tests/<folder>/test_<module>*.py``, the folders mirror
 ap_coder/, or those named in ``OWN``), the test files that import it by name (a script: those that load it; a module
 more than ``WIDE`` of them import: the quickest of them, up to ``BUDGET`` seconds) and those that name a function
-the diff changed; a changed test file runs itself; a changed template, page script or stylesheet runs the tests
-named after it, in a browser too; a changed doc runs the rules every doc is held to and the tests that open it; a
-file every test uses (conftest.py, pyproject.toml, the shared helpers...) runs the whole default run. Any change to
-the app, the scripts or the tests also runs the rules that check the whole tree (``RULES``, D-329, their slow tests
-too). A changed module of the app no test is picked for fails the check (``NO TESTS RAN FOR``), and a changed
-function near the length limit gets a warning. The files picked run with their slow tests but no browser
-(``--fast``: without them), on several cores when they take long (pytest-xdist: ``pip install -e ".[parallel]"``);
-the rest is CI's. A change to what the pilot tester's first day walks through (a page, its words, the guide, the
-launcher: ``WALK``) runs that walk too, ``scripts/ci/first_day.py`` (D-225, about two minutes), in a temporary
-folder and on a free port, never the data folder. Exit code 0 when everything passes, 2 outside a git checkout
-without files named.
+the diff changed (with a test map, tests/test_map.json.gz: those that ran it, up to ``BUDGET`` seconds, D-333); a
+changed test file runs itself; a changed template, page script or stylesheet runs the tests named after it, in a
+browser too; a changed doc runs the rules every doc is held to and the tests that open it; a file every test uses
+(conftest.py, pyproject.toml, the shared helpers...) runs the whole default run. Any change to the app, the scripts
+or the tests also runs the rules that check the whole tree (``RULES``, D-329, their slow tests too). A changed
+module of the app no test is picked for fails the check (``NO TESTS RAN FOR``), and a changed function near the
+length limit gets a warning. The files picked run with their slow tests but no browser (``--fast``: without them; a
+file's that take over ``SLOW_SECONDS`` together are CI's), on several cores when they take long (pytest-xdist: ``pip
+install -e ".[parallel]"``); the rest is CI's. A change to what the pilot tester's first day walks through (a page,
+its words, the guide, the launcher: ``WALK``) runs that walk too, ``scripts/ci/first_day.py`` (D-225, about two
+minutes), in a temporary folder and on a free port, never the data folder. Exit code 0 when everything passes, 2
+outside a git checkout without files named.
 """
 
 from __future__ import annotations
@@ -36,6 +37,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 TESTS = ROOT / "tests"
@@ -148,6 +151,12 @@ def quickest(users: list[Path], mirror: Path, times: dict[str, list[float]]) -> 
     return taken
 
 
+def mirror(f: str) -> Path:
+    """The tests folder of a module (ap_coder/coding/x.py: tests/coding; tests/ for one with none)."""
+    parts = Path(f).parts
+    return TESTS.joinpath(parts[1]) if len(parts) > 2 else TESTS
+
+
 def is_doc(f: str) -> bool:
     """A doc, or .ignore (which of the logs a search skips)."""
     md = f.endswith(".md") and (f.startswith(("docs/", ".claude/agents/")) or f in ("CLAUDE.md", "README.md"))
@@ -188,8 +197,7 @@ def own_tests(f: str, test_texts: dict[Path, str], times: dict[str, list[float]]
         users = script_users(path.stem, test_texts)
     if len(users) <= WIDE:
         return own | set(users)
-    mirror = TESTS.joinpath(*path.parts[1:2]) if len(path.parts) > 2 else TESTS  # ap_coder/coding/x.py: tests/coding
-    taken = quickest(users, mirror, times)
+    taken = quickest(users, mirror(f), times)
     left = sorted(p.relative_to(ROOT).as_posix() for p in set(users) - taken - own)
     if said is not None and left:
         said.append(f"{len(users)} test files use it: the quickest {len(taken)} run, {len(left)} left to CI (about "
@@ -212,8 +220,10 @@ def read_tests() -> tuple[dict[Path, str], dict[str, list[float]]]:
 
 def picks(files: list[str], notes: dict[str, list[str]] | None = None) -> dict[str, set[str]]:
     """Each changed file's own test files, the rules that check the whole tree aside, and those that name a function
-    of it the diff changed. ``notes``: what to say of each file (the tests its functions brought, the budget's)."""
+    of it the diff changed or, by the test map, ran one. ``notes``: what to say of each file (the tests its functions
+    brought, what a budget left out)."""
     test_texts, times = read_tests()
+    mapped = load_map()
     found: dict[str, set[str]] = {}
     for f in files:
         said = [] if notes is None else notes.setdefault(f, [])
@@ -224,7 +234,44 @@ def picks(files: list[str], notes: dict[str, list[str]] | None = None) -> dict[s
                 if more:
                     said.append(f"{name} (changed) is named in " + ", ".join(sorted(more)))
                 found[f] |= more
+        if mapped and f.startswith("ap_coder/") and f.endswith(".py"):
+            module, test_map = mapped
+            ran = [ROOT / t for t in module.tests_for(map_keys(module, f), test_map)[0] if t not in found[f]]
+            taken = {p.relative_to(ROOT).as_posix() for p in quickest(ran, mirror(f), times)} if ran else set()
+            left = sorted({p.relative_to(ROOT).as_posix() for p in ran} - taken)
+            rest = f"; {len(left)} left to CI (about {estimate(left, times):.0f} s more)" if left else ""
+            if taken:
+                said.append(f"the test map's tests of its changed functions: {', '.join(sorted(taken))}{rest}")
+            found[f] |= taken
     return found
+
+
+def load_map(path: Path | None = None) -> tuple[ModuleType, Any] | None:
+    """tests/test_map.py and its map of the test files that ran each function (tests/test_map.json.gz, D-333); None
+    when there is no map."""
+    path = path or TESTS / "test_map.json.gz"
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("ap_check_test_map", TESTS / "test_map.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # (its dataclass looks itself up there)
+    spec.loader.exec_module(module)
+    test_map = module.load(path)
+    return None if test_map is None else (module, test_map)
+
+
+def map_keys(module: ModuleType, f: str) -> set[str]:
+    """The map's keys of the functions of ``f`` the diff touches: in the file as it is and, for the lines taken out,
+    as it was; all of them in a file git doesn't have yet."""
+    path = ROOT / f
+    text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+    changed = changed_lines(f)
+    now, was = (set(range(1, text.count("\n") + 2)), set()) if changed is None else changed
+    try:
+        keys = module.keys_for_lines(f, now, text) if now and text else set()
+        return keys | (module.keys_for_lines(f, was, committed(f)) if was else set())
+    except SyntaxError:  # (ruff says so)
+        return set()
 
 
 def tests_for(files: list[str], found: dict[str, set[str]] | None = None) -> list[str] | None:

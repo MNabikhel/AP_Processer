@@ -247,6 +247,30 @@ def test_a_change_inside_a_function_brings_the_tests_that_name_it(monkeypatch):
     assert {"ready_problems", "queue_facts"} <= check.changed_functions(exports) | check.changed_functions(bulk)
 
 
+def test_with_a_test_map_the_functions_changed_bring_the_tests_that_ran_them(monkeypatch, tmp_path, capsys):
+    """B-3021: D-333 said check.py reads the test map (tests/test_map.json.gz), and it read none. With a map, the
+    functions the diff touches bring the test files that ran them, the quickest within BUDGET, the rest left to CI and
+    said so; with none, the picks are as before."""
+    from tests.test_map import write
+
+    taxmath = "ap_coder/coding/taxmath.py"
+    text = (ROOT / taxmath).read_text(encoding="utf-8")
+    monkeypatch.setattr(check, "committed", lambda f: text)
+    lines = {taxmath: (_lines_of(text, "invoice_taxes"), set())}
+    monkeypatch.setattr(check, "changed_lines", lambda f: lines.get(f, (set(), set())))
+    load = check.load_map
+    monkeypatch.setattr(check, "load_map", lambda: None)  # no map: as before
+    without = check.picks([taxmath])[taxmath]
+    volume, day_one = "tests/erp/test_jde_sync_volume.py", "tests/web/test_day_one.py"  # (118 s and 3.5 s)
+    write({"format": 1, "tests": [volume, day_one], "map": {f"{taxmath}::invoice_taxes": [0, 1]}}, tmp_path / "m.gz")
+    monkeypatch.setattr(check, "load_map", lambda: load(tmp_path / "m.gz"))
+    notes: dict[str, list[str]] = {}
+    found = check.picks([taxmath], notes)[taxmath]
+    assert found - without == {day_one} and volume not in found
+    assert any("the test map" in n and day_one in n and "1 left to CI" in n for n in notes[taxmath]), notes
+    assert load(tmp_path / "gone.gz") is None
+
+
 def test_a_name_too_many_tests_have_brings_none(monkeypatch):
     texts = {ROOT / f"tests/x/test_{i}.py": "main(); ready_problems()" if i < 2 else "main()" for i in range(20)}
     assert check.named_tests({"main", "__init__", "ready_problems", "gone"}, texts) == {
