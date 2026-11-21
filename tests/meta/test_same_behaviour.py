@@ -192,6 +192,22 @@ def test_a_move_word_for_word_is_the_same_and_a_token_changed_on_the_way_is_said
     assert moved.main(["no-such-ref"]) == 2
 
 
+def test_an_empty_module_is_compared_with_the_docstrings_left_out_too(tmp_path, capsys):
+    """B-3017: ``--docstrings`` stopped with IndexError on an empty file (a split package's new ``__init__.py``):
+    a module with nothing in it has no first statement to be its docstring."""
+    moved = load_script("moved_same", "ap_moved_same")
+    repo = moved.ROOT = tmp_path
+    _git(repo, "init", "-q")
+    (repo / "a.py").write_text(MODULE, encoding="utf-8")
+    _git(repo, "add", "a.py")
+    _git(repo, "commit", "-qm", "a")
+    (repo / "pkg").mkdir()
+    (repo / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (repo / "pkg" / "notes.py").write_text("# only a comment\n", encoding="utf-8")
+    assert moved.main(["HEAD", "--docstrings"]) == 0
+    assert "0 new" in capsys.readouterr().out
+
+
 def test_with_no_probes_named_the_default_ones_run():
     tool = _tool()
     assert tool.parse([]).probes == list(tool.DEFAULT)

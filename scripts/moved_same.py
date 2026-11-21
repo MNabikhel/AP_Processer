@@ -53,10 +53,9 @@ def _docstring(node: ast.AST) -> bool:
 
 
 def _without_docstrings(tree: ast.Module) -> ast.Module:
-    for each in ast.walk(tree):
-        if isinstance(each, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)) and _docstring(
-            each.body[0]
-        ):
+    for each in ast.walk(tree):  # (an empty module has no first statement)
+        kinds = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)
+        if isinstance(each, kinds) and each.body and _docstring(each.body[0]):
             each.body = each.body[1:] or [ast.Pass()]
     return tree
 
