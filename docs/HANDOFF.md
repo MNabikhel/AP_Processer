@@ -575,9 +575,10 @@ From `CLAUDE.md`, with why:
   connection gets the same treatment: off by default, an Admin switches it on, one named address, a test in
   `tests/offline/` that it reaches nothing else.
 - **No company data in the repository.** It lives in the data folder; keep `.gitignore` as it is.
-- **A bug fix starts with a failing test**, then the fix, then its entry: `python scripts/new_entry.py B "what broke ·
-  severity · test"` takes the next number and writes `docs/bugs/B-NNNN.md` (D-328; the format at the top of
-  `docs/BUGS.md`, which keeps B-1442 to B-2997, frozen). A suspicion that didn't reproduce is an `N-` line.
+- **A bug fix starts with a failing test**, then the fix, then its entry: `python scripts/new_entry.py B 'what broke ·
+  severity · test'` (single quotes; words holding a ', or on Windows: `--file entry.txt`) takes the next number and
+  writes `docs/bugs/B-NNNN.md` (D-328; the format at the top of `docs/BUGS.md`, which keeps B-1442 to B-2997, frozen).
+  A suspicion that didn't reproduce is an `N-` line.
 - **Significant choices get an entry too**, `docs/decisions/D-NNN.md` from `python scripts/new_entry.py D --file
   entry.md` (the format at the top of `docs/decisions.md`, lines of 120 characters at most), and are named in the pull
   request. Never renumber; a reversed decision is marked "replaced by D-NN". Read the decisions before changing

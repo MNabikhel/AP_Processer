@@ -208,8 +208,8 @@ def test_the_number_is_after_every_entry_any_branch_or_worktree_of_the_clone_has
     assert git("diff", "--cached", "--name-only", cwd=worktree) == "docs/bugs/B-15.md"  # added, not committed
 
     monkeypatch.chdir(clone)
-    assert write(["b", "main's · low · `t`"], capsys)[:2] == (0, "B-16\n")  # the worktree's is reserved
-    assert read(clone / "docs/bugs/B-16.md") == "- **B-16** · main's · low · `t`\n"
+    assert write(["b", "main's · low · `tests/x.py::test_z`"], capsys)[:2] == (0, "B-16\n")  # (the other reserved)
+    assert read(clone / "docs/bugs/B-16.md") == "- **B-16** · main's · low · `tests/x.py::test_z`\n"
     assert sorted(p.name for p in (clone / ".git" / "ap-numbers").iterdir()) == ["B-15", "B-16"]
     assert write(["D", "**The next choice.**"], capsys)[:2] == (0, "D-7\n")
 
@@ -219,7 +219,7 @@ def test_runs_at_once_in_worktrees_of_one_clone_never_take_one_number(clone, tmp
     for k, worktree in enumerate(worktrees):
         git("worktree", "add", "-q", "-b", f"w{k}", str(worktree), "main")
     script = str(ROOT / "scripts" / "new_entry.py")
-    runs = [subprocess.Popen([sys.executable, script, "B", f"bug {k} · low · `t`"], cwd=w, stdout=subprocess.PIPE,
+    runs = [subprocess.Popen([sys.executable, script, "B", f"bug {k} · low · test {k}"], cwd=w, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True) for k, w in enumerate(worktrees)]  # fmt: skip
     numbers = [run.communicate()[0].strip() for run in runs]
     assert sorted(numbers) == ["B-12", "B-13", "B-14", "B-15"], numbers
@@ -247,9 +247,26 @@ def test_a_decision_comes_from_a_file_or_stdin_and_a_text_that_would_break_a_rul
     refused = {("B", "two\nlines"): "A bug is one line", ("B", "- **B-12** · x"): "without its start",
                ("D", "**A.**\n- **Why:** not indented."): "Line 2 is not indented",
                ("D", "**A.**\n  - " + "long " * 30): "Line 2 is 153 characters",
-               ("D", "  \n"): "No text given"}  # fmt: skip
+               ("D", "  \n"): "No text given",
+               # B-3000: what bash leaves of "what broke · low · `tests/x.py::test_y`" (the backticks run), and more
+               ("B", "what broke · low ·"): "in single quotes", ("B", "what broke · low"): "has 2 parts",
+               ("B", "what broke · whenever · `tests/x.py::test_y`"): "The severity",
+               ("B", "what broke · low · fixed"): "names the test"}  # fmt: skip
     for (kind, text), why in refused.items():
         code, out, err = write([kind, text], capsys)
         assert (code, out) == (1, "") and why in err, err
     assert sorted(p.name for p in (clone / ".git" / "ap-numbers").iterdir()) == ["D-7", "D-8"]  # none taken
     assert not (clone / "docs" / "bugs").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32" or shutil.which("bash") is None, reason="bash's own quoting")
+def test_words_in_single_quotes_keep_their_backticks_and_dollars_and_in_double_quotes_are_refused(clone):
+    """B-3000: the form the docs gave, in double quotes, let bash run the test in backticks and expand $1: the line
+    was written without its test, or "$1,234.56" as ",234.56"."""
+    words = "A total of $1,234.56 was read as $12.34 · high · `tests/x/test_y.py::test_z`"
+    command = f"{shlex.quote(sys.executable)} {shlex.quote(str(ROOT / 'scripts' / 'new_entry.py'))} B"
+    done = subprocess.run(["bash", "-c", f"{command} '{words}'"], capture_output=True, text=True, encoding="utf-8")
+    assert done.stdout == "B-12\n" and read(clone / "docs/bugs/B-12.md") == f"- **B-12** · {words}\n"
+    done = subprocess.run(["bash", "-c", f'{command} "{words}"'], capture_output=True, text=True, encoding="utf-8")
+    assert (done.returncode, done.stdout) == (1, "") and "in single quotes" in done.stderr, done.stderr
+    assert not (clone / "docs" / "bugs" / "B-13.md").exists()

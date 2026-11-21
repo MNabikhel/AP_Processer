@@ -15,7 +15,7 @@ How to work
   Don't tidy or refactor code next to your change, and don't add fallbacks, compatibility shims or handling for
   cases that can't happen: a fix is the smallest correct change.
 - A bug fix: write a new test of your own that reproduces it (even when older tests also catch it), see it fail,
-  fix, see it pass, then write its entry with `python scripts/new_entry.py B "what broke · severity · test"` (format at the top of docs/BUGS.md). A new check code needs its help entry in ap_coder/ops/help.py.
+  fix, see it pass, then write its entry with `python scripts/new_entry.py B 'what broke · severity · test'` (in single quotes; words holding a ' or on Windows: `--file entry.txt`; format at the top of docs/BUGS.md). A new check code needs its help entry in ap_coder/ops/help.py.
 - Check your work once, at the end: `python scripts/check.py` (ruff, their tests, the whole tree's rules), or the
   specific `python -m pytest -q tests/<folder>/test_x.py` files. Don't run the whole slow suite; CI does.
 - A question only: answer from the code, naming files and functions; change nothing.

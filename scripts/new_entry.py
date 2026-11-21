@@ -1,12 +1,17 @@
 """Write a new bug or decision entry under its number, taken now (D-328): a file of its own, ``docs/bugs/B-NNNN.md``
 or ``docs/decisions/D-NNN.md``, numbered after every entry any branch of this clone has.
 
-    python scripts/new_entry.py B "what broke · severity · `tests/x/test_y.py::test_z`"
-    python scripts/new_entry.py D --file entry.md      a decision, its lines in a file (or on stdin: D < entry.md)
+    python scripts/new_entry.py B 'what broke · severity · `tests/x/test_y.py::test_z`'
+    python scripts/new_entry.py B --file entry.txt     the words in a file (or on stdin: B < entry.txt)
+    python scripts/new_entry.py D --file entry.md      a decision, its lines in a file (or on stdin)
+
+The words go in single quotes: in double quotes the shell runs what is in backticks and expands $1. Words holding a
+quote ('), or typed in Windows' cmd (where ' quotes nothing), go in a file (--file) or on stdin.
 
 The text is the entry without its start, ``- **B-NNNN** · ``, which the script writes with the number. A bug is one
-line. A decision is its first line (``**The choice.** (B-, D- it builds on)``) and then its ``  - **Why:**``,
-``  - **How:**`` and ``  - *Not chosen:*`` lines, indented two spaces, each line at most 120 characters with the start.
+line: what broke · its severity (low, medium, high...) · the test that keeps it fixed. A decision is its first line
+(``**The choice.** (B-, D- it builds on)``) and then its ``  - **Why:**``, ``  - **How:**`` and ``  - *Not chosen:*``
+lines, indented two spaces, each line at most 120 characters with the start.
 
 The number is one more than the highest an entry has in this checkout (docs/BUGS.md and docs/decisions.md, frozen at
 B-2997 and D-327; the archive; docs/bugs/ and docs/decisions/), on every local and remote branch (as last fetched:
@@ -33,6 +38,8 @@ FROZEN = {"B": 2997, "D": 327}  # the last entry of each frozen log
 FILE_NAME = re.compile(r"([BD])-(\d+)\.md")
 LONGEST = {"B": 2000, "D": 120}  # a bug's line is cut off past 2,000 when read; a decision's lines are wrapped
 RESERVED = "ap-numbers"
+SEVERITY = re.compile(r"(?:very )?(?:low|medium|high|minor)\b", re.I)  # (medium-low, high (security)...)
+QUOTES = "Words in double quotes lose their backticks and $ to the shell: give them in single quotes, or with --file."
 
 
 class Refused(Exception):
@@ -142,6 +149,17 @@ def entry(kind: str, number: int, text: str) -> str:
     lines = f"- **{kind}-{number}** · {text}".split("\n")
     if kind == "B" and len(lines) > 1:
         raise Refused("A bug is one line: what broke · severity · `the test that keeps it fixed`.")
+    if kind == "B":
+        parts = text.rsplit(" · ", 2)
+        if len(parts) < 3:
+            raise Refused(f"A bug is what broke · severity · the test that keeps it fixed: this has {len(parts)} "
+                          f"parts. {QUOTES}")  # fmt: skip
+        if not SEVERITY.match(parts[1]):
+            raise Refused(f"The severity, the part before the test, is low, medium or high (medium-low, high "
+                          f"(security)...), not '{parts[1]}'.")  # fmt: skip
+        if "test" not in parts[2].lower():
+            raise Refused(f"The last part names the test that keeps it fixed (`tests/x/test_y.py::test_z`), not "
+                          f"'{parts[2]}'. {QUOTES}")  # fmt: skip
     for n, line in enumerate(lines[1:], 2):
         if not line.startswith("  "):
             raise Refused(f"Line {n} is not indented: each line after the first starts with two spaces (  - **Why:**).")
@@ -167,9 +185,11 @@ def write_entry(kind: str, text: str) -> tuple[int, str]:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(description="\n\n".join(__doc__.split("\n\n")[:3]),  # (with how to quote)
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)  # fmt: skip
     parser.add_argument("kind", type=str.upper, choices=sorted(LOGS), help="B, a bug; D, a decision")
-    parser.add_argument("text", nargs="?", help="the entry's words, without its start (else --file, or stdin)")
+    parser.add_argument("text", nargs="?", help="the entry's words, without its start, in single quotes (else --file, "
+                        "or stdin: for words holding a quote, or in Windows' cmd)")  # fmt: skip
     parser.add_argument("--file", type=Path, help="a file holding the entry's words (a decision's several lines)")
     args = parser.parse_args(argv)
     if args.text is not None:
