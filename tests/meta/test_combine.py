@@ -336,8 +336,8 @@ def test_a_log_whose_merge_base_git_could_not_make_is_left_to_a_person(repo, cap
 
 
 def test_the_checks_run_on_the_files_the_merges_changed_and_the_whole_tree_rules_once(repo, monkeypatch, capsys):
-    """scripts/check.py runs its RULES for a change to code (here scripts/), so only it runs; for docs only (and a
-    file outside the app, the scripts and the tests) the rules are run first."""
+    """scripts/check.py on the files the merges changed, with its RULES (``--rules``) whatever changed: for docs only
+    (and a file outside the app, the scripts and the tests) too, run as check.py runs them, once."""
     branch("one", {"app.py": "RATE = 2\n", "docs/BUGS.md": BUGS + "- **B-12** · one · low · `t2`\n"})
     branch("code", {"scripts/tool.py": "RATE = 3\n"})
     ran = []
@@ -346,13 +346,13 @@ def test_the_checks_run_on_the_files_the_merges_changed_and_the_whole_tree_rules
     assert combine.main(["one", "--onto", "main"]) == 0
     assert combine.main(["code"]) == 0
 
-    rules = ["-m", "pytest", "-q", "-m", "", *combine.RULES]
-    assert "tests/meta" in combine.RULES
-    assert ran == [rules, ["scripts/check.py", "app.py", "docs/BUGS.md"], ["scripts/check.py", "scripts/tool.py"]]
+    # One run of check.py each, the rules among it as check.py runs them (B-3014: docs only ran them with -m "").
+    assert ran == [["scripts/check.py", "--rules", "app.py", "docs/BUGS.md"], ["scripts/check.py", "--rules",
+                                                                                "scripts/tool.py"]]  # fmt: skip
     said = capsys.readouterr().out
-    assert "the rules that check the whole tree (run first, as only docs changed)" in said
-    assert "Checking: scripts/check.py on the 1 file the merges changed, and the rules that check the whole tree " \
-           "(run by it)" in said  # fmt: skip
+    assert (
+        "Checking: scripts/check.py on the 2 files the merges changed, with the rules that check the whole tree" in said
+    )
     monkeypatch.setattr(combine, "run_step", lambda command: False)
     git("checkout", "-q", "-b", "again", "main")
     assert combine.main(["one"]) == 1
