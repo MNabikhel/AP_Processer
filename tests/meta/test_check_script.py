@@ -178,22 +178,26 @@ def test_asked_for_the_rules_run_once_as_for_a_change_to_code_whatever_changed(m
 def test_slow_tests_that_take_long_together_are_left_to_ci(monkeypatch, capsys):
     """B-3019: D-331's probe test (the jde and pages probes run twice, about 50 s) ran in every check's rules while
     tests/test_times.json gave its file 0.7 s. A test file whose slow tests take over SLOW_SECONDS together leaves
-    them to CI, in the rules run and among the files picked; a slow rule that takes little still runs."""
-    times = check.read_tests()[1]
-    probe = "tests/meta/test_same_behaviour.py::test_the_jde_and_pages_probes_give_the_same_output_each_run"
-    whole, fast = times["tests/meta/test_same_behaviour.py"]
-    assert whole - fast > check.SLOW_SECONDS  # (53 s measured, 0.7 s of it not slow)
-    assert probe in check.slow_tests("tests/meta/test_same_behaviour.py")  # (marked so, with others: B-3024)
+    them to CI, in the rules run and among the files picked; a slow rule that takes little still runs. B-3029: this
+    test held the seconds tests/test_times.json gives test_accruals.py, so a refresh of the times failed it: the times
+    of the files it leans on are made up here."""
+    texts, real = check.read_tests()
+    probe_file, rules_file = "tests/meta/test_same_behaviour.py", "tests/meta/test_code_rules.py"
+    accruals = "tests/erp/test_accruals.py"
+    long, short = check.SLOW_SECONDS + 10, check.SLOW_SECONDS - 5  # (the seconds of their slow tests)
+    times = {**real, probe_file: [long + 1, 1.0], rules_file: [short + 1, 1.0], accruals: [long + 2, 2.0],
+             "tests/coding/test_tax.py": [1.0, 1.0]}  # fmt: skip
+    monkeypatch.setattr(check, "read_tests", lambda: (texts, times))
+    probe = f"{probe_file}::test_the_jde_and_pages_probes_give_the_same_output_each_run"
+    assert probe in check.slow_tests(probe_file)  # (marked so in the file, with others: B-3024)
     args = check.rules_args(sorted(check.RULES), times)
-    assert probe in args and "tests/meta/test_code_rules.py::test_no_sql_placeholders_are_made_one_per_item_of_a_list" \
-        not in args  # fmt: skip
-    assert check.estimate(sorted(check.RULES), times, slow=False, long=check.long_slow(["tests/meta"], times)) < 40
+    assert probe in args and f"{rules_file}::test_no_sql_placeholders_are_made_one_per_item_of_a_list" not in args
     ran = []
     monkeypatch.setattr(check, "pytest", lambda args: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
-    assert check.main(["tests/erp/test_accruals.py", "tests/coding/test_tax.py", "--serial", "--no-walk"]) == 0
+    assert check.main([accruals, "tests/coding/test_tax.py", "--serial", "--no-walk"]) == 0
     left = [ran[1][i + 1] for i, a in enumerate(ran[1]) if a == "--deselect"]
-    assert left and all(t.startswith("tests/erp/test_accruals.py::") for t in left)  # (test_tax.py's: none, 0 s)
-    assert "tests/erp/test_accruals.py: its slow tests left to CI (about 49 s)" in capsys.readouterr().out
+    assert left and all(t.startswith(f"{accruals}::") for t in left)  # (test_tax.py's: none)
+    assert f"{accruals}: its slow tests left to CI (about {long:.0f} s)" in capsys.readouterr().out
 
 
 def test_the_estimate_counts_what_runs_a_page_scripts_tests_slow_ones_and_all(monkeypatch, capsys):
