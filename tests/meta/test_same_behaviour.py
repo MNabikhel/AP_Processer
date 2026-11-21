@@ -120,6 +120,40 @@ def test_the_pages_probe_prints_its_own_day_whatever_the_day_it_runs(tmp_path):
     assert probe.DAY.isoformat() in out and dt.date.today().isoformat() not in out
 
 
+@pytest.mark.slow
+def test_the_pages_probe_says_different_for_an_app_an_import_cycle_stops_from_starting(tmp_path):
+    """B-3028: the probe imported every module of the app in its folders' order before making the app, to give
+    them its clock, so a cycle that only that order resolves (a page importing a module that imports the page) gave
+    the same bytes as the unchanged tree, though the app could not start. The app is made as it starts first."""
+    tree = _scratch_tree(tmp_path / "tree")
+    rules = tree / "ap_coder" / "web" / "pages" / "rules.py"
+    future = "from __future__ import annotations\n"
+    text = rules.read_text(encoding="utf-8")
+    assert text.count(future) == 1
+    rules.write_text(text.replace(future, future + "from ap_coder.coding import cycle_probe  # noqa: F401\n"),
+                     encoding="utf-8")  # fmt: skip
+    (tree / "ap_coder" / "coding" / "cycle_probe.py").write_text(
+        "from ap_coder.web.pages.rules import router\n", encoding="utf-8"
+    )
+    runs = [subprocess.Popen([sys.executable, str(ROOT / "scripts" / "probes" / "pages.py"), "0", str(tmp_path / name)],
+                             env={**os.environ, "PYTHONPATH": str(base), "PYTHONHASHSEED": "0"},
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            for name, base in (("before", ROOT), ("after", tree))]  # fmt: skip
+    (before, err), (after, said) = (run.communicate() for run in runs)
+    assert runs[0].returncode == 0, err[-3000:]
+    assert runs[1].returncode != 0 or before != after  # same_behaviour.py: FAILED TO RUN, or DIFFERENT
+    assert b"circular import" in said
+    # a module the app's start never imports, broken: said in the output, so DIFFERENT too
+    (tree / "ap_coder" / "coding" / "cycle_probe.py").unlink()
+    rules.write_text(text, encoding="utf-8")
+    (tree / "ap_coder" / "bench" / "broken_probe.py").write_text("import no_such_module_anywhere\n", encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(tree), "PYTHONHASHSEED": "0"}
+    out = subprocess.run([sys.executable, str(ROOT / "scripts" / "probes" / "pages.py"), "0", str(tmp_path / "broken")],
+                         env=env, capture_output=True, check=True).stdout  # fmt: skip
+    assert out.splitlines()[0] == (b'{"body": "ModuleNotFoundError: No module named \'no_such_module_anywhere\'", '
+                                   b'"kind": "not imported", "path": "ap_coder.bench.broken_probe"}')  # fmt: skip
+
+
 def test_the_pages_probe_leaves_out_what_differs_run_to_run(tmp_path):
     spec = importlib.util.spec_from_file_location("pages_probe", ROOT / "scripts" / "probes" / "pages.py")
     probe = importlib.util.module_from_spec(spec)
