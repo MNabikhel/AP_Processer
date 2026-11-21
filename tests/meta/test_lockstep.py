@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import functools
 import re
+from collections.abc import Callable
 
 from tests.conftest import ROOT
 
@@ -36,10 +37,12 @@ CHANGES_INVOICES = re.compile(
 
 
 @functools.cache
-def _trees(folder: str) -> dict[str, ast.Module]:
-    """Each module under ``folder`` (from the repository's root), parsed."""
-    paths = sorted((ROOT / folder).rglob("*.py"))
-    return {p.relative_to(ROOT).as_posix(): ast.parse(p.read_text(encoding="utf-8")) for p in paths}
+def _trees(folder: str, word: str = "") -> dict[str, ast.Module]:
+    """Each module under ``folder`` (from the repository's root) whose text holds ``word``, parsed."""
+    texts = {
+        p.relative_to(ROOT).as_posix(): p.read_text(encoding="utf-8") for p in sorted((ROOT / folder).rglob("*.py"))
+    }
+    return {name: ast.parse(text) for name, text in texts.items() if word in text}
 
 
 def _called(call: ast.Call) -> str:
@@ -49,6 +52,11 @@ def _called(call: ast.Call) -> str:
 
 def _calls(trees: dict[str, ast.Module]) -> list[tuple[str, ast.Call]]:
     return [(name, node) for name, tree in trees.items() for node in ast.walk(tree) if isinstance(node, ast.Call)]
+
+
+def _calls_in_the_app(name: str) -> list[ast.Call]:
+    """Each call of ``name`` in ap_coder."""
+    return [call for _, call in _calls(_trees("ap_coder", f"{name}(")) if _called(call) == name]
 
 
 def _revisions() -> tuple[str, ...]:
@@ -80,7 +88,7 @@ def test_a_replace_while_nobody_has_the_invoice_open_is_a_revision():
     """B-2805, B-2985: the AI reviewer's corrections and Azure's reading again replaced the proposal while nobody had
     the invoice open, as far as the store knew, logged as ``proposal_updated``: a screen open on a laptop showed the
     values read before, and its next check saved them over the change."""
-    assert replaces_not_revisions(_trees("ap_coder"), _revisions()) == []
+    assert replaces_not_revisions(_trees("ap_coder", "replace_proposal"), _revisions()) == []
 
 
 def test_the_replace_rule_finds_a_replace_that_is_no_revision():
@@ -99,13 +107,13 @@ store.replace_proposal(6, out, rep, cap, unless_in_use=False)
 # --- (b) What a store function that changes an invoice logs is a revision, or says why not -------------------------
 
 
-def _values(node: ast.expr | None, fn: ast.FunctionDef, calls: list[tuple[str, ast.Call]]) -> set[str] | None:
+def _values(node: ast.expr | None, fn: ast.FunctionDef, calls_of: Callable[[str], list[ast.Call]]) -> set[str] | None:
     """The strings an argument can be: a constant, either side of ``a if b else c``, a name assigned them in the
     function, or a parameter: its default and what each call of the function passes it. None: not told."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return {node.value}
     if isinstance(node, ast.IfExp):
-        both = (_values(node.body, fn, calls), _values(node.orelse, fn, calls))
+        both = (_values(node.body, fn, calls_of), _values(node.orelse, fn, calls_of))
         return None if None in both else both[0] | both[1]
     if not isinstance(node, ast.Name):
         return None
@@ -121,19 +129,18 @@ def _values(node: ast.expr | None, fn: ast.FunctionDef, calls: list[tuple[str, a
     defaults.update((a.arg, d) for a, d in zip(args.kwonlyargs, args.kw_defaults, strict=True) if d is not None)
     if node.id in defaults:
         sources.append(defaults[node.id])
-        sources += [k.value for _, call in calls if _called(call) == fn.name for k in call.keywords if k.arg == node.id]
+        sources += [k.value for call in calls_of(fn.name) for k in call.keywords if k.arg == node.id]
     elif node.id in {a.arg for a in [*positional, *args.kwonlyargs]}:
         return None  # (a parameter every caller must give: what it is, the callers say)
     if not sources:
         return None
-    found = [_values(s, fn, calls) for s in sources]
+    found = [_values(s, fn, calls_of) for s in sources]
     return None if None in found else set().union(*found)
 
 
-def logged_by_invoice_changes(store: dict[str, ast.Module], everything: dict[str, ast.Module]) -> dict[str, set | None]:
+def logged_by_invoice_changes(store: dict[str, ast.Module], calls_of: Callable[[str], list[ast.Call]]) -> dict:
     """Each ``_log`` call of a store function whose SQL changes the invoices table: the actions it can log (None: not
     told), by where it is."""
-    calls = _calls(everything)
     found: dict[str, set | None] = {}
     for name, tree in store.items():
         for fn in ast.walk(tree):
@@ -146,7 +153,7 @@ def logged_by_invoice_changes(store: dict[str, ast.Module], everything: dict[str
                 if isinstance(call, ast.Call) and _called(call) == "_log":
                     said = {k.arg: k.value for k in call.keywords}
                     action = call.args[1] if len(call.args) > 1 else said.get("action")
-                    found[f"{name}:{call.lineno} {fn.name}"] = _values(action, fn, calls)
+                    found[f"{name}:{call.lineno} {fn.name}"] = _values(action, fn, calls_of)
     return found
 
 
@@ -159,7 +166,7 @@ def unexplained(logged: dict[str, set | None], revisions: tuple[str, ...], expla
 def test_an_invoice_changed_in_the_store_is_a_revision_or_says_why_not():
     """Every event logged where the store changes an invoice is a revision (a screen drawn before it is out of date,
     says so, and saves nothing) or in NOT_REVISIONS with why a screen drawn before it is still right."""
-    logged = logged_by_invoice_changes(_trees("ap_coder/core/store"), _trees("ap_coder"))
+    logged = logged_by_invoice_changes(_trees("ap_coder/core/store"), _calls_in_the_app)
     assert len(logged) >= 15  # (the rule reads the store's own: approve, park, reject, delete, replace...)
     assert unexplained(logged, _revisions(), NOT_REVISIONS) == []
     assert not set(NOT_REVISIONS) & set(_revisions())
@@ -195,7 +202,9 @@ class Mixin:
 store.replace(conn, 1, action="read_again")
 """
     tree = ast.parse(source)
-    logged = logged_by_invoice_changes({"s.py": tree}, {"s.py": tree})
+    logged = logged_by_invoice_changes(
+        {"s.py": tree}, lambda name: [c for _, c in _calls({"s.py": tree}) if _called(c) == name]
+    )
     assert logged == {"s.py:5 park": {"parked_by_hand"}, "s.py:10 answer": {"confirmed", "sent_back"},
                       "s.py:14 replace": {"proposal_updated", "read_again"}, "s.py:18 told": None}  # fmt: skip
     found = unexplained(logged, ("sent_back", "confirmed"), {"proposal_updated": "why"})
