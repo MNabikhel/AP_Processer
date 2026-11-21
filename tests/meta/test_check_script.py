@@ -218,6 +218,35 @@ def test_the_estimate_counts_what_runs_a_page_scripts_tests_slow_ones_and_all(mo
     assert "tests/web/test_web_invoice.py" in tests and "--deselect" not in tests and tests[:2] == ["-n", "2"]
 
 
+def test_a_rule_renamed_or_a_picked_set_that_runs_nothing_fails_the_check(monkeypatch, capsys):
+    """B-3032: a RULES entry not in the checkout (a rule test renamed) made pytest run none of the rules: on several
+    cores it says "no tests ran" (exit code 5), which the check took for a pass, and said "check: OK". Each entry is
+    looked for first and one not found is named; a run that runs no test fails, the rules' or the files picked."""
+    gone = "tests/core/test_store_package.py::test_a_rule_since_renamed"
+    monkeypatch.setattr(check, "RULES", (*check.RULES, gone))
+    ran = []
+
+    def pytest(args):  # as pytest: none run for a test named not found (4 serially, 5 on several cores) or none there
+        ran.append(args)
+        if gone in args or any(a.startswith("tests/x/") for a in args):
+            code = 4 if gone in args and "-n" not in args else 5
+            return subprocess.CompletedProcess(args, code, "no tests ran in 0.1s\n", "")
+        return subprocess.CompletedProcess(args, 0, "1 passed\n", "")
+
+    monkeypatch.setattr(check, "pytest", pytest)
+    monkeypatch.setattr(check.importlib.util, "find_spec", lambda name: object())  # (as if pytest-xdist were there)
+    monkeypatch.setenv("AP_CHECK_WORKERS", "4")
+    for how in ([], ["--serial"]):
+        ran.clear()
+        assert check.main(["ap_coder/coding/terms.py", "--no-walk", *how]) == 1, how
+        out = capsys.readouterr().out
+        assert f"RULE NOT FOUND: {gone}" in out and out.rstrip().endswith("check: FAILED"), (how, out)
+        assert any("tests/meta" in args for args in ran) and not any(gone in args for args in ran)  # (the others run)
+    monkeypatch.setattr(check, "RULES", tuple(r for r in check.RULES if r != gone))
+    assert check.run_tests([], ["tests/x/test_none.py"], 1.0, serial=True)  # (a picked set that runs none: failed)
+    assert "NO TESTS RAN" in capsys.readouterr().out
+
+
 def test_a_long_run_goes_on_several_cores(monkeypatch, capsys):
     """pytest-xdist (the parallel extra): a run of over PARALLEL_SECONDS on AP_CHECK_WORKERS cores, else up to 4."""
     ran = []
