@@ -120,12 +120,11 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
   at `--scanned 0.1` takes ~40 min, `lines` 6 x 8 at `--scanned 1` ~6 min, `run --n 60` ~2.5 min.
 
 ## Run and test
-- Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"` (or double-click `APProcessor.bat` / `APProcessor.command`).
+- Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev,parallel]"` (or double-click `APProcessor.bat` / `APProcessor.command`).
 - Run: `python -m ap_coder serve` (http://127.0.0.1:8501); `python -m ap_coder doctor`; `python scripts/pilot_check.py`.
-- Check a change: `python scripts/check.py`: ruff, the changed files' tests and the whole tree's rules (about 30 s,
-  D-329); a module no test is picked for fails it. A page, its words (`ops/help.py`), `docs/PROTOTYPE.md` or the
-  launcher changed: it walks the pilot tester's first day too (two minutes more); `--walk` / `--no-walk` force or
-  skip it.
+- Check a change: `python scripts/check.py`: ruff, the tests of the changed files and functions (on 4 cores) and
+  the whole tree's rules (D-329); a module no test is picked for fails it. A page, its words (`ops/help.py`),
+  `docs/PROTOTYPE.md` or the launcher changed: it walks the first day too; `--fast`, `--serial`, `--no-walk`.
 - Test: `python -m pytest -q` runs all but the slow tests (about 7 minutes; serially, no xdist). The whole suite with
   the browser tests, `python -m pytest -q -m ""`, takes about 28 minutes (docs/REFERENCE.md): CI runs it on pull requests
   (Ubuntu 3.12 and Windows 3.14 only; every Python and the Mac jobs on main after a merge and nightly, D-260), so leave

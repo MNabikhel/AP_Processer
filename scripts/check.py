@@ -3,24 +3,29 @@
     python scripts/check.py              the files changed since the last commit (and new ones)
     python scripts/check.py FILE...      these files instead
     --walk / --no-walk                   run the first-day walk whatever changed / not at all
+    --fast                               the default run's tests of the files picked only (no slow ones)
+    --serial                             on one core (else a long run takes AP_CHECK_WORKERS, or up to 4)
 
 The tests picked for a changed module are its own (``tests/<folder>/test_<module>*.py``, the folders mirror
-ap_coder/, or those named in ``OWN``) and the test files that import it by name (a script: those that load it; a
-module more than ``WIDE`` of them import: the quickest of them, up to ``BUDGET`` seconds); a changed test file runs
-itself; a changed template, page script or stylesheet runs the tests named after it, in a browser too; a changed doc
-runs the rules every doc is held to and the tests that open it; a file every test uses (conftest.py, pyproject.toml,
-the shared helpers...) runs the whole default run. Any change to the app, the scripts or the tests also runs the
-rules that check the whole tree (``RULES``, D-329, their slow tests too). A changed module of the app no test is
-picked for fails the check (``NO TESTS RAN FOR``), and a changed function near the length limit gets a warning.
-Other slow tests are left to CI and ``python -m pytest -m ""`` (pyproject.toml). A change to what the pilot tester's
-first day walks through (a page, its words, the guide, the launcher: ``WALK``) runs that walk too,
-``scripts/ci/first_day.py`` (D-225, about two minutes), in a temporary folder and on a free port, never the data
-folder. Exit code 0 when everything passes, 2 outside a git checkout without files named.
+ap_coder/, or those named in ``OWN``), the test files that import it by name (a script: those that load it; a module
+more than ``WIDE`` of them import: the quickest of them, up to ``BUDGET`` seconds) and those that name a function
+the diff changed; a changed test file runs itself; a changed template, page script or stylesheet runs the tests
+named after it, in a browser too; a changed doc runs the rules every doc is held to and the tests that open it; a
+file every test uses (conftest.py, pyproject.toml, the shared helpers...) runs the whole default run. Any change to
+the app, the scripts or the tests also runs the rules that check the whole tree (``RULES``, D-329, their slow tests
+too). A changed module of the app no test is picked for fails the check (``NO TESTS RAN FOR``), and a changed
+function near the length limit gets a warning. The files picked run with their slow tests but no browser
+(``--fast``: without them), on several cores when they take long (pytest-xdist: ``pip install -e ".[parallel]"``);
+the rest is CI's. A change to what the pilot tester's first day walks through (a page, its words, the guide, the
+launcher: ``WALK``) runs that walk too, ``scripts/ci/first_day.py`` (D-225, about two minutes), in a temporary
+folder and on a free port, never the data folder. Exit code 0 when everything passes, 2 outside a git checkout
+without files named.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 import os
 import re
@@ -38,6 +43,8 @@ BUDGET = 20.0  # up to these seconds of the default run (tests/test_times.json),
 UNTIMED = 2.0  # the seconds taken for a test file tests/test_times.json has no time for yet
 NEAR = 110  # a changed function this long (tests/meta/test_function_length.py: at most 120 lines) and
 NEAR_PART = 950  # a part of the store this long (tests/core/test_store_package.py: under 1,000) get a warning
+PARALLEL_SECONDS = 15  # a run longer than this (tests/test_times.json) goes on several cores (pytest-xdist)
+OLD_WINDOWS_CLOCK = False  # True: the tests on old Windows' clock (tests/conftest.py, AP_TEST_OLD_WINDOWS_CLOCK)
 
 
 # Files every test leans on: a change to one runs the whole default run.
@@ -111,11 +118,11 @@ def script_users(stem: str, test_texts: dict[Path, str]) -> list[Path]:
 
 
 def quickest(users: list[Path], mirror: Path, times: dict[str, list[float]]) -> set[Path]:
-    """Of the many test files that import a module, the quickest (tests/test_times.json, the default run's seconds),
+    """Of the many test files that import a module, the quickest (tests/test_times.json, all their tests' seconds),
     those in its own tests folder first, up to ``BUDGET`` seconds: a few of them rather than none."""
 
     def seconds(path: Path) -> float:
-        return times.get(path.relative_to(ROOT).as_posix(), [UNTIMED, UNTIMED])[1]
+        return times.get(path.relative_to(ROOT).as_posix(), [UNTIMED, UNTIMED])[0]
 
     taken: set[Path] = set()
     spent = 0.0
@@ -142,8 +149,10 @@ def doc_tests(f: str, test_texts: dict[Path, str]) -> set[Path]:
     return rules | {p for t in OWN.get(f, []) for p in ROOT.glob(t)} | readers
 
 
-def own_tests(f: str, test_texts: dict[Path, str], times: dict[str, list[float]]) -> set[Path]:
-    """The test files of one changed file, the rules that check the whole tree aside."""
+def own_tests(f: str, test_texts: dict[Path, str], times: dict[str, list[float]], said: list[str] | None = None
+              ) -> set[Path]:  # fmt: skip
+    """The test files of one changed file, the rules that check the whole tree aside; what the budget left out is added
+    to ``said``."""
     path = Path(f)
     if is_doc(f):
         return doc_tests(f, test_texts)
@@ -163,8 +172,15 @@ def own_tests(f: str, test_texts: dict[Path, str], times: dict[str, list[float]]
             own |= set(TESTS.rglob(f"test_{path.parent.name}*.py"))
     elif path.parts[:1] == ("scripts",) and path.suffix == ".py":
         users = script_users(path.stem, test_texts)
+    if len(users) <= WIDE:
+        return own | set(users)
     mirror = TESTS.joinpath(*path.parts[1:2]) if len(path.parts) > 2 else TESTS  # ap_coder/coding/x.py: tests/coding
-    return own | (set(users) if len(users) <= WIDE else quickest(users, mirror, times))
+    taken = quickest(users, mirror, times)
+    left = sorted(p.relative_to(ROOT).as_posix() for p in set(users) - taken - own)
+    if said is not None and left:
+        said.append(f"{len(users)} test files use it: the quickest {len(taken)} run, {len(left)} left to CI (about "
+                    f"{estimate(left, times):.0f} s more)")  # fmt: skip
+    return own | taken
 
 
 def checks_whole_tree(f: str) -> bool:
@@ -180,10 +196,21 @@ def read_tests() -> tuple[dict[Path, str], dict[str, list[float]]]:
     return texts, json.loads(times_file.read_text(encoding="utf-8")) if times_file.is_file() else {}
 
 
-def picks(files: list[str]) -> dict[str, set[str]]:
-    """Each changed file's own test files, the rules that check the whole tree aside."""
+def picks(files: list[str], notes: dict[str, list[str]] | None = None) -> dict[str, set[str]]:
+    """Each changed file's own test files, the rules that check the whole tree aside, and those that name a function
+    of it the diff changed. ``notes``: what to say of each file (the tests its functions brought, the budget's)."""
     test_texts, times = read_tests()
-    return {f: {p.relative_to(ROOT).as_posix() for p in own_tests(f, test_texts, times)} for f in files}
+    found: dict[str, set[str]] = {}
+    for f in files:
+        said = [] if notes is None else notes.setdefault(f, [])
+        found[f] = {p.relative_to(ROOT).as_posix() for p in own_tests(f, test_texts, times, said)}
+        if f.startswith(("ap_coder/", "scripts/")) and f.endswith(".py"):
+            for name, users in named_tests(changed_functions(f), test_texts).items():
+                more = {p.relative_to(ROOT).as_posix() for p in users} - found[f]
+                if more:
+                    said.append(f"{name} (changed) is named in " + ", ".join(sorted(more)))
+                found[f] |= more
+    return found
 
 
 def tests_for(files: list[str], found: dict[str, set[str]] | None = None) -> list[str] | None:
@@ -208,8 +235,9 @@ def is_rule(test: str) -> bool:
     return test in RULES or test.startswith("tests/meta/")
 
 
-def changed_lines(f: str) -> set[int] | None:
-    """The lines of ``f`` changed since the last commit (``git diff -U0``); None for a file git doesn't have yet."""
+def changed_lines(f: str) -> tuple[set[int], set[int]] | None:
+    """The lines of ``f`` the diff since the last commit (``git diff -U0``) touches: of the file as it is, and those
+    taken out of it as it was; None for a file git doesn't have yet (all of it new)."""
     try:
         known = subprocess.run(["git", "ls-files", "--", f], cwd=ROOT, capture_output=True, text=True)
         diff = subprocess.run(["git", "diff", "-U0", "HEAD", "--", f], cwd=ROOT, capture_output=True, text=True)
@@ -217,10 +245,67 @@ def changed_lines(f: str) -> set[int] | None:
         return None
     if known.returncode or diff.returncode or not known.stdout.strip():
         return None
-    lines: set[int] = set()
-    for start, count in re.findall(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@", diff.stdout, re.M):
-        lines |= set(range(int(start), int(start) + max(int(count or 1), 1)))  # (0: lines removed after start)
-    return lines
+    now: set[int] = set()
+    was: set[int] = set()
+    for old, old_count, new, new_count in re.findall(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", diff.stdout, re.M):
+        was |= set(range(int(old), int(old) + int(old_count or 1)))  # (a count of 0: none)
+        now |= set(range(int(new), int(new) + int(new_count or 1)))
+    return now, was
+
+
+def functions(text: str) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Every function and method of a module (none when it doesn't parse: ruff says so)."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    return [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+
+def span(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[int]:
+    """A function's lines, its decorators' (a page's address) among them."""
+    first = min([node.lineno, *(d.lineno for d in node.decorator_list)])
+    return set(range(first, (node.end_lineno or node.lineno) + 1))
+
+
+def changed_functions(f: str) -> set[str]:
+    """The names of the functions (and methods) of ``f`` whose lines the diff since the last commit touches: in the
+    file as it is and, for the lines taken out, as it was; every one of a file git doesn't have yet."""
+    path = ROOT / f
+    now = functions(path.read_text(encoding="utf-8", errors="replace")) if path.is_file() else []
+    changed = changed_lines(f)
+    if changed is None:
+        return {node.name for node in now}
+    lines, taken_out = changed
+    names = {node.name for node in now if lines & span(node)}
+    if taken_out:
+        was = subprocess.run(["git", "show", f"HEAD:{f}"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+                             errors="replace")  # fmt: skip
+        names |= {node.name for node in functions(was.stdout) if taken_out & span(node)}
+    return names
+
+
+def named_tests(names: set[str], test_texts: dict[Path, str]) -> dict[str, set[Path]]:
+    """The test files that name each function as a whole word; none for a name more than ``WIDE`` of them have (main,
+    load, a method every class has)."""
+    found = {}
+    for name in sorted(n for n in names if not (n.startswith("__") and n.endswith("__"))):
+        pattern = re.compile(rf"\b{re.escape(name)}\b")
+        users = {path for path, text in test_texts.items() if name in text and pattern.search(text)}
+        if users and len(users) <= WIDE:
+            found[name] = users
+    return found
+
+
+def estimate(tests: list[str], times: dict[str, list[float]], slow: bool = True) -> float:
+    """The seconds these test files (or folders) take by tests/test_times.json, with their slow tests or not
+    (tests/meta's always); ``UNTIMED`` each for a file not timed yet."""
+    total = 0.0
+    for test in tests:
+        column = 0 if slow or test == "tests/meta" or test.startswith("tests/meta/") else 1
+        inside = [both[column] for path, both in times.items() if path == test or path.startswith(test + "/")]
+        total += sum(inside) if inside else UNTIMED
+    return total
 
 
 def near_limits(files: list[str]) -> list[str]:
@@ -233,16 +318,11 @@ def near_limits(files: list[str]) -> list[str]:
         text = (ROOT / f).read_text(encoding="utf-8", errors="replace")
         if f.startswith("ap_coder/core/store/") and len(text.splitlines()) >= NEAR_PART:
             found.append(f"{f}: {len(text.splitlines())} lines (a part of the store stays under 1,000)")
-        try:
-            tree = ast.parse(text)
-        except SyntaxError:
-            continue  # (ruff has said so)
         changed = changed_lines(f)
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                end = node.end_lineno or node.lineno
-                if end - node.lineno + 1 >= NEAR and (changed is None or changed & set(range(node.lineno, end + 1))):
-                    found.append(f"{f}::{node.name}: {end - node.lineno + 1} lines (the limit is 120)")
+        for node in functions(text):
+            lines = (node.end_lineno or node.lineno) - node.lineno + 1  # (as tests/meta/test_function_length.py counts)
+            if lines >= NEAR and (changed is None or changed[0] & span(node)):
+                found.append(f"{f}::{node.name}: {lines} lines (the limit is 120)")
     return found
 
 
@@ -278,16 +358,30 @@ def walk() -> tuple[bool, str]:
 
 
 def pytest(args: list[str]) -> subprocess.CompletedProcess:
+    env = {**os.environ, "AP_TEST_OLD_WINDOWS_CLOCK": "1"} if OLD_WINDOWS_CLOCK else None
     return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *args], cwd=ROOT,
-                          capture_output=True, text=True)  # fmt: skip
+                          capture_output=True, text=True, env=env)  # fmt: skip
 
 
-def run_tests(args: list[str], slow_too: bool = True) -> bool:
-    """One pytest run, its failures and its last line printed: whether it failed. ``slow_too``: when every test
-    picked is a slow one, run them."""
-    done = pytest(args)
-    if done.returncode == 5 and slow_too:
-        done = pytest(["-m", "", *args])
+def workers(serial: bool) -> int:
+    """The cores a long run takes (pytest -n): ``AP_CHECK_WORKERS``, else one a core up to 4; one with ``--serial``
+    or without pytest-xdist (``pip install -e ".[parallel]"``)."""
+    if serial or importlib.util.find_spec("xdist") is None:
+        return 1
+    asked = os.environ.get("AP_CHECK_WORKERS", "").strip()
+    return max(1, int(asked)) if asked.isdigit() else min(4, os.cpu_count() or 1)
+
+
+def run_tests(tier: list[str], paths: list[str], seconds: float, serial: bool, retry: bool = True) -> bool:
+    """One pytest run of these test files, on several cores when it takes long (``seconds``, its estimate): its
+    failures and its last line printed; whether it failed. ``retry``: when it ran none (each a slow one), run them."""
+    cores = workers(serial) if seconds > PARALLEL_SECONDS else 1
+    print(f"  about {seconds:.0f} s of tests (tests/test_times.json)" + (f", on {cores} cores" if cores > 1 else ""),
+          flush=True)  # fmt: skip
+    on = ["-n", str(cores)] if cores > 1 else []
+    done = pytest([*on, *tier, *paths])
+    if done.returncode == 5 and retry:
+        done = pytest([*on, "-m", "", *paths])
     lines = done.stdout.strip().splitlines()
     failures = [line for line in lines if line.startswith(("FAILED", "ERROR"))]
     print("\n".join(failures[:20] + lines[-1:]))
@@ -301,15 +395,16 @@ def rules_args(rules: list[str]) -> list[str]:
     tests/meta (the offline guard's whole walks are CI's)."""
     slow = (TESTS / "slow_tests.txt").read_text(encoding="utf-8").splitlines()
     left_out = [line.strip() for line in slow if line.split("::")[0] in rules and not line.startswith("tests/meta/")]
-    return ["-m", "", "-k", "not in_a_browser", *(a for t in left_out for a in ("--deselect", t)), *rules]
+    return ["-m", "", "-k", "not in_a_browser", *(a for t in left_out for a in ("--deselect", t))]
 
 
 def main(argv: list[str]) -> int:
     if any(a in ("-h", "--help") for a in argv):
         print(__doc__.strip())
         return 0
-    force, skip = "--walk" in argv, "--no-walk" in argv
-    argv = [a for a in argv if a not in ("--walk", "--no-walk")]
+    flags = ("--walk", "--no-walk", "--fast", "--serial")
+    force, skip, fast, serial = (flag in argv for flag in flags)
+    argv = [a for a in argv if a not in flags]
     files = [f.replace("\\", "/") for f in argv] or changed_files()  # (ap_coder\x.py as typed on Windows)
     if files is None:
         print("Not a git checkout: name the files to check, e.g. python scripts/check.py ap_coder/coding/tax.py")
@@ -325,21 +420,27 @@ def main(argv: list[str]) -> int:
             if done.returncode:
                 failed = True
                 print((done.stdout + done.stderr).strip())
-    found = picks(files)
+    notes: dict[str, list[str]] = {}
+    found = picks(files, notes)
+    times = read_tests()[1]
     tests = tests_for(files, found) if files else []  # (--walk alone: the walk only)
     rules = list(RULES) if tests is None else [t for t in tests if is_rule(t)]
     if tests == [] and files:
         print("No tests found for these files.")
+    for f, said in notes.items():
+        print("".join(f"{f}: {line}\n" for line in said), end="")
     if rules:
         print("Rules:", " ".join(rules), flush=True)
-        failed |= run_tests(rules_args(rules), slow_too=False)
+        failed |= run_tests(rules_args(rules), rules, estimate(rules, times, slow=False), serial, retry=False)
     if tests is None or any(not is_rule(t) for t in tests):
         picked = None if tests is None else [t for t in tests if not is_rule(t)]
         # A page's script, template or stylesheet is tested in a browser: those tests are slow, so asked for here.
-        every = ["-m", ""] if any(f.endswith((".js", ".html", ".css")) for f in files) else []
+        browser = any(f.endswith((".js", ".html", ".css")) for f in files)
+        tier = ["-m", ""] if browser else [] if fast or picked is None else ["-m", "", "-k", "not in_a_browser"]
         print("Tests:", " ".join(picked) if picked else "the whole default run (a file every test uses changed)",
               flush=True)  # fmt: skip
-        failed |= run_tests([*every, *(picked or [])], slow_too=not every)
+        seconds = estimate(list(times) if picked is None else picked, times, slow=bool(tier))
+        failed |= run_tests(tier, picked or [], seconds, serial, retry=not browser)
     for warning in near_limits(files):
         print(f"near the limit: split before adding: {warning}")
     for f in untested(found):
