@@ -13,33 +13,34 @@ leaving the machine:
   accepted or corrected the AI's coding. This is the learning memory.
 
 One class, ``Store``, built from a part per subject (D-69): ``_base`` (the schema, migrations, connections, shared
-helpers), ``accounts`` (GL accounts, cost centers, audit trail, bank accounts, tax setup), ``invoices`` (saving,
-approving, the second approval), ``register`` (the ERP's invoice register, JD Edwards' vouchers in it, D-181),
-``purchasing`` (POs, export batches), ``capture``
-(supplier learning, touchless, reader scores, the Azure check's queue), ``page_queue`` (the page reader's queue,
-D-171), ``lessons`` (lessons and the AI reviewer's queue), ``vendors`` (the vendor list) and ``vendor_master`` (the
-ERP's vendor master: its import, hold codes, retired names, people), ``backups`` (and ``backup_files``: the
-invoice files and others a backup holds, D-143; the copies server-update makes of a database file without opening a
-Store on it, D-189), ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages and uploads kept for a short
-while), ``samples``, ``users`` (server mode's accounts, sessions and login attempts, D-97), ``roles`` (the roles an
-Admin makes, and a person's role, D-250) and ``sign_in`` (a login's steps before its session, D-146; the first
-sign-in, D-243; what the Admin panel shows of the sessions, D-249), ``hub`` (what the finance hub feed reads, D-103, and
-its own SQLite files: what it sent, the gateway's copy, D-189), ``postings`` (the JD Edwards postings: the table's
-reads and writes, D-189, and their ledger kept across a restore, D-105), ``summary``
-(the invoices' summary the lists, the search and the reports read, D-110), ``review_queue`` (the review queue's
-lists and facts, kept in each process and followed by the summary's log of the queue's changes, D-193), ``managers``
-(a manager confirming an invoice's cost allocation, D-138), ``suppliers`` (every supplier's record at once, for the
-pages that list them, D-157), ``folder`` (what the pick-up read of the invoices folder's files, D-155), ``imports``
-(the import queue: the files waiting to be read, D-168), ``reports`` (the big answers worked out once for every process
-of the company server, and the downloads its background process makes, D-169), ``bulk_jobs`` (bulk approvals as
-jobs, D-185), ``transaction`` (several calls kept in one transaction by a caller, D-189), ``chart`` (the chart of
-accounts and the business units as JD Edwards exports them, and the GL accounts and cost centers worked out from
-them, D-209), ``journal`` (past invoice coding as JD Edwards' Transaction Journal has it: its vouchers and lines, kept
-apart from the feedback memory), ``prior`` (what the supplier prior reads of the journal's names, the vendor list and
-a vendor's approved lines, counted, D-212), ``rules`` (the fixed coding rules, the history of their changes and the
-lines each coded, D-217), ``joined`` (the files a person joined into one voucher, D-216), ``loaded`` (what is loaded
-of JD Edwards' files, read a page at a time) and ``by_hand`` (what a person changed by hand in it, kept across the
-next load, D-221). A test that patches a module-level name (``_now``, ``json``...) patches it in the part that uses
+helpers), ``accounts`` (GL accounts, cost centers, the audit trail ``events``, bank accounts, tax setup), ``invoices``
+(saving, approving ``approve_invoice``, the second approval ``final_approve``), ``register`` (the ERP's invoice
+register, JD Edwards' vouchers in it, D-181), ``purchasing`` (POs, export batches), ``capture`` (supplier learning,
+touchless, reader scores, the Azure check's queue), ``page_queue`` (the page reader's queue, D-171), ``lessons``
+(lessons and the AI reviewer's queue), ``vendors`` (the vendor list) and ``vendor_master`` (the ERP's vendor master: its
+import, hold codes, retired names, people), ``backups`` (and ``backup_files``: the invoice files and others a backup
+holds, D-143; the copies server-update makes of a database file without opening a Store on it, D-189), ``learning`` (the
+feedback memory, metrics), ``ephemeral`` (messages and uploads kept for a short while), ``samples``, ``users`` (server
+mode's accounts, sessions and login attempts, D-97), ``roles`` (the roles an Admin makes, and a person's role, D-250)
+and ``sign_in`` (a login's steps before its session, D-146; the first sign-in, D-243; what the Admin panel shows of the
+sessions, D-249), ``hub`` (what the finance hub feed reads, D-103, and its own SQLite files: what it sent, the gateway's
+copy, D-189), ``postings`` (the JD Edwards postings: the table's reads and writes, D-189, and their ledger kept across a
+restore, D-105), ``summary`` (the invoices' summary the lists, the search and the reports read, D-110), ``review_queue``
+(the review queue's lists and facts, kept in each process and followed by the summary's log of the queue's changes,
+D-193), ``managers`` (a manager confirming an invoice's cost allocation, D-138), ``suppliers`` (every supplier's record
+at once, for the pages that list them, D-157), ``folder`` (what the pick-up read of the invoices folder's files, D-155),
+``imports`` (the import queue: the files waiting to be read, D-168), ``reports`` (the big answers worked out once for
+every process of the company server, and the downloads its background process makes, D-169), ``bulk_jobs`` (bulk
+approvals as jobs, D-185), ``transaction`` (several calls kept in one transaction by a caller, D-189), ``chart`` (the
+chart of accounts and the business units as JD Edwards exports them, and the GL accounts and cost centers worked out
+from them, D-209), ``journal`` (past invoice coding as JD Edwards' Transaction Journal has it: its vouchers and lines,
+kept apart from the feedback memory), ``prior`` (what the supplier prior reads of the journal's names, the vendor list
+and a vendor's approved lines, counted, D-212), ``rules`` (the fixed coding rules, the history of their changes and the
+lines each coded, D-217), ``joined`` (the files a person joined into one voucher, D-216), ``loaded`` (what is loaded of
+JD Edwards' files, read a page at a time) and ``by_hand`` (what a person changed by hand in it, kept across the next
+load, D-221), ``fx`` (the exchange rates AP sets, for the second-approval limit), ``old_readings`` (the invoices read
+before D-89, scored again once) and ``peek`` (a data folder's database read without a Store, which would migrate it: the
+launcher's first look). A test that patches a module-level name (``_now``, ``json``...) patches it in the part that uses
 it.
 
 Every SQL statement AP Coder runs is in this folder (D-189: ``tests/meta/test_sql_in_store.py``; the benchmark's

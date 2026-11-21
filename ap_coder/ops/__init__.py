@@ -7,5 +7,6 @@ offline guard), ``help`` (what each check code means), ``share_report``. The pil
 the made-up company), ``pilot_score``, ``journal_score`` and ``proposed_score`` (against what AP posted). The company
 server: ``service`` (``service_windows``, ``service_macos``, ``service_linux``), ``server_update`` and
 ``update_recovery``, ``safety`` (its data folder), ``health``, ``system_log``. A laptop serving a few colleagues:
-``share``; kept awake while it reads: ``awake``.
+``share`` (run end to end by Windows CI only: ``scripts/ci/share_end_to_end.py``); kept awake while it reads:
+``awake``.
 """
