@@ -59,10 +59,18 @@ def _calls_in_the_app(name: str) -> list[ast.Call]:
     return [call for _, call in _calls(_trees("ap_coder", f"{name}(")) if _called(call) == name]
 
 
-def _revisions() -> tuple[str, ...]:
-    from ap_coder.core.store.invoices import REVISION_ACTIONS
+def _literal(module: str, name: str):
+    """The value of ``name = <a literal>`` at the top of ``module`` (a path from the root), read from its source as the
+    rules read the rest."""
+    tree = _trees(module.rsplit("/", 1)[0])[module]
+    found = [
+        n.value for n in tree.body if isinstance(n, ast.Assign) and any(getattr(t, "id", "") == name for t in n.targets)
+    ]
+    return ast.literal_eval(found[0])
 
-    return REVISION_ACTIONS
+
+def _revisions() -> tuple[str, ...]:
+    return _literal("ap_coder/core/store/invoices.py", "REVISION_ACTIONS")
 
 
 # --- (a) A replace that waits for nobody to have the invoice open is a revision -------------------------------------
@@ -223,9 +231,8 @@ def unworded(words: dict[str, str], revisions: tuple[str, ...]) -> list[str]:
 def test_a_screen_out_of_date_says_what_each_revision_was():
     """``invoice_drafts._CHANGES`` words each revision ("Approved by Ann Lee today at 10:41 a.m."); one left out
     would say "Changed" without a word in the tests."""
-    from ap_coder.web.pages.invoice_drafts import _CHANGES
-
-    assert unworded(_CHANGES, _revisions()) == []
+    words = _literal("ap_coder/web/pages/invoice_drafts.py", "_CHANGES")
+    assert unworded(words, _revisions()) == []
 
 
 def test_the_words_rule_finds_a_revision_with_no_words():
