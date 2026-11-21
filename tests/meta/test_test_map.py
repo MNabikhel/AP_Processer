@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
+import subprocess
+import sys
 
 from tests import test_map as tm
 from tests.conftest import ROOT
@@ -33,6 +36,34 @@ def test_each_function_gets_the_test_files_that_ran_one_of_its_lines(tmp_path):
     assert tm.write(made, tmp_path / "a.json.gz") == tm.write(tm.build(recorded), tmp_path / "b.json.gz")
     assert (tmp_path / "a.json.gz").read_bytes() == (tmp_path / "b.json.gz").read_bytes()
     assert json.loads(gzip.decompress((tmp_path / "a.json.gz").read_bytes()))["format"] == tm.FORMAT
+
+
+def test_what_a_shared_fixture_ran_counts_for_every_test_file_that_used_it():
+    """B-3023: a session fixture (the made-up company, the demo) is made once, inside the first test that asks for
+    it, so what it ran counted for that test's file alone, and the map changed with the order the files ran. Its
+    setup is recorded under its own context and counts for each file whose tests used it."""
+    company = _body_line("ap_coder/ops/demo.py", "load_company")
+    shared = "fixture:tests::chart_company_template"
+    made = tm.build({"ap_coder/ops/demo.py": {company: [shared, A]}}, uses={shared: [C, B]})
+    assert made["tests"] == [A, B, C] and made["map"] == {"ap_coder/ops/demo.py::load_company": [0, 1, 2]}
+
+
+def test_the_plugin_names_a_shared_fixtures_setup_and_the_files_that_used_it(tmp_path):
+    """Run by pytest with the plugin, each shared fixture (not made a test) is written with the test files whose
+    tests used it, every run in whatever order; a fixture made for each test is that test's own."""
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\n\n@pytest.fixture(scope='session')\ndef books():\n    return 1\n\n"
+        "@pytest.fixture\ndef each():\n    return 2\n", encoding="utf-8")  # fmt: skip
+    (tmp_path / "test_a.py").write_text("def test_a(books):\n    assert books\n", encoding="utf-8")
+    (tmp_path / "test_b.py").write_text("def test_b(books, each):\n    assert books\n", encoding="utf-8")
+    (tmp_path / "test_c.py").write_text("def test_c(each):\n    assert each\n", encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(ROOT), tm.USES_ENV: str(tmp_path / "uses")}
+    for order in (["test_a.py", "test_b.py", "test_c.py"], ["test_c.py", "test_b.py", "test_a.py"]):
+        subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "tests.test_map", "-p", "no:cacheprovider", *order],
+                       cwd=tmp_path, env=env, check=True, capture_output=True)  # fmt: skip
+        assert tm.fixture_uses(tmp_path / "uses") == {"fixture:::books": ["test_a.py", "test_b.py"]}
+        for kept in (tmp_path / "uses").iterdir():
+            kept.unlink()
 
 
 def test_the_test_files_of_some_functions_and_which_of_them_the_map_has(tmp_path):

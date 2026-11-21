@@ -57,6 +57,69 @@ def test_the_jde_and_pages_probes_give_the_same_output_each_run(tmp_path, probe,
     assert first == second and first.count(b"\n") > lines
 
 
+def _probe(name: str):
+    spec = importlib.util.spec_from_file_location(f"{name}_probe", ROOT / "scripts" / "probes" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_jde_probe_leaves_out_only_the_times_the_clock_writes(capsys):
+    """The clock's times (a PO's ``updated_at``) are left out; a date the books give, a keying sheet's cell among
+    them, is printed as it is, so a wrong or swapped date says DIFFERENT."""
+    import datetime as dt
+
+    probe = _probe("jde")
+    cells = {"Keying sheet": [["Invoice date", dt.datetime(2026, 10, 24)]]}
+    probe.emit("x", po={"updated_at": "2026-11-21T03:29:33"}, sheet=cells, gl_date=dt.date(2026, 10, 20))
+    said = capsys.readouterr().out
+    assert '"updated_at": "(time)"' in said
+    assert "2026-10-24" in said and "2026-10-20" in said
+
+
+def _scratch_tree(to: Path) -> Path:
+    import shutil
+
+    for part in ("ap_coder", "data", "samples"):
+        shutil.copytree(ROOT / part, to / part, ignore=shutil.ignore_patterns("__pycache__"))
+    return to
+
+
+@pytest.mark.slow
+def test_the_jde_probe_says_different_for_a_keying_sheet_with_two_dates_swapped(tmp_path):
+    """B-3010: the G/L date and the invoice date swapped on the keying sheet (what the clerk types) gave the same
+    bytes, every date cell having been left out as a time of the clock."""
+    tree = _scratch_tree(tmp_path / "tree")
+    keying = tree / "ap_coder" / "erp" / "jde_keying.py"
+    text = keying.read_text(encoding="utf-8")
+    right = '[("Invoice date", LABEL), (v.invoice_date, DATE), ("G/L date", LABEL), (v.gl_date, DATE)]'
+    assert text.count(right) == 1
+    keying.write_text(text.replace(right, right.replace("v.invoice_date", "v.X").replace("v.gl_date", "v.invoice_date")
+                                   .replace("v.X", "v.gl_date")), encoding="utf-8")  # fmt: skip
+    runs = [subprocess.Popen([sys.executable, str(ROOT / "scripts" / "probes" / "jde.py"), "0", str(tmp_path / name)],
+                             env={**os.environ, "PYTHONPATH": str(base), "PYTHONHASHSEED": "0"},
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            for name, base in (("before", ROOT), ("after", tree))]  # fmt: skip
+    (before, err), (after, _) = (run.communicate() for run in runs)
+    assert all(run.returncode == 0 for run in runs), err[-3000:]
+    assert before != after
+    assert "/sheet/Keying sheet" in _tool().first_difference(before, after)
+
+
+@pytest.mark.slow
+def test_the_pages_probe_prints_its_own_day_whatever_the_day_it_runs(tmp_path):
+    """B-3016: the pages printed the day the probe ran (the activity's range, "in the review queue since", a due
+    date's days ago), so two runs a second apart on either side of midnight differed. The probe's clock now reads a
+    fixed day; only its seconds go on."""
+    import datetime as dt
+
+    env = {**os.environ, "PYTHONPATH": str(ROOT), "PYTHONHASHSEED": "0"}
+    out = subprocess.run([sys.executable, str(ROOT / "scripts" / "probes" / "pages.py"), "1", str(tmp_path / "w")],
+                         env=env, capture_output=True, check=True).stdout.decode("utf-8")  # fmt: skip
+    probe = _probe("pages")
+    assert probe.DAY.isoformat() in out and dt.date.today().isoformat() not in out
+
+
 def test_the_pages_probe_leaves_out_what_differs_run_to_run(tmp_path):
     spec = importlib.util.spec_from_file_location("pages_probe", ROOT / "scripts" / "probes" / "pages.py")
     probe = importlib.util.module_from_spec(spec)
@@ -127,6 +190,65 @@ def test_a_move_word_for_word_is_the_same_and_a_token_changed_on_the_way_is_said
     assert moved.main(["HEAD", "--docstrings", "a.py", "b.py"]) == 0  # only these files
     capsys.readouterr()
     assert moved.main(["no-such-ref"]) == 2
+
+
+def test_an_empty_module_is_compared_with_the_docstrings_left_out_too(tmp_path, capsys):
+    """B-3017: ``--docstrings`` stopped with IndexError on an empty file (a split package's new ``__init__.py``):
+    a module with nothing in it has no first statement to be its docstring."""
+    moved = load_script("moved_same", "ap_moved_same")
+    repo = moved.ROOT = tmp_path
+    _git(repo, "init", "-q")
+    (repo / "a.py").write_text(MODULE, encoding="utf-8")
+    _git(repo, "add", "a.py")
+    _git(repo, "commit", "-qm", "a")
+    (repo / "pkg").mkdir()
+    (repo / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (repo / "pkg" / "notes.py").write_text("# only a comment\n", encoding="utf-8")
+    assert moved.main(["HEAD", "--docstrings"]) == 0
+    assert "0 new" in capsys.readouterr().out
+
+
+USERS = """class UsersMixin:
+    def add_user(self, name):
+        return name
+
+
+    def start_session(self, user_id):
+        return {"user": user_id}
+"""
+STORE = """from users import UsersMixin
+
+
+class Store(UsersMixin):
+    pass
+"""
+
+
+def test_methods_moved_word_for_word_into_a_new_class_are_the_same_and_one_changed_on_the_way_is_said(tmp_path, capsys):
+    """B-3018: the store's usual split (methods moved word for word from one part's class into a new one, the Store
+    taking it among its bases) was said gone, new and changed: a method was looked for in its own class only. A
+    method is found by its name and code in any class; the new class that only holds what moved, and a class whose
+    bases gained it, are said so and pass; a token changed in a moved method is said changed."""
+    moved = load_script("moved_same", "ap_moved_same")
+    repo = moved.ROOT = tmp_path
+    _git(repo, "init", "-q")
+    (repo / "users.py").write_text(USERS, encoding="utf-8")
+    (repo / "store.py").write_text(STORE, encoding="utf-8")
+    _git(repo, "add", "users.py", "store.py")
+    _git(repo, "commit", "-qm", "a")
+    kept, method = USERS.split("\n\n\n")
+    (repo / "users.py").write_text(kept + "\n", encoding="utf-8")
+    sessions = f'class SessionsMixin:\n    """The sessions."""\n\n{method}'
+    (repo / "sessions.py").write_text(sessions, encoding="utf-8")
+    (repo / "store.py").write_text(STORE.replace("(UsersMixin)", "(UsersMixin, SessionsMixin)"), encoding="utf-8")
+    assert moved.main(["HEAD"]) == 0
+    said = capsys.readouterr().out
+    assert "0 changed, 0 gone, 0 twice, 0 new" in said
+    assert "  moved: method start_session (users.py UsersMixin -> sessions.py SessionsMixin)\n" in said
+    (repo / "sessions.py").write_text(sessions.replace('{"user": user_id}', '{"user": user_id + 1}'), encoding="utf-8")
+    assert moved.main(["HEAD"]) == 1
+    said = capsys.readouterr().out
+    assert "  changed: method start_session (users.py UsersMixin -> sessions.py SessionsMixin)\n" in said
 
 
 def test_with_no_probes_named_the_default_ones_run():

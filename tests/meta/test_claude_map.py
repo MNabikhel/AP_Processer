@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
 from functools import cache
 from pathlib import Path
 
@@ -115,9 +116,21 @@ def test_every_path_and_name_of_claudes_map_is_there():
 
 
 def test_claude_md_is_no_bigger_than_when_its_map_was_first_checked():
-    """It is read on every turn: a line added takes one out (or a package's own map holds it)."""
-    size = len(CLAUDE.read_bytes())
+    """It is read on every turn: a line added takes one out (or a package's own map holds it). Counted with LF line
+    ends, as Linux checks it out (a Windows checkout's CRLF is a byte more a line)."""
+    size = len(CLAUDE.read_bytes().replace(b"\r\n", b"\n"))
     assert size <= MOST_BYTES, f"CLAUDE.md is {size:,} bytes, over {MOST_BYTES:,}: move a detail into the package's map"
+
+
+def test_the_size_is_the_same_whatever_the_line_ends_a_checkout_has(tmp_path, monkeypatch):
+    """B-3020: a Windows checkout ends each line in CRLF, so a CLAUDE.md within the limit on Linux was over it there
+    (a byte more a line). Its size is counted with LF line ends."""
+    text = CLAUDE.read_text(encoding="utf-8")
+    near = text + "x" * (MOST_BYTES - len(text.encode("utf-8")) - 1) + "\n"  # at the limit, with LF
+    windows = tmp_path / "CLAUDE.md"
+    windows.write_bytes(near.encode("utf-8").replace(b"\n", b"\r\n"))
+    monkeypatch.setattr(sys.modules[__name__], "CLAUDE", windows)
+    test_claude_md_is_no_bigger_than_when_its_map_was_first_checked()
 
 
 def package_maps() -> list[tuple[Path, str]]:
@@ -175,3 +188,43 @@ def test_every_name_of_a_packages_map_is_there():
             ):
                 missing.append(f"{init.relative_to(ROOT)}: {token}")
     assert not missing, missing
+
+
+def _named_in_maps() -> set[Path]:
+    """The files and folders of the app the maps name: CLAUDE.md's by path, a package's by path or by module name
+    (``jde_ais``, ``jde_settings.load``), a path's ``<word>`` standing for any (``pages/<name>.py``)."""
+    named: set[Path] = {
+        ROOT / "ap_coder" / t
+        for t in re.findall(r"`(\w+)`", CLAUDE.read_text(encoding="utf-8"))
+        if (ROOT / "ap_coder" / t / "__init__.py").is_file()
+    }  # fmt: skip  (the packages: "Code:")
+    for bullet in map_bullets():
+        paths: list[Path] = []
+        for token in (t for t in re.findall(r"`([^`]+)`", bullet) if " " not in t and PATH.fullmatch(t)):
+            paths += found(token, paths)
+        named.update(paths)
+    for init, doc in package_maps():
+        near = [init.parent]
+        for token in (t.split("(", 1)[0] for t in re.findall(r"``([^`]+)``", doc)):
+            if PATH.fullmatch(token):
+                near += found(token, near)
+            elif NAME.fullmatch(token):
+                first = token.split(".")[0]
+                named.update(p for p in (init.parent / f"{first}.py", init.parent / first) if p.exists())
+        named.update(near[1:])
+    return named | {p.parent for p in named if p.name == "__init__.py"}
+
+
+def test_every_module_of_the_app_is_in_a_map():
+    """B-3022: details CLAUDE.md's map dropped were to go into the packages' maps (D-332), yet some went into none
+    (coding's ``manager_mail``, bench's ``jde_group`` and ``companies_speed``): found only by searching. Each module
+    and package of the app is named in its package's map or in CLAUDE.md's (a ``__main__.py`` is its package's
+    ``python -m``)."""
+    named = _named_in_maps()
+    unnamed = []
+    for init, _ in package_maps():
+        for module in sorted(init.parent.iterdir()):
+            is_module = module.suffix == ".py" and module.name not in ("__init__.py", "__main__.py")
+            if (is_module or (module / "__init__.py").is_file()) and module not in named:
+                unnamed.append(module.relative_to(ROOT).as_posix())
+    assert not unnamed, f"name each in its package's __init__.py docstring: {unnamed}"

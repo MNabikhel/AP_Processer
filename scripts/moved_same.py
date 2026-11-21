@@ -8,8 +8,11 @@ behaviour, the tests the rest.
     python scripts/moved_same.py origin/main ap_coder      only the files under ap_coder/
 
 A definition is said "changed" (found by its name, its code not the same), "gone" (no longer found), "twice" (found
-more often than before) or "new" (not there before). Exit code 0 when each one is found once and the same and none is
-new, 1 otherwise, 2 when the ref can't be read. Only git on this clone is run (``git diff``, ``git show``).
+more often than before) or "new" (not there before). A method is found by its name in any class (the store's parts
+are split so: methods moved into a new class); a class is compared without its methods. Said and passing: a method
+"moved" to another class, a new class that is only the "home" of moved methods, and a class whose "bases" gained such
+a home. Exit code 0 when each one is found once and the same and none is new, 1 otherwise, 2 when the ref can't be
+read. Only git on this clone is run (``git diff``, ``git show``).
 """
 
 from __future__ import annotations
@@ -53,53 +56,103 @@ def _docstring(node: ast.AST) -> bool:
 
 
 def _without_docstrings(tree: ast.Module) -> ast.Module:
-    for each in ast.walk(tree):
-        if isinstance(each, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)) and _docstring(
-            each.body[0]
-        ):
+    for each in ast.walk(tree):  # (an empty module has no first statement)
+        kinds = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)
+        if isinstance(each, kinds) and each.body and _docstring(each.body[0]):
             each.body = each.body[1:] or [ast.Pass()]
     return tree
 
 
-def definitions(source: str, path: str, docstrings: bool) -> dict[str, list[tuple[str, str]]]:
-    """{"def name" / "class Name" / "method Class.name": [(the file, its ``ast.dump``)]} of a file's top level."""
-    found: dict[str, list[tuple[str, str]]] = {}
+METHOD = (ast.FunctionDef, ast.AsyncFunctionDef)
+Entry = tuple[str, str, ast.AST]  # (where it is: its file, and for a method its class too; its ast.dump; its node)
+Found = dict[str, list[Entry]]  # {"def f" / "class C" / "method m": the definitions of that name}
+
+
+def _shell(node: ast.ClassDef, bases: bool = True) -> str:
+    """A class without its methods (compared one by one, wherever they went), and without its bases if asked."""
+    shell = ast.ClassDef(name=node.name, bases=node.bases if bases else [], keywords=node.keywords,
+                         body=[s for s in node.body if not isinstance(s, METHOD)], decorator_list=node.decorator_list,
+                         type_params=getattr(node, "type_params", []))  # fmt: skip
+    return ast.dump(shell)
+
+
+def definitions(source: str, path: str, docstrings: bool) -> Found:
+    """A file's top-level functions (``def f``, where: its file), its classes without their methods (``class C``)
+    and their methods (``method m``, where: its file and class)."""
+    found: Found = {}
     tree = ast.parse(source)
     if not docstrings:
         tree = _without_docstrings(tree)
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            found.setdefault(f"def {node.name}", []).append((path, ast.dump(node)))
+        if isinstance(node, METHOD):
+            found.setdefault(f"def {node.name}", []).append((path, ast.dump(node), node))
         elif isinstance(node, ast.ClassDef):
-            found.setdefault(f"class {node.name}", []).append((path, ast.dump(node)))
-            for method in node.body:
-                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    found.setdefault(f"method {node.name}.{method.name}", []).append((path, ast.dump(method)))
+            found.setdefault(f"class {node.name}", []).append((path, _shell(node), node))
+            for method in (m for m in node.body if isinstance(m, METHOD)):
+                found.setdefault(f"method {method.name}", []).append((f"{path} {node.name}", ast.dump(method), method))
     return found
 
 
-def compare(before: dict[str, list[tuple[str, str]]], after: dict[str, list[tuple[str, str]]]) -> list[str]:
-    """What is not found once and the same, in words, one line each. Of the definitions of a name, each one before
-    takes one after with the same code; one left before is "changed" when one is left after (the one in its own file
-    first), else "gone"; one left after is "twice" when its code is one before, else "new" (another file's ``main``)."""
-    said = []
+def _pair(was: list[Entry], now: list[Entry]) -> list[tuple[Entry, Entry]]:
+    """Each one before taken with one after of the same code (the one in its own place first); both lists lose them."""
+    pairs = []
+    for old in list(was):
+        same = [x for x in now if x[1] == old[1]]
+        if same:
+            new = next((x for x in same if x[0] == old[0]), same[0])
+            was.remove(old)
+            now.remove(new)
+            pairs.append((old, new))
+    return pairs
+
+
+def _bases(node: ast.ClassDef) -> list[str]:
+    return [ast.unparse(b) for b in node.bases]
+
+
+def compare(before: Found, after: Found) -> list[str]:
+    """What is not found once and the same, one line each, then what moved and passes. Of the definitions of a name,
+    each one before takes one after with the same code; one left before is "changed" when one is left after (the one
+    in its own file first), else "gone"; one left after is "twice" when its code is one before, else "new" (another
+    file's ``main``). Passing: a method "moved" to another class; a new class that only holds methods moved in, their
+    "home"; a class as before but for "bases" it gained, each such a home."""
+    said, passing = [], []
+    moved_in: set[str] = set()  # "file Class" a method moved into from another class
+    left = {}
     for name in sorted(set(before) | set(after)):
         was, now = list(before.get(name, [])), list(after.get(name, []))
-        for path, code in list(was):
-            same = next((x for x in now if x[1] == code), None)
-            if same is not None:
-                was.remove((path, code))
-                now.remove(same)
-        for path, _ in was:
-            if now:
-                other = next((x for x in now if x[0] == path), now[0])
-                now.remove(other)
-                said.append(f"changed: {name} ({path} -> {other[0]})")
+        for old, new in _pair(was, now):
+            if name.startswith("method ") and old[0].split(" ")[1] != new[0].split(" ")[1]:
+                passing.append(f"moved: {name} ({old[0]} -> {new[0]})")
+                moved_in.add(new[0])
+        left[name] = (was, now)
+    homes = set()
+    for name, (_, now) in left.items():
+        for entry in [e for e in now if name.startswith("class ") and not before.get(name)]:
+            where, _, node = entry
+            methods = {f"{where} {node.name}" for m in node.body if isinstance(m, METHOD)}
+            rest = [s for s in node.body if not isinstance(s, METHOD)]
+            rest = rest[1:] if rest and _docstring(rest[0]) else rest  # (its docstring is no code)
+            if methods and methods <= moved_in and not rest:
+                now.remove(entry)
+                homes.add(node.name)
+                passing.append(f"home: {name} ({where}), only methods moved in")
+    for name, (was, now) in left.items():
+        for old in was:
+            if not now:
+                said.append(f"gone: {name} ({old[0]})")
+                continue
+            new = next((x for x in now if x[0].split(" ")[0] == old[0].split(" ")[0]), now[0])
+            now.remove(new)
+            gained = [b for b in _bases(new[2]) if b not in _bases(old[2])] if name.startswith("class ") else []
+            if (gained and set(gained) <= homes and [b for b in _bases(new[2]) if b not in gained] == _bases(old[2])
+                    and _shell(old[2], bases=False) == _shell(new[2], bases=False)):  # fmt: skip
+                passing.append(f"bases: {name} ({new[0]}) gains {', '.join(gained)}")
             else:
-                said.append(f"gone: {name} ({path})")
-        codes = {code for _, code in before.get(name, [])}
-        said += [f"{'twice' if code in codes else 'new'}: {name} ({path})" for path, code in now]
-    return said
+                said.append(f"changed: {name} ({old[0]} -> {new[0]})")
+        codes = {code for _, code, _ in before.get(name, [])}
+        said += [f"{'twice' if code in codes else 'new'}: {name} ({where})" for where, code, _ in now]
+    return said + passing
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -111,19 +164,20 @@ def main(argv: list[str] | None = None) -> int:
     keep = not args.docstrings
     try:
         old_files, new_files = changed_files(args.ref, args.under)
-        before: dict[str, list[tuple[str, str]]] = {}
+        before: Found = {}
         for path in old_files:
             for name, found in definitions(git("show", f"{args.ref}:{path}"), path, keep).items():
                 before.setdefault(name, []).extend(found)
     except ValueError as exc:
         print(f"Could not read {args.ref}: {exc}")
         return 2
-    after: dict[str, list[tuple[str, str]]] = {}
+    after: Found = {}
     for path in new_files:
         for name, found in definitions((ROOT / path).read_text(encoding="utf-8"), path, keep).items():
             after.setdefault(name, []).extend(found)
     said = compare(before, after)
     kinds = {k: sum(line.startswith(f"{k}:") for line in said) for k in ("changed", "gone", "twice", "new")}
+    wrong = [line for line in said if line.split(":")[0] in kinds]
     total = sum(len(found) for found in before.values())
     same = total - kinds["changed"] - kinds["gone"] - kinds["twice"]
     what = " (docstrings left out)" if args.docstrings else ""
@@ -133,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {line}")
     if len(said) > SHOWN:
         print(f"  ... and {len(said) - SHOWN} more")
-    return 1 if said else 0
+    return 1 if wrong else 0
 
 
 if __name__ == "__main__":

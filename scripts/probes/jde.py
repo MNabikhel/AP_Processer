@@ -41,7 +41,9 @@ from pathlib import Path
 ON = dt.date(2026, 11, 2)  # the batches' day; the company's invoices are dated in the days before
 ROOT = Path(__file__).resolve().parents[2]
 TYPED = ("PO {}", "PO-{}", "PO{}", "PO#{}", " #{} ", "PO# {}")  # how a PO is printed; the last over VLPO's 8
-CLOCK = re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?([+-]\d{2}:\d{2}|Z)?")  # a time the clock wrote
+# What the clock writes: a stamp of the store's (a PO's ``updated_at``), by its name. Nothing else is left out: a date
+# of the books (an invoice's, a G/L date, a keying sheet's cell) is printed as it is.
+CLOCK = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?([+-]\d{2}:\d{2}|Z)?")
 
 
 def _plain(value):
@@ -63,8 +65,19 @@ def _plain(value):
     return f"<{type(value).__name__}>"
 
 
+def _stamps_out(value):
+    """``value`` (as JSON reads it) with each ``..._at`` stamp the clock wrote as "(time)"."""
+    if isinstance(value, dict):
+        return {k: "(time)" if k.endswith("_at") and isinstance(v, str) and CLOCK.fullmatch(v) else _stamps_out(v)
+                for k, v in value.items()}  # fmt: skip
+    if isinstance(value, list):
+        return [_stamps_out(v) for v in value]
+    return value
+
+
 def emit(part: str, **said) -> None:
-    print(CLOCK.sub("(time)", json.dumps({"part": part, **said}, sort_keys=True, default=_plain)))
+    plain = json.loads(json.dumps({"part": part, **said}, default=_plain))
+    print(json.dumps(_stamps_out(plain), sort_keys=True))
 
 
 def said(call, *args, **kwargs):
