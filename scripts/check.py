@@ -86,7 +86,8 @@ WALK_SECONDS = 2400  # the walk's own waits end it well before; this only stops 
 def changed_files() -> list[str] | None:
     """Changed, new and deleted files since the last commit; None outside a git checkout."""
     try:
-        done = subprocess.run(["git", "status", "--porcelain", "-uall"], cwd=ROOT, capture_output=True, text=True)
+        done = subprocess.run(["git", "status", "--porcelain", "-uall"], cwd=ROOT, capture_output=True,
+                              encoding="utf-8", errors="replace")  # fmt: skip
     except OSError:
         return None
     if done.returncode:
@@ -210,9 +211,11 @@ def is_rule(test: str) -> bool:
 
 def changed_lines(f: str) -> set[int] | None:
     """The lines of ``f`` changed since the last commit (``git diff -U0``); None for a file git doesn't have yet."""
-    try:
-        known = subprocess.run(["git", "ls-files", "--", f], cwd=ROOT, capture_output=True, text=True)
-        diff = subprocess.run(["git", "diff", "-U0", "HEAD", "--", f], cwd=ROOT, capture_output=True, text=True)
+    try:  # (git writes UTF-8, whatever the code page Windows reads with by default before Python 3.15)
+        known = subprocess.run(["git", "ls-files", "--", f], cwd=ROOT, capture_output=True, encoding="utf-8",
+                               errors="replace")  # fmt: skip
+        diff = subprocess.run(["git", "diff", "-U0", "HEAD", "--", f], cwd=ROOT, capture_output=True,
+                              encoding="utf-8", errors="replace")  # fmt: skip
     except OSError:
         return None
     if known.returncode or diff.returncode or not known.stdout.strip():
@@ -278,8 +281,9 @@ def walk() -> tuple[bool, str]:
 
 
 def pytest(args: list[str]) -> subprocess.CompletedProcess:
+    # (pytest writes a pipe in the code page this reads it with, unlike git and ruff: no encoding; a byte replaced)
     return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *args], cwd=ROOT,
-                          capture_output=True, text=True)  # fmt: skip
+                          capture_output=True, text=True, errors="replace")  # fmt: skip
 
 
 def run_tests(args: list[str], slow_too: bool = True) -> bool:
@@ -320,8 +324,9 @@ def main(argv: list[str]) -> int:
     failed = False
     python = [f for f in files if f.endswith(".py") and (ROOT / f).is_file()]
     if python:
-        for cmd in (["ruff", "check", "-q", *python], ["ruff", "format", "--check", "-q", *python]):
-            done = subprocess.run([sys.executable, "-m", *cmd], cwd=ROOT, capture_output=True, text=True)
+        for cmd in (["ruff", "check", "-q", *python], ["ruff", "format", "--check", "-q", *python]):  # (in UTF-8)
+            done = subprocess.run([sys.executable, "-m", *cmd], cwd=ROOT, capture_output=True, encoding="utf-8",
+                                  errors="replace")  # fmt: skip
             if done.returncode:
                 failed = True
                 print((done.stdout + done.stderr).strip())
@@ -359,4 +364,5 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(errors="replace")  # (a Windows pipe's code page has no → for ruff's words)
     sys.exit(main(sys.argv[1:]))
