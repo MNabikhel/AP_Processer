@@ -8,12 +8,16 @@ bug or decision number two branches both took given anew to the later branch's e
 A conflict in a doc under docs/ is settled when the two sides changed different lines: both added entries at the end
 of BUGS.md or decisions.md (both kept, then sorted by number), both added a section to WHATS_NEW.md (both kept),
 each took a different item off TODO.md. Two changes to the same line, and any conflict in code, stop the script with
-the merge left in progress and the files that need a person listed. A B- or D- number that the branch being merged
-and the ones merged before it each gave to a new entry of their own is given anew to the branch's entry (the next
-number no branch given uses), with its mentions in the lines that branch changed (code, tests, docs), in a commit on
-top of the branch; the branch itself is left as it was. Each merge is committed; nothing is pushed. The checks: the
-meta tests (``python -m pytest -q -m "" tests/meta``), then ``python scripts/check.py`` on the files the merges
-changed. Exit code 0 when all is merged and checked, 1 when something needs a person, 2 when nothing was done.
+the merge left in progress and the files that need a person listed. Since D-328 each new entry is a file of its own
+(docs/bugs/B-NNNN.md, docs/decisions/D-NNN.md), which merges with no conflict; an entry a branch made before then
+added to BUGS.md or decisions.md, past where they stop, is moved into its file. A B- or D- number that the branch
+being merged and the ones merged before it each gave to a new entry of their own (separate clones: the worktrees of
+one clone are kept apart by scripts/new_entry.py) is given anew to the branch's entry (the next number no branch has
+and this clone did not reserve), its file renamed, with its mentions in the lines that branch changed (code, tests,
+docs), in a commit on top of the branch; the branch itself is left as it was. Each merge is committed; nothing is
+pushed. The checks: the meta tests (``python -m pytest -q -m "" tests/meta``), then ``python scripts/check.py`` on the
+files the merges changed. Exit code 0 when all is merged and checked, 1 when something needs a person, 2 when nothing
+was done.
 """
 
 from __future__ import annotations
@@ -28,7 +32,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-LOGS = {"B": "docs/BUGS.md", "D": "docs/decisions.md"}  # each kind of number and the log its entries are in
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # scripts/ is no package: new_entry.py is beside this one
+import new_entry  # noqa: E402  (standard library only)
+from new_entry import FILE_NAME, FOLDERS, FROZEN, LOGS  # noqa: E402  (the logs, frozen, and the entries' folders)
+
 MENTION = re.compile(r"(?<![A-Za-z0-9_])([BD])-(\d+)(?!\d)")
 ALIKE = 0.6  # two entries of one number this alike (words) are one entry, edited on a side: not two that clash
 
@@ -64,7 +71,7 @@ def write(path: str, text: str) -> None:
     git("add", "--", path)
 
 
-# The logs: an entry is a line "- **B-12** · ..." and the indented lines under it.
+# The logs: an entry is a line "- **B-12** · ..." and the indented lines under it, in a frozen log or a file of its own.
 
 
 def entries(text: str, prefix: str) -> list[tuple[int, str]]:
@@ -94,6 +101,34 @@ def doubled(text: str, prefix: str) -> set[int]:
     return {n for n, texts in seen.items() if len(texts) > 1}
 
 
+def entry_files(rev: str, prefix: str) -> dict[int, str]:
+    """The entry files of this kind at a commit: each one's number and path."""
+    paths = git("ls-tree", "--name-only", rev, "--", f"{FOLDERS[prefix]}/").splitlines()
+    return {int(m[2]): path for path in paths if (m := FILE_NAME.fullmatch(path.rpartition("/")[2])) and m[1] == prefix}
+
+
+def renamed(path: str, given: dict[tuple[str, int], int]) -> str:
+    """An entry file's path under the number given anew to it (else the path as it is)."""
+    folder, _, name = path.rpartition("/")
+    if (m := FILE_NAME.fullmatch(name)) and FOLDERS[m[1]] == folder and (m[1], int(m[2])) in given:
+        return f"{folder}/{m[1]}-{given[(m[1], int(m[2]))]}.md"
+    return path
+
+
+def without(text: str, prefix: str, gone: set[int]) -> str:
+    """A log without the entries of these numbers (each its line and the indented lines under it)."""
+    head = re.compile(rf"- \*\*{prefix}-(\d+)\*\*")
+    kept, dropping = [], False
+    for line in text.split("\n"):
+        if m := head.match(line):
+            dropping = int(m[1]) in gone
+        elif not line.startswith("  "):
+            dropping = False
+        if not dropping:
+            kept.append(line)
+    return "\n".join(kept)
+
+
 def alike(a: str, b: str) -> bool:
     """Whether two entries of one number are one written twice: their words after the number."""
     a_words, b_words = a.split()[3:], b.split()[3:]  # (after "- **B-12** ·")
@@ -101,14 +136,18 @@ def alike(a: str, b: str) -> bool:
 
 
 def clashes(base: str, ours: str, theirs: str, prefix: str) -> list[int]:
-    """The numbers both sides gave to a new entry (a number the merge base has not), each a different entry."""
-    before = numbers(show(base, LOGS[prefix]), prefix)
+    """The numbers both sides gave to a new entry (a number the merge base has not), each a different entry: in its
+    file, or in the frozen log (a branch made before D-328)."""
+    before = numbers(show(base, LOGS[prefix]), prefix) | entry_files(base, prefix).keys()
 
     def new(rev: str) -> dict[int, list[str]]:
         found: dict[int, list[str]] = {}
         for n, entry in entries(show(rev, LOGS[prefix]), prefix):
             if n not in before:
                 found.setdefault(n, []).append(entry)
+        for n, path in entry_files(rev, prefix).items():
+            if n not in before:
+                found.setdefault(n, []).append(show(rev, path).strip())
         return found
 
     mine, yours = new(ours), new(theirs)
@@ -116,8 +155,9 @@ def clashes(base: str, ours: str, theirs: str, prefix: str) -> list[int]:
 
 
 def highest(rev: str, prefix: str) -> int:
-    """The highest number of this kind its log mentions (the archive's are older: tests/meta/test_agent_friendly.py)."""
-    return max((int(n) for kind, n in MENTION.findall(show(rev, LOGS[prefix])) if kind == prefix), default=0)
+    """The highest number of this kind its log mentions or an entry file has (the archive's are older)."""
+    said = [int(n) for kind, n in MENTION.findall(show(rev, LOGS[prefix])) if kind == prefix]
+    return max([*said, *entry_files(rev, prefix)], default=0)
 
 
 def sort_newest(text: str, prefix: str, start: int) -> str | None:
@@ -261,34 +301,62 @@ def renumbered(tip: str, base: str, given: dict[tuple[str, int], int], message: 
                 continue  # not text
             old = text.split("\n")
             new = [MENTION.sub(anew, line) if n in lines else line for n, line in enumerate(old, 1)]
-            if new != old:
+            moved = renamed(path, given)
+            if new != old or moved != path:
                 blob = git("hash-object", "-w", "--stdin", data="\n".join(new).encode("utf-8"))
                 mode = git("ls-tree", tip, "--", path).split()[0]
-                git("update-index", "--cacheinfo", f"{mode},{blob},{path}", env=env)
-                files.append(path)
+                if moved != path:
+                    git("update-index", "--force-remove", "--", path, env=env)
+                git("update-index", "--add", "--cacheinfo", f"{mode},{blob},{moved}", env=env)
+                files.append(path if moved == path else f"{path} (now {moved})")
         tree = git("write-tree", env=env)
     return git("commit-tree", tree, "-p", tip, "-m", message), files
 
 
 def give_anew(base: str, head: str, tip: str, later: list[str]) -> dict[tuple[str, int], int]:
     """The branch's numbers the branches merged before it gave to entries of their own, and the number each is given:
-    the next one that neither these nor the branches still to merge use."""
+    the next one that neither these, the branches still to merge nor any branch of this clone use, reserved as
+    scripts/new_entry.py reserves one (so no worktree of this clone takes it meanwhile)."""
     given = {}
     for prefix in LOGS:
-        top = max(highest(rev, prefix) for rev in [head, tip, *later])
-        given |= {(prefix, n): top + k for k, n in enumerate(clashes(base, head, tip, prefix), 1)}
+        clashing = clashes(base, head, tip, prefix)
+        if clashing:
+            top = max([*(highest(rev, prefix) for rev in [head, tip, *later]), *new_entry.taken(prefix)])
+            for n in clashing:
+                top = given[(prefix, n)] = new_entry.reserve(prefix, top)
     return given
 
 
 # One merge.
 
 
+def move_out(path: str, text: str, prefix: str, notes: list[str], person: list[str]) -> None:
+    """The entries a frozen log has past its last (a branch made before D-328 added them) moved to files of their
+    own; a person is asked when such a file is there with another entry."""
+    late = {n: entry for n, entry in entries(text, prefix) if n > FROZEN[prefix]}
+    files = {n: f"{FOLDERS[prefix]}/{prefix}-{n}.md" for n in late}
+    other = [files[n] for n in late if Path(files[n]).is_file() and read(files[n]).strip() != late[n].strip()]
+    if other:
+        person.append(f"{path}: entries past its last ({prefix}-{FROZEN[prefix]}) whose file holds another entry: "
+                      f"{', '.join(other)}")  # fmt: skip
+        return
+    if late:
+        for n, entry in late.items():
+            Path(files[n]).parent.mkdir(parents=True, exist_ok=True)
+            write(files[n], entry + "\n")
+        write(path, without(text, prefix, set(late)))
+        said = ", ".join(f"{prefix}-{n}" for n in late)
+        notes.append(f"Moved {said} from {path}, which stops at {prefix}-{FROZEN[prefix]}, into files of their own.")
+        print(f"  {notes[-1]}")
+
+
 def tidy_logs(head: str, notes: list[str], person: list[str]) -> None:
     """After a merge: each log's newest entries sorted by number, a number newly written twice differently given to
-    a person, and the bug log's last number checked to be its newest."""
+    a person, and the entries past a frozen log's last moved to files of their own."""
     for prefix, path in LOGS.items():
         if not Path(path).is_file() or "<<<<<<<" in (text := read(path)):
             continue
+        asked = len(person)
         before = show(head, path)
         added = numbers(text, prefix) - numbers(before, prefix)
         tidy = sort_newest(text, prefix, min(added)) if added else text
@@ -304,10 +372,8 @@ def tidy_logs(head: str, notes: list[str], person: list[str]) -> None:
         if twice:
             said = ", ".join(f"{prefix}-{n}" for n in twice)
             person.append(f"{path}: {said} written twice, differently (one side edited it): keep the right one")
-        said = [int(n) for kind, n in MENTION.findall(text) if kind == prefix]
-        if prefix == "B" and said and said[-1] != max(said):
-            print(f"  To look at: the last line of {path} mentions B-{said[-1]} after its own number, but the "
-                  "log's last number must be its newest (tests/meta/test_agent_friendly.py): reword it.")  # fmt: skip
+        if len(person) == asked:
+            move_out(path, text, prefix, notes, person)
 
 
 def merge(branch: str, later: list[str]) -> bool:

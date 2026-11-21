@@ -3,9 +3,6 @@
 The owner's list of what is still to do on AP Coder, newest last. Remove an item once it is done (its bug or
 decision number then says what was done).
 
-- **No more number clashes in the logs.** Each bug and decision in a file of its own (`docs/bugs/`, `docs/decisions/`),
-  numbered automatically when its branch is merged, so parallel branches never fight over the next B- or D- number at
-  the end of BUGS.md and decisions.md.
 - **User-facing wording in one place (after the pilot, once the wording settles).** The words people see kept by key in
   one file, with tests that check each key is used and each page's key exists, so a wording change is one edit and
   can't silently break the first-day walk.

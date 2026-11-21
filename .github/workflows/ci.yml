@@ -12,7 +12,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # A newer run of one kind on one ref cancels the older (a pull request's next push, the next merge to main); the
+  # nightly, a run by hand and a merge all run on main's ref, so the kind is in the group: none cancels another (D-330)
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -57,9 +59,9 @@ jobs:
         # tests that read scans run on Windows (they skip without it; its PP-OCRv4 models come inside the rapidocr
         # package: nothing is downloaded); the fast tier on the other two. Each is split into even parts run side by
         # side (--shard, tests/conftest.py: whole files, by the times in tests/test_times.json), so the run ends when
-        # the slowest part does (D-233). A pull request runs the cells marked "pull_request" (Ubuntu 3.12, Windows
-        # 3.14): the rest run on main after each merge and nightly, and a build is released only once main passed
-        # them all (D-260).
+        # the slowest part does (D-233). A pull request runs the cells marked "pull_request" (Ubuntu 3.12, and both
+        # Windows ones: 3.12 as Windows before Python 3.13 behaves otherwise, D-330): the rest run on main after each
+        # merge and nightly, and a build is released only once main passed them all (D-260).
         include: ${{ fromJSON(needs.plan.outputs.tests) }}
     steps:
       - uses: actions/checkout@v4

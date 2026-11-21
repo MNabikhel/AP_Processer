@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import subprocess
 from contextlib import closing
 from pathlib import Path
 
@@ -19,8 +20,9 @@ from tests.scripts import load_script
 OLD = Path(__file__).parents[1] / "fixtures" / "old_schemas"
 SNAPSHOTS = sorted(OLD.glob("schema-*.sql"))
 # The schema of every release a user may have (scripts/ci/old_versions.py and docs/UPGRADING.md for PR #1 to #8, the
-# pilot's and the hand-over's tags since): PR #1's 2 is the oldest an update starts from.
-RELEASED = {2, 13, 14, 15, 16, 17, 18, 19, 27}
+# pilot's and the hand-over's tags since, then GitHub's tested builds from PR #133, D-247): PR #1's 2 is the oldest an
+# update starts from.
+RELEASED = {2, 13, 14, 15, 16, 17, 18, 19, 27, 28, 29, 30, 31, 32}
 # What a database brought up to date keeps that a new one does not have, and why it is harmless.
 KNOWN = {
     "verifications: columns in another order": "the AI reviewer's queue had its reader before the time it was renewed "
@@ -131,6 +133,18 @@ def test_the_old_databases_are_those_of_every_release(tmp_path):
     assert RELEASED <= versions and max(versions) <= SCHEMA_VERSION
 
 
+def test_every_schema_since_pr_99s_has_an_old_database():
+    """Every green main commit is a release (D-247), so each schema from PR #99's 27 to the one before this build's
+    was some user's: each has an old database to bring up to date, and a step that breaks only from it is caught."""
+    missing = sorted(set(range(27, SCHEMA_VERSION)) - {int(p.name.split("-")[1]) for p in SNAPSHOTS})
+    assert not missing, (
+        f"No old database at schema {', '.join(map(str, missing))}: add the releases at it (the v0.3.0-build.<sha> "
+        "tags: git ls-remote --tags origin; if no release had it, the commit that first made it, to UNRELEASED) to "
+        "RELEASES in scripts/old_schemas.py, then run: python scripts/old_schemas.py (a shallow clone: git fetch "
+        "--unshallow first; without the older history, docs/HANDOFF.md's route B, their files are kept as they are)"
+    )
+
+
 def test_a_database_kept_as_sql_is_made_again_the_same(tmp_path):
     """The way the old databases are kept (``scripts/old_schemas.py``'s dump) loses nothing: a new database dumped and
     made again from the SQL has the same tables, columns, indexes, triggers and settings."""
@@ -139,11 +153,84 @@ def test_a_database_kept_as_sql_is_made_again_the_same(tmp_path):
     again = _old_database_from(old_schemas.dump(made), tmp_path / "b")
     assert shape(again) == shape(made)
 
-    def settings(db: Path) -> list[tuple[str, str]]:
+    def settings(db: Path) -> list[tuple[str, str]]:  # but what is new in every database, which the dump writes as one
         with closing(sqlite3.connect(db)) as conn:
-            return conn.execute("SELECT key, value FROM settings WHERE key != 'summary_id' ORDER BY key").fetchall()
+            rows = conn.execute("SELECT key, value FROM settings ORDER BY key").fetchall()
+        return [(key, value) for key, value in rows if key not in old_schemas.NEW_EACH_TIME]
 
     assert settings(again) == settings(made)
+
+
+@pytest.mark.parametrize("clone", ["shallow", "without a release"])
+def test_the_old_databases_are_not_made_again_by_a_clone_without_every_release(clone, tmp_path, monkeypatch, capsys):
+    """Made in a shallow clone (a cloud session's), which has none of the older releases' code, the files came out
+    wrong: one named after another release, one naming fewer releases. A clone that cannot read every release writes
+    nothing and says how to get them all."""
+    old_schemas = load_script("old_schemas", "ap_old_schemas")
+    gone = old_schemas.RELEASES[3][0]
+
+    def git(*args):
+        if args[:2] == ("rev-parse", "--is-shallow-repository"):
+            said = b"true\n" if clone == "shallow" else b"false\n"
+            return subprocess.CompletedProcess(args, 0, said, b"")
+        assert args[0] == "cat-file", args  # nothing is read before every release is found
+        return subprocess.CompletedProcess(args, 128 if args[2].startswith(gone) else 0, b"", b"")
+
+    monkeypatch.setattr(old_schemas, "git", git)
+    kept = tmp_path / "schema-14-4366f35.sql"
+    kept.write_text("-- as it was\n", encoding="utf-8")
+    assert old_schemas.main(["--out", str(tmp_path)]) == 2
+    said = capsys.readouterr().out
+    assert said.startswith("Nothing was written: ") and ("git fetch --unshallow" in said) == (clone == "shallow")
+    assert (gone in said) == (clone != "shallow") and ("--code SHA=FOLDER" in said) == (clone != "shallow")
+    assert [p.name for p in tmp_path.iterdir()] == [kept.name] and kept.read_text(encoding="utf-8") == "-- as it was\n"
+    if clone != "shallow":  # its code given unpacked, every release is read
+        assert old_schemas.not_here({gone: str(tmp_path)}) == []
+
+
+@pytest.mark.parametrize("clone", ["without the history", "shallow"])
+def test_a_release_whose_history_is_not_here_keeps_its_file_and_one_with_no_file_stops_it(clone, tmp_path, monkeypatch,
+                                                                                         capsys):  # fmt: skip
+    """B-3003: a repository without the older history (the code handed over as a zip: docs/HANDOFF.md's route B) wrote
+    nothing unless it could read every release, so the rule that each schema has an old database could not be met
+    there. A release it cannot read keeps its file as it is, one making the same database adds none, and one with no
+    file yet stops it. A shallow clone still writes nothing at all (git fetch --unshallow gets every release)."""
+    old_schemas = load_script("old_schemas", "ap_old_schemas")
+    made = {"1111111": "-- schema 14\nA;\n", "2222222": "-- schema 14\nA;\n", "3333333": "-- schema 33\nC;\n"}
+    monkeypatch.setattr(old_schemas, "RELEASES", [("1111111", "PR #1"), ("2222222", "PR #2"), ("3333333", "ours")])
+    monkeypatch.setattr(old_schemas, "UNRELEASED", [])
+    here = {"2222222", "3333333"}  # the commits this repository has
+
+    def git(*args):
+        if args[:2] == ("rev-parse", "--is-shallow-repository"):
+            return subprocess.CompletedProcess(args, 0, b"true\n" if clone == "shallow" else b"false\n", b"")
+        assert args[0] == "cat-file", args  # (no release's code is read but by code_of)
+        return subprocess.CompletedProcess(args, 0 if args[2][:7] in here else 128, b"", b"")
+
+    monkeypatch.setattr(old_schemas, "git", git)
+    monkeypatch.setattr(old_schemas, "code_of", lambda sha, folder: folder.mkdir() or (folder / "sha").write_text(sha))
+    monkeypatch.setattr(old_schemas, "made_by", lambda folder, work: folder / "sha")
+    monkeypatch.setattr(old_schemas, "dump", lambda db: made[db.read_text()])
+    kept = tmp_path / "schema-14-1111111.sql"
+    as_it_was = (b"-- A new database as AP Coder made it at 1111111 (PR #1); the same at 2222222 (PR #2) "
+                 b"(scripts/old_schemas.py)\n-- schema 14\nA;\n")  # fmt: skip
+    kept.write_bytes(as_it_was)
+    code, said = old_schemas.main(["--out", str(tmp_path)]), capsys.readouterr().out
+    if clone == "shallow":
+        assert code == 2 and said.startswith("Nothing was written: ") and "git fetch --unshallow" in said
+        assert [p.name for p in tmp_path.iterdir()] == [kept.name]  # none rewritten, none added twice
+    else:
+        assert code == 0, said
+        new = tmp_path / "schema-33-3333333.sql"  # (2222222 made 1111111's database: no second file of it)
+        assert sorted(p.name for p in tmp_path.iterdir()) == [kept.name, new.name]
+        header = "-- A new database as AP Coder made it at 3333333 (ours) (scripts/old_schemas.py)\n"
+        assert new.read_text(encoding="utf-8") == header + made["3333333"]
+        files = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+        monkeypatch.setattr(old_schemas, "RELEASES", [*old_schemas.RELEASES, ("4444444", "PR #4")])  # no file yet
+        code, said = old_schemas.main(["--out", str(tmp_path)]), capsys.readouterr().out
+        assert code == 2 and said.startswith("Nothing was written: ") and "4444444 (PR #4)" in said
+        assert "1111111" not in said and {p.name: p.read_bytes() for p in tmp_path.iterdir()} == files
+    assert kept.read_bytes() == as_it_was
 
 
 def test_the_numbered_steps_run_in_the_order_of_their_versions():

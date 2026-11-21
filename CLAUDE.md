@@ -94,8 +94,8 @@ guides, the bug log (BUGS.md), decisions (decisions.md) and the owner's to-do li
   enabled by an Admin: JD Edwards' AIS Server, only its saved address on the company network (D-104).
 - No company data in the repo: the data folder (`private/` or `~/APCoder`) and `.env` are git-ignored.
 - User-facing wording: "pilot tester" for the person running the pilot, never "manager". Plain English.
-- A bug fix starts with a failing test, then the fix, then one line at the end of docs/BUGS.md (format at its top).
-  Significant choices go in docs/decisions.md (next D-NN).
+- A bug fix starts with a failing test, then the fix, then its entry; a significant choice too: a file each, numbered
+  by `python scripts/new_entry.py B|D|N 'text'` (with a ' or on Windows: `--file F`; D-328; format: top of each log).
 
 ## Working here in few steps
 - Coding work (a fix, a feature, a test, a question about the code) runs best as the `developer` agent
@@ -107,9 +107,8 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
   around a match rather than whole files.
 - Make the change, then check once with `python scripts/check.py`; don't wait on the whole suite (CI runs it).
 - Search code with `grep -rn --include=*.py` (skips `__pycache__`). `docs/archive/` (bugs B-01 to B-1441 and
-  decisions in full) is skipped by ripgrep and the Grep tool (`.ignore`): look a number up with `grep -n "B-1234 "
-  docs/archive/*.md`. The next numbers: `grep -o "B-[0-9]*" docs/BUGS.md | tail -1` (and `D-[0-9]*` in
-  docs/decisions.md).
+  decisions in full) is skipped by ripgrep and the Grep tool (`.ignore`): look a number up (or D-34) with
+  `grep -rnw "B-1234" docs`: the logs, the archive and the entry files.
 - A refactor, clean-up or speed-up is proven to change nothing with `python scripts/same_behaviour.py` (probes on
   origin/main and this checkout, compared; D-124), plus the tests.
 - Merge parallel branches: `python scripts/combine.py BRANCH... [--onto REF]` (D-325: logs settled, then checked).
@@ -122,12 +121,12 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
 ## Run and test
 - Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"` (or double-click `APProcessor.bat` / `APProcessor.command`).
 - Run: `python -m ap_coder serve` (http://127.0.0.1:8501); `python -m ap_coder doctor`; `python scripts/pilot_check.py`.
-- Check a change: `python scripts/check.py` (ruff on the changed files, then their tests; a minute or two); when a
-  page, its words (`ops/help.py`), `docs/PROTOTYPE.md` or the launcher changed, it also walks the pilot tester's
-  first day (`scripts/ci/first_day.py`, about two minutes more, in a temporary folder); `--walk` / `--no-walk`
-  force or skip it.
+- Check a change: `python scripts/check.py`: ruff, the changed files' tests and the whole tree's rules (about 30 s,
+  D-329); a module no test is picked for fails it. A page, its words (`ops/help.py`), `docs/PROTOTYPE.md` or the
+  launcher changed: it walks the pilot tester's first day too (two minutes more); `--walk` / `--no-walk` force or
+  skip it.
 - Test: `python -m pytest -q` runs all but the slow tests (about 7 minutes; serially, no xdist). The whole suite with
   the browser tests, `python -m pytest -q -m ""`, takes about 28 minutes (docs/REFERENCE.md): CI runs it on pull requests
-  (Ubuntu 3.12 and Windows 3.14 only; every Python and the Mac jobs on main after a merge and nightly, D-260), so leave
+  (Ubuntu 3.12, Windows 3.12 and 3.14; every Python and the Mac jobs on main after a merge and nightly, D-330), so leave
   it to CI.
 - Lint: `ruff check ap_coder tests scripts` and `ruff format --check ap_coder tests scripts`.

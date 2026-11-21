@@ -1,13 +1,15 @@
 # Decisions
 
 The significant choices behind AP Coder. D-01 to D-124, in full (the choice, why, and where it is written or
-enforced): [archive/decisions-2026-10.md](archive/decisions-2026-10.md); look one up with
-`grep -n -A8 "D-34\b" docs/archive/decisions-*.md`. Below, one line each. D-77 to D-79, D-81 to D-84, D-113
-and D-114 were never used (not lost).
+enforced): [archive/decisions-2026-10.md](archive/decisions-2026-10.md); below, one line each, then D-125 to D-327 in
+full, where this file stops (frozen, D-328). D-328 on: a file each in [decisions/](decisions/). Look one up with
+`grep -rnw "D-34" docs`. D-77 to D-79, D-81 to D-84, D-113 and D-114 were never used (not lost).
 
-A new choice: the next number (`grep -o "D-[0-9]*" docs/decisions.md | sort -t- -k2 -n | tail -1`), written in full
-at the end of the last section here (lines at most 120 characters); say so in the pull request. Never renumber. A
-choice that is reversed keeps its line, marked "replaced by D-NN".
+A new choice: its entry, as those at the end of this file (`**The choice.**` and the numbers it builds on, then its
+`  - **Why:**`, `  - **How:**` and `  - *Not chosen:*` lines; lines at most 120 characters), without its start
+`- **D-NNN** · `, in a file given to `python scripts/new_entry.py D --file entry.md` (or on stdin): it takes the next
+number, writes `docs/decisions/D-NNN.md` and prints the number. Say so in the pull request. Never renumber. A choice
+that is reversed keeps its entry, marked "replaced by D-NN".
 
 ## Running offline
 
