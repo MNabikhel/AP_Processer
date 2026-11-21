@@ -496,8 +496,8 @@ def workers(serial: bool) -> int:
 def run_tests(tier: list[str], paths: list[str], seconds: float, serial: bool, retry: bool = True,
               left: list[str] = ()) -> bool:  # fmt: skip
     """One pytest run of these test files, on several cores when it takes long (``seconds``, its estimate), the tests
-    ``left`` to CI left out: its failures and its last line printed; whether it failed. ``retry``: when it ran none
-    (each a slow one), run them."""
+    ``left`` to CI left out: its failures and its last line printed; whether it failed, a run of no test among them.
+    ``retry``: when it ran none (each a slow one, or left to CI), run them all rather than none."""
     cores = workers(serial) if seconds > PARALLEL_SECONDS else 1
     print(f"  about {seconds:.0f} s of tests (tests/test_times.json)" + (f", on {cores} cores" if cores > 1 else ""),
           flush=True)  # fmt: skip
@@ -505,13 +505,15 @@ def run_tests(tier: list[str], paths: list[str], seconds: float, serial: bool, r
     out = [a for test in left for a in ("--deselect", test)]
     done = pytest([*on, *tier, *out, *paths])
     if done.returncode == 5 and retry:
-        done = pytest([*on, "-m", "", *out, *paths])
+        done = pytest([*on, "-m", "", *paths])
     lines = done.stdout.strip().splitlines()
     failures = [line for line in lines if line.startswith(("FAILED", "ERROR"))]
     print("\n".join(failures[:20] + lines[-1:]))
-    if done.returncode not in (0, 5) and not failures:
+    if done.returncode == 5:  # (pytest collected none: on several cores, also when a test named is not found)
+        print("NO TESTS RAN of those picked: " + " ".join(paths))
+    elif done.returncode and not failures:
         print(done.stderr.strip()[-2000:] or "\n".join(lines[-30:]))
-    return done.returncode not in (0, 5)
+    return done.returncode != 0
 
 
 def rules_args(rules: list[str], times: dict[str, list[float]]) -> list[str]:
@@ -529,11 +531,27 @@ def run_rules(rules: list[str], times: dict[str, list[float]], serial: bool = Fa
     slow tests too, no browser, none of CI's whole walks (``rules_args``), on several cores when long. Whether they
     passed."""
     print("Rules:", " ".join(rules), flush=True)
+    gone = missing(rules)
+    for rule in gone:
+        print(f"RULE NOT FOUND: {rule} (renamed or gone? RULES in scripts/check.py names the rules)")
+    rules = [rule for rule in rules if rule not in gone]  # (pytest would run none of them)
     long = long_slow([rule for rule in rules if rule.startswith("tests/meta")], times)
     for path in long:
         print(f"  {path}: its slow tests left to CI (about {times[path][0] - times[path][1]:.0f} s)")
     seconds = estimate(rules, times, slow=False, long=long)
-    return not run_tests(rules_args(rules, times), rules, seconds, serial, retry=False)
+    failed = run_tests(rules_args(rules, times), rules, seconds, serial, retry=False)  # (the others: run all the same)
+    return not (failed or gone)
+
+
+def missing(tests: list[str]) -> list[str]:
+    """The test files, folders or tests (``path::name``) of these that the checkout doesn't have."""
+    gone = []
+    for test in tests:
+        path, _, name = test.partition("::")
+        file = ROOT / path
+        if not file.exists() or (name and f"def {name.split('::')[-1].split('[')[0]}(" not in file.read_text("utf-8")):
+            gone.append(test)
+    return gone
 
 
 def main(argv: list[str]) -> int:
