@@ -22,9 +22,25 @@ YEAR = (dt.date.today() - dt.timedelta(days=400), dt.date.today())
 
 @pytest.fixture(scope="module")
 def seeded(tmp_path_factory):
+    from types import SimpleNamespace
+
+    from ap_coder.core.store import _base
+
+    start = dt.datetime.now().replace(microsecond=0)
+
+    class Held(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return start
+
     folder = tmp_path_factory.mktemp("seed")
     data = folder / "data"
-    with isolated(folder):
+    with isolated(folder) as mp:
+        # The store's clock (every row's and event's time) held at one second while the seed runs, as a computer fast
+        # enough has it: what the seed makes is the same however fast the computer is (B-3034). Only on a quick one
+        # did the USD sample come in within the second the seed set the exchange rates: with no rate in force since
+        # it came in (B-970) it waited for a second approval, and the volume bench opened it, a new vendor's page.
+        mp.setattr(_base, "dt", SimpleNamespace(datetime=Held, timedelta=dt.timedelta, date=dt.date))
         assert main(["seed", "--out", str(data), "--invoices", "200", "--vendors", "40", "--master", "300", "--gl",
                      "200", "--cost-centers", "30", "--pos", "20", "--users", "8", "--queue", "60", "--register",
                      "500", "--workers", "1"]) == 0  # fmt: skip
@@ -433,6 +449,9 @@ def test_a_seed_on_a_file_system_out_of_links_for_a_template_copies_it_and_goes_
 # no full scans on hot paths, guarded by tests). A new one fails the test; one gone must leave the list too.
 HOT_PAGES = ("/review", "/review/{invoice_id:int}", "/search", "/process", "/review/vendors.json")
 HOT_SCANS = {
+    ("invoices", "/review/{invoice_id:int}", "table"): "whether another vendor has an invoice at all, for a vendor "
+    "not in the master with none approved (VENDOR_NEW; the USD sample waiting for a second approval): LIMIT 1, the "
+    "first invoice of another vendor stops it",
     ("feedback", "/review/{invoice_id:int}", "table"): "the learning memory's stamp and its read: kept by the process "
     "until a lesson is added, FEEDBACK_READ lessons at most (D-173, D-195)",
     ("vendors", "/review/{invoice_id:int}", "table"): "the vendor list and the master's numbers: kept by the process "
