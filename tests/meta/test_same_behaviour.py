@@ -208,6 +208,49 @@ def test_an_empty_module_is_compared_with_the_docstrings_left_out_too(tmp_path, 
     assert "0 new" in capsys.readouterr().out
 
 
+USERS = """class UsersMixin:
+    def add_user(self, name):
+        return name
+
+
+    def start_session(self, user_id):
+        return {"user": user_id}
+"""
+STORE = """from users import UsersMixin
+
+
+class Store(UsersMixin):
+    pass
+"""
+
+
+def test_methods_moved_word_for_word_into_a_new_class_are_the_same_and_one_changed_on_the_way_is_said(tmp_path, capsys):
+    """B-3018: the store's usual split (methods moved word for word from one part's class into a new one, the Store
+    taking it among its bases) was said gone, new and changed: a method was looked for in its own class only. A
+    method is found by its name and code in any class; the new class that only holds what moved, and a class whose
+    bases gained it, are said so and pass; a token changed in a moved method is said changed."""
+    moved = load_script("moved_same", "ap_moved_same")
+    repo = moved.ROOT = tmp_path
+    _git(repo, "init", "-q")
+    (repo / "users.py").write_text(USERS, encoding="utf-8")
+    (repo / "store.py").write_text(STORE, encoding="utf-8")
+    _git(repo, "add", "users.py", "store.py")
+    _git(repo, "commit", "-qm", "a")
+    kept, method = USERS.split("\n\n\n")
+    (repo / "users.py").write_text(kept + "\n", encoding="utf-8")
+    sessions = f'class SessionsMixin:\n    """The sessions."""\n\n{method}'
+    (repo / "sessions.py").write_text(sessions, encoding="utf-8")
+    (repo / "store.py").write_text(STORE.replace("(UsersMixin)", "(UsersMixin, SessionsMixin)"), encoding="utf-8")
+    assert moved.main(["HEAD"]) == 0
+    said = capsys.readouterr().out
+    assert "0 changed, 0 gone, 0 twice, 0 new" in said
+    assert "  moved: method start_session (users.py UsersMixin -> sessions.py SessionsMixin)\n" in said
+    (repo / "sessions.py").write_text(sessions.replace('{"user": user_id}', '{"user": user_id + 1}'), encoding="utf-8")
+    assert moved.main(["HEAD"]) == 1
+    said = capsys.readouterr().out
+    assert "  changed: method start_session (users.py UsersMixin -> sessions.py SessionsMixin)\n" in said
+
+
 def test_with_no_probes_named_the_default_ones_run():
     tool = _tool()
     assert tool.parse([]).probes == list(tool.DEFAULT)
