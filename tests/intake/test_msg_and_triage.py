@@ -398,7 +398,7 @@ def test_unpack_sorts_attachments_and_logs_each_email(tmp_path):
         "not_for_ap",
         "emails/needs a person/a - slip.pdf",
     )
-    (tmp_path / "emails" / "triage.jsonl").open("a").write("not json\n")  # a damaged line is skipped
+    (tmp_path / "emails" / "triage.jsonl").open("a", encoding="utf-8").write("not json\n")  # a damaged line is skipped
     assert len(triage_log(tmp_path)) == 3
 
 
@@ -428,7 +428,9 @@ def test_an_open_email_stays_in_needs_a_person_however_many_were_sorted_after_it
     bank = {"id": "fraud01", "kind": "bank_change", "possible_fraud": True, "needs_person": True, "documents": []}
     newer = [{"id": f"inv{n}", "kind": "invoice", "needs_person": False, "documents": []} for n in range(6000)]
     (tmp_path / "emails").mkdir()
-    (tmp_path / "emails" / "triage.jsonl").write_text("".join(json.dumps(r) + "\n" for r in [bank, *newer]))
+    (tmp_path / "emails" / "triage.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in [bank, *newer]), encoding="utf-8"
+    )
     assert [r["id"] for r in inbox.needs_person(store, tmp_path)] == ["fraud01"]
     assert inbox.mark_done(store, tmp_path, "fraud01")  # and a person can still mark it done
     assert inbox.needs_person(store, tmp_path) == []
@@ -437,9 +439,9 @@ def test_an_open_email_stays_in_needs_a_person_however_many_were_sorted_after_it
 def test_a_path_in_the_log_never_leaves_the_invoices_folder(tmp_path):
     folder = tmp_path / "invoices"
     (folder / "emails").mkdir(parents=True)
-    (tmp_path / "secret.txt").write_text("x")
+    (tmp_path / "secret.txt").write_text("x", encoding="utf-8")
     entry = {"id": "abc", "needs_person": True, "email": "../secret.txt", "documents": [{"file": "../secret.txt"}]}
-    (folder / "emails" / "triage.jsonl").write_text(json.dumps(entry) + "\n")
+    (folder / "emails" / "triage.jsonl").write_text(json.dumps(entry) + "\n", encoding="utf-8")
     assert inbox.file_of(folder, "abc", -1) is None and inbox.file_of(folder, "abc", 0) is None
 
 

@@ -35,17 +35,18 @@ class MacLauncher:
         tool = subprocess.run(["bash", "-c", "command -v dirname"], capture_output=True, text=True).stdout.strip()
         (self.bin / "dirname").symlink_to(tool)
         self.script("uname", f"echo {'Darwin' if darwin else 'Linux'}")
-        text = (ROOT / "APProcessor.command").read_text()
+        text = (ROOT / "APProcessor.command").read_text(encoding="utf-8")
         assert "APPLE_STUB=/usr/bin/python3\n" in text
         (self.code / "APProcessor.command").write_text(text.replace("APPLE_STUB=/usr/bin/python3\n",
-                                                                    f"APPLE_STUB={self.apple}\n"))  # fmt: skip
+                                                                    f"APPLE_STUB={self.apple}\n"),
+                                                       encoding="utf-8")  # fmt: skip
         (self.code / "scripts").mkdir()
-        (self.code / "scripts" / "launch.py").write_text("# the stand-in Pythons never read it\n")
+        (self.code / "scripts" / "launch.py").write_text("# the stand-in Pythons never read it\n", encoding="utf-8")
 
     def script(self, name: str, body: str, folder: Path | None = None) -> Path:
         path = (folder or self.bin) / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"#!/bin/sh\n{body}\n")
+        path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
         path.chmod(0o755)
         return path
 
@@ -63,7 +64,7 @@ class MacLauncher:
                               timeout=60)  # fmt: skip
 
     def used(self) -> list[str]:
-        return self.ran.read_text().split("\n")[:-1] if self.ran.exists() else []
+        return self.ran.read_text(encoding="utf-8").split("\n")[:-1] if self.ran.exists() else []
 
 
 @pytest.fixture
@@ -127,7 +128,7 @@ def test_without_python_the_code_alone_and_the_bundle_say_what_to_do(mac):
     out = mac.run()
     assert out.returncode == 1 and "What to do: install Python 3.12 from" in out.stdout
     assert "offline build" not in out.stdout
-    (mac.code / "bundle_manifest.json").write_text("{}")
+    (mac.code / "bundle_manifest.json").write_text("{}", encoding="utf-8")
     out = mac.run()
     assert out.returncode == 1 and "this is an offline build, so it does not download Python" in out.stdout
 
@@ -223,7 +224,7 @@ BASH4 = {
 @pytest.mark.parametrize("name", ["APProcessor.command"])
 def test_the_mac_launchers_need_only_bash_3_2(name):
     """macOS's own /bin/bash is 3.2 (2007): nothing from bash 4 or newer."""
-    code = "\n".join(line.split(" #")[0] for line in (ROOT / name).read_text().splitlines()
+    code = "\n".join(line.split(" #")[0] for line in (ROOT / name).read_text(encoding="utf-8").splitlines()
                      if not line.lstrip().startswith("#"))  # fmt: skip
     found = [what for what, pattern in BASH4.items() if re.search(pattern, code)]
     assert not found, f"{name} uses bash 4 syntax: {found}"
@@ -277,11 +278,11 @@ class MacPlaces(MacLauncher):
     def __init__(self, tmp_path: Path) -> None:
         super().__init__(tmp_path, darwin=True)
         script = self.code / "APProcessor.command"
-        text = script.read_text()
+        text = script.read_text(encoding="utf-8")
         for place in self.PLACES:
             assert place in text
             text = text.replace(place, str(tmp_path / place.lstrip("/")))
-        script.write_text(text)
+        script.write_text(text, encoding="utf-8")
 
     def at(self, place: str, name: str, version: str) -> Path:
         """A stand-in Python in a fixed place ("/opt/homebrew/bin", ...): a run writes its full path."""

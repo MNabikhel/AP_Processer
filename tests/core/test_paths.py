@@ -64,7 +64,9 @@ def test_each_answer_kept_prunes_its_folder(tmp_path, monkeypatch, reference):
     assert InvoicePipeline._model_reading(SimpleNamespace(coder=coder), pdf, "cc" * 32) == {"vendor_name": "Staples"}
     assert not any(path.exists() for path in stale)
     kept = [p for p in cache.rglob("*.json")]
-    assert len(kept) == 3 and json.loads((cache / "model_reading" / f"{'cc' * 32}-qwen3.5-9b-v1.json").read_text())
+    assert len(kept) == 3 and json.loads(
+        (cache / "model_reading" / f"{'cc' * 32}-qwen3.5-9b-v1.json").read_text(encoding="utf-8")
+    )
 
 
 def test_a_reading_kept_as_another_process_prunes_its_folder_is_kept(monkeypatch):

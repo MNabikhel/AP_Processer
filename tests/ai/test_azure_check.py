@@ -986,7 +986,7 @@ def test_the_key_never_appears_in_the_page_logs_or_activity(store, monkeypatch, 
         "enabled": "on", "endpoint": ENDPOINT, "api_key": KEY, "model": "prebuilt-invoice", "spot_percent": "5",
         "daily_pages": "200", "back": "/settings#azure-check"})  # fmt: skip
     assert answer.json()["ok"] and answer.json()["redirect"].startswith("/settings")
-    assert KEY in env.read_text()  # kept in the .env, like the other Azure settings
+    assert KEY in env.read_text(encoding="utf-8")  # kept in the .env, like the other Azure settings
     text = client.get("/settings/azure-check").text
     assert KEY not in text and KEY[:12] not in text and "…WXYZ" in text and HOST in text
     assert repr(azure_check.load_settings(store)).count(KEY) == 0

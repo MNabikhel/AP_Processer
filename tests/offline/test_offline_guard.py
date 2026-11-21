@@ -468,12 +468,12 @@ def test_the_launcher_never_asks_github_for_a_release_offline(offline_guard, lau
     _bait(monkeypatch)
     here = tmp_path / "AP_Processer"
     (here / "ap_coder").mkdir(parents=True)
-    (here / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.3.0"\n')
+    (here / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.3.0"\n', encoding="utf-8")
     monkeypatch.setattr(launch_module, "ROOT", here)
     monkeypatch.setattr(launch_module.fetch_models, "BUNDLE_MODELS", here / "models")
     monkeypatch.delenv("AP_UPDATE_CHECK", raising=False)
     if how == "offline bundle":
-        (here / "bundle_manifest.json").write_text("{}")
+        (here / "bundle_manifest.json").write_text("{}", encoding="utf-8")
     else:
         monkeypatch.setenv("AP_ALLOW_INTERNET", "0")
     monkeypatch.setattr(launch_module.releases, "newest", lambda: pytest.fail("GitHub asked"))

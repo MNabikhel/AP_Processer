@@ -105,7 +105,7 @@ def draft_form(client: TestClient, invoice_id: int) -> dict[str, Any]:
 
 def gt(stem: str = SAMPLE_STEM, **changes: Any) -> dict[str, Any]:
     """A sample's ground truth (samples/ground_truth), a new copy each time, with ``changes`` made to it."""
-    return {**json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text()), **changes}
+    return {**json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text(encoding="utf-8")), **changes}
 
 
 def known_vendors(store: Store, *stems: str) -> None:

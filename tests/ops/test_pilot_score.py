@@ -169,7 +169,7 @@ def test_the_report_finds_exactly_the_differences_put_in(pilot, tmp_path):
     assert len(rows) == 6 and {r["field"] for r in rows} >= {"GL account", "Invoice number"}
     gl = next(r for r in rows if r["field"] == "GL account")
     assert gl["jd_edwards"].endswith(".6010") and gl["ap_coder"].startswith("CC")
-    assert json.loads((folder / pilot_score.FIGURES).read_text())["matched"] == 8
+    assert json.loads((folder / pilot_score.FIGURES).read_text(encoding="utf-8"))["matched"] == 8
 
 
 def test_by_supplier_the_first_invoice_is_kept_apart_from_the_later_ones(pilot, tmp_path):

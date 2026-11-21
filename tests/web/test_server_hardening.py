@@ -24,7 +24,9 @@ GOOD = "correct horse battery"
 
 def test_a_env_file_never_sets_what_decides_which_code_runs(tmp_path, monkeypatch):
     env = tmp_path / ".env"
-    env.write_text("PYTHONPATH=C:\\evil\nPIP_INDEX_URL=http://evil\nPYTHONSTARTUP=x.py\nAP_LLM_MODEL=gemma\n")
+    env.write_text(
+        "PYTHONPATH=C:\\evil\nPIP_INDEX_URL=http://evil\nPYTHONSTARTUP=x.py\nAP_LLM_MODEL=gemma\n", encoding="utf-8"
+    )
     for name in ("PYTHONPATH", "PIP_INDEX_URL", "PYTHONSTARTUP", "AP_LLM_MODEL"):
         monkeypatch.delenv(name, raising=False)
     config.Settings.from_env(env)
@@ -36,7 +38,7 @@ def test_a_env_file_never_sets_what_decides_which_code_runs(tmp_path, monkeypatc
 def test_an_administrators_command_reads_no_env_file(tmp_path, monkeypatch, argv):
     data = tmp_path / "data"
     data.mkdir()
-    (data / ".env").write_text("AP_TLS_CERT=C:\\planted.pem\nAZURE_OPENAI_ENDPOINT=https://x\n")
+    (data / ".env").write_text("AP_TLS_CERT=C:\\planted.pem\nAZURE_OPENAI_ENDPOINT=https://x\n", encoding="utf-8")
     monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
     for name in ("AP_TLS_CERT", "AZURE_OPENAI_ENDPOINT"):
         monkeypatch.delenv(name, raising=False)

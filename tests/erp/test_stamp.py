@@ -14,7 +14,7 @@ from tests.conftest import SAMPLE_STEM, SAMPLES
 
 def _approved(tmp_path, source):
     store = Store(tmp_path / "s.db")
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     gt["gl_distribution"] = [{"kind": "expense", "gl_code": "6010", "cost_center": "CC400", "description": "Laptops",
                               "amount": 4350.0}]  # fmt: skip
     invoice_id = store.add_invoice(source, gt, {})

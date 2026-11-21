@@ -59,7 +59,7 @@ def test_restore_asks_first_and_refuses_while_ap_coder_runs(tmp_path, ground_tru
     assert "Nothing was changed" in capsys.readouterr().out
     with socket.create_server(("127.0.0.1", 0)) as dashboard:
         (data / ".ap_coder_server.json").write_text(
-            json.dumps({"pid": os.getpid(), "port": dashboard.getsockname()[1]})
+            json.dumps({"pid": os.getpid(), "port": dashboard.getsockname()[1]}), encoding="utf-8"
         )
         assert cli.main(["--db", str(store.path), "backup", "restore", made.name, "--yes"]) == 1
     assert "AP Coder is running" in capsys.readouterr().err
@@ -78,7 +78,7 @@ def test_a_server_file_left_by_an_ap_coder_that_was_killed_does_not_refuse_the_r
     with socket.create_server(("127.0.0.1", 0)) as another:
         port = another.getsockname()[1]
         left = {"pid": os.getppid(), "port": port, "started": "2026-01-05T09:00:00"}  # (a program that is no AP Coder)
-        (data / ".ap_coder_server.json").write_text(json.dumps(left))
+        (data / ".ap_coder_server.json").write_text(json.dumps(left), encoding="utf-8")
         assert cli.main(restore) == 1  # something answers on its port: taken for running
         err = capsys.readouterr().err
         assert "AP Coder is running" in err and "Nothing was changed" in err
@@ -97,7 +97,9 @@ def test_a_server_that_has_just_started_is_running_before_its_port_opens(tmp_pat
     with socket.create_server(("127.0.0.1", 0)) as closed:
         port = closed.getsockname()[1]
     started = (dt.datetime.now() - dt.timedelta(seconds=60)).isoformat(timespec="seconds")
-    (data / ".ap_coder_server.json").write_text(json.dumps({"pid": os.getppid(), "port": port, "started": started}))
+    (data / ".ap_coder_server.json").write_text(
+        json.dumps({"pid": os.getppid(), "port": port, "started": started}), encoding="utf-8"
+    )
     assert cli.main(["--db", str(store.path), "backup", "restore", made.name, "--yes"]) == 1
     assert "AP Coder is running" in capsys.readouterr().err
 

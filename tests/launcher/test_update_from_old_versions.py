@@ -94,7 +94,8 @@ def test_connections_leaving_the_computer_are_found_in_an_strace_log(tmp_path):
         '12 connect(4, {sa_family=AF_INET, sin_port=htons(8601), sin_addr=inet_addr("127.0.0.1")}, 16) = 0\n'
         "13 connect(5, {sa_family=AF_INET6, sin6_port=htons(8601), sin6_flowinfo=htonl(0), "
         'inet_pton(AF_INET6, "::1", &sin6_addr), sin6_scope_id=0}, 28) = -1 ECONNREFUSED\n'
-        '14 connect(6, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("10.0.0.2")}, 16) = 0\n'
+        '14 connect(6, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("10.0.0.2")}, 16) = 0\n',
+        encoding="utf-8",
     )
     leaving = old_versions.connects(trace)
     assert len(leaving) == 1 and "10.0.0.2" in leaving[0]

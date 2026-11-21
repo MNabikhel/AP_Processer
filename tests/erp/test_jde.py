@@ -51,7 +51,7 @@ def _setup(**treatments):
 
 
 def _invoice(stem, inv_id=1, setup=None, **changes):
-    doc = {**json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text()), **changes}
+    doc = {**json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text(encoding="utf-8")), **changes}
     doc["gl_distribution"] = build_gl_distribution(InvoiceCoding.model_validate(doc), setup or _setup())
     return {"id": inv_id, "final_output": doc}
 
@@ -167,7 +167,7 @@ def test_decimal_point_mode():
 
 
 def test_self_assessed_pst_and_exempt_codes():
-    doc = json.loads((SAMPLES / "ground_truth" / f"{SK}.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / f"{SK}.json").read_text(encoding="utf-8"))
     no_pst = [t for t in doc["tax_lines"] if t["tax_type"] != "PST"]
     inv = _invoice(SK, tax_lines=no_pst, tax_total=504.75, grand_total=10599.75)
     (head,) = _files([inv])[jde_zfiles.HEADER_FILE]
@@ -277,7 +277,7 @@ def test_match_header_pay_items_carry_their_own_pst():
 def test_match_header_gives_no_tax_to_an_exempt_line():
     """The HST is split over the lines that carry it: an exempt line's pay item has no tax and no taxable amount
     (it was weighted by net amount, so the exempt line got HST and VLATXN could go negative)."""
-    doc = json.loads((SAMPLES / "ground_truth" / f"{ON}.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / f"{ON}.json").read_text(encoding="utf-8"))
     doc["line_items"][-1]["taxes_applied"] = []
     exempt = doc["line_items"][-1]["amount"]
     taxable = round(doc["subtotal"] - exempt, 2)
@@ -300,7 +300,7 @@ def test_match_header_pay_items_take_the_tax_shares_the_lines_have():
     was truncated and the cent left over put on the largest, while the lines' shares (``tax.tax_shares``,
     ``money.split``) round each half up: two lines of 10.10 with GST 1.01 gave pay items 0.51 / 0.50 against the
     lines' 0.50 / 0.51. One rule now, ``money.split``'s, for the tax and the taxable amount, in whole yen too."""
-    doc = json.loads((SAMPLES / "ground_truth" / f"{AB}.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / f"{AB}.json").read_text(encoding="utf-8"))
     lines = doc["line_items"][:2]
     for li in lines:
         li.update(amount=10.10, quantity=1, unit_price=10.10)
@@ -333,7 +333,7 @@ def test_match_header_an_exempt_or_zero_rated_line_is_its_own_pay_item_with_the_
     """D-64: a line marked exempt or zero-rated (no tax put on it) says so to E1, on its pay item and, with the
     distribution's tax columns, on its G/L line; the taxed lines keep the invoice's code. One pay item: the
     invoice's."""
-    doc = json.loads((SAMPLES / "ground_truth" / f"{ON}.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / f"{ON}.json").read_text(encoding="utf-8"))
     doc["line_items"][-1].update(taxes_applied=[], tax_status="exempt")
     doc["line_items"][-2].update(taxes_applied=[], tax_status="zero_rated")
     free = doc["line_items"][-1]["amount"] + doc["line_items"][-2]["amount"]
@@ -367,7 +367,7 @@ def test_match_header_an_exempt_or_zero_rated_line_is_its_own_pay_item_with_the_
 def _yen_invoice(old_distribution=False):
     """Three 10-yen lines with BC PST (2 yen), one 1,000-yen line without; GST 52 yen on everything. An old
     distribution was spread in cents (10.66 + 10.67 + 10.67): rounded line by line to the yen, that is 33, not 32."""
-    doc = json.loads((SAMPLES / "ground_truth" / f"{BC}.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / f"{BC}.json").read_text(encoding="utf-8"))
     item = doc["line_items"][0]
     doc["line_items"] = [
         {**item, "line_number": n, "quantity": 1, "unit_price": a, "amount": a, "taxes_applied": t}
@@ -1006,7 +1006,7 @@ def test_a_line_with_no_gl_account_yet_has_no_e1_account():
 
 def _recoded(stem, gl_code, cost_center, **kw):
     """A sample invoice with every line coded to one account string's two codes."""
-    doc = json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text(encoding="utf-8"))
     lines = [{**li, "predicted_gl_code": gl_code, "predicted_cost_center": cost_center} for li in doc["line_items"]]
     return _invoice(stem, line_items=lines, **kw)
 

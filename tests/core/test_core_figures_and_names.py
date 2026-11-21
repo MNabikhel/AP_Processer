@@ -79,7 +79,7 @@ def test_an_email_marked_done_long_ago_does_not_come_back(tmp_path):
     store = Store(tmp_path / "ap.db")
     (tmp_path / "emails").mkdir()
     old = {"id": "first01", "kind": "not_for_ap", "needs_person": True, "documents": []}
-    (tmp_path / "emails" / "triage.jsonl").write_text(json.dumps(old) + "\n")
+    (tmp_path / "emails" / "triage.jsonl").write_text(json.dumps(old) + "\n", encoding="utf-8")
     assert [r["id"] for r in inbox.needs_person(store, tmp_path)] == ["first01"]
     assert inbox.mark_done(store, tmp_path, "first01")
     with sqlite3.connect(store.path) as conn:  # 20,000 emails marked done since

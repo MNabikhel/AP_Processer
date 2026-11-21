@@ -8,7 +8,7 @@ from tests.conftest import SAMPLES
 
 
 def _doc(stem):
-    return json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text())
+    return json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text(encoding="utf-8"))
 
 
 def test_batch_totals_keep_currencies_apart(tmp_path):

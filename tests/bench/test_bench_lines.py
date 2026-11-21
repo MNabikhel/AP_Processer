@@ -8,7 +8,7 @@ def test_digital_invoices_read_every_line_and_each_item_keeps_the_account_ap_gav
     assert s["lines"] > 10 and s["descriptions_right"] == 1.0 and s["descriptions_corrected"] == 0
     assert s["known_items"] and s["known_items_gl_right"] == 1.0  # the coding memory knows each item by its words
     assert s["renamed_other_item"] == 0
-    assert (tmp_path / "lines.md").read_text().startswith("# Line items, right next time")
+    assert (tmp_path / "lines.md").read_text(encoding="utf-8").startswith("# Line items, right next time")
 
 
 def test_each_printed_line_pairs_with_the_line_read_for_it():

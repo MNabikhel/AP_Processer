@@ -155,7 +155,7 @@ def test_two_clones_that_took_one_number_have_the_later_branchs_file_renamed_wit
                      "tests/test_there.py": '"""B-12: there\'s test (D-6)."""\n'})  # fmt: skip
     reserved = Path(".git") / "ap-numbers"
     reserved.mkdir()
-    (reserved / "B-13").write_text("a worktree of this clone\n")
+    (reserved / "B-13").write_text("a worktree of this clone\n", encoding="utf-8")
 
     assert combine.main(["here", "there", "--onto", "main", "--no-check"]) == 0
 
@@ -187,6 +187,68 @@ def test_an_entry_a_branch_made_before_the_cut_over_added_to_a_frozen_log_is_mov
     assert text("docs/decisions/D-6.md") == old_choice
     assert "Moved B-13 from docs/BUGS.md, which stops at B-11, into files of their own." in capsys.readouterr().out
     assert git("status", "--porcelain") == ""
+
+
+def test_a_number_both_sides_gave_entries_alike_is_asked_about_with_both_entries_shown(repo, capsys):
+    """Alike (ALIKE), they are taken for one entry edited on a side, so not numbered anew: a person says which."""
+    edited = "- **B-12** · the totals were wrong on a credit note · low · `t1`\n"
+    again = "- **B-12** · the totals were wrong on a credit memo · low · `t1`\n"
+    asked = "B-12 on both sides, the words alike: the same entry edited, or two bugs?"
+    branch("edited", {"docs/bugs/B-12.md": edited})
+    branch("again", {"docs/bugs/B-12.md": again})
+    branch("log-edited", {"docs/BUGS.md": BUGS + edited})
+    branch("log-again", {"docs/BUGS.md": BUGS + again})
+
+    for one, other, where in (("edited", "again", "docs/bugs/B-12.md"), ("log-edited", "log-again", "docs/BUGS.md")):
+        assert combine.main([one, other, "--onto", "main", "--no-check"]) == 1
+        said = capsys.readouterr().out
+        assert f"{where}: {asked}" in said and f"      {edited.strip()}" in said and f"      {again.strip()}" in said
+        git("merge", "--abort")
+        git("checkout", "-q", "main")
+
+    assert combine.main(["--trial", "--onto", "main", "edited", "again"]) == 0  # (docs only)
+    assert f"docs, for a person: docs/bugs/B-12.md: {asked}" in capsys.readouterr().out
+
+
+def test_a_trial_says_what_each_merge_and_each_two_would_conflict_on_and_changes_nothing(repo, capsys):
+    branch("one", {"app.py": "RATE = 2\n", "docs/BUGS.md": BUGS + "- **B-13** · one · low · `t3`\n",
+                   "docs/GUIDE.md": "Step 1: open it.\n"})  # fmt: skip
+    branch("two", {"app.py": "RATE = 3\n", "docs/BUGS.md": BUGS + "- **B-12** · two · low · `t2`\n"})
+    branch("three", {"docs/GUIDE.md": "Step 1: start it.\n"})
+    Path("untracked.txt").write_text("left as it is\n", encoding="utf-8")
+    state = ("for-each-ref", "status --porcelain=v2 --branch --untracked-files=all", "ls-files --stage")
+    before = {command: git(*command.split()) for command in state}
+
+    assert combine.main(["--trial", "--pairs", "one", "two", "three"]) == 1
+
+    assert {command: git(*command.split()) for command in state} == before
+    assert not Path(".git", "ap-numbers").exists() and not merging()
+    said = capsys.readouterr().out
+    assert "A trial: one, two, three merged onto HEAD in this order (nothing is changed)." in said
+    assert "\none: no conflict.\n" in said
+    assert ("\ntwo: 2 files would conflict.\n  code, for a person: app.py\n"
+            "  docs, settled by combine.py: docs/BUGS.md\n") in said  # fmt: skip
+    assert "\nthree: 1 file would conflict.\n  docs, for a person: docs/GUIDE.md: both sides changed the same" in said
+    assert "\none + two: 2 files would conflict.\n  code, for a person: app.py\n" in said
+    assert "\none + three: 1 file would conflict.\n" in said and "\ntwo + three: no conflict.\n" in said
+    assert said.endswith("Code would conflict (1 file): combine.py would stop there for a person.\n")
+
+
+def test_a_trial_of_docs_the_script_settles_exits_0_with_a_number_it_would_give_anew(repo, capsys):
+    new = "## Older"
+    branch("first", {"docs/bugs/B-12.md": "- **B-12** · first's · low · `t1`\n",
+                     "docs/WHATS_NEW.md": WHATS_NEW.replace(new, "## First\n\n- First.\n\n" + new)})  # fmt: skip
+    branch("second", {"docs/bugs/B-12.md": "- **B-12** · a quite different failure, second's · high · `t2`\n",
+                      "docs/WHATS_NEW.md": WHATS_NEW.replace(new, "## Second\n\n- Second.\n\n" + new)})  # fmt: skip
+    branches = git("branch", "--list")
+
+    assert combine.main(["--trial", "--onto", "main", "first", "second"]) == 0
+
+    said = capsys.readouterr().out
+    assert "\nsecond: 1 file would conflict (B-12 would be B-13).\n" in said
+    assert "  docs, settled by combine.py: docs/WHATS_NEW.md\n" in said
+    assert said.endswith("Only docs would conflict, and combine.py would settle them all.\n")
+    assert git("branch", "--list") == branches and not Path(".git", "ap-numbers").exists()  # nothing kept
 
 
 def test_a_conflict_in_code_stops_with_the_merge_left_for_a_person(repo, capsys):
@@ -233,14 +295,24 @@ def test_a_log_whose_merge_base_git_could_not_make_is_left_to_a_person(repo, cap
     assert "docs/BUGS.md: the branches have more than one merge base, and git's merge of those conflicts here" in said
 
 
-def test_the_checks_run_on_the_files_the_merges_changed(repo, monkeypatch, capsys):
+def test_the_checks_run_on_the_files_the_merges_changed_and_the_whole_tree_rules_once(repo, monkeypatch, capsys):
+    """scripts/check.py runs its RULES for a change to code (here scripts/), so only it runs; for docs only (and a
+    file outside the app, the scripts and the tests) the rules are run first."""
     branch("one", {"app.py": "RATE = 2\n", "docs/BUGS.md": BUGS + "- **B-12** · one · low · `t2`\n"})
+    branch("code", {"scripts/tool.py": "RATE = 3\n"})
     ran = []
     monkeypatch.setattr(combine, "run_step", lambda command: ran.append(command[1:]) or True)
 
     assert combine.main(["one", "--onto", "main"]) == 0
+    assert combine.main(["code"]) == 0
 
-    assert ran == [["-m", "pytest", "-q", "-m", "", "tests/meta"], ["scripts/check.py", "app.py", "docs/BUGS.md"]]
+    rules = ["-m", "pytest", "-q", "-m", "", *combine.RULES]
+    assert "tests/meta" in combine.RULES
+    assert ran == [rules, ["scripts/check.py", "app.py", "docs/BUGS.md"], ["scripts/check.py", "scripts/tool.py"]]
+    said = capsys.readouterr().out
+    assert "the rules that check the whole tree (run first, as only docs changed)" in said
+    assert "Checking: scripts/check.py on the 1 file the merges changed, and the rules that check the whole tree " \
+           "(run by it)" in said  # fmt: skip
     monkeypatch.setattr(combine, "run_step", lambda command: False)
     git("checkout", "-q", "-b", "again", "main")
     assert combine.main(["one"]) == 1

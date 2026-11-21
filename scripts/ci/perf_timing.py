@@ -40,7 +40,7 @@ def build(folder: Path, n: int, bulk: int) -> tuple[Store, list[Path], list[int]
     approved), plus ``bulk`` clean ones of a known vendor for the bulk approval. (store, files, bulk ids)"""
     store = Store(folder / "private" / "ap_coder.db")
     load_sample_setup(store)
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     pdf = (SAMPLES / f"{SAMPLE_STEM}.pdf").read_bytes()
     files_dir = folder / "files"
     files_dir.mkdir()

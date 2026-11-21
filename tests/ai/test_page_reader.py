@@ -491,7 +491,7 @@ def test_render_pictures(tmp_path):
     with Image.open(BytesIO(page_reader.render_pages(clear, OVIS, 1)[0])) as img:
         assert img.convert("RGB").getpixel((5, 5)) == (255, 255, 255)
     text = tmp_path / "notes.txt"
-    text.write_text("not a page")
+    text.write_text("not a page", encoding="utf-8")
     with pytest.raises(PageReaderError):
         page_reader.render_pages(text, OVIS, 1)
 
@@ -848,7 +848,7 @@ def test_read_document_chooses_its_model(monkeypatch, pages_read):
 
 def test_read_document_reports_problems(tmp_path, pages_read):
     text = tmp_path / "notes.txt"
-    text.write_text("not a page")
+    text.write_text("not a page", encoding="utf-8")
     assert "couldn't open notes.txt" in page_reader.read_document(Settings(), text, model=OVIS_KEY).error
     nothing = page_reader.read_document(Settings(), SAMPLE_PDF)  # no model server
     assert nothing.model == "" and "Nothing answered" in nothing.error and nothing.page_count == 2

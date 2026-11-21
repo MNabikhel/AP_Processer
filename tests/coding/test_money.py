@@ -140,7 +140,7 @@ def _setup():
 
 def _sk_doc(amount, currency="CAD", number="X-1"):
     """A Saskatchewan supply charging the GST only: its PST is self-assessed on ``amount``."""
-    doc = json.loads((SAMPLES / "ground_truth" / "prairie_SK_GST_PST_PNS-104882.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / "prairie_SK_GST_PST_PNS-104882.json").read_text(encoding="utf-8"))
     line = {**doc["line_items"][0], "quantity": 1, "unit_price": amount, "amount": amount, "taxes_applied": ["GST"]}
     gst = money.times(amount, 0.05, 0 if currency == "JPY" else 2)
     taxes = [{"tax_type": "GST", "province": "", "rate": 0.05, "taxable_amount": amount, "tax_amount": gst}]

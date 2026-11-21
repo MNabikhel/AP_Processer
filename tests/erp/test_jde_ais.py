@@ -274,7 +274,7 @@ def test_settings_keep_the_password_in_the_env_not_the_database(tmp_path, monkey
     assert "password" in changed and "step1" in changed
     saved = store.get_setting(jde_ais.SETTING_KEY)
     assert PASSWORD not in saved and json.loads(saved)["base_url"] == "https://ais.company.local:9300"
-    assert PASSWORD in env.read_text()
+    assert PASSWORD in env.read_text(encoding="utf-8")
     cfg = jde_ais.load(store)
     assert cfg.password == PASSWORD and cfg.step1 and not cfg.step2 and PASSWORD not in repr(cfg)
     assert jde_ais.save(store, base_url="https://ais.company.local:9300", environment="JPD920", role="*ALL",
@@ -308,12 +308,13 @@ def test_the_mapping_can_be_renamed_from_the_data_folder(tmp_path, monkeypatch):
 
     monkeypatch.setattr(paths, "private_dir", lambda: tmp_path)
     (tmp_path / jde_ais.MAPPING_FILE).write_text(json.dumps(
-        {"orchestrations": {"suppliers": {"name": "ACME_Suppliers", "fields": {"an8": "AN8"}}}}))  # fmt: skip
+        {"orchestrations": {"suppliers": {"name": "ACME_Suppliers", "fields": {"an8": "AN8"}}}}),
+        encoding="utf-8")  # fmt: skip
     mapping = jde_ais.load_mapping()
     assert mapping["orchestrations"]["suppliers"]["name"] == "ACME_Suppliers"
     assert mapping["orchestrations"]["suppliers"]["fields"]["an8"] == "AN8"
     assert mapping["orchestrations"]["suppliers"]["fields"]["name"] == "AlphaName"  # the rest kept
     assert mapping["ais"]["token_path"] == "/jderest/v2/tokenrequest"
-    (tmp_path / jde_ais.MAPPING_FILE).write_text("{not json")
+    (tmp_path / jde_ais.MAPPING_FILE).write_text("{not json", encoding="utf-8")
     with pytest.raises(ValueError, match="can't be read"):
         jde_ais.load_mapping()

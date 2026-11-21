@@ -233,7 +233,8 @@ def test_doubled_quotes_in_a_csv_cell_are_read_as_one_quote(tmp_path):
 def test_tax_rate_file_resaved_by_excel(tmp_path):
     f = tmp_path / "rates.csv"
     f.write_text(
-        "tax_type,province,rate,effective_from,effective_to,notes\nGST,,5%,2008/01/01,,x\nHST,ON,13,31/12/2010,,x\n"
+        "tax_type,province,rate,effective_from,effective_to,notes\nGST,,5%,2008/01/01,,x\nHST,ON,13,31/12/2010,,x\n",
+        encoding="utf-8",
     )
     rates = TaxRateTable.load(f)
     assert [(r.rate, str(r.effective_from)) for r in rates.rates] == [(0.05, "2008-01-01"), (0.13, "2010-12-31")]

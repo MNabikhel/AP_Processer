@@ -55,7 +55,7 @@ def test_a_long_log_is_kept_once_as_the_previous_one(launch):
 
 def test_the_log_never_stops_a_start(launch, monkeypatch, tmp_path, capsys):
     blocked = tmp_path / "a file, not a folder"
-    blocked.write_text("")
+    blocked.write_text("", encoding="utf-8")
     monkeypatch.setenv("AP_USER_SETTINGS", str(blocked / "settings.json"))
     launch.say("still said")
     assert "still said" in capsys.readouterr().out

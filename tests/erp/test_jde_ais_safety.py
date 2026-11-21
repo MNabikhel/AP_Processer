@@ -77,7 +77,9 @@ def test_a_new_ais_host_forgets_the_saved_password(tmp_path, monkeypatch):
         jde_ais.save(store, base_url="ais.other.local:9300", environment="JPD920", role="", username=USER, step1=True)
     assert jde_ais.load(store).password == PASSWORD  # refused: nothing changed
     changed = jde_ais.save(store, base_url="ais.other.local:9300", environment="JPD920", role="", username=USER)
-    assert "password" in changed and jde_ais.load(store).password == "" and PASSWORD not in env.read_text()
+    assert (
+        "password" in changed and jde_ais.load(store).password == "" and PASSWORD not in env.read_text(encoding="utf-8")
+    )
     jde_ais.save(store, base_url="ais.other.local:9300", environment="JPD920", role="", username=USER,
                  password="New-Pass-1", step1=True)  # fmt: skip
     assert jde_ais.save(store, base_url="https://ais.other.local:9300", environment="JPD920", role="",

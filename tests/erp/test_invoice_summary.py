@@ -30,7 +30,7 @@ PERIODS = [YEAR, (dt.date(2026, 1, 1), dt.date(2026, 3, 31)), (dt.date(2026, 7, 
 
 
 def _docs() -> list[dict]:
-    return [json.loads(p.read_text()) for p in sorted((SAMPLES / "ground_truth").glob("*.json"))]
+    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted((SAMPLES / "ground_truth").glob("*.json"))]
 
 
 def _add(store: Store, tmp_path, name: str, doc: dict, meta: dict | None = None) -> tuple[int, dict]:

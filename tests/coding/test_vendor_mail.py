@@ -9,7 +9,7 @@ from tests.conftest import SAMPLES
 
 
 def _doc(stem="northwind_ON_HST_NW-2026-0912", **changes):
-    return {**json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text()), **changes}
+    return {**json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text(encoding="utf-8")), **changes}
 
 
 def test_only_what_the_vendor_can_fix():

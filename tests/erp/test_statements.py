@@ -144,7 +144,7 @@ def test_a_payment_line_carrying_the_invoice_number_never_takes_the_invoice():
 
 
 def _coded(store, stem):
-    doc = json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text(encoding="utf-8"))
     out, _ = finalise_coding(InvoiceCoding.model_validate(doc), store.reference_data(), Settings(), store=store)
     return out
 

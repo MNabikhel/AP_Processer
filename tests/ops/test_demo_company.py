@@ -127,5 +127,5 @@ def test_the_made_up_company_never_goes_into_a_folder_with_accounts(tmp_path, ca
 def test_the_made_up_company_never_goes_into_a_folder_signed_into_or_set_up_as_a_server(tmp_path, capsys, left):
     db = tmp_path / "private" / "ap_coder.db"
     Store(db)
-    (db.parent / left).write_text("{}")
+    (db.parent / left).write_text("{}", encoding="utf-8")
     assert cli.main(["--db", str(db), "demo", "--company"]) == 1 and "new data folder" in capsys.readouterr().err

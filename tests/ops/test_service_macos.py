@@ -298,7 +298,8 @@ def test_status_says_the_daemon_its_host_and_the_dashboard_in_words_and_in_json(
     monkeypatch.setattr(service, "dashboard_health", lambda data, s, timeout=3.0: health)
     (mac.data / ".ap_coder_server.json").write_text(json.dumps({"pid": 5150, "port": 8501}), encoding="utf-8")
     service.host_record(mac.data).write_text(json.dumps({"pid": 4242, "started": "2026-11-06T08:00:00",
-                                                         "folder": str(mac.folder), "version": "1.4.0"}))  # fmt: skip
+                                                         "folder": str(mac.folder), "version": "1.4.0"}),
+                                             encoding="utf-8")  # fmt: skip
     held = paths.try_lock(service.host_lock(mac.data))
     try:
         capsys.readouterr()
@@ -435,7 +436,7 @@ def test_sigterm_or_sigint_ends_the_dashboard_then_the_host_with_exit_code_0(dat
         while not pid_file.exists() and time.monotonic() < deadline and host.poll() is None:
             time.sleep(0.05)
         assert pid_file.exists(), "the dashboard did not start"
-        dashboard = int(pid_file.read_text())
+        dashboard = int(pid_file.read_text(encoding="utf-8"))
         log = data / "logs" / "service.log"
         while "dashboard: dashboard up" not in (log.read_text(encoding="utf-8") if log.exists() else ""):
             assert time.monotonic() < deadline, "the host did not read the dashboard's output"

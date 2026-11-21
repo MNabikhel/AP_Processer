@@ -457,7 +457,11 @@ def test_canadian_dollars_stated_in_words_win_over_a_code_in_a_payment_note():
     assert currency_evidence("Total $1,000.00\nAll amounts in US dollars")[0] == "USD"
     assert currency_evidence("Total $1,000.00\nUSD cheques accepted at par")[1] < 0.8  # a guess, not verified
     assert currency_evidence("Total $1,000.00\nWire to: Bank of Nova Scotia, USD account 4455")[1] < 0.8
-    text = (SAMPLES / "harbourview_NS_HST_HPS-2026-0347.md").read_text().replace("Total Due (CAD)", "Total Due")
+    text = (
+        (SAMPLES / "harbourview_NS_HST_HPS-2026-0347.md")
+        .read_text(encoding="utf-8")
+        .replace("Total Due (CAD)", "Total Due")
+    )
     capture = _read(text.replace("Payable on receipt.", f"Payable on receipt.\n{note}"))
     assert capture.fields["currency"].value == "CAD"
 
@@ -476,14 +480,14 @@ def test_a_currency_in_words_in_a_payment_note_is_not_a_statement():
 def test_a_registration_number_read_only_in_the_bill_to_block_is_not_verified():
     """The customer's GST/HST number printed in the "Client:" block, and no number of the supplier's: a valid check
     digit shows the number is well formed, not whose it is. Verified, input tax credits were claimed on it."""
-    text = (SAMPLES / "harbourview_NS_HST_HPS-2026-0347.md").read_text()
+    text = (SAMPLES / "harbourview_NS_HST_HPS-2026-0347.md").read_text(encoding="utf-8")
     text = text.replace("HST Registration No. 356201848 RT0001\n", "")
     capture = _read(text.replace("Attn: Controller\n", "Attn: Controller\nGST/HST No. 123456782 RT0001\n"))
     gst = capture.fields["gst_hst_registration_number"]
     assert gst.status != VERIFIED and any("bill-to" in r for r in gst.reasons), (gst.status, gst.reasons)
     assert not should_auto_approve(AUTONOMOUS, capture, True, [])[0]
     # The supplier's own number at the top is still verified.
-    assert _read((SAMPLES / "harbourview_NS_HST_HPS-2026-0347.md").read_text()).fields[
+    assert _read((SAMPLES / "harbourview_NS_HST_HPS-2026-0347.md").read_text(encoding="utf-8")).fields[
         "gst_hst_registration_number"].status == VERIFIED  # fmt: skip
 
 
@@ -555,7 +559,11 @@ def test_a_zero_or_a_total_lookalike_does_not_vote_on_a_credit_notes_sign():
 def test_a_field_that_failed_a_check_does_not_show_its_measured_confidence():
     """A total that does not add up is marked down (x0.3); the calibration's measure of its evidence pattern, which
     does not record the failure, must not put it back up (it showed 0.918 beside "check failed")."""
-    text = (SAMPLES / "harbourview_NS_HST_HPS-2026-0347.md").read_text().replace("$10,960.53", "$10,990.53")
+    text = (
+        (SAMPLES / "harbourview_NS_HST_HPS-2026-0347.md")
+        .read_text(encoding="utf-8")
+        .replace("$10,960.53", "$10,990.53")
+    )
     total = _read(text).fields["grand_total"]
     assert total.status == "check" and any(r.startswith("check failed") for r in total.reasons)
     assert total.confidence <= 0.3, total.confidence

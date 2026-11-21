@@ -14,7 +14,10 @@ from tests.conftest import SAMPLE_STEM, SAMPLES
 
 
 def _gt(number="A"):
-    return {**json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text()), "invoice_number": number}
+    return {
+        **json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8")),
+        "invoice_number": number,
+    }
 
 
 def test_controls_report_lists_the_exceptions(tmp_path):
@@ -80,7 +83,7 @@ def test_watch_picks_new_settled_files_only(tmp_path):
     os.utime(old, (time.time() - 60, time.time() - 60))
     copying = inbox / "copying.pdf"
     shutil.copy(SAMPLES / "pacific_BC_GST_PST_PO-77120.pdf", copying)  # modified just now
-    (inbox / "notes.txt.bak").write_text("not an invoice")
+    (inbox / "notes.txt.bak").write_text("not an invoice", encoding="utf-8")
     assert new_files(inbox, store) == [old]
     assert set(new_files(inbox, store, now=time.time() + 60)) == {copying, old}
     store.add_invoice(old, None, None, error="Azure said no")  # a failed attempt is not retried in a loop

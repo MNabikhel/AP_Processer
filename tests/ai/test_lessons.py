@@ -302,7 +302,7 @@ def _approve_and_learn(st, tmp_path, n, proposed, final, actor, bulk=False):
     from ap_coder.capture.workflow import learn_from_approval
 
     f = tmp_path / f"{actor}{n}.txt"
-    f.write_text(f"{actor} {n}")
+    f.write_text(f"{actor} {n}", encoding="utf-8")
     iid = st.add_invoice(f, proposed, {"issues": []})
     st.approve_invoice(iid, final, actor, bulk=bulk)
     learn_from_approval(st, iid, final, actor=actor, bulk=bulk)
@@ -361,7 +361,7 @@ def test_a_line_bulk_approved_unchanged_is_left_out_of_the_accuracy(tmp_path):
 
     st = Store(tmp_path / "ap.db")
     f = tmp_path / "x.txt"
-    f.write_text("b")
+    f.write_text("b", encoding="utf-8")
     iid = st.add_invoice(f, _bulk_line("6100"), {"issues": []})
     assert st.approve_invoice(iid, _bulk_line("6100"), "bob", bulk=True)[ACCEPTED] == 0
     m = st.metrics()

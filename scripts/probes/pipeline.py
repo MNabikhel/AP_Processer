@@ -88,7 +88,7 @@ def main() -> None:
         if p.suffix.lower() in (".pdf", ".md", ".txt", ".png", ".jpg"):
             files.append(shutil.copy(p, work / "in" / p.name))
     (work / "in" / "broken.pdf").write_bytes(b"%PDF-1.4 not really")
-    (work / "in" / "empty.txt").write_text("")
+    (work / "in" / "empty.txt").write_text("", encoding="utf-8")
     files += [work / "in" / "broken.pdf", work / "in" / "empty.txt"]
     store = Store(work / "private" / "ap_coder.db")
     reference = load_reference_data(
