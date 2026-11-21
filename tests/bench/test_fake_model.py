@@ -8,6 +8,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -279,6 +280,17 @@ def _cut_short(
                   b"Content-Length: 100000\r\n\r\n" + sent)  # fmt: skip
 
 
+def _logged(log, seconds=10.0):
+    """The requests in a fake's ``log`` once its last line is whole (or after ``seconds``): a request is counted a
+    moment before its line is written, and stopping the fake doesn't wait for that line."""
+    deadline = time.monotonic() + seconds
+    while not (text := log.read_text(encoding="utf-8") if log.exists() else "").endswith("\n"):
+        if time.monotonic() > deadline:
+            break
+        time.sleep(0.02)
+    return [json.loads(line) for line in text.splitlines()]
+
+
 def test_a_request_cut_short_is_no_chat_request_with_an_empty_model(tmp_path, monkeypatch):
     """CI's Mac job (B-2651): AP Coder shut down while it sent the chat model a page; what came of it was logged as a
     chat request for the model "", and the check said a model LM Studio doesn't have was asked. A request whose body
@@ -287,9 +299,8 @@ def test_a_request_cut_short_is_no_chat_request_with_an_empty_model(tmp_path, mo
     log = tmp_path / "lms.log"
     with FakeModel(log=log) as fake:
         _cut_short(fake)
-        _wait_for(fake, lambda s: s["by_kind"].get("cut"))
+        asked = _logged(log)
         assert fake.stats()["served"] == 0
-    asked = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
     assert [(a["path"], a["kind"], a["model"]) for a in asked] == [("/v1/chat/completions", "cut", "")]
     lms = load_script("ci/fake_lm_studio", "fake_lm_studio_cut")
     monkeypatch.setattr(lms, "_page", lambda app, path: "")  # (Settings > Reading is not what this test looks at)
@@ -299,3 +310,23 @@ def test_a_request_cut_short_is_no_chat_request_with_an_empty_model(tmp_path, mo
         assert chat(fake, model="")[0] == 404  # a whole request with no model: still the wrong model
     asked_wrong = [p for p in lms.check("http://127.0.0.1:9", CHAT, READER, EMBED, log) if "model it doesn" in p]
     assert asked_wrong == ["a model it doesn't have was asked: ['']"]
+
+
+class _LineLate(type(Path())):
+    """A fake's log whose line is written a moment after its file is opened (there, empty), as CI read it (B-3033)."""
+
+    def open(self, *args, **kwargs):
+        opened = super().open(*args, **kwargs)
+        time.sleep(0.3)
+        return opened
+
+
+def test_a_cut_short_requests_line_written_a_moment_after_it_is_counted_is_waited_for(tmp_path):
+    """CI's flake (B-3033): the request cut short was counted, the fake stopped and its log read while its line was
+    still being written: []. Its log is read once its line is there, not once the request is counted."""
+    log = tmp_path / "lms.log"
+    with FakeModel(log=log) as fake:
+        fake.log = _LineLate(log)
+        _cut_short(fake)
+        asked = _logged(log)
+    assert [(a["path"], a["kind"]) for a in asked] == [("/v1/chat/completions", "cut")]
