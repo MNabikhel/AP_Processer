@@ -62,7 +62,9 @@ the placeholder back before the first commit: `printf '$Format:%%h %%cI$\n' > ap
 The decisions and bugs are written in full in `docs/` (and `docs/archive/`), so the reasons survive route B; the
 commit messages don't. On route B, `doctor` and `/healthz` report the new commit, not the handoff's: the zip's
 checksum (`SHA256SUMS.txt`) is what proves the files are the release's. Drop `.github/workflows/release.yml` (its
-tag list names commits a route B repository doesn't have).
+tag list names commits a route B repository doesn't have). A schema raised needs an old database for each release
+(`tests/core/test_migrations.py` says when): list the release in `RELEASES` of `scripts/old_schemas.py` and run it; the
+releases from before the handoff, whose history isn't there, keep the files they have.
 
 **Python and packages.** Python 3.11 to 3.14 (3.12 recommended). With a package index reachable:
 `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"`. `pyproject.toml` asks only for minimum versions;

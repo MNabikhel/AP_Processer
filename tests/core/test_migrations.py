@@ -140,8 +140,8 @@ def test_every_schema_since_pr_99s_has_an_old_database():
     assert not missing, (
         f"No old database at schema {', '.join(map(str, missing))}: add the releases at it (the v0.3.0-build.<sha> "
         "tags: git ls-remote --tags origin; if no release had it, the commit that first made it, to UNRELEASED) to "
-        "RELEASES in scripts/old_schemas.py, then run: python scripts/old_schemas.py (in a full clone: git fetch "
-        "--unshallow, or it rewrites the older files)"
+        "RELEASES in scripts/old_schemas.py, then run: python scripts/old_schemas.py (a shallow clone: git fetch "
+        "--unshallow first; without the older history, docs/HANDOFF.md's route B, their files are kept as they are)"
     )
 
 
@@ -181,11 +181,56 @@ def test_the_old_databases_are_not_made_again_by_a_clone_without_every_release(c
     kept.write_text("-- as it was\n", encoding="utf-8")
     assert old_schemas.main(["--out", str(tmp_path)]) == 2
     said = capsys.readouterr().out
-    assert said.startswith("Nothing was written: ") and "git fetch --unshallow" in said
-    assert (gone in said) == (clone != "shallow")
+    assert said.startswith("Nothing was written: ") and ("git fetch --unshallow" in said) == (clone == "shallow")
+    assert (gone in said) == (clone != "shallow") and ("--code SHA=FOLDER" in said) == (clone != "shallow")
     assert [p.name for p in tmp_path.iterdir()] == [kept.name] and kept.read_text(encoding="utf-8") == "-- as it was\n"
     if clone != "shallow":  # its code given unpacked, every release is read
-        assert old_schemas.unreadable({gone: str(tmp_path)}) == ""
+        assert old_schemas.not_here({gone: str(tmp_path)}) == []
+
+
+@pytest.mark.parametrize("clone", ["without the history", "shallow"])
+def test_a_release_whose_history_is_not_here_keeps_its_file_and_one_with_no_file_stops_it(clone, tmp_path, monkeypatch,
+                                                                                         capsys):  # fmt: skip
+    """B-3003: a repository without the older history (the code handed over as a zip: docs/HANDOFF.md's route B) wrote
+    nothing unless it could read every release, so the rule that each schema has an old database could not be met
+    there. A release it cannot read keeps its file as it is, one making the same database adds none, and one with no
+    file yet stops it. A shallow clone still writes nothing at all (git fetch --unshallow gets every release)."""
+    old_schemas = load_script("old_schemas", "ap_old_schemas")
+    made = {"1111111": "-- schema 14\nA;\n", "2222222": "-- schema 14\nA;\n", "3333333": "-- schema 33\nC;\n"}
+    monkeypatch.setattr(old_schemas, "RELEASES", [("1111111", "PR #1"), ("2222222", "PR #2"), ("3333333", "ours")])
+    monkeypatch.setattr(old_schemas, "UNRELEASED", [])
+    here = {"2222222", "3333333"}  # the commits this repository has
+
+    def git(*args):
+        if args[:2] == ("rev-parse", "--is-shallow-repository"):
+            return subprocess.CompletedProcess(args, 0, b"true\n" if clone == "shallow" else b"false\n", b"")
+        assert args[0] == "cat-file", args  # (no release's code is read but by code_of)
+        return subprocess.CompletedProcess(args, 0 if args[2][:7] in here else 128, b"", b"")
+
+    monkeypatch.setattr(old_schemas, "git", git)
+    monkeypatch.setattr(old_schemas, "code_of", lambda sha, folder: folder.mkdir() or (folder / "sha").write_text(sha))
+    monkeypatch.setattr(old_schemas, "made_by", lambda folder, work: folder / "sha")
+    monkeypatch.setattr(old_schemas, "dump", lambda db: made[db.read_text()])
+    kept = tmp_path / "schema-14-1111111.sql"
+    as_it_was = (b"-- A new database as AP Coder made it at 1111111 (PR #1); the same at 2222222 (PR #2) "
+                 b"(scripts/old_schemas.py)\n-- schema 14\nA;\n")  # fmt: skip
+    kept.write_bytes(as_it_was)
+    code, said = old_schemas.main(["--out", str(tmp_path)]), capsys.readouterr().out
+    if clone == "shallow":
+        assert code == 2 and said.startswith("Nothing was written: ") and "git fetch --unshallow" in said
+        assert [p.name for p in tmp_path.iterdir()] == [kept.name]  # none rewritten, none added twice
+    else:
+        assert code == 0, said
+        new = tmp_path / "schema-33-3333333.sql"  # (2222222 made 1111111's database: no second file of it)
+        assert sorted(p.name for p in tmp_path.iterdir()) == [kept.name, new.name]
+        header = "-- A new database as AP Coder made it at 3333333 (ours) (scripts/old_schemas.py)\n"
+        assert new.read_text(encoding="utf-8") == header + made["3333333"]
+        files = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+        monkeypatch.setattr(old_schemas, "RELEASES", [*old_schemas.RELEASES, ("4444444", "PR #4")])  # no file yet
+        code, said = old_schemas.main(["--out", str(tmp_path)]), capsys.readouterr().out
+        assert code == 2 and said.startswith("Nothing was written: ") and "4444444 (PR #4)" in said
+        assert "1111111" not in said and {p.name: p.read_bytes() for p in tmp_path.iterdir()} == files
+    assert kept.read_bytes() == as_it_was
 
 
 def test_the_numbered_steps_run_in_the_order_of_their_versions():

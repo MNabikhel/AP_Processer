@@ -4,8 +4,11 @@ an older database brought up to date is the same as a new one (``tests/core/test
     python scripts/old_schemas.py                        every release in RELEASES (and UNRELEASED)
     python scripts/old_schemas.py --code e1cf61a=FOLDER  a release's code unpacked already (GitHub's ZIP of it)
 
-It needs every release's code: in a shallow clone (a cloud session's), or one without a release, it writes nothing
-and says so (``git fetch --unshallow`` gets them all). A file kept for a release it could not read would be wrong.
+In a shallow clone (a cloud session's) it writes nothing and says so (``git fetch --unshallow`` gets every release):
+a file made again without the older releases' code would be wrong. In a clone without a release's history (the code
+handed over as a zip, docs/HANDOFF.md's route B) a release it cannot read whose file is here keeps that file as it is,
+never written again, and a release that makes the same database adds none; a release with no file yet that it cannot
+read (``--code`` gives its code) stops it, writing nothing.
 
 Each release's own code (its commit's ``ap_coder/``, as ``git archive`` gives it) makes a new database, run by this
 Python; what it made (its tables, indexes, triggers and the rows it wrote, such as ``schema_version``) is written as
@@ -18,6 +21,7 @@ from __future__ import annotations
 import argparse
 import io
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -80,18 +84,33 @@ def git(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=ROOT, capture_output=True)
 
 
-def unreadable(given: dict[str, str]) -> str:
-    """What stops this clone from reading every release's code (one given with ``--code`` is read from its folder),
-    and what to do: '' when nothing does."""
+def files_of(out: Path) -> dict[str, Path]:
+    """Each release a file in ``out`` was made from (named after the first, its first line naming the others)."""
+    found = {}
+    for path in sorted(out.glob("schema-*.sql")):
+        with path.open(encoding="utf-8") as sql:
+            found |= {sha: path for sha in re.findall(r"\b([0-9a-f]{7,40}) \(", sql.readline())}
+    return found
+
+
+def not_here(given: dict[str, str]) -> list[tuple[str, str]]:
+    """The releases whose code this clone does not have (one given with ``--code`` is read from its folder)."""
+    return [(sha, label) for sha, label in [*RELEASES, *UNRELEASED]
+            if sha not in given and git("cat-file", "-e", f"{sha}^{{commit}}").returncode]  # fmt: skip
+
+
+def unreadable(gone: list[tuple[str, str]], files: dict[str, Path]) -> str:
+    """What stops this clone from writing the files: being shallow, or a release it cannot read (of ``gone``) that no
+    file was made from (``files``); and what to do: '' when nothing does."""
     if git("rev-parse", "--is-shallow-repository").stdout.strip() == b"true":
         return ("this clone is shallow: it has only the newest commits, not the older releases' code. Run git fetch "
                 "--unshallow, then run this again.")  # fmt: skip
-    missing = [f"{sha} ({label})" for sha, label in [*RELEASES, *UNRELEASED]
-               if sha not in given and git("cat-file", "-e", f"{sha}^{{commit}}").returncode]  # fmt: skip
+    missing = [f"{sha} ({label})" for sha, label in gone if sha not in files]
     if not missing:
         return ""
-    return (f"this clone does not have {', '.join(missing)}. Run git fetch --unshallow (or give a release's code "
-            "with --code SHA=FOLDER), then run this again.")  # fmt: skip
+    return (f"this clone does not have {', '.join(missing)}, and no file here was made from it yet. Fetch it (git "
+            "fetch origin SHA), or give its code with --code SHA=FOLDER (GitHub's ZIP of it, unpacked), then run this "
+            "again.")  # fmt: skip
 
 
 def code_of(sha: str, folder: Path) -> None:
@@ -143,19 +162,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=OUT)
     args = parser.parse_args(argv)
     given = dict(item.split("=", 1) for item in args.code)
-    why = unreadable(given)
+    files, gone = files_of(args.out), dict(not_here(given))
+    why = unreadable(list(gone.items()), files)
     if why:
         print(f"Nothing was written: {why}")
         return 2
+    left = {files[sha] for sha in gone}  # each made from a release not here: kept as it is, never written again
+    as_left = {path.read_text(encoding="utf-8").partition("\n")[2]: path for path in left}  # (its SQL under its header)
+    for path in sorted(left):
+        print(f"{path.name}: kept as it is (made from {', '.join(s for s in gone if files[s] == path)}, not here)")
     args.out.mkdir(parents=True, exist_ok=True)
     kept: dict[str, tuple[Path, list[str]]] = {}  # a dump -> (its file, the releases that made it)
     for sha, label in [*RELEASES, *UNRELEASED]:
+        if sha in gone:
+            continue
         with tempfile.TemporaryDirectory(prefix="ap-old-schema-") as scratch:
             work = Path(scratch)
             folder = Path(given[sha]) if sha in given else work / "code"
             if sha not in given:
                 code_of(sha, folder)
             sql = dump(made_by(folder, work))
+        if sql in as_left:
+            print(f"{sha} ({label}): the same database as {as_left[sql].name}, kept as it is")
+            continue
         same = kept.get(sql)
         if same is not None:
             same[1].append(f"{sha} ({label})")
