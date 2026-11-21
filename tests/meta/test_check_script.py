@@ -178,22 +178,44 @@ def test_asked_for_the_rules_run_once_as_for_a_change_to_code_whatever_changed(m
 def test_slow_tests_that_take_long_together_are_left_to_ci(monkeypatch, capsys):
     """B-3019: D-331's probe test (the jde and pages probes run twice, about 50 s) ran in every check's rules while
     tests/test_times.json gave its file 0.7 s. A test file whose slow tests take over SLOW_SECONDS together leaves
-    them to CI, in the rules run and among the files picked; a slow rule that takes little still runs."""
-    times = check.read_tests()[1]
-    probe = "tests/meta/test_same_behaviour.py::test_the_jde_and_pages_probes_give_the_same_output_each_run"
-    whole, fast = times["tests/meta/test_same_behaviour.py"]
-    assert whole - fast > check.SLOW_SECONDS  # (53 s measured, 0.7 s of it not slow)
-    assert probe in check.slow_tests("tests/meta/test_same_behaviour.py")  # (marked so, with others: B-3024)
+    them to CI, in the rules run and among the files picked; a slow rule that takes little still runs. B-3029: this
+    test held the seconds tests/test_times.json gives test_accruals.py, so a refresh of the times failed it: the times
+    of the files it leans on are made up here."""
+    texts, real = check.read_tests()
+    probe_file, rules_file = "tests/meta/test_same_behaviour.py", "tests/meta/test_code_rules.py"
+    accruals = "tests/erp/test_accruals.py"
+    long, short = check.SLOW_SECONDS + 10, check.SLOW_SECONDS - 5  # (the seconds of their slow tests)
+    times = {**real, probe_file: [long + 1, 1.0], rules_file: [short + 1, 1.0], accruals: [long + 2, 2.0],
+             "tests/coding/test_tax.py": [1.0, 1.0]}  # fmt: skip
+    monkeypatch.setattr(check, "read_tests", lambda: (texts, times))
+    probe = f"{probe_file}::test_the_jde_and_pages_probes_give_the_same_output_each_run"
+    assert probe in check.slow_tests(probe_file)  # (marked so in the file, with others: B-3024)
     args = check.rules_args(sorted(check.RULES), times)
-    assert probe in args and "tests/meta/test_code_rules.py::test_no_sql_placeholders_are_made_one_per_item_of_a_list" \
-        not in args  # fmt: skip
-    assert check.estimate(sorted(check.RULES), times, slow=False) < 40
+    assert probe in args and f"{rules_file}::test_no_sql_placeholders_are_made_one_per_item_of_a_list" not in args
     ran = []
     monkeypatch.setattr(check, "pytest", lambda args: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
-    assert check.main(["tests/erp/test_accruals.py", "tests/coding/test_tax.py", "--serial", "--no-walk"]) == 0
+    assert check.main([accruals, "tests/coding/test_tax.py", "--serial", "--no-walk"]) == 0
     left = [ran[1][i + 1] for i, a in enumerate(ran[1]) if a == "--deselect"]
-    assert left and all(t.startswith("tests/erp/test_accruals.py::") for t in left)  # (test_tax.py's: none, 0 s)
-    assert "tests/erp/test_accruals.py: its slow tests left to CI (about 49 s)" in capsys.readouterr().out
+    assert left and all(t.startswith(f"{accruals}::") for t in left)  # (test_tax.py's: none)
+    assert f"{accruals}: its slow tests left to CI (about {long:.0f} s)" in capsys.readouterr().out
+
+
+def test_the_estimate_counts_what_runs_a_page_scripts_tests_slow_ones_and_all(monkeypatch, capsys):
+    """B-3027: for a changed page script nothing is left to CI (its browser tests are asked for), yet the estimate
+    dropped a long-slow file's slow seconds: "about 1 s" for a run of 27 and one core. Only the files whose slow tests
+    are really left out are counted without them."""
+    times = {"tests/x/test_a.py": [30.0, 1.0], "tests/x/test_b.py": [3.0, 2.0]}
+    assert check.estimate(["tests/x/test_a.py", "tests/x/test_b.py"], times) == 33.0  # (all of them run)
+    assert check.estimate(["tests/x/test_a.py"], times, long=["tests/x/test_a.py"]) == 1.0  # (its slow ones: CI's)
+    texts, real = check.read_tests()
+    monkeypatch.setattr(check, "read_tests", lambda: (texts, {**real, "tests/web/test_web_invoice.py": [30.0, 1.0]}))
+    ran = []
+    monkeypatch.setattr(check, "pytest", lambda args: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
+    monkeypatch.setattr(check.importlib.util, "find_spec", lambda name: object())  # (as if pytest-xdist were there)
+    monkeypatch.setenv("AP_CHECK_WORKERS", "2")
+    assert check.main(["ap_coder/web/static/js/invoice.js", "--no-walk"]) == 0
+    tests = ran[-1]
+    assert "tests/web/test_web_invoice.py" in tests and "--deselect" not in tests and tests[:2] == ["-n", "2"]
 
 
 def test_a_long_run_goes_on_several_cores(monkeypatch, capsys):
@@ -269,6 +291,32 @@ def test_with_a_test_map_the_functions_changed_bring_the_tests_that_ran_them(mon
     assert found - without == {day_one} and volume not in found
     assert any("the test map" in n and day_one in n and "1 left to CI" in n for n in notes[taxmath]), notes
     assert load(tmp_path / "gone.gz") is None
+
+
+def test_the_test_map_takes_a_functions_signature_and_decorators_for_part_of_it(monkeypatch):
+    """B-3030: the map's keys of a diff came from the functions' bodies only (the lines coverage counts), so a changed
+    default value, parameter or page address (``@router.get``) brought none of the tests the map says ran it:
+    Store.final_approve's signature, D-333's own example, among them."""
+    mapped = check.load_map()
+    assert mapped, "tests/test_map.json.gz, the committed map"
+    module, test_map = mapped
+    store, exports = "ap_coder/core/store/invoices.py", "ap_coder/web/pages/exports.py"
+    texts = {f: (ROOT / f).read_text(encoding="utf-8") for f in (store, exports)}
+
+    def head(text: str, name: str) -> set[int]:  # its decorators' and its signature's lines, before its body
+        (node,) = [n for n in check.functions(text) if n.name == name]
+        return set(range(min([node.lineno, *(d.lineno for d in node.decorator_list)]), node.body[0].lineno))
+
+    monkeypatch.setattr(check, "committed", lambda f: texts[f])
+    changed = {
+        store: (head(texts[store], "final_approve"), set()),
+        exports: (set(), head(texts[exports], "exports_page")),
+    }
+    monkeypatch.setattr(check, "changed_lines", lambda f: changed[f])
+    final_approve = f"{store}::InvoicesMixin.final_approve"
+    assert check.map_keys(store) == {final_approve} and test_map.files(final_approve)  # (tests that ran it)
+    assert check.map_keys(exports) == {f"{exports}::exports_page"}  # (its @router lines, taken out)
+    assert set(check.map_spans(texts[store])) == set(module.functions(texts[store]))  # (the map's names, all of them)
 
 
 def test_a_name_too_many_tests_have_brings_none(monkeypatch):
