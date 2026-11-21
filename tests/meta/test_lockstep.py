@@ -54,9 +54,30 @@ def _calls(trees: dict[str, ast.Module]) -> list[tuple[str, ast.Call]]:
     return [(name, node) for name, tree in trees.items() for node in ast.walk(tree) if isinstance(node, ast.Call)]
 
 
-def _calls_in_the_app(name: str) -> list[ast.Call]:
-    """Each call of ``name`` in ap_coder."""
-    return [call for _, call in _calls(_trees("ap_coder", f"{name}(")) if _called(call) == name]
+Calls = Callable[
+    [str], list[tuple[ast.Call, ast.FunctionDef | None]]
+]  # a name's calls, each with the function it is in
+
+
+def _calls_of(trees: dict[str, ast.Module]) -> Calls:
+    """The calls of a name in these modules, each with the function it is in (None: at the top of its module)."""
+
+    def calls(name: str) -> list[tuple[ast.Call, ast.FunctionDef | None]]:
+        found = []
+        for tree in trees.values():
+            inside: dict[ast.Call, ast.FunctionDef] = {}
+            for fn in ast.walk(tree):  # (outer functions first: a call in an inner one is the inner one's)
+                if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    inside.update((n, fn) for n in ast.walk(fn) if isinstance(n, ast.Call))
+            found += [(n, inside.get(n)) for n in ast.walk(tree) if isinstance(n, ast.Call) and _called(n) == name]
+        return found
+
+    return calls
+
+
+def _calls_in_the_app(name: str) -> list[tuple[ast.Call, ast.FunctionDef | None]]:
+    """Each call of ``name`` in ap_coder, with the function it is in."""
+    return _calls_of(_trees("ap_coder", f"{name}("))(name)
 
 
 def _literal(module: str, name: str):
@@ -115,20 +136,25 @@ store.replace_proposal(6, out, rep, cap, unless_in_use=False)
 # --- (b) What a store function that changes an invoice logs is a revision, or says why not -------------------------
 
 
-def _values(node: ast.expr | None, fn: ast.FunctionDef, calls_of: Callable[[str], list[ast.Call]]) -> set[str] | None:
-    """The strings an argument can be: a constant, either side of ``a if b else c``, a name assigned them in the
-    function, or a parameter: its default and what each call of the function passes it. None: not told."""
+def _values(node: ast.expr | None, fn: ast.FunctionDef | None, calls_of: Calls, seen: frozenset = frozenset()
+            ) -> set[str] | None:  # fmt: skip
+    """The strings an argument of ``fn`` can be: a constant, either side of ``a if b else c``, a name assigned them in
+    the function, or a parameter: its default and what each call of the function passes it, a name there being the
+    caller's. A name met again (``action = ... else action``) adds nothing more. None: not told."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return {node.value}
     if isinstance(node, ast.IfExp):
-        both = (_values(node.body, fn, calls_of), _values(node.orelse, fn, calls_of))
+        both = (_values(node.body, fn, calls_of, seen), _values(node.orelse, fn, calls_of, seen))
         return None if None in both else both[0] | both[1]
-    if not isinstance(node, ast.Name):
+    if not isinstance(node, ast.Name) or fn is None:
         return None
-    sources: list[ast.expr | None] = []
+    if (fn, node.id) in seen:
+        return set()
+    seen = seen | {(fn, node.id)}
+    sources: list[tuple[ast.expr | None, ast.FunctionDef | None]] = []
     for assign in ast.walk(fn):
         if isinstance(assign, ast.Assign) and any(isinstance(t, ast.Name) and t.id == node.id for t in assign.targets):
-            sources.append(assign.value)
+            sources.append((assign.value, fn))
     args = fn.args
     positional = [*args.posonlyargs, *args.args]
     defaults = dict(
@@ -136,17 +162,17 @@ def _values(node: ast.expr | None, fn: ast.FunctionDef, calls_of: Callable[[str]
     )
     defaults.update((a.arg, d) for a, d in zip(args.kwonlyargs, args.kw_defaults, strict=True) if d is not None)
     if node.id in defaults:
-        sources.append(defaults[node.id])
-        sources += [k.value for call in calls_of(fn.name) for k in call.keywords if k.arg == node.id]
+        sources.append((defaults[node.id], fn))
+        sources += [(k.value, caller) for call, caller in calls_of(fn.name) for k in call.keywords if k.arg == node.id]
     elif node.id in {a.arg for a in [*positional, *args.kwonlyargs]}:
         return None  # (a parameter every caller must give: what it is, the callers say)
     if not sources:
         return None
-    found = [_values(s, fn, calls_of) for s in sources]
+    found = [_values(value, where, calls_of, seen) for value, where in sources]
     return None if None in found else set().union(*found)
 
 
-def logged_by_invoice_changes(store: dict[str, ast.Module], calls_of: Callable[[str], list[ast.Call]]) -> dict:
+def logged_by_invoice_changes(store: dict[str, ast.Module], calls_of: Calls) -> dict:
     """Each ``_log`` call of a store function whose SQL changes the invoices table: the actions it can log (None: not
     told), by where it is."""
     found: dict[str, set | None] = {}
@@ -210,14 +236,48 @@ class Mixin:
 store.replace(conn, 1, action="read_again")
 """
     tree = ast.parse(source)
-    logged = logged_by_invoice_changes(
-        {"s.py": tree}, lambda name: [c for _, c in _calls({"s.py": tree}) if _called(c) == name]
-    )
+    logged = logged_by_invoice_changes({"s.py": tree}, _calls_of({"s.py": tree}))
     assert logged == {"s.py:5 park": {"parked_by_hand"}, "s.py:10 answer": {"confirmed", "sent_back"},
                       "s.py:14 replace": {"proposal_updated", "read_again"}, "s.py:18 told": None}  # fmt: skip
     found = unexplained(logged, ("sent_back", "confirmed"), {"proposal_updated": "why"})
     assert found == ["s.py:5 park: ['parked_by_hand']", "s.py:14 replace: ['proposal_updated', 'read_again']",
                      "s.py:18 told: which action, not told"]  # fmt: skip
+
+
+def test_the_store_rule_follows_a_callers_name_in_the_callers_own_function():
+    """B-3007: a caller's name for the action (``action=action``, ``action=chosen``) is the caller's. It was looked up
+    in the store function, so ``action=action`` went round its default and the caller for good (RecursionError) and
+    ``action=chosen`` was not told, on a change that kept what the app does. A name given itself again adds nothing."""
+    source = """
+class Mixin:
+    def replace(self, conn, invoice_id, *, action="proposal_updated"):
+        conn.execute("UPDATE invoices SET ai_output = ? WHERE id = ?", ("{}", invoice_id))
+        self._log(conn, action, invoice_id)
+
+    def correct(self, conn, invoice_id, corrected, action="noted"):
+        action = "verifier_corrected" if corrected else action
+        conn.execute("UPDATE invoices SET status = 'review' WHERE id = ?", (invoice_id,))
+        self._log(conn, action, invoice_id)
+
+
+def chat_again(store):
+    action = "proposal_updated"
+    store.replace(conn, 1, action=action)
+
+
+def corrections(store):
+    chosen = "verifier_corrected"
+    store.replace(conn, 2, action=chosen)
+"""
+    tree = ast.parse(source)
+    logged = logged_by_invoice_changes({"s.py": tree}, _calls_of({"s.py": tree}))
+    assert logged == {"s.py:5 replace": {"proposal_updated", "verifier_corrected"},
+                      "s.py:10 correct": {"verifier_corrected", "noted"}}  # fmt: skip
+    told_nothing = ast.parse(
+        source.replace('    chosen = "verifier_corrected"\n', "") + "\nstore.replace(c, 3, action=x)\n"
+    )
+    logged = logged_by_invoice_changes({"s.py": told_nothing}, _calls_of({"s.py": told_nothing}))
+    assert logged["s.py:5 replace"] is None  # (a name nobody gives a value: not told)
 
 
 # --- (c) Each revision has its words on the screen that is out of date ----------------------------------------------
