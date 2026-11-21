@@ -436,7 +436,7 @@ def settings():
 
 @pytest.fixture
 def ground_truth():
-    return json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    return json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture

@@ -312,8 +312,8 @@ def test_the_mark_of_the_web_is_taken_off_the_windows_launchers(launch, monkeypa
     monkeypatch.setattr(launch, "WINDOWS", True)
     (launch.ROOT / "scripts").mkdir(exist_ok=True)
     for name in ("APProcessor.bat", "scripts/terminal.bat", "README.md"):
-        (launch.ROOT / name).write_text("x")
-        (launch.ROOT / f"{name}:Zone.Identifier").write_text("[ZoneTransfer]\nZoneId=3\n")
+        (launch.ROOT / name).write_text("x", encoding="utf-8")
+        (launch.ROOT / f"{name}:Zone.Identifier").write_text("[ZoneTransfer]\nZoneId=3\n", encoding="utf-8")
     launch.unblock_launchers()
     assert not (launch.ROOT / "APProcessor.bat:Zone.Identifier").exists()
     assert not (launch.ROOT / "scripts" / "terminal.bat:Zone.Identifier").exists()
@@ -325,7 +325,7 @@ def test_the_mark_of_the_web_is_taken_off_the_windows_launchers(launch, monkeypa
 def test_gatekeepers_quarantine_is_taken_off_the_mac_launchers(launch, monkeypatch):
     monkeypatch.setattr(launch, "MAC", True)
     for name in ("APProcessor.command", "README.md"):
-        (launch.ROOT / name).write_text("x")
+        (launch.ROOT / name).write_text("x", encoding="utf-8")
     calls = []
     monkeypatch.setattr(launch.subprocess, "run", lambda cmd, **k: calls.append(cmd))
     launch.unblock_launchers()

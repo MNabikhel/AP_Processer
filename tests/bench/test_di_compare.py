@@ -45,21 +45,23 @@ def test_each_case_is_read_with_and_without_azure_and_compared_field_by_field(tm
     cases = load_cases(out / "cases")
     answers.mkdir()
     first, second, third = cases
-    (answers / f"{di_compare.response_key(first)}.json").write_text(json.dumps(_answer(first.truth)))
+    (answers / f"{di_compare.response_key(first)}.json").write_text(json.dumps(_answer(first.truth)), encoding="utf-8")
     wrong = _answer(second.truth, invoice_number="WRONG-1")
     (answers / f"{di_compare.response_key(second)}.json.gz").write_bytes(gzip.compress(json.dumps(wrong).encode()))
-    (answers / f"{third.id}.old-version.0123456789ab.json").write_text("{}")  # recorded for another invoice
+    (answers / f"{third.id}.old-version.0123456789ab.json").write_text(
+        "{}", encoding="utf-8"
+    )  # recorded for another invoice
 
     both = run(n=3, seed=7, scanned=0.0, out=out, workers=1, reader="capture", di_responses=answers)
     assert {**both, "timing": None} == {**alone, "timing": None}  # the report is AP Coder's alone, as always
-    readers = json.loads((out / "readers.json").read_text())
+    readers = json.loads((out / "readers.json").read_text(encoding="utf-8"))
     assert readers["cases"] == 2
     assert len(readers["warnings"]) == 1 and third.id in readers["warnings"][0]
     number = readers["fields"]["invoice_number"]
     assert number["printed"] == 2 and number["azure_accuracy"] == 0.5 and number["differ"] == 1
     assert number["right_when_differ"] == 1.0  # AP Coder's own reading kept: local first
     assert readers["overall"]["both_accuracy"] >= readers["overall"]["local_accuracy"]
-    text = (out / "readers.md").read_text()
+    text = (out / "readers.md").read_text(encoding="utf-8")
     assert "| invoice_number | 2 |" in text and "Answers not used" in text
 
 

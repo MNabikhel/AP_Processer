@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import re
 import subprocess
 import sys
 
@@ -28,6 +29,74 @@ def test_every_text_file_is_read_and_written_with_its_encoding():
         cwd=ROOT, capture_output=True, text=True,
     )  # fmt: skip
     assert run.returncode == 0, "name the encoding (usually encoding='utf-8'):\n" + run.stdout + run.stderr
+
+
+TEXT_MODE = re.compile(r"[rwaxt+]*")  # a mode of open() with no "b": text
+# Calls of the app the rule below finds, left as they are until after Monday's test (the behaviour freeze): each file
+# and how many. lines.py: the lines benchmark's lines.json, json.dumps' ASCII only, so read alike on any computer.
+NO_ENCODING_KEPT = {"ap_coder/bench/lines.py": 1}
+
+
+def _text_without_encoding(source: str) -> list[int]:
+    """The lines of a path's ``read_text()``, ``write_text(data)`` or ``open(<a text mode>)`` with no encoding, by
+    pathlib's own signatures (an encoding given by position, ``**kwargs``, a module's function of that name such as
+    tarfile.open, PyMuPDF's TextWriter, and ``open()`` with no mode, which a page or a PDF has too, aside)."""
+    tree = ast.parse(source)
+    modules = {(alias.asname or alias.name).split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import)
+               for alias in node.names}  # fmt: skip
+    modules |= {target.id for node in ast.walk(tree)
+                if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                and getattr(node.value.func, "attr", getattr(node.value.func, "id", "")) == "TextWriter"
+                for target in node.targets if isinstance(target, ast.Name)}  # fmt: skip
+    found = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+        of_module = isinstance(node.func.value, ast.Name) and node.func.value.id in modules  # (or a TextWriter)
+        if "encoding" in keywords or None in keywords or of_module:
+            continue
+        name, given = node.func.attr, len(node.args)
+        mode = keywords.get("mode", node.args[0] if node.args else None)
+        text = isinstance(mode, ast.Constant) and isinstance(mode.value, str) and TEXT_MODE.fullmatch(mode.value)
+        if (name, given) in {("read_text", 0), ("write_text", 1)} or (name == "open" and given <= 1 and text):
+            found.append(node.lineno)
+    return sorted(found)
+
+
+def test_every_path_read_or_written_as_text_names_its_encoding():
+    """The rule above where ruff can't tell a path: it knows ``Path(...)`` itself, not a fixture's ``tmp_path / "x"``
+    or a variable, so ``(tmp_path / "a.md").write_text("·")`` went unseen and was written in cp1252 on Windows."""
+    found: dict[str, list[int]] = {}
+    for folder in CODE:
+        for path in sorted((ROOT / folder).rglob("*.py")):
+            if lines := _text_without_encoding(path.read_text(encoding="utf-8")):
+                found[path.relative_to(ROOT).as_posix()] = lines
+    new = {name: lines for name, lines in found.items() if len(lines) > NO_ENCODING_KEPT.get(name, 0)}
+    assert not new, f"name the encoding (usually encoding='utf-8'): {new}"
+    assert {name: len(lines) for name, lines in found.items()} == NO_ENCODING_KEPT, "a call kept no longer is: say so"
+
+
+def test_the_path_encoding_rule_finds_what_it_should():
+    source = """import tarfile
+(tmp_path / "a.csv").write_text("x")
+path.read_text()
+log.open("w")
+path.open(mode="a")
+path.write_text("x", encoding="utf-8")
+path.read_text("utf-8")
+path.write_text("x", "utf-8")
+path.open("rb")
+path.open("w", **options)
+envfile.read_text(name)
+tarfile.open("old.tar", "r")
+pymupdf.open()
+page.open()
+archive.open("word/document.xml")
+writer = pymupdf.TextWriter(page.rect)
+writer.write_text(page)
+"""
+    assert _text_without_encoding(source) == [2, 3, 4, 5]
 
 
 def _is_mark(node: ast.AST) -> bool:

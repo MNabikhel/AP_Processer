@@ -27,10 +27,10 @@ STAMP_B = "5e6f7a8 2026-10-21T09:30:00-04:00\n"
 def _code(folder: Path, version: str = "0.3.0", stamp: str | None = STAMP_A) -> Path:
     (folder / "ap_coder").mkdir(parents=True, exist_ok=True)
     (folder / "scripts").mkdir(exist_ok=True)
-    (folder / "scripts" / "launch.py").write_text("")
-    (folder / "pyproject.toml").write_text(f'[project]\nname = "ap-coder"\nversion = "{version}"\n')
+    (folder / "scripts" / "launch.py").write_text("", encoding="utf-8")
+    (folder / "pyproject.toml").write_text(f'[project]\nname = "ap-coder"\nversion = "{version}"\n', encoding="utf-8")
     if stamp is not None:
-        (folder / "ap_coder" / "BUILD").write_text(stamp)
+        (folder / "ap_coder" / "BUILD").write_text(stamp, encoding="utf-8")
     return folder
 
 
@@ -39,8 +39,8 @@ def launch(tmp_path, monkeypatch):
     module = load_script("launch", "ap_script_launch_build")
     monkeypatch.setattr(module, "index_problem", lambda: "")  # (the package site answers: never asked from a test)
     here = _code(tmp_path / "AP Coder")
-    (here / "APProcessor.bat").write_text("")
-    (here / "APProcessor.command").write_text("")
+    (here / "APProcessor.bat").write_text("", encoding="utf-8")
+    (here / "APProcessor.command").write_text("", encoding="utf-8")
     venv = here / ".venv"
     venv.mkdir()
     monkeypatch.setattr(module, "ROOT", here)
@@ -78,10 +78,10 @@ def test_a_stamped_zip_says_its_commit_and_time(tmp_path):
 def test_the_placeholder_or_no_stamp_falls_back_to_a_hash_of_the_code(tmp_path):
     """A folder copied by hand (no stamp filled in, no git): its identity still changes whenever its code does."""
     folder = _code(tmp_path / "copy", stamp="$Format:%h %cI$\n")
-    (folder / "ap_coder" / "x.py").write_text("one = 1\n")
+    (folder / "ap_coder" / "x.py").write_text("one = 1\n", encoding="utf-8")
     first = paths.install_identity(folder)
     assert paths.build_stamp(folder)["source"] == "code" and first["commit"] == "" and first["build"] == ""
-    (folder / "ap_coder" / "x.py").write_text("one = 2\n")
+    (folder / "ap_coder" / "x.py").write_text("one = 2\n", encoding="utf-8")
     second = paths.install_identity(folder)
     assert second["fingerprint"] != first["fingerprint"] and second["code"] != first["code"]
     assert paths.describe(second) == "0.3.0"  # (a hash of the code is not shown as a build)
@@ -142,7 +142,7 @@ def test_a_newer_zip_unzipped_over_the_older_one_is_an_update(launch, monkeypatc
     capsys.readouterr()
     assert launch.run(*launch.parse(["--venv=reused"])) == 0 and checks == [1]  # a later start: nothing new
     assert "Updated" not in capsys.readouterr().out
-    (launch.ROOT / "ap_coder" / "BUILD").write_text(STAMP_B)  # the newer ZIP, unzipped over it
+    (launch.ROOT / "ap_coder" / "BUILD").write_text(STAMP_B, encoding="utf-8")  # the newer ZIP, unzipped over it
     assert launch.run(*launch.parse(["--venv=reused"])) == 0
     out = capsys.readouterr().out
     assert "Updated AP Coder from 0.3.0 (build 1a2b3c4, 2026-10-20) to 0.3.0 (build 5e6f7a8, 2026-10-21)." in out
@@ -345,9 +345,9 @@ def test_one_python_version_everywhere():
 
 def test_a_venv_made_with_an_older_python_is_made_again(launch, monkeypatch, capsys):
     """A .venv from AP Coder 0.1 (Python 3.10 was allowed then) can't install 0.3: it is made again with this Python."""
-    (launch.VENV / "pyvenv.cfg").write_text("home = /usr/bin\nversion = 3.10.12\n")
+    (launch.VENV / "pyvenv.cfg").write_text("home = /usr/bin\nversion = 3.10.12\n", encoding="utf-8")
     launch.VENV_PY.parent.mkdir(parents=True)
-    launch.VENV_PY.write_text("")
+    launch.VENV_PY.write_text("", encoding="utf-8")
     monkeypatch.setattr(launch, "fitting_pythons", lambda: [])
     made: list[bool] = []
     monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("clear", None))
@@ -395,7 +395,7 @@ def test_a_quiet_step_after_pip_says_it_is_still_working(launch, capsys):
 
 def _bundle(folder: Path, stamp: str | None, built: str) -> Path:
     _code(folder, stamp=stamp)
-    (folder / "bundle_manifest.json").write_text(json.dumps({"version": "0.3.0", "built": built}))
+    (folder / "bundle_manifest.json").write_text(json.dumps({"version": "0.3.0", "built": built}), encoding="utf-8")
     return folder
 
 
@@ -440,19 +440,21 @@ def test_an_older_build_unzipped_over_a_newer_one_is_said_as_such(launch, monkey
     """B-553: "Updated AP Coder from <newer> to <older>"; and "Updated AP Coder from 0.3.0 to 0.3.0" for a folder whose
     files changed without a build stamp."""
     _quiet(launch, monkeypatch)
-    (launch.ROOT / "ap_coder" / "BUILD").write_text(STAMP_B)
+    (launch.ROOT / "ap_coder" / "BUILD").write_text(STAMP_B, encoding="utf-8")
     assert launch.run(*launch.parse(["--venv=reused"])) == 0
     capsys.readouterr()
-    (launch.ROOT / "ap_coder" / "BUILD").write_text(STAMP_A)  # the older ZIP, over the newer one
+    (launch.ROOT / "ap_coder" / "BUILD").write_text(STAMP_A, encoding="utf-8")  # the older ZIP, over the newer one
     assert launch.run(*launch.parse(["--venv=reused"])) == 0
     out = capsys.readouterr().out
     assert ("Replaced AP Coder 0.3.0 (build 5e6f7a8, 2026-10-21) with an older build, 0.3.0 (build 1a2b3c4, "
             "2026-10-20)") in out  # fmt: skip
     assert "Updated AP Coder" not in out
-    (launch.ROOT / "ap_coder" / "BUILD").write_text("$Format:%h %cI$\n")  # copied by hand: no build to name
+    (launch.ROOT / "ap_coder" / "BUILD").write_text(
+        "$Format:%h %cI$\n", encoding="utf-8"
+    )  # copied by hand: no build to name
     assert launch.run(*launch.parse(["--venv=reused"])) == 0
     capsys.readouterr()
-    (launch.ROOT / "ap_coder" / "x.py").write_text("changed = True\n")
+    (launch.ROOT / "ap_coder" / "x.py").write_text("changed = True\n", encoding="utf-8")
     assert launch.run(*launch.parse(["--venv=reused"])) == 0
     out = capsys.readouterr().out
     assert "AP Coder's files in this folder changed since it was last set up" in out and "Updated" not in out
@@ -472,9 +474,9 @@ def test_pip_progress_never_sticks_on_a_name_it_cant_match(launch, tmp_path):
 def test_an_older_venv_is_made_again_only_after_old_dashboards_stopped(launch, monkeypatch):
     """B-556: the 3.10 .venv of a running old AP Coder window can't be deleted (Windows: files in use): the old
     dashboards are stopped first."""
-    (launch.VENV / "pyvenv.cfg").write_text("home = /usr/bin\nversion = 3.10.12\n")
+    (launch.VENV / "pyvenv.cfg").write_text("home = /usr/bin\nversion = 3.10.12\n", encoding="utf-8")
     launch.VENV_PY.parent.mkdir(parents=True)
-    launch.VENV_PY.write_text("")
+    launch.VENV_PY.write_text("", encoding="utf-8")
     monkeypatch.setattr(launch, "fitting_pythons", lambda: [])
     order: list[str] = []
     monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: order.append("take_over") or ("clear", None))
@@ -502,5 +504,5 @@ def test_the_demo_never_cleans_up_or_takes_over_the_pilot_testers_own_install(la
 
 
 def test_demo_bat_marks_its_start_as_a_demo():
-    text = (Path(__file__).resolve().parents[2] / "scripts" / "demo.bat").read_text()
+    text = (Path(__file__).resolve().parents[2] / "scripts" / "demo.bat").read_text(encoding="utf-8")
     assert 'set "AP_DEMO=1"' in text

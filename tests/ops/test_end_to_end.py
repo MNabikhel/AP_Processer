@@ -83,7 +83,7 @@ def test_sales_tax_lists_a_claim_whose_gst_number_fails_the_check(tmp_path):
 
 def test_the_sample_invoices_use_numbers_that_pass_the_check_digit():
     for path in (SAMPLES / "ground_truth").glob("*.json"):
-        number = json.loads(path.read_text())["gst_hst_registration_number"]
+        number = json.loads(path.read_text(encoding="utf-8"))["gst_hst_registration_number"]
         assert not number or gst_check_digit_ok(number), path.name
         assert not number or number in (SAMPLES / f"{path.stem}.md").read_text(encoding="utf-8")
 

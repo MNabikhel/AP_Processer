@@ -220,7 +220,7 @@ def test_a_split_puts_the_new_parts_under_the_line_split(reference):
     from ap_coder.core.config import Settings
     from tests.conftest import SAMPLE_STEM, SAMPLES
 
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     out = split_line(pd.DataFrame(gt["line_items"]), 2, [("6110", "", 60), ("6110", "", 40)])
     assert out["line_number"].tolist() == [1, 2, 6, 3, 4, 5]
     assert out["description"].tolist()[1:3] == [f"{gt['line_items'][1]['description']} ({p}%)" for p in (60, 40)]

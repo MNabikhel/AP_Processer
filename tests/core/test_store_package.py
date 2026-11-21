@@ -4,8 +4,8 @@ from pathlib import Path
 
 import ap_coder.core.store as store
 
-API = [line for line in (Path(__file__).parents[1] / "fixtures" / "store_api.txt").read_text().splitlines()
-       if line and not line.startswith("#")]  # fmt: skip
+API = [line for line in (Path(__file__).parents[1] / "fixtures" / "store_api.txt").read_text(encoding="utf-8")
+       .splitlines() if line and not line.startswith("#")]  # fmt: skip
 
 
 def test_every_name_and_method_of_the_old_module_is_still_there():

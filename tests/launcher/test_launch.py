@@ -344,10 +344,10 @@ def test_a_running_ap_coder_is_found_and_another_server_is_not(launch, web, monk
     assert launch.running_dashboard(["--port", str(port)], {}) is None  # something else answers on that port
     version = launch.identity()["version"]
     health = {"ok": True, "app": "ap-coder", "version": version, "folder": str(launch.ROOT), "pid": 1, "port": port}
-    (site / "healthz").write_text(json.dumps(health))
+    (site / "healthz").write_text(json.dumps(health), encoding="utf-8")
     assert launch.running_dashboard(["--port", str(port)], {}) == port
     assert launch.running_dashboard([], {"port": port}) == port  # the port the last start used
-    (site / "healthz").write_text(json.dumps({**health, "folder": "/another/folder"}))
+    (site / "healthz").write_text(json.dumps({**health, "folder": "/another/folder"}), encoding="utf-8")
     assert launch.running_dashboard([], {"port": port}) is None  # another install's: not this one to open
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -361,7 +361,7 @@ def test_another_accounts_running_ap_coder_is_named_never_opened(launch, web, mo
     site, port = web
     health = {"ok": True, "app": "ap-coder", "version": launch.identity()["version"], "folder": str(launch.ROOT),
               "pid": 1, "port": port, "user": "someone-else"}  # fmt: skip
-    (site / "healthz").write_text(json.dumps(health))
+    (site / "healthz").write_text(json.dumps(health), encoding="utf-8")
     monkeypatch.setattr(launch, "candidate_ports", lambda rest, state: [port])
     opened: list[str] = []
     monkeypatch.setattr(launch, "open_browser", opened.append)
@@ -1596,7 +1596,7 @@ def test_shortcut_is_made_once(launch, tmp_path, monkeypatch):
     assert launch.ensure_shortcut().startswith("Desktop shortcut")
     assert launch.ensure_shortcut() == "" and made == [desk]  # never a second one, even if deleted
     paths.write_user_settings(desktop_shortcut=None)
-    (desk / "AP Coder.lnk").write_text("an older installer's")
+    (desk / "AP Coder.lnk").write_text("an older installer's", encoding="utf-8")
     assert launch.ensure_shortcut() == "" and made == [desk]  # one already there: kept
 
 
@@ -1617,7 +1617,7 @@ def test_mac_launcher_explains_a_missing_python(tmp_path):
     code.mkdir()
     (code / "APProcessor.command").write_bytes((ROOT / "APProcessor.command").read_bytes())
     (code / "scripts").mkdir()
-    (code / "scripts" / "launch.py").write_text("")
+    (code / "scripts" / "launch.py").write_text("", encoding="utf-8")
     out = subprocess.run(["/bin/bash", str(code / "APProcessor.command")], capture_output=True, text=True,
                          env={"PATH": str(bindir), "AP_NO_PAUSE": "1"}, timeout=60)  # fmt: skip
     assert out.returncode == 1

@@ -27,12 +27,16 @@ def launch(tmp_path, monkeypatch):
     here = tmp_path / "AP Coder 0.2"
     (here / "ap_coder").mkdir(parents=True)
     (here / "scripts").mkdir()
-    (here / "scripts" / "launch.py").write_text("")
-    (here / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.2.0"\n')
-    (here / "bundle_manifest.json").write_text(json.dumps({"version": "0.2.0", "built": "2026-10-11T09:00:00"}))
-    (here / "ap_coder" / "BUILD").write_text("b2b2b2b 2026-10-11T08:00:00+00:00\n")  # the offline bundle's stamp
-    (here / "APProcessor.bat").write_text("")
-    (here / "APProcessor.command").write_text("")
+    (here / "scripts" / "launch.py").write_text("", encoding="utf-8")
+    (here / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.2.0"\n', encoding="utf-8")
+    (here / "bundle_manifest.json").write_text(
+        json.dumps({"version": "0.2.0", "built": "2026-10-11T09:00:00"}), encoding="utf-8"
+    )
+    (here / "ap_coder" / "BUILD").write_text(
+        "b2b2b2b 2026-10-11T08:00:00+00:00\n", encoding="utf-8"
+    )  # the offline bundle's stamp
+    (here / "APProcessor.bat").write_text("", encoding="utf-8")
+    (here / "APProcessor.command").write_text("", encoding="utf-8")
     venv = here / ".venv"
     venv.mkdir()
     monkeypatch.setattr(module, "ROOT", here)
@@ -57,7 +61,7 @@ def _windows_desktop(launch, monkeypatch, tmp_path, ok=True):
     def write_shortcut(folder):
         written.append(str(launch.ROOT))
         if ok:
-            (folder / "AP Coder.lnk").write_text(str(launch.ROOT / "APProcessor.bat"))
+            (folder / "AP Coder.lnk").write_text(str(launch.ROOT / "APProcessor.bat"), encoding="utf-8")
         return ok
 
     monkeypatch.setattr(launch, "write_shortcut", write_shortcut)
@@ -68,7 +72,7 @@ def test_the_shortcut_is_moved_to_the_newer_install(launch, monkeypatch, tmp_pat
     """An older install made the shortcut: it kept opening that older folder after an update."""
     desk, written = _windows_desktop(launch, monkeypatch, tmp_path)
     old = tmp_path / "AP Coder 0.1"
-    (desk / "AP Coder.lnk").write_text(str(old / "APProcessor.bat"))  # made by the older install
+    (desk / "AP Coder.lnk").write_text(str(old / "APProcessor.bat"), encoding="utf-8")  # made by the older install
     paths.write_user_settings(desktop_shortcut=True, shortcut_target=str(old / "APProcessor.bat"))
     assert "now opens" in launch.ensure_shortcut() and written == [str(launch.ROOT)]
     assert paths.read_user_settings()["shortcut_target"] == str(launch.ROOT / "APProcessor.bat")
@@ -78,7 +82,7 @@ def test_the_shortcut_is_moved_to_the_newer_install(launch, monkeypatch, tmp_pat
 def test_an_ap_coder_0_1_shortcut_is_repointed_too(launch, monkeypatch, tmp_path):
     """AP Coder 0.1 recorded only ``desktop_shortcut: true``, not where the shortcut points."""
     desk, written = _windows_desktop(launch, monkeypatch, tmp_path)
-    (desk / "AP Coder.lnk").write_text("C:/AP Coder 0.1/APProcessor.bat")
+    (desk / "AP Coder.lnk").write_text("C:/AP Coder 0.1/APProcessor.bat", encoding="utf-8")
     paths.write_user_settings(desktop_shortcut=True)
     assert launch.ensure_shortcut() and written == [str(launch.ROOT)]
 
@@ -107,22 +111,24 @@ def test_a_mac_gets_one_launcher_on_its_desktop_that_opens_the_current_install(l
     monkeypatch.setattr(launch, "desktop", lambda: desk)
     assert launch.ensure_shortcut().startswith("Desktop shortcut")
     made = desk / "AP Coder.command"
-    text = made.read_text()
+    text = made.read_text(encoding="utf-8")
     assert text.startswith("#!/bin/bash") and f"exec '{launch.ROOT / 'APProcessor.command'}'" in text
     assert os.name == "nt" or made.stat().st_mode & 0o111  # executable on the Mac (Windows has no such bit)
     newer = tmp_path / "AP Coder 0.3"
     monkeypatch.setattr(launch, "ROOT", newer)
-    assert "now opens" in launch.ensure_shortcut() and str(newer / "APProcessor.command") in made.read_text()
+    assert "now opens" in launch.ensure_shortcut() and str(newer / "APProcessor.command") in made.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_a_file_of_the_persons_own_on_the_mac_desktop_is_never_replaced(launch, monkeypatch, tmp_path):
     desk = tmp_path / "Desktop"
     desk.mkdir()
-    (desk / "AP Coder.command").write_text("#!/bin/bash\necho mine\n")
+    (desk / "AP Coder.command").write_text("#!/bin/bash\necho mine\n", encoding="utf-8")
     monkeypatch.setattr(launch, "MAC", True)
     monkeypatch.setattr(launch, "desktop", lambda: desk)
     assert "AP Coder.command" in launch.ensure_shortcut()  # says where to start AP Coder instead
-    assert (desk / "AP Coder.command").read_text() == "#!/bin/bash\necho mine\n"
+    assert (desk / "AP Coder.command").read_text(encoding="utf-8") == "#!/bin/bash\necho mine\n"
 
 
 # --- A start while an AP Coder already runs ---------------------------------------------------------------------
@@ -217,8 +223,8 @@ def test_an_update_from_another_folder_takes_over_and_cleans_up_after_its_self_c
     old = tmp_path / "AP Coder 0.1"
     (old / "ap_coder").mkdir(parents=True)
     (old / "scripts").mkdir()
-    (old / "scripts" / "launch.py").write_text("")
-    (old / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
+    (old / "scripts" / "launch.py").write_text("", encoding="utf-8")
+    (old / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n', encoding="utf-8")
     paths.record_install(paths.install_identity(old))
     args, rest = launch.parse(["--venv=created"])
     assert launch.run(args, rest) == 0
@@ -234,8 +240,8 @@ def test_the_older_install_is_kept_while_the_self_check_fails(launch, monkeypatc
     old = tmp_path / "AP Coder 0.1"
     (old / "ap_coder").mkdir(parents=True)
     (old / "scripts").mkdir()
-    (old / "scripts" / "launch.py").write_text("")
-    (old / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
+    (old / "scripts" / "launch.py").write_text("", encoding="utf-8")
+    (old / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n', encoding="utf-8")
     paths.record_install(paths.install_identity(old))
     assert launch.run(*launch.parse(["--venv=created"])) == 0
     assert cleaned == [] and f"kept in {old} until the self-check passes" in capsys.readouterr().out
@@ -249,8 +255,8 @@ def test_on_the_company_server_the_previous_version_is_kept_for_going_back(launc
     old = tmp_path / "AP Coder 0.1"
     (old / "ap_coder").mkdir(parents=True)
     (old / "scripts").mkdir()
-    (old / "scripts" / "launch.py").write_text("")
-    (old / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
+    (old / "scripts" / "launch.py").write_text("", encoding="utf-8")
+    (old / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n', encoding="utf-8")
     paths.record_install(paths.install_identity(old))
     assert launch.run(*launch.parse(["--venv=created"])) == 0
     assert cleaned == [] and f"The previous AP Coder is kept in {old}" in capsys.readouterr().out
@@ -267,14 +273,14 @@ def test_an_ap_coder_0_1_folder_whose_data_moved_out_is_still_cleaned_up(launch,
     old = tmp_path / "AP Coder 0.1"
     (old / "ap_coder").mkdir(parents=True)
     (old / "scripts").mkdir()
-    (old / "scripts" / "launch.py").write_text("")
-    (old / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
+    (old / "scripts" / "launch.py").write_text("", encoding="utf-8")
+    (old / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n', encoding="utf-8")
     (old / "private").mkdir()
-    (old / "private" / "ap_coder.db").write_text("the data")
+    (old / "private" / "ap_coder.db").write_text("the data", encoding="utf-8")
     paths.write_user_settings(data_dir=str(old / "private"))  # all AP Coder 0.1 recorded
     _, _, cleaned = _quiet_setup(launch, monkeypatch, self_check_ok=False)
     assert launch.run(*launch.parse(["--venv=created"])) == 0
-    assert (home / "ap_coder.db").read_text() == "the data" and cleaned == []
+    assert (home / "ap_coder.db").read_text(encoding="utf-8") == "the data" and cleaned == []
     assert f"kept in {old} until the self-check passes" in capsys.readouterr().out
     _, _, cleaned = _quiet_setup(launch, monkeypatch)
     assert launch.run(*launch.parse(["--check"])) == 0 and cleaned == [[old]]
@@ -290,15 +296,17 @@ def test_an_older_ap_coder_run_by_hand_and_stopped_by_this_start_brings_its_data
                         lambda: launch.upgrade.settle_data_folder(launch.ROOT, launch.say, default=home))  # fmt: skip
     old = tmp_path / "AP_Processer-main"
     (old / "ap_coder").mkdir(parents=True)
-    (old / "start.sh").write_text("")
-    (old / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.1.0"\n')
+    (old / "start.sh").write_text("", encoding="utf-8")
+    (old / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.1.0"\n', encoding="utf-8")
     (old / "private").mkdir()
-    (old / "private" / "ap_coder.db").write_text("the data")
+    (old / "private" / "ap_coder.db").write_text("the data", encoding="utf-8")
     _, _, cleaned = _quiet_setup(launch, monkeypatch, self_check_ok=False)
     monkeypatch.setattr(launch.running, "stopped", [str(old)])  # its dashboard, stopped by this start
     assert launch.run(*launch.parse(["--venv=created"])) == 0
     out = capsys.readouterr().out
-    assert (home / "ap_coder.db").read_text() == "the data"  # before the dashboard starts, self-check or not
+    assert (home / "ap_coder.db").read_text(
+        encoding="utf-8"
+    ) == "the data"  # before the dashboard starts, self-check or not
     assert "Updated AP Coder from 0.1.0" in out and cleaned == []
     _, _, cleaned = _quiet_setup(launch, monkeypatch)
     assert launch.run(*launch.parse(["--check"])) == 0 and cleaned == [[old]]
@@ -314,13 +322,13 @@ def test_an_older_ap_coder_closed_before_the_update_next_to_this_one_is_taken_ov
                         lambda: launch.upgrade.settle_data_folder(launch.ROOT, launch.say, default=home))  # fmt: skip
     old = tmp_path / "APProcessor"
     (old / "ap_coder").mkdir(parents=True)
-    (old / "APProcessor.command").write_text("")
-    (old / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.1.0"\n')
+    (old / "APProcessor.command").write_text("", encoding="utf-8")
+    (old / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.1.0"\n', encoding="utf-8")
     (old / "private").mkdir()
-    (old / "private" / "ap_coder.db").write_text("the data")
+    (old / "private" / "ap_coder.db").write_text("the data", encoding="utf-8")
     _, _, cleaned = _quiet_setup(launch, monkeypatch)
     assert launch.run(*launch.parse(["--venv=created"])) == 0
-    assert (home / "ap_coder.db").read_text() == "the data" and cleaned == [[old]]
+    assert (home / "ap_coder.db").read_text(encoding="utf-8") == "the data" and cleaned == [[old]]
     assert "Updated AP Coder from 0.1.0" in capsys.readouterr().out
 
 
@@ -359,10 +367,10 @@ def test_settings_no_longer_used_are_commented_out_and_a_code_folder_env_moves(l
     _quiet_setup(launch, monkeypatch)
     data = tmp_path / "private"
     data.mkdir()
-    (data / ".env").write_text("AP_REVIEWER=Ann\nAP_PAGE_READER=on\nAP_LLM_PROVIDER=local\n")
-    (launch.ROOT / ".env").write_text("AP_REVIEWER=Old\n")
+    (data / ".env").write_text("AP_REVIEWER=Ann\nAP_PAGE_READER=on\nAP_LLM_PROVIDER=local\n", encoding="utf-8")
+    (launch.ROOT / ".env").write_text("AP_REVIEWER=Old\n", encoding="utf-8")
     assert launch.run(*launch.parse([])) == 0
-    text = (data / ".env").read_text()
+    text = (data / ".env").read_text(encoding="utf-8")
     assert "# no longer used (AP Coder 0.2): AP_PAGE_READER=on" in text and "\nAP_REVIEWER=Ann\n" in "\n" + text
     assert "# no longer used (AP Coder 0.2): AP_LLM_PROVIDER=local" in text
     assert not (launch.ROOT / ".env").exists() and list((data / "backups").glob("from-*/.env"))
@@ -374,8 +382,8 @@ def test_a_settings_file_that_cannot_be_changed_never_stops_the_start(launch, mo
     started, _, _ = _quiet_setup(launch, monkeypatch)
     data = tmp_path / "private"
     data.mkdir()
-    (data / ".env").write_text("AP_PAGE_READER=on\n")
-    (launch.ROOT / ".env").write_text("AP_REVIEWER=Old\n")
+    (data / ".env").write_text("AP_PAGE_READER=on\n", encoding="utf-8")
+    (launch.ROOT / ".env").write_text("AP_REVIEWER=Old\n", encoding="utf-8")
 
     def refused(*args, **kwargs):
         raise PermissionError(13, "Access is denied", str(data / ".env"))
@@ -395,9 +403,9 @@ def test_leftovers_of_an_older_version_unzipped_over_are_removed(launch, monkeyp
         "built": "2026-10-11T09:00:00",
         "files": {"ap_coder/x.py": "0" * 64, "ap_coder/BUILD": stamp, "scripts/launch.py": "0" * 64},
     }
-    (launch.ROOT / "bundle_manifest.json").write_text(json.dumps(manifest))
-    (launch.ROOT / "ap_coder" / "x.py").write_text("")
-    (launch.ROOT / "ap_coder" / "retired.py").write_text("")
+    (launch.ROOT / "bundle_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (launch.ROOT / "ap_coder" / "x.py").write_text("", encoding="utf-8")
+    (launch.ROOT / "ap_coder" / "retired.py").write_text("", encoding="utf-8")
     assert launch.run(*launch.parse([])) == 0
     assert not (launch.ROOT / "ap_coder" / "retired.py").exists() and (launch.ROOT / "ap_coder" / "x.py").exists()
     assert "1 file the older version left" in capsys.readouterr().out
@@ -410,8 +418,8 @@ def _install(folder: Path, version: str, current: bool = True) -> Path:
     """Another AP Coder ``version`` in ``folder``, recorded as installed (the current one by default)."""
     (folder / "ap_coder").mkdir(parents=True)
     (folder / "scripts").mkdir()
-    (folder / "scripts" / "launch.py").write_text("")
-    (folder / "pyproject.toml").write_text(f'[project]\nname = "ap-coder"\nversion = "{version}"\n')
+    (folder / "scripts" / "launch.py").write_text("", encoding="utf-8")
+    (folder / "pyproject.toml").write_text(f'[project]\nname = "ap-coder"\nversion = "{version}"\n', encoding="utf-8")
     paths.record_install(paths.install_identity(folder), current=current)
     return folder
 
@@ -474,7 +482,7 @@ def test_a_database_a_newer_ap_coder_made_stops_before_anything_is_set_up(launch
     reached = _first_phase(launch, monkeypatch)
     store = launch.ROOT / "ap_coder" / "core" / "store"
     store.mkdir(parents=True)
-    (store / "_base.py").write_text(f"SCHEMA_VERSION = {SCHEMA_VERSION}  # this folder's code\n")
+    (store / "_base.py").write_text(f"SCHEMA_VERSION = {SCHEMA_VERSION}  # this folder's code\n", encoding="utf-8")
     data = tmp_path / "private"  # AP_PRIVATE_DIR (tests/conftest.py)
     data.mkdir()
     conn = sqlite3.connect(data / "ap_coder.db")
@@ -716,7 +724,7 @@ def test_a_wheelhouse_that_does_not_fit_is_said_once_not_twice(launch, monkeypat
     _wheelhouse(launch, *WINDOWS_ONLY)
     manifest = {"version": "0.2.0", "built": "2026-10-11T09:00:00", "targets": ["this computer (linux-x86_64, "
                                                                                  "Python 3.12)"]}  # fmt: skip
-    (launch.ROOT / "bundle_manifest.json").write_text(json.dumps(manifest))
+    (launch.ROOT / "bundle_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     monkeypatch.setattr(launch, "sys", SimpleNamespace(version_info=(3, 14, 0), version="3.14.0 (main)",
                                                        executable="/usr/bin/python3.14", platform="linux"))  # fmt: skip
     monkeypatch.setattr(launch.platform, "machine", lambda: "x86_64")
@@ -760,9 +768,9 @@ def test_a_full_disk_is_said_plainly_not_as_missing_packages(launch, monkeypatch
 
 
 def _venv_made_with(launch, version: str) -> None:
-    (launch.VENV / "pyvenv.cfg").write_text(f"home = /usr/bin\nversion = {version}.1\n")
+    (launch.VENV / "pyvenv.cfg").write_text(f"home = /usr/bin\nversion = {version}.1\n", encoding="utf-8")
     launch.VENV_PY.parent.mkdir(parents=True, exist_ok=True)
-    launch.VENV_PY.write_text("")
+    launch.VENV_PY.write_text("", encoding="utf-8")
 
 
 def test_a_venv_on_a_python_without_packages_is_rebuilt_with_one_that_has_them(launch, monkeypatch, capsys):
@@ -810,7 +818,7 @@ def test_the_double_clicks_quick_check_keeps_a_venv_that_works(launch, monkeypat
 def test_the_double_click_asks_the_venv_before_using_it():
     bat = (ROOT / "APProcessor.bat").read_text(encoding="ascii")
     assert '".venv\\Scripts\\python.exe" scripts\\launch.py --venv-ok' in bat
-    command = (ROOT / "APProcessor.command").read_text()
+    command = (ROOT / "APProcessor.command").read_text(encoding="utf-8")
     assert ".venv/bin/python scripts/launch.py --venv-ok" in command
 
 
@@ -820,7 +828,7 @@ def test_an_install_set_up_by_install_bat_is_checked_before_the_older_one_is_cle
     _, checks, cleaned = _quiet_setup(launch, monkeypatch)
     old = tmp_path / "AP Coder 0.1"
     (old / "ap_coder").mkdir(parents=True)
-    (old / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
+    (old / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n', encoding="utf-8")
     paths.record_install({"folder": str(old), "version": "0.1.0"}, current=False)
     ident = launch.identity()
     launch.save_state({"setup_done": True, "fingerprint": ident["fingerprint"], "version": "0.2.0",
@@ -841,7 +849,7 @@ def test_a_desktop_and_shortcut_with_accents_are_read_right_on_windows(launch, m
     monkeypatch.setattr(launch.subprocess, "run", fake_windows_powershell(target))
     paths.write_user_settings(desktop_shortcut=True)
     monkeypatch.setattr(launch, "desktop", lambda: launch.ROOT)
-    (launch.ROOT / "AP Coder.lnk").write_text("")
+    (launch.ROOT / "AP Coder.lnk").write_text("", encoding="utf-8")
     assert Path(launch.old_shortcut_folder()) == Path("/Users/José/Données/AP Coder 0.1")  # "\\" on Windows
 
 

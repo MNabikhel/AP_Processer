@@ -417,8 +417,8 @@ def test_credit_note_finds_the_invoice_it_credits(tmp_path, reference):
     from tests.conftest import SAMPLES
 
     store = Store(tmp_path / "ap.db")
-    invoice = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text())
-    credit = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_CN-2026-0047.json").read_text())
+    invoice = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text(encoding="utf-8"))
+    credit = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_CN-2026-0047.json").read_text(encoding="utf-8"))
     codes, report = _codes(store, credit, reference)
     assert codes.get("CREDIT_NOTE_ORIGINAL_UNKNOWN") == "info"
     original = _approved(store, invoice, tmp_path, "a.pdf")
@@ -447,8 +447,8 @@ def test_several_credit_notes_together_exceed_the_invoice(tmp_path, reference):
     from tests.conftest import SAMPLES
 
     store = Store(tmp_path / "ap.db")
-    invoice = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text())
-    credit = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_CN-2026-0047.json").read_text())
+    invoice = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text(encoding="utf-8"))
+    credit = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_CN-2026-0047.json").read_text(encoding="utf-8"))
     _approved(store, invoice, tmp_path, "a.pdf")  # 18,017.85
     for n in range(7):  # 7 x 2,316.50 = 16,215.50: still under the invoice
         _approved(store, {**credit, "invoice_number": f"CN-{n}"}, tmp_path, f"c{n}.pdf")
@@ -470,8 +470,8 @@ def test_a_credit_note_never_credits_a_rejected_invoice(tmp_path, reference):
     from tests.conftest import SAMPLES
 
     store = Store(tmp_path / "ap.db")
-    invoice = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text())
-    credit = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_CN-2026-0047.json").read_text())
+    invoice = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text(encoding="utf-8"))
+    credit = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_CN-2026-0047.json").read_text(encoding="utf-8"))
     rejected = store.add_invoice(tmp_path / "a.pdf", invoice, {})
     store.reject_invoice(rejected, "Jane", "not ours")
     codes, _ = _codes(store, credit, reference)

@@ -117,9 +117,11 @@ def launch(tmp_path, monkeypatch, github):
     here = tmp_path / "installs" / "AP_Processer-main"
     (here / "ap_coder").mkdir(parents=True)
     (here / "scripts").mkdir()
-    (here / "scripts" / "launch.py").write_text("")
-    (here / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.3.0"\n')
-    (here / "ap_coder" / "BUILD").write_text("a1a1a1a 2026-11-10T10:00:00+00:00\n")  # GitHub's ZIP's stamp
+    (here / "scripts" / "launch.py").write_text("", encoding="utf-8")
+    (here / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.3.0"\n', encoding="utf-8")
+    (here / "ap_coder" / "BUILD").write_text(
+        "a1a1a1a 2026-11-10T10:00:00+00:00\n", encoding="utf-8"
+    )  # GitHub's ZIP's stamp
     monkeypatch.setattr(module, "ROOT", here)
     monkeypatch.setattr(module.fetch_models, "BUNDLE_MODELS", here / "models")
     monkeypatch.setattr(module, "WINDOWS", False)
@@ -205,13 +207,19 @@ def test_no_starts_this_version_and_that_release_is_not_asked_about_again(launch
 def test_the_same_or_an_older_release_is_not_said(launch, github, monkeypatch, capsys, ours):
     asked = _answer(launch, monkeypatch, "")
     if ours == "same build":
-        (launch.ROOT / "ap_coder" / "BUILD").write_text("b2b2b2b9 2026-11-20T11:00:00+00:00\n")
-        (launch.ROOT / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.3.1"\n')
+        (launch.ROOT / "ap_coder" / "BUILD").write_text("b2b2b2b9 2026-11-20T11:00:00+00:00\n", encoding="utf-8")
+        (launch.ROOT / "pyproject.toml").write_text(
+            '[project]\nname = "ap-coder"\nversion = "0.3.1"\n', encoding="utf-8"
+        )
     elif ours == "newer build":
-        (launch.ROOT / "ap_coder" / "BUILD").write_text("c3c3c3c 2026-11-21T09:00:00+00:00\n")
-        (launch.ROOT / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.3.1"\n')
+        (launch.ROOT / "ap_coder" / "BUILD").write_text("c3c3c3c 2026-11-21T09:00:00+00:00\n", encoding="utf-8")
+        (launch.ROOT / "pyproject.toml").write_text(
+            '[project]\nname = "ap-coder"\nversion = "0.3.1"\n', encoding="utf-8"
+        )
     else:
-        (launch.ROOT / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.4.0"\n')
+        (launch.ROOT / "pyproject.toml").write_text(
+            '[project]\nname = "ap-coder"\nversion = "0.4.0"\n', encoding="utf-8"
+        )
     assert _offer(launch) is None and asked == [] and launch.handed == []
     assert "AP Coder" not in capsys.readouterr().out and len(github.requests) == 1
 
@@ -272,7 +280,7 @@ def test_no_request_at_all_where_the_check_does_not_belong(launch, github, monke
     asked = _answer(launch, monkeypatch, "")
     argv = []
     if how == "offline bundle":
-        (launch.ROOT / "bundle_manifest.json").write_text("{}")
+        (launch.ROOT / "bundle_manifest.json").write_text("{}", encoding="utf-8")
     elif how == "AP_ALLOW_INTERNET=0":
         monkeypatch.setenv("AP_ALLOW_INTERNET", "0")
     elif how == "AP_UPDATE_CHECK=0":
@@ -363,7 +371,9 @@ def test_a_folder_an_earlier_yes_unzipped_is_started_again_not_downloaded_again(
         archive.extractall(launch.ROOT.parent)
     assert _offer(launch) == 0 and launch.handed == [(launch.ROOT.parent / TOP, [])]
     assert github.asked == [f"/repos/{launch.releases.REPO}/releases?per_page=20"]
-    (launch.ROOT.parent / TOP / "ap_coder" / "BUILD").write_text("d4d4d4d 2026-11-01T10:00:00+00:00\n")
+    (launch.ROOT.parent / TOP / "ap_coder" / "BUILD").write_text(
+        "d4d4d4d 2026-11-01T10:00:00+00:00\n", encoding="utf-8"
+    )
     assert _offer(launch) is None and len(launch.handed) == 1
 
 

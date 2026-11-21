@@ -110,7 +110,7 @@ def test_the_first_certificate_of_a_chain_to_end_is_the_one_said(tmp_path):
 
 
 def test_a_file_with_no_certificate_says_its_end_is_not_known(tmp_path):
-    (tmp_path / "key.pem").write_text("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n")
+    (tmp_path / "key.pem").write_text("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n", encoding="utf-8")
     assert health.certificate_check(tmp_path / "key.pem")["status"] == health.WARN
     assert "can't be read" in health.certificate_check(tmp_path / "none.pem")["problem"]
 
@@ -490,7 +490,7 @@ def test_doctor_on_the_server_says_the_certificate_the_zone_the_disk_and_the_bac
     soon = data / "soon.pem"
     soon.write_bytes(_pem(_certificate((dt.datetime.now(UTC) + dt.timedelta(days=12)).strftime("%y%m%d%H%M%SZ")
                                        .encode())))  # fmt: skip
-    (data / "key.pem").write_text("a key")
+    (data / "key.pem").write_text("a key", encoding="utf-8")
     _server_json(certfile=str(soon), keyfile=str(data / "key.pem"), time_zone="Mars/Olympus")
     store = Store(data / "ap_coder.db")
     (data / "copies").mkdir()

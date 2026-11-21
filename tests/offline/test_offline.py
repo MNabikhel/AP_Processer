@@ -585,7 +585,7 @@ def test_bundle_leaves_out_ocr_only_where_it_has_no_wheel(tmp_path, monkeypatch,
     monkeypatch.setattr(bundle.subprocess, "run", run)
     out = tmp_path / "dist"
     assert bundle.main(["--out", str(out), "--no-models", "--mac", "--python", "3.14"]) == 0
-    manifest = json.loads((out / "offline-bundle" / "APProcessor" / "bundle_manifest.json").read_text())
+    manifest = json.loads((out / "offline-bundle" / "APProcessor" / "bundle_manifest.json").read_text(encoding="utf-8"))
     assert manifest["without_ocr"] == ["macosx_13_0_x86_64, Python 3.14"]
     assert manifest["targets"][1:] == ["win_amd64, Python 3.14", "macosx_14_0_arm64, Python 3.14",
                                        "macosx_13_0_x86_64, Python 3.14"]  # fmt: skip
@@ -624,7 +624,7 @@ def test_bundle_never_ships_databases_spreadsheets_or_invoices_left_in_the_code_
     data = ("ap_coder.db", "old/ap_coder.db-wal", "labels.xlsx", "Invoice 1.pdf", "scan.TIF", "private/.env")
     for rel in code + data:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / rel).write_text("x")
+        (tmp_path / rel).write_text("x", encoding="utf-8")
     monkeypatch.setattr(bundle, "ROOT", tmp_path)  # no .git here
     files = {p.as_posix() for p in bundle.source_files()}
     assert files == set(code)
@@ -634,8 +634,8 @@ def test_bundle_zip_keeps_the_mac_launcher_executable(tmp_path):
     bundle = _script("build_offline_bundle")
     stage = tmp_path / "stage"
     (stage / "wheelhouse").mkdir(parents=True)
-    (stage / "APProcessor.command").write_text("#!/bin/bash\n")
-    (stage / "README.md").write_text("hi")
+    (stage / "APProcessor.command").write_text("#!/bin/bash\n", encoding="utf-8")
+    (stage / "README.md").write_text("hi", encoding="utf-8")
     (stage / "wheelhouse" / "x-1.0-py3-none-any.whl").write_bytes(b"PK")
     dest = tmp_path / "b.zip"
     bundle._zip(stage, dest)
@@ -654,7 +654,7 @@ def test_bundle_zip_built_on_windows_keeps_the_mac_launcher_executable(tmp_path,
     bundle = _script("build_offline_bundle")
     stage = tmp_path / "stage"
     stage.mkdir()
-    (stage / "APProcessor.command").write_text("#!/bin/bash\n")
+    (stage / "APProcessor.command").write_text("#!/bin/bash\n", encoding="utf-8")
     monkeypatch.setattr(sys, "platform", "win32")  # what zipfile.ZipInfo reads to set create_system
     bundle._zip(stage, tmp_path / "b.zip")
     monkeypatch.undo()
@@ -703,7 +703,7 @@ def test_windows_launcher():
     assert "if not defined AP_YES set /p" in text  # asked once; automated runs (AP_NO_PAUSE, --yes) are not
     assert "https://www.python.org/downloads/" in text and "if not defined AP_NO_PAUSE pause" in text
     assert "APProcessor.bat --installer" in text
-    terminal = (ROOT / "scripts" / "terminal.bat").read_text()
+    terminal = (ROOT / "scripts" / "terminal.bat").read_text(encoding="utf-8")
     assert "APProcessor.bat first" in terminal and 'pushd "%~dp0.."' in terminal  # the app folder: above scripts\
 
 
@@ -771,11 +771,13 @@ def test_check_deps_knows_where_ap_coder_is_installed_from(tmp_path, monkeypatch
     site = tmp_path / "site"
     dist = site / "ap_coder-0.1.0.dist-info"
     dist.mkdir(parents=True)
-    (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: ap-coder\nVersion: 0.1.0\n")
-    (dist / "direct_url.json").write_text(json.dumps({"url": code.as_uri(), "dir_info": {"editable": True}}))
+    (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: ap-coder\nVersion: 0.1.0\n", encoding="utf-8")
+    (dist / "direct_url.json").write_text(
+        json.dumps({"url": code.as_uri(), "dir_info": {"editable": True}}), encoding="utf-8"
+    )
     egg = code / "ap_coder.egg-info"
     egg.mkdir()
-    (egg / "PKG-INFO").write_text("Metadata-Version: 2.1\nName: ap-coder\nVersion: 0.1.0\n")
+    (egg / "PKG-INFO").write_text("Metadata-Version: 2.1\nName: ap-coder\nVersion: 0.1.0\n", encoding="utf-8")
     monkeypatch.syspath_prepend(str(site))
     monkeypatch.syspath_prepend(str(code))
     assert check_deps.self_problem(code) == ""

@@ -141,7 +141,7 @@ def test_vendors_page_shows_recurring_vendors(tmp_path):
     from tests.conftest import SAMPLE_STEM, SAMPLES
 
     store = Store(tmp_path / "private" / "ap_coder.db")
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     for i, day in enumerate(("2026-05-01", "2026-06-01", "2026-07-01", "2026-08-01")):
         store.add_invoice(tmp_path / f"{i}.pdf", {**gt, "invoice_number": f"R-{i}", "invoice_date": day}, {})
     response = client_for(store).get("/vendors")

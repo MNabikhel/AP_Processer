@@ -61,7 +61,8 @@ def main(*argv: str) -> int:
 def test_the_settings_come_from_server_json_and_the_environment_wins(data, monkeypatch):
     assert service.settings(data).port == 8501 and service.settings(data).account == "APCoderService"
     (data / "server.json").write_text(json.dumps({"port": 8443, "certfile": "C:\\certs\\ap.pem",
-                                                  "allowed_hosts": ["apcoder.company.local"]}))  # fmt: skip
+                                                  "allowed_hosts": ["apcoder.company.local"]}),
+                                      encoding="utf-8")  # fmt: skip
     found = service.settings(data)
     assert (found.port, found.certfile, found.allowed_hosts) == (8443, "C:\\certs\\ap.pem", ("apcoder.company.local",))
     monkeypatch.setenv("AP_SERVER_PORT", "9443")
@@ -71,7 +72,7 @@ def test_the_settings_come_from_server_json_and_the_environment_wins(data, monke
 
 
 def test_a_damaged_server_json_is_said_plainly_not_a_crash(data, capsys):
-    (data / "server.json").write_text("{not json")
+    (data / "server.json").write_text("{not json", encoding="utf-8")
     assert main("install", "--dry-run", "--insecure-http") == 1
     assert "server.json" in capsys.readouterr().err
 
@@ -80,7 +81,7 @@ def test_https_needs_a_certificate_and_its_key(data, capsys):
     assert main("install", "--dry-run") == 1
     assert "--certfile" in capsys.readouterr().err
     cert = data / "ap.pem"
-    cert.write_text("cert")
+    cert.write_text("cert", encoding="utf-8")
     assert main("install", "--dry-run", "--certfile", str(cert)) == 1
     assert "--keyfile" in capsys.readouterr().err
 
@@ -283,8 +284,8 @@ def test_the_dashboard_is_started_with_the_server_settings(data):
 
 def test_install_writes_the_settings_the_runner_and_the_task_then_starts_it(data, commands, capsys):
     cert, key = data / "ap.pem", data / "ap.key"
-    cert.write_text("c")
-    key.write_text("k")
+    cert.write_text("c", encoding="utf-8")
+    key.write_text("k", encoding="utf-8")
     assert main("install", "--certfile", str(cert), "--keyfile", str(key), "--port", "8443",
                 "--allowed-hosts", "apcoder.company.local") == 0  # fmt: skip
     saved = json.loads((data / "server.json").read_text(encoding="utf-8"))
@@ -301,7 +302,7 @@ def test_install_writes_the_settings_the_runner_and_the_task_then_starts_it(data
 
 
 def test_stop_keeps_the_host_from_starting_it_again_and_start_lets_it(data, commands):
-    (data / "server.json").write_text(json.dumps({"insecure_http": True}))
+    (data / "server.json").write_text(json.dumps({"insecure_http": True}), encoding="utf-8")
     assert main("stop") == 0
     assert (data / "service" / "stopped").exists() and ["schtasks", "/end", "/tn", "AP Coder"] in commands
     assert main("start") == 0
@@ -309,7 +310,7 @@ def test_stop_keeps_the_host_from_starting_it_again_and_start_lets_it(data, comm
 
 
 def test_remove_stops_and_deletes_the_task_and_keeps_the_settings_and_logs(data, commands):
-    (data / "server.json").write_text(json.dumps({"insecure_http": True}))
+    (data / "server.json").write_text(json.dumps({"insecure_http": True}), encoding="utf-8")
     assert main("remove") == 0
     assert commands[-1] == ["schtasks", "/delete", "/tn", "AP Coder", "/f"]
     assert (data / "server.json").exists()
@@ -329,10 +330,10 @@ def test_the_data_folder_never_picks_the_task_its_account_its_folder_or_a_proces
     elsewhere = data / "theirs"
     task = "\\Microsoft\\Windows\\Defrag\\ScheduledDefrag"
     saved = {"insecure_http": True, "account": "SYSTEM", "folder": str(elsewhere), "task_name": task}
-    (data / "server.json").write_text(json.dumps(saved))
+    (data / "server.json").write_text(json.dumps(saved), encoding="utf-8")
     (data / "service").mkdir()
-    (data / "service" / "host.json").write_text(json.dumps({"pid": 4242}))
-    (data / ".ap_coder_server.json").write_text(json.dumps({"pid": 4343, "port": 8501, "token": "t"}))
+    (data / "service" / "host.json").write_text(json.dumps({"pid": 4242}), encoding="utf-8")
+    (data / ".ap_coder_server.json").write_text(json.dumps({"pid": 4343, "port": 8501, "token": "t"}), encoding="utf-8")
     main("install", "--no-start")
     xml = (data / "service" / "ap-coder-task.xml").read_text(encoding="utf-16")
     assert "<UserId>APCoderService</UserId>" in xml and "S-1-5-18" not in xml
@@ -384,12 +385,12 @@ class FakeChild:
 
 
 def test_the_host_starts_the_dashboard_again_when_it_stops_until_it_is_stopped(data):
-    (data / "server.json").write_text(json.dumps({"insecure_http": True, "port": 8601}))
+    (data / "server.json").write_text(json.dumps({"insecure_http": True, "port": 8601}), encoding="utf-8")
     started, slept = [], []
 
     def popen(cmd, **kwargs):
         started.append(cmd)
-        stop = (lambda: service.stop_flag(data).write_text("")) if len(started) == 3 else None
+        stop = (lambda: service.stop_flag(data).write_text("", encoding="utf-8")) if len(started) == 3 else None
         return FakeChild(1 if len(started) < 3 else 0, [f"line {len(started)}\n"], stop)
 
     assert service.run_host(data, popen=popen, sleep=slept.append, clock=lambda: 0.0) == 0
@@ -402,7 +403,7 @@ def test_the_host_starts_the_dashboard_again_when_it_stops_until_it_is_stopped(d
 
 def test_the_host_does_nothing_while_the_service_is_stopped(data):
     service.stop_flag(data).parent.mkdir(parents=True)
-    service.stop_flag(data).write_text("")
+    service.stop_flag(data).write_text("", encoding="utf-8")
     assert service.run_host(data, popen=lambda *a, **k: pytest.fail("started"), sleep=lambda s: None) == 0
 
 
@@ -425,14 +426,16 @@ def test_a_stale_host_record_never_keeps_the_service_down(data):
     """B-1585: after a reboot or a kill, host.json names a process number another program may have since (likely on
     a Mac: numbers start again low at boot). The host took that for a host running and exited, starting nothing, at
     every retry of the task: the service stayed down. Here host.json names a live process that is no host."""
-    (data / "server.json").write_text(json.dumps({"insecure_http": True}))
+    (data / "server.json").write_text(json.dumps({"insecure_http": True}), encoding="utf-8")
     service.host_record(data).parent.mkdir(parents=True)
-    service.host_record(data).write_text(json.dumps({"pid": os.getppid(), "started": "2026-11-01T08:00:00"}))
+    service.host_record(data).write_text(
+        json.dumps({"pid": os.getppid(), "started": "2026-11-01T08:00:00"}), encoding="utf-8"
+    )
     started = []
 
     def popen(cmd, **kwargs):
         started.append(cmd)
-        return FakeChild(0, [], lambda: service.stop_flag(data).write_text(""))
+        return FakeChild(0, [], lambda: service.stop_flag(data).write_text("", encoding="utf-8"))
 
     assert service.run_host(data, popen=popen, sleep=lambda s: None) == 0
     assert len(started) == 1
@@ -445,9 +448,9 @@ def test_status_and_install_tell_a_running_host_by_its_lock_not_host_json(data, 
     """B-1588: status said "Service host: running" when host.json named a live process (a number reused after a
     reboot), and install then stopped the service first: with --no-start the service stayed stopped. The lock the
     running host holds (B-1585) says it."""
-    (data / "server.json").write_text(json.dumps({"insecure_http": True}))
+    (data / "server.json").write_text(json.dumps({"insecure_http": True}), encoding="utf-8")
     service.host_record(data).parent.mkdir(parents=True)
-    service.host_record(data).write_text(json.dumps({"pid": 4242, "started": "2026-11-01T08:00:00"}))
+    service.host_record(data).write_text(json.dumps({"pid": 4242, "started": "2026-11-01T08:00:00"}), encoding="utf-8")
     monkeypatch.setattr(service, "process_alive", lambda pid: pid == 4242)  # the number is another program's now
     monkeypatch.setattr(service, "_local", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("no dashboard")))
     assert main("status") == 0
@@ -467,12 +470,15 @@ def test_status_and_install_tell_a_running_host_by_its_lock_not_host_json(data, 
 def test_status_json_says_the_task_the_host_and_the_dashboard(data, commands, monkeypatch, capsys):
     """``service status --json`` (D-186), for a monitoring script: whether it is installed and runs, the host's
     process, version and folder, the address, and the dashboard's /healthz answer; the plain words stay the default."""
-    (data / "server.json").write_text(json.dumps({"insecure_http": True, "allowed_hosts": ["apcoder.company.local"]}))
+    (data / "server.json").write_text(
+        json.dumps({"insecure_http": True, "allowed_hosts": ["apcoder.company.local"]}), encoding="utf-8"
+    )
     health = {"ok": True, "app": "ap-coder", "version": "1.4.0", "folder": "C:\\APCoder\\APProcessor", "port": 8501}
     monkeypatch.setattr(service, "dashboard_health", lambda data, s, timeout=3.0: health)
     service.host_record(data).parent.mkdir(parents=True)
     service.host_record(data).write_text(json.dumps({"pid": 4242, "started": "2026-11-06T08:00:00", "version": "1.4.0",
-                                                     "folder": "C:\\APCoder\\APProcessor"}))  # fmt: skip
+                                                     "folder": "C:\\APCoder\\APProcessor"}),
+                                         encoding="utf-8")  # fmt: skip
     held = paths.try_lock(service.host_lock(data))
     try:
         assert main("status", "--json") == 0
@@ -497,9 +503,9 @@ def test_stop_ends_only_the_running_host_never_a_process_a_stale_record_names(da
     """B-1590: stop ended the process host.json named whenever it ran the AP Coder folder's Python. A record left by
     a host that was killed may name a number an AP Coder watch has since: stop ended that watch mid-invoice. The host
     is ended only while it holds the host lock (it writes host.json as soon as it holds it)."""
-    (data / "server.json").write_text(json.dumps({"insecure_http": True}))
+    (data / "server.json").write_text(json.dumps({"insecure_http": True}), encoding="utf-8")
     service.host_record(data).parent.mkdir(parents=True)
-    service.host_record(data).write_text(json.dumps({"pid": 4242}))
+    service.host_record(data).write_text(json.dumps({"pid": 4242}), encoding="utf-8")
     monkeypatch.setattr(service, "process_alive", lambda pid: pid == 4242)
     monkeypatch.setattr(service, "process_image", lambda pid: str(service.folder_python(service.PROJECT_DIR)))
     assert main("stop") == 0  # no host runs: 4242 is the watch's now
@@ -517,13 +523,13 @@ def test_stop_reads_the_host_record_once_the_lock_says_a_host_runs(data, command
     """B-1677: stop read host.json before it asked whether a host holds the lock. A record left by a host that was
     killed (its number an AP Coder watch's since) was read, then a new host took the lock and wrote its own: stop
     ended the watch. The record is read once the lock says a host runs: the one that holds it wrote it."""
-    (data / "server.json").write_text(json.dumps({"insecure_http": True}))
+    (data / "server.json").write_text(json.dumps({"insecure_http": True}), encoding="utf-8")
     record = service.host_record(data)
     record.parent.mkdir(parents=True)
-    record.write_text(json.dumps({"pid": 4242}))  # the killed host's; 4242 is a watch's now
+    record.write_text(json.dumps({"pid": 4242}), encoding="utf-8")  # the killed host's; 4242 is a watch's now
 
     def a_host_starts_meanwhile(folder):  # it takes the lock and writes host.json at once
-        record.write_text(json.dumps({"pid": 5151}))
+        record.write_text(json.dumps({"pid": 5151}), encoding="utf-8")
         return True
 
     monkeypatch.setattr(service, "host_running", a_host_starts_meanwhile)

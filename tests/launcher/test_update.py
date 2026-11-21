@@ -33,8 +33,8 @@ def make_install(folder: Path, version: str, built: str = "", files: bool = Fals
     for rel in ("ap_coder/__init__.py", "scripts/launch.py", "tests/test_a.py", "APProcessor.bat",
                 "APProcessor.command", "private/README.md", "README.md", *extra):  # fmt: skip
         (folder / rel).parent.mkdir(parents=True, exist_ok=True)
-        (folder / rel).write_text(f"# {rel} {version}\n")
-    (folder / "pyproject.toml").write_text(f'[project]\nname = "ap-coder"\nversion = "{version}"\n')
+        (folder / rel).write_text(f"# {rel} {version}\n", encoding="utf-8")
+    (folder / "pyproject.toml").write_text(f'[project]\nname = "ap-coder"\nversion = "{version}"\n', encoding="utf-8")
     (folder / "models").mkdir()
     (folder / "models" / "det.onnx").write_bytes(b"m" * 2000)
     manifest: dict = {"app": "AP Coder", "version": version}
@@ -43,7 +43,7 @@ def make_install(folder: Path, version: str, built: str = "", files: bool = Fals
     if files:
         manifest["files"] = {p.relative_to(folder).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                              for p in folder.rglob("*") if p.is_file()}  # fmt: skip
-    (folder / "bundle_manifest.json").write_text(json.dumps(manifest))
+    (folder / "bundle_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     if venv:
         (folder / ".venv" / "lib").mkdir(parents=True)
         (folder / ".venv" / "lib" / "big.bin").write_bytes(b"v" * 5000)
@@ -117,9 +117,9 @@ def test_files_the_older_version_left_are_removed_when_unzipped_over_it(upgrade,
              "wheelhouse/numpy-1.0-cp311-cp311-win_amd64.whl", "ap_coder/gone/__init__.py"]  # fmt: skip
     for rel in stale:
         (folder / rel).parent.mkdir(parents=True, exist_ok=True)
-        (folder / rel).write_text("left by the older version")
+        (folder / rel).write_text("left by the older version", encoding="utf-8")
     (folder / "docs").mkdir()
-    (folder / "docs" / "my notes.md").write_text("not ours to remove")
+    (folder / "docs" / "my notes.md").write_text("not ours to remove", encoding="utf-8")
     (folder / "ap_coder" / "__pycache__").mkdir()
     (folder / "ap_coder" / "__pycache__" / "x.cpython-312.pyc").write_bytes(b"cache")
     removed, freed = upgrade.prune_stale(folder)
@@ -140,10 +140,10 @@ def test_retired_samples_and_top_level_files_of_an_older_version_are_removed(upg
     stale = ["samples/retired.pdf", "samples/ground_truth/retired.json", "streamlit_app.py", ".streamlit/config.toml"]
     for rel in stale:
         (folder / rel).parent.mkdir(parents=True, exist_ok=True)
-        (folder / rel).write_text("left by the older version")
-    (folder / "my notes.txt").write_text("the person's own")
+        (folder / rel).write_text("left by the older version", encoding="utf-8")
+    (folder / "my notes.txt").write_text("the person's own", encoding="utf-8")
     (folder / "docs").mkdir()
-    (folder / "docs" / "my notes.md").write_text("the person's own")
+    (folder / "docs" / "my notes.md").write_text("the person's own", encoding="utf-8")
     removed, _ = upgrade.prune_stale(folder)
     assert sorted(removed) == sorted(stale) and not (folder / ".streamlit").exists()
     assert (folder / "samples" / "a.pdf").exists() and (folder / "samples" / "ground_truth" / "a.json").exists()
@@ -162,7 +162,7 @@ def test_the_older_versions_install_and_start_files_are_removed_when_unzipped_ov
     folder = make_install(tmp_path / "AP Coder", "0.3.0", files=True, extra=("scripts/terminal.bat",))
     retired = ["install.bat", "install.sh", "start.bat", "start.sh", "terminal.bat"]
     for name in retired:
-        (folder / name).write_text("call APProcessor.bat\n")
+        (folder / name).write_text("call APProcessor.bat\n", encoding="utf-8")
     removed, freed = upgrade.prune_stale(folder)
     assert sorted(removed) == sorted(retired) and freed > 0
     assert not any((folder / name).exists() for name in retired)
@@ -173,11 +173,11 @@ def test_the_older_versions_install_and_start_files_are_removed_when_unzipped_ov
 
 def test_nothing_is_pruned_without_a_file_list_or_in_a_checkout(upgrade, tmp_path):
     folder = make_install(tmp_path / "old bundle", "0.1.0")  # an AP Coder 0.1 manifest: no file list
-    (folder / "ap_coder" / "extra.py").write_text("x")
+    (folder / "ap_coder" / "extra.py").write_text("x", encoding="utf-8")
     assert upgrade.prune_stale(folder) == ([], 0)
     checkout = make_install(tmp_path / "checkout", "0.2.0", files=True)
     (checkout / ".git").mkdir()
-    (checkout / "ap_coder" / "new_module.py").write_text("work in progress")
+    (checkout / "ap_coder" / "new_module.py").write_text("work in progress", encoding="utf-8")
     assert upgrade.prune_stale(checkout) == ([], 0) and (checkout / "ap_coder" / "new_module.py").exists()
 
 
@@ -190,11 +190,11 @@ def test_githubs_zip_copied_over_a_bundles_folder_loses_none_of_its_own_files(up
     new = ["ap_coder/erp/new_module.py", "scripts/new_tool.py", "tests/test_new.py"]
     for rel in ["ap_coder/BUILD", "ap_coder/__init__.py", *new]:  # the newer code, copied over; the list stays
         (folder / rel).parent.mkdir(parents=True, exist_ok=True)
-        (folder / rel).write_text("# the newer version\n")
+        (folder / rel).write_text("# the newer version\n", encoding="utf-8")
     assert upgrade.prune_stale(folder) == ([], 0) and all((folder / rel).is_file() for rel in new)
     older = make_install(tmp_path / "older", "0.2.0", files=True)  # a bundle from before the stamp: pyproject.toml
-    (older / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.3.0"\n')
-    (older / "ap_coder" / "new_module.py").write_text("# the newer version\n")
+    (older / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.3.0"\n', encoding="utf-8")
+    (older / "ap_coder" / "new_module.py").write_text("# the newer version\n", encoding="utf-8")
     assert upgrade.prune_stale(older) == ([], 0) and (older / "ap_coder" / "new_module.py").is_file()
 
 
@@ -207,12 +207,12 @@ def test_a_wheelhouse_this_bundle_did_not_unzip_here_is_never_pruned(upgrade, tm
     copied = ["wheelhouse/numpy-2.1.3-cp312-cp312-win_amd64.whl", "wheelhouse/streamlit-1.40.1-py3-none-any.whl"]
     for rel in copied:
         (folder / rel).parent.mkdir(parents=True, exist_ok=True)
-        (folder / rel).write_text("a wheel")
+        (folder / rel).write_text("a wheel", encoding="utf-8")
     assert upgrade.prune_stale(folder) == ([], 0) and all((folder / rel).exists() for rel in copied)
     # Its own wheels listed but not there (the person replaced the folder): the copied one is kept too.
-    listed = json.loads((folder / "bundle_manifest.json").read_text())
+    listed = json.loads((folder / "bundle_manifest.json").read_text(encoding="utf-8"))
     listed["files"]["wheelhouse/numpy-2.3.0-cp312-cp312-manylinux2014_x86_64.whl"] = "0" * 64
-    (folder / "bundle_manifest.json").write_text(json.dumps(listed))
+    (folder / "bundle_manifest.json").write_text(json.dumps(listed), encoding="utf-8")
     assert upgrade.prune_stale(folder) == ([], 0) and all((folder / rel).exists() for rel in copied)
 
 
@@ -222,8 +222,8 @@ def test_a_wheelhouse_this_bundle_did_not_unzip_here_is_never_pruned(upgrade, tm
 def _with_data(folder: Path) -> Path:
     private = folder / "private"
     (private / "invoices").mkdir(parents=True, exist_ok=True)
-    (private / "invoices" / "a.pdf").write_text("pdf")
-    (private / "ap_coder.db").write_text("db")
+    (private / "invoices" / "a.pdf").write_text("pdf", encoding="utf-8")
+    (private / "ap_coder.db").write_text("db", encoding="utf-8")
     return private
 
 
@@ -235,7 +235,7 @@ def test_data_kept_in_a_code_folder_moves_to_the_data_folder(upgrade, tmp_path, 
     home = tmp_path / "APCoder"
     said: list[str] = []
     assert upgrade.settle_data_folder(tmp_path / "new", said.append, default=home) == home
-    assert (home / "ap_coder.db").read_text() == "db" and (home / "invoices" / "a.pdf").exists()
+    assert (home / "ap_coder.db").read_text(encoding="utf-8") == "db" and (home / "invoices" / "a.pdf").exists()
     assert paths.private_dir() == home and not (private / "ap_coder.db").exists()
     assert (private / "README.md").exists() and "Moved your data" in said[0]
     assert upgrade.settle_data_folder(tmp_path / "new", said.append, default=home) == home and len(said) == 1
@@ -248,10 +248,12 @@ def test_data_in_a_code_folder_stays_when_the_data_folder_has_other_data(upgrade
     paths.write_user_settings(data_dir=str(private))
     home = tmp_path / "APCoder"
     home.mkdir()
-    (home / "ap_coder.db").write_text("someone else's")
+    (home / "ap_coder.db").write_text("someone else's", encoding="utf-8")
     said: list[str] = []
     assert upgrade.settle_data_folder(tmp_path / "new", said.append, default=home) == private
-    assert (private / "ap_coder.db").read_text() == "db" and (home / "ap_coder.db").read_text() == "someone else's"
+    assert (private / "ap_coder.db").read_text(encoding="utf-8") == "db" and (home / "ap_coder.db").read_text(
+        encoding="utf-8"
+    ) == "someone else's"
     assert "still in" in said[0]
 
 
@@ -265,7 +267,7 @@ def test_an_interrupted_data_move_is_finished_by_the_next_start(upgrade, tmp_pat
     old = make_install(tmp_path / "AP Coder 0.1", "0.1.0")
     private = _with_data(old)
     (private / "outputs").mkdir()
-    (private / "outputs" / "batch.xlsx").write_text("export")
+    (private / "outputs" / "batch.xlsx").write_text("export", encoding="utf-8")
     paths.write_user_settings(data_dir=str(private))
     home = tmp_path / "APCoder"
     real_move, moved = shutil.move, []
@@ -284,8 +286,10 @@ def test_an_interrupted_data_move_is_finished_by_the_next_start(upgrade, tmp_pat
     monkeypatch.setattr(shutil, "move", real_move)  # the file was closed; the next start
     said: list[str] = []
     assert upgrade.settle_data_folder(tmp_path / "new", said.append, default=home) == home
-    assert (home / "ap_coder.db").read_text() == "db" and (home / "invoices" / "a.pdf").read_text() == "pdf"
-    assert (home / "outputs" / "batch.xlsx").read_text() == "export" and not upgrade.has_data(private)
+    assert (home / "ap_coder.db").read_text(encoding="utf-8") == "db" and (home / "invoices" / "a.pdf").read_text(
+        encoding="utf-8"
+    ) == "pdf"
+    assert (home / "outputs" / "batch.xlsx").read_text(encoding="utf-8") == "export" and not upgrade.has_data(private)
     assert paths.private_dir() == home and "Finished moving your data" in said[0]
     assert upgrade.settle_data_folder(tmp_path / "new", said.append, default=home) == home and len(said) == 1
 
@@ -302,23 +306,30 @@ def test_a_first_start_in_a_folder_with_data_moves_it_out(upgrade, tmp_path, mon
 def test_an_older_folders_data_and_settings_file_are_adopted(upgrade, tmp_path):
     old = make_install(tmp_path / "AP Coder 0.1", "0.1.0")
     _with_data(old)
-    (old / ".env").write_text("AP_REVIEWER=Ann\n")
+    (old / ".env").write_text("AP_REVIEWER=Ann\n", encoding="utf-8")
     data = tmp_path / "APCoder"
     (data / "invoices").mkdir(parents=True)  # an empty data folder (as the first start makes it)
     assert upgrade.adopt_legacy(old, data, lambda m: None)
-    assert (data / "ap_coder.db").read_text() == "db" and (data / ".env").read_text() == "AP_REVIEWER=Ann\n"
+    assert (data / "ap_coder.db").read_text(encoding="utf-8") == "db" and (data / ".env").read_text(
+        encoding="utf-8"
+    ) == "AP_REVIEWER=Ann\n"
     assert (data / "invoices" / "a.pdf").exists() and not (old / ".env").exists()
     # A second older folder whose data would collide: kept apart, whole, never merged over the data folder's own.
     other = make_install(tmp_path / "AP Coder copy", "0.1.0")
     _with_data(other)
-    (other / "private" / "ap_coder.db").write_text("other db")
-    (other / ".env").write_text("AP_REVIEWER=Bob\n")
+    (other / "private" / "ap_coder.db").write_text("other db", encoding="utf-8")
+    (other / ".env").write_text("AP_REVIEWER=Bob\n", encoding="utf-8")
     said: list[str] = []
     assert upgrade.adopt_legacy(other, data, said.append)
     (aside,) = (data / "backups").iterdir()
-    assert aside.name.startswith("from-AP Coder copy-") and (aside / "ap_coder.db").read_text() == "other db"
-    assert (aside / ".env").read_text() == "AP_REVIEWER=Bob\n" and (data / "ap_coder.db").read_text() == "db"
-    assert (data / ".env").read_text() == "AP_REVIEWER=Ann\n" and "nothing was merged" in said[0]
+    assert (
+        aside.name.startswith("from-AP Coder copy-")
+        and (aside / "ap_coder.db").read_text(encoding="utf-8") == "other db"
+    )
+    assert (aside / ".env").read_text(encoding="utf-8") == "AP_REVIEWER=Bob\n" and (data / "ap_coder.db").read_text(
+        encoding="utf-8"
+    ) == "db"
+    assert (data / ".env").read_text(encoding="utf-8") == "AP_REVIEWER=Ann\n" and "nothing was merged" in said[0]
 
 
 # --- Cleaning up after the update --------------------------------------------------------------------------------
@@ -329,7 +340,7 @@ def test_the_older_install_is_removed_whole_and_forgotten(upgrade, tmp_path):
     new = make_install(tmp_path / "AP Coder 0.2", "0.2.0", "2026-10-11T09:00:00")
     data = tmp_path / "APCoder"
     data.mkdir()
-    (data / "ap_coder.db").write_text("the data")
+    (data / "ap_coder.db").write_text("the data", encoding="utf-8")
     _with_data(old)
     paths.record_install(paths.install_identity(old))
     paths.record_install(paths.install_identity(new))
@@ -337,7 +348,7 @@ def test_the_older_install_is_removed_whole_and_forgotten(upgrade, tmp_path):
     freed = upgrade.clean_up(new, data, [old], said.append)
     assert not old.exists() and freed > 7000
     assert [e["folder"] for e in paths.installs()] == [str(new)]
-    assert (data / "ap_coder.db").read_text() == "the data"  # the data folder's own data: untouched
+    assert (data / "ap_coder.db").read_text(encoding="utf-8") == "the data"  # the data folder's own data: untouched
     assert list((data / "backups").glob("from-AP Coder 0.1-*/ap_coder.db"))  # the old folder's data: kept aside
     assert any("Removed the older AP Coder folder" in s and "KB" in s for s in said)
     assert new.exists() and (new / ".venv").exists()
@@ -346,7 +357,7 @@ def test_the_older_install_is_removed_whole_and_forgotten(upgrade, tmp_path):
 
 def test_an_older_folder_with_files_of_its_own_keeps_them_but_not_its_venv(upgrade, tmp_path):
     old = make_install(tmp_path / "AP Coder 0.1", "0.1.0")
-    (old / "my export.xlsx").write_text("the person's own file")
+    (old / "my export.xlsx").write_text("the person's own file", encoding="utf-8")
     said: list[str] = []
     freed = upgrade.clean_up(tmp_path / "new", tmp_path / "data", [old], said.append)
     assert (old / "my export.xlsx").exists() and (old / "ap_coder").exists()
@@ -381,7 +392,7 @@ def test_a_running_or_checked_out_older_install_is_left_alone(upgrade, tmp_path)
 def test_only_an_ap_coder_folder_is_ever_removed(upgrade, tmp_path):
     stranger = tmp_path / "Projects"
     (stranger / "ap_coder").mkdir(parents=True)
-    (stranger / "notes.txt").write_text("x")
+    (stranger / "notes.txt").write_text("x", encoding="utf-8")
     assert "doesn't look like" in upgrade.removable(stranger, tmp_path / "new")
     here = make_install(tmp_path / "here", "0.2.0")
     assert upgrade.removable(here, here) == "it holds this AP Coder"
@@ -431,7 +442,7 @@ def test_read_only_files_in_an_older_folder_are_removed_too(upgrade, tmp_path, m
 
     old = make_install(tmp_path / "AP Coder 0.1", "0.1.0", "2026-09-01T10:00:00")
     (old / "docs").mkdir()
-    (old / "docs" / "guide.pdf").write_text("read-only")
+    (old / "docs" / "guide.pdf").write_text("read-only", encoding="utf-8")
     (old / "docs" / "guide.pdf").chmod(stat.S_IREAD)
     (old / ".venv" / "lib" / "big.bin").chmod(stat.S_IREAD)
     paths.record_install(paths.install_identity(old), current=False)
@@ -463,7 +474,7 @@ def test_an_older_folders_data_that_cannot_be_moved_keeps_the_folder(upgrade, tm
     monkeypatch.setattr(shutil, "move", move)
     said: list[str] = []
     assert upgrade.clean_up(tmp_path / "new", tmp_path / "data", [old], said.append) == 0
-    assert (old / "private" / "ap_coder.db").read_text() == "db" and (old / ".venv").exists()
+    assert (old / "private" / "ap_coder.db").read_text(encoding="utf-8") == "db" and (old / ".venv").exists()
     assert "it is cleaned up on a later start" in said[0]
 
 
@@ -483,8 +494,8 @@ def make_pre_launcher_install(folder: Path) -> Path:
     for rel in ("ap_coder/__init__.py", "ap_coder/dashboard.py", "scripts/install.py", "install.bat", "install.sh",
                 "start.bat", "start.sh", "README.md", "private/README.md", ".env.example"):  # fmt: skip
         (folder / rel).parent.mkdir(parents=True, exist_ok=True)
-        (folder / rel).write_text(f"# {rel}\n")
-    (folder / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.1.0"\n')
+        (folder / rel).write_text(f"# {rel}\n", encoding="utf-8")
+    (folder / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.1.0"\n', encoding="utf-8")
     (folder / ".venv" / "lib").mkdir(parents=True)
     (folder / ".venv" / "lib" / "big.bin").write_bytes(b"v" * 5000)
     return folder
@@ -506,7 +517,7 @@ def test_an_ap_coder_from_before_the_launcher_is_an_older_install(upgrade, tmp_p
     assert upgrade.newer_install(new) is None  # never handed over to a folder without the launcher
     stranger = tmp_path / "Projects"
     (stranger / "ap_coder").mkdir(parents=True)
-    (stranger / "pyproject.toml").write_text('[project]\nname = "something-else"\n')
+    (stranger / "pyproject.toml").write_text('[project]\nname = "something-else"\n', encoding="utf-8")
     assert not upgrade.is_install(stranger)
 
 
@@ -514,9 +525,9 @@ def test_an_older_folder_from_githubs_zip_is_removed_whole(upgrade, tmp_path):
     """GitHub's ZIP holds every file git tracks, CLAUDE.md and .claude/ too: with no file list to go by, those were
     taken for the person's own files and the older folder was always kept ("files AP Coder didn't put there")."""
     old = make_pre_launcher_install(tmp_path / "AP_Processer-main")
-    (old / "CLAUDE.md").write_text("# the codebase map\n")
+    (old / "CLAUDE.md").write_text("# the codebase map\n", encoding="utf-8")
     (old / ".claude").mkdir()
-    (old / ".claude" / "settings.json").write_text("{}")
+    (old / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
     assert upgrade.removable(old, make_install(tmp_path / "APProcessor", "0.2.0")) == ""
 
 
@@ -546,7 +557,7 @@ def test_data_kept_in_an_older_folder_found_running_moves_out_before_the_start(u
     home = tmp_path / "APCoder"
     said: list[str] = []
     assert upgrade.settle_data_folder(tmp_path / "APProcessor", said.append, default=home) == home
-    assert (home / "ap_coder.db").read_text() == "db" and (home / "invoices" / "a.pdf").exists()
+    assert (home / "ap_coder.db").read_text(encoding="utf-8") == "db" and (home / "invoices" / "a.pdf").exists()
     assert paths.read_user_settings()["data_dir"] == str(home) and "Moved your data" in said[0]
 
 
@@ -591,7 +602,7 @@ def test_an_older_folder_beside_already_cleaned_up_and_kept_is_not_taken_over_ag
 def test_the_bundle_manifest_lists_every_file_with_its_sha256(tmp_path):
     bundle = _script("build_offline_bundle")
     folder = make_install(tmp_path / "APProcessor", "0.2.0", venv=False)
-    manifest = json.loads(bundle.write_manifest(folder).read_text())
+    manifest = json.loads(bundle.write_manifest(folder).read_text(encoding="utf-8"))
     assert manifest["version"] == "0.2.0" and manifest["built"][:4].isdigit()
     files = manifest["files"]
     assert "bundle_manifest.json" not in files and "models/det.onnx" in files
@@ -614,8 +625,10 @@ def test_a_version_registered_by_the_older_install_is_noticed(tmp_path, monkeypa
     code.mkdir()
     dist = tmp_path / "site" / "ap_coder-0.1.0.dist-info"
     dist.mkdir(parents=True)
-    (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: ap-coder\nVersion: 0.1.0\n")
-    (dist / "direct_url.json").write_text(json.dumps({"url": code.as_uri(), "dir_info": {"editable": True}}))
+    (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: ap-coder\nVersion: 0.1.0\n", encoding="utf-8")
+    (dist / "direct_url.json").write_text(
+        json.dumps({"url": code.as_uri(), "dir_info": {"editable": True}}), encoding="utf-8"
+    )
     monkeypatch.syspath_prepend(str(tmp_path / "site"))
     assert check_deps.registered_version(code) == "0.1.0"
     assert check_deps.registered_version(tmp_path / "elsewhere") == ""
@@ -626,10 +639,12 @@ def test_settings_no_longer_used_are_commented_out_with_a_note(tmp_path):
     from ap_coder.core.config import RETIRED_SETTINGS
 
     env = tmp_path / ".env"
-    env.write_text("# my settings\nAP_REVIEWER=Ann\nexport AP_PAGE_READER=on\nAP_PAGE_READER_SCOPE = all\n")
+    env.write_text(
+        "# my settings\nAP_REVIEWER=Ann\nexport AP_PAGE_READER=on\nAP_PAGE_READER_SCOPE = all\n", encoding="utf-8"
+    )
     found = envfile.retire(env, RETIRED_SETTINGS, "no longer used (AP Coder 0.2)")
     assert found == ["AP_PAGE_READER", "AP_PAGE_READER_SCOPE"]
     note = "# no longer used (AP Coder 0.2): "
     expected = f"# my settings\nAP_REVIEWER=Ann\n{note}export AP_PAGE_READER=on\n{note}AP_PAGE_READER_SCOPE = all\n"
-    assert env.read_text() == expected
+    assert env.read_text(encoding="utf-8") == expected
     assert envfile.retire(env, RETIRED_SETTINGS, "x") == [] and envfile.read_env(env) == {"AP_REVIEWER": "Ann"}

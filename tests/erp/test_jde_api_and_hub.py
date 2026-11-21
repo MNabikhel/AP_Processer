@@ -270,7 +270,9 @@ def test_a_new_hub_format_clears_the_old_formats_files_and_parquet_times_are_mil
     for table in ("invoices", "activity"):
         names = sorted(p.name for p in (share / table).iterdir())
         assert not [n for n in names if n.endswith(".parquet")] and [n for n in names if n.endswith(".csv")], names
-        assert _json.loads((share / table / "_metadata.json").read_text())["fileFormat"] == "DelimitedText"
+        assert (
+            _json.loads((share / table / "_metadata.json").read_text(encoding="utf-8"))["fileFormat"] == "DelimitedText"
+        )
 
 
 # --- S10. Paused usernames on the Users page ----------------------------------------------------------------------

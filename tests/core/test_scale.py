@@ -13,7 +13,7 @@ from tests.webclient import client_for
 
 
 def _add(store, tmp_path, n, approve=0):
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     ids = []
     for i in range(n):
         doc = {**gt, "invoice_number": f"N-{i}", "vendor_name": f"Vendor {i % 7}"}

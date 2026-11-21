@@ -44,7 +44,7 @@ def sha(path: Path) -> str:
 
 
 def gt(name: str) -> dict:
-    return json.loads((SAMPLES / "ground_truth" / f"{Path(name).stem}.json").read_text())
+    return json.loads((SAMPLES / "ground_truth" / f"{Path(name).stem}.json").read_text(encoding="utf-8"))
 
 
 def old_install(tmp_path: Path) -> tuple[Path, Path, dict[str, int]]:
@@ -227,7 +227,9 @@ def test_nothing_to_point_anywhere_changes_nothing(upgrade, tmp_path):
     Store(data / "ap_coder.db")
     assert upgrade.repoint_files(old, data, tmp_path / "new", lambda m: None) == []
     assert not (data / "backups").exists()
-    (data / "ap_coder.db").write_text("not a database")  # whatever is there: never a reason to stop the update
+    (data / "ap_coder.db").write_text(
+        "not a database", encoding="utf-8"
+    )  # whatever is there: never a reason to stop the update
     assert upgrade.repoint_files(old, data, tmp_path / "new", lambda m: None) == []
 
 

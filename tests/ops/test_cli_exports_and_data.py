@@ -81,9 +81,9 @@ def test_labels_workbook_with_a_damaged_pdfs_control_characters(tmp_path):
     """Text read from a damaged PDF can hold control characters: openpyxl refused them and the labels command
     stopped with a traceback (the export workbook already dropped them)."""
     out = _prediction(tmp_path, invoice_number="A\x0c1")
-    out_doc = json.loads((out / "inv.json").read_text())
+    out_doc = json.loads((out / "inv.json").read_text(encoding="utf-8"))
     out_doc["line_items"][0]["description"] = "Pa\x01per"
-    (out / "inv.json").write_text(json.dumps(out_doc))
+    (out / "inv.json").write_text(json.dumps(out_doc), encoding="utf-8")
     assert labels.export_labels(out, tmp_path / "labels.xlsx") == 1
     wb = load_workbook(tmp_path / "labels.xlsx")
     values = [c.value for row in wb["Labels"].iter_rows(min_row=2) for c in row]

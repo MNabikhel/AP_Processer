@@ -65,7 +65,7 @@ def test_what_cannot_be_joined_is_said_and_nothing_is_joined(store, folder):
     copy = folder / "a again.pdf"
     copy.write_bytes(first.read_bytes())
     notes = folder / "notes.txt"
-    notes.write_text("Total 12.00")
+    notes.write_text("Total 12.00", encoding="utf-8")
     for paths, kind, said in (
         ([first], PAGES, "at least two files"),
         ([first, second], "", "Choose what the files are"),

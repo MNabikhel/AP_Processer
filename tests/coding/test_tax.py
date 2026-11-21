@@ -578,7 +578,7 @@ def test_a_new_rate_row_wins_over_an_old_one_left_open():
 def test_a_rate_that_is_not_a_finite_number_is_refused(tmp_path, rate):
     """float() reads "nan" and "inf": a rate like that is refused like any other text that is not a number."""
     path = tmp_path / "rates.csv"
-    path.write_text(f"tax_type,province,rate,effective_from,effective_to\nGST,,{rate},2008-01-01,\n")
+    path.write_text(f"tax_type,province,rate,effective_from,effective_to\nGST,,{rate},2008-01-01,\n", encoding="utf-8")
     with pytest.raises(ValueError, match="is not a number"):
         TaxRateTable.load(path)
 
@@ -586,7 +586,8 @@ def test_a_rate_that_is_not_a_finite_number_is_refused(tmp_path, rate):
 def test_a_rate_written_with_a_percent_sign_is_always_a_percentage(tmp_path):
     path = tmp_path / "rates.csv"
     path.write_text(
-        "tax_type,province,rate,effective_from,effective_to\nPST,BC,0.5%,2026-01-01,\nGST,,5%,2008-01-01,\n"
+        "tax_type,province,rate,effective_from,effective_to\nPST,BC,0.5%,2026-01-01,\nGST,,5%,2008-01-01,\n",
+        encoding="utf-8",
     )
     table = TaxRateTable.load(path)
     assert table.rate_for("PST", "BC", dt.date(2026, 2, 1)) == pytest.approx(0.005)

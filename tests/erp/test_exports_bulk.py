@@ -128,10 +128,10 @@ def test_bulk_approve_never_takes_a_check_that_always_needs_a_person(tmp_path):
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)
     ref = store.reference_data()
-    known = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text())
+    known = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text(encoding="utf-8"))
     out, _ = finalise_coding(InvoiceCoding.model_validate(known), ref, Settings(), store=store)
     store.approve_invoice(store.add_invoice(tmp_path / "a.pdf", out, {}), out, "jane")
-    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text(encoding="utf-8"))
     today = dt.date.today()
     doc = {**doc, "vendor_name": "Totally New Supplies Inc", "confidence_score": 0.99,
            "invoice_date": today.isoformat(), "due_date": (today + dt.timedelta(days=30)).isoformat()}  # fmt: skip
@@ -167,7 +167,7 @@ def test_bulk_approval_never_takes_a_credit_note(tmp_path):
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)
     ref = store.reference_data()
-    known = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text())
+    known = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text(encoding="utf-8"))
     out, _ = finalise_coding(InvoiceCoding.model_validate(known), ref, Settings(), store=store)
     store.approve_invoice(store.add_invoice(tmp_path / "a.pdf", out, {}), out, "jane")
     credit = {**_negated(known), "invoice_number": "CN-1", "original_invoice_number": known["invoice_number"],
@@ -206,7 +206,7 @@ def test_every_list_query_takes_more_ids_than_sqlite_takes_variables(demo_store,
 
 def _loader_invoice():
     """An approved invoice whose invoice number and texts start with formula characters."""
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     gt["invoice_number"] = "+A-100"
     gt["gl_distribution"] = [
         {"kind": "expense", "line_number": 1, "gl_code": "6010", "cost_center": "", "net_amount": 4350.0,
@@ -240,7 +240,7 @@ def test_an_invoice_approved_without_a_stored_distribution_still_has_its_lines_i
     from ap_coder.coding.tax import load_tax_mapping
     from tests.conftest import DATA
 
-    doc = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text(encoding="utf-8"))
     assert "gl_distribution" not in doc
     inv = {"id": 5, "final_output": doc}
     treatments = load_tax_mapping(DATA / "tax_gl_mapping.csv")

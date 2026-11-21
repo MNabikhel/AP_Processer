@@ -271,7 +271,9 @@ def test_a_daily_backup_made_in_the_same_second_as_another_is_pruned_like_the_ot
     for folder in (store.backup_dir(), second):
         for day in range(1, 16):  # 15 newer daily backups
             (folder / f"ap_coder-202602{day:02d}-090000.db").write_bytes(b"")
-            (folder / f"ap_coder-202602{day:02d}-090000.files.json").write_text('{"files": []}')  # complete
+            (folder / f"ap_coder-202602{day:02d}-090000.files.json").write_text(
+                '{"files": []}', encoding="utf-8"
+            )  # complete
     store.auto_backup(keep=Retention(daily=14, weekly=0, monthly=0), min_hours=0)
     for folder in (store.backup_dir(), second):
         names = sorted(p.name for p in folder.glob("ap_coder-*.db"))
@@ -290,7 +292,7 @@ def _data_folder(tmp_path, ground_truth, name: str = "data"):
     pdf.write_bytes(b"%PDF-1.4 the invoice a")
     (data / "invoices" / "originals" / "a.jpg").write_bytes(b"the photo of a")
     (data / "emails" / "manager" / "AP-1-reply.eml").write_bytes(b"From: the manager")
-    (data / "canada_tax_rates.csv").write_text("province,gst\nON,5\n")
+    (data / "canada_tax_rates.csv").write_text("province,gst\nON,5\n", encoding="utf-8")
     store = Store(data / "ap_coder.db")
     store.add_invoice(pdf, ground_truth, {})
     return store, data
@@ -459,11 +461,11 @@ def test_a_backup_list_of_files_never_writes_outside_the_data_folder(tmp_path, g
     store, data = _data_folder(tmp_path, ground_truth)
     backup = store.backup_now("manual")
     listed = backup.with_name(f"{backup.stem}.files.json")
-    found = json.loads(listed.read_text())
+    found = json.loads(listed.read_text(encoding="utf-8"))
     good = found["files"][0]
     found["files"] += [{**good, "path": p} for p in ("../evil.pdf", ".env", "invoices/../../evil.pdf", "/tmp/evil.pdf",
                                                      "backups/x.db", "invoices\\..\\..\\evil.pdf")]  # fmt: skip
-    listed.write_text(json.dumps(found))
+    listed.write_text(json.dumps(found), encoding="utf-8")
     store.restore_state(backup)
     assert not (tmp_path / "evil.pdf").exists() and not (data / ".env").exists()
     assert not (data / "backups" / "x.db").exists()
@@ -482,19 +484,21 @@ def test_the_postings_ledger_is_merged_never_replaced_and_comes_back_on_a_new_co
     """``jde_postings.jsonl`` is what JD Edwards holds (D-105): a restore keeps every line written since the backup."""
     store, data = _data_folder(tmp_path, ground_truth)
     ledger = data / "jde_postings.jsonl"
-    ledger.write_text('{"idem_key": "a", "status": "posted"}\n')
+    ledger.write_text('{"idem_key": "a", "status": "posted"}\n', encoding="utf-8")
     share = tmp_path / "share"
     share.mkdir()
     store.set_setting("backup_copy_dir", str(share))
     backup = store.backup_now()
-    with ledger.open("a") as out:
+    with ledger.open("a", encoding="utf-8") as out:
         out.write('{"idem_key": "b", "status": "posted"}\n')
     store.restore_state(backup)
-    assert ledger.read_text().splitlines() == ['{"idem_key": "a", "status": "posted"}',
+    assert ledger.read_text(encoding="utf-8").splitlines() == ['{"idem_key": "a", "status": "posted"}',
                                                '{"idem_key": "b", "status": "posted"}']  # fmt: skip
     new = Store(tmp_path / "new" / "ap_coder.db")
     new.restore_state(share / backup.name)
-    assert (tmp_path / "new" / "jde_postings.jsonl").read_text() == '{"idem_key": "a", "status": "posted"}\n'
+    assert (tmp_path / "new" / "jde_postings.jsonl").read_text(
+        encoding="utf-8"
+    ) == '{"idem_key": "a", "status": "posted"}\n'
 
 
 def test_an_invoice_file_kept_outside_the_data_folder_is_in_the_backup(tmp_path, ground_truth):

@@ -18,13 +18,13 @@ _spec.loader.exec_module(install)
 
 def test_env_values_are_updated_in_place(tmp_path):
     env = tmp_path / ".env"
-    env.write_text((ROOT / ".env.example").read_text())
-    before = env.read_text().count("\n")
+    env.write_text((ROOT / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+    before = env.read_text(encoding="utf-8").count("\n")
     for _ in range(3):  # running the installer three times
         install.write_env(env, {"AZURE_OPENAI_ENDPOINT": "https://x.openai.azure.com/", "AP_REVIEWER": "Jane Doe"})
-    text = env.read_text()
+    text = env.read_text(encoding="utf-8")
     assert text.count("AZURE_OPENAI_ENDPOINT=") == 1 and text.count("AP_REVIEWER=") == 1
-    assert env.read_text().count("\n") == before  # the commented "# AP_REVIEWER=" line was reused
+    assert env.read_text(encoding="utf-8").count("\n") == before  # the commented "# AP_REVIEWER=" line was reused
     values = install.read_env(env)
     assert values["AP_REVIEWER"] == "Jane Doe" and values["AZURE_OPENAI_ENDPOINT"] == "https://x.openai.azure.com/"
 
@@ -60,8 +60,8 @@ def test_installer_env_has_no_example_endpoints(tmp_path, monkeypatch):
 
     env = tmp_path / ".env"
     install.write_example_env(env)
-    _forget_env_after_test(monkeypatch, env.read_text())
-    live = [line for line in env.read_text().splitlines() if not line.startswith("#")]
+    _forget_env_after_test(monkeypatch, env.read_text(encoding="utf-8"))
+    live = [line for line in env.read_text(encoding="utf-8").splitlines() if not line.startswith("#")]
     assert not [line for line in live if "<your-resource>" in line]
     settings = Settings.from_env(env)
     assert settings.openai.endpoint is None and settings.document_intelligence.endpoint is None
@@ -76,9 +76,10 @@ def test_example_endpoints_left_in_an_older_env_count_as_unset(tmp_path, monkeyp
     env.write_text(
         "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=https://<your-resource>.cognitiveservices.azure.com/\n"
         "AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com/\n"
-        "AZURE_OPENAI_DEPLOYMENT=gpt-4o\n"
+        "AZURE_OPENAI_DEPLOYMENT=gpt-4o\n",
+        encoding="utf-8",
     )
-    _forget_env_after_test(monkeypatch, env.read_text() + "AP_LLM_PROVIDER=\n")
+    _forget_env_after_test(monkeypatch, env.read_text(encoding="utf-8") + "AP_LLM_PROVIDER=\n")
     settings = Settings.from_env(env)
     assert settings.openai.endpoint is None and settings.document_intelligence.endpoint is None
     assert resolve_provider(settings) == "local"
@@ -106,10 +107,10 @@ def test_endpoints_are_tidied():
 
 
 def test_fresh_start_keeps_settings_and_backs_up_data(tmp_path):
-    (tmp_path / ".env").write_text("AP_REVIEWER=x\n")
-    (tmp_path / "ap_coder.db").write_text("db")
+    (tmp_path / ".env").write_text("AP_REVIEWER=x\n", encoding="utf-8")
+    (tmp_path / "ap_coder.db").write_text("db", encoding="utf-8")
     (tmp_path / "invoices").mkdir()
-    (tmp_path / "invoices" / "a.pdf").write_text("pdf")
+    (tmp_path / "invoices" / "a.pdf").write_text("pdf", encoding="utf-8")
     install.fresh_start(_yes_console(), tmp_path)
     backups = list(tmp_path.glob("backup-*"))
     assert len(backups) == 1 and (backups[0] / "ap_coder.db").exists() and (backups[0] / "invoices" / "a.pdf").exists()
@@ -124,7 +125,7 @@ def test_fresh_start_keeps_the_models_ap_coder_reads(tmp_path, monkeypatch):
     monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path))
     (tmp_path / "models").mkdir()
     (tmp_path / "models" / offline.TABLE_FINDER_NAME).write_bytes(b"onnx")
-    (tmp_path / "ap_coder.db").write_text("db")
+    (tmp_path / "ap_coder.db").write_text("db", encoding="utf-8")
     assert tmp_path / "models" in offline.table_finder_dirs()  # (where AP Coder reads it from)
     install.fresh_start(_yes_console(), tmp_path)
     assert (tmp_path / "models" / offline.TABLE_FINDER_NAME).read_bytes() == b"onnx"
@@ -141,9 +142,9 @@ def test_app_uses_the_data_folder_recorded_by_the_installer(tmp_path, monkeypatc
     monkeypatch.delenv("AP_PRIVATE_DIR")
     data = tmp_path / "APCoder"
     data.mkdir()
-    (data / ".env").write_text("AZURE_OPENAI_DEPLOYMENT=from-data-folder\n")
+    (data / ".env").write_text("AZURE_OPENAI_DEPLOYMENT=from-data-folder\n", encoding="utf-8")
     paths.write_user_settings(data_dir=str(data))
-    assert json.loads(paths.user_settings_path().read_text())["data_dir"] == str(data)
+    assert json.loads(paths.user_settings_path().read_text(encoding="utf-8"))["data_dir"] == str(data)
     assert paths.private_dir() == data and paths.default_db_path() == data / "ap_coder.db"
     monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "")  # restored after the test (load_dotenv writes it)
     monkeypatch.delenv("AZURE_OPENAI_DEPLOYMENT")

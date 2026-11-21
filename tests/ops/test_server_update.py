@@ -25,10 +25,10 @@ GOOD = "correct horse battery"
 
 def _folder(path: Path, version: str) -> Path:
     (path / "ap_coder").mkdir(parents=True)
-    (path / "ap_coder" / "__init__.py").write_text("")
+    (path / "ap_coder" / "__init__.py").write_text("", encoding="utf-8")
     (path / "scripts").mkdir()
-    (path / "scripts" / "launch.py").write_text("")
-    (path / "pyproject.toml").write_text(f'[project]\nname = "ap-coder"\nversion = "{version}"\n')
+    (path / "scripts" / "launch.py").write_text("", encoding="utf-8")
+    (path / "pyproject.toml").write_text(f'[project]\nname = "ap-coder"\nversion = "{version}"\n', encoding="utf-8")
     return path
 
 
@@ -124,7 +124,7 @@ def test_an_update_backs_up_switches_folders_and_keeps_the_previous_one(server, 
     # Prepared while the old version serves (a copy of the database updated first), then stopped (D-188).
     assert fake.calls == ["set up APProcessor-0.4.0", "migrate copy", "self-check", "stop", "migrate", "start",
                           "up APProcessor-0.4.0"]  # fmt: skip
-    assert (new / "README.md").read_text() == "AP Coder" and server["current"].is_dir()
+    assert (new / "README.md").read_text(encoding="utf-8") == "AP Coder" and server["current"].is_dir()
     assert not (server["data"] / "service" / "update-check").exists()  # the copy, removed
     assert not (server["data"] / "service" / "update.json").exists()  # the marker, once recorded
     saved = service.read_config(server["data"])
@@ -135,7 +135,7 @@ def test_an_update_backs_up_switches_folders_and_keeps_the_previous_one(server, 
     times = saved["history"][-1]["times"]  # the downtime, from the stop to the answer, and its parts
     assert {"prepare_s", "check_migration_s", "self_check_s", "stop_s", "safety_copy_s", "migrate_s", "start_s",
             "downtime_s"} <= set(times)  # fmt: skip
-    assert str(new) in service.runner_path(server["data"]).read_text()
+    assert str(new) in service.runner_path(server["data"]).read_text(encoding="utf-8")
     assert paths.current_install()["folder"] == str(new)  # recorded as the laptop updater does
     out = capsys.readouterr().out
     assert "server-update --back" in out and "Downtime:" in out and "kept serving" in out
@@ -196,7 +196,7 @@ def test_a_failed_self_check_stops_nothing_and_leaves_the_database_as_it_was(ser
     saved = service.read_config(server["data"])
     assert saved["folder"] == str(server["current"]) and "previous_folder" not in saved
     assert saved["history"][-1]["result"].startswith("not updated: The self-check failed")
-    assert str(server["current"]) in service.runner_path(server["data"]).read_text()
+    assert str(server["current"]) in service.runner_path(server["data"]).read_text(encoding="utf-8")
     assert not (server["data"] / "service" / "update.json").exists()
     assert not list((server["data"] / "backups").glob("*before-update*"))  # no safety copy needed
     out = capsys.readouterr().out
@@ -262,7 +262,7 @@ def test_back_restores_the_pre_update_backup_and_the_previous_folder(server, cap
     assert _marker(server["db"]) == "as before the update"  # the old version refuses the newer database
     saved = service.read_config(server["data"])
     assert saved["folder"] == str(server["current"]) and not saved.get("previous_folder")
-    assert str(server["current"]) in service.runner_path(server["data"]).read_text()
+    assert str(server["current"]) in service.runner_path(server["data"]).read_text(encoding="utf-8")
     safety = list((server["data"] / "backups").glob("ap_coder-*-before-going-back.db"))
     assert len(safety) == 1  # what was done since the update is kept in a copy
     assert safety[0].name in capsys.readouterr().out
@@ -328,7 +328,7 @@ def test_run_from_another_folder_it_says_this_computers_command(server, monkeypa
 
 def test_a_file_that_is_not_a_zip_is_refused(server, capsys):
     bogus = server["tmp"] / "bundle.zip"
-    bogus.write_text("not a zip")
+    bogus.write_text("not a zip", encoding="utf-8")
     assert _install(bogus, server["data"], server["db"], server=FakeServer()) == 1
     assert "bundle.zip" in capsys.readouterr().err
 
@@ -586,7 +586,7 @@ def test_back_that_raises_before_the_backup_is_put_back_starts_the_running_versi
     assert _marker(server["db"]) == "work done on the new version"  # the database as it was
     saved = service.read_config(server["data"])
     assert saved["folder"].endswith("APProcessor-0.4.0") and saved["previous_folder"] == str(server["current"])
-    assert "APProcessor-0.4.0" in service.runner_path(server["data"]).read_text()
+    assert "APProcessor-0.4.0" in service.runner_path(server["data"]).read_text(encoding="utf-8")
     out = capsys.readouterr().out
     assert "did not go back" in out and "runs 0.4.0 again" in out
 

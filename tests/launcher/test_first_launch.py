@@ -117,8 +117,10 @@ def launch(tmp_path, monkeypatch):
     here = tmp_path / "AP Coder 0.2"
     (here / "ap_coder").mkdir(parents=True)
     (here / "scripts").mkdir()
-    (here / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.2.0"\n')
-    (here / "bundle_manifest.json").write_text(json.dumps({"version": "0.2.0", "built": "2026-10-11T09:00:00"}))
+    (here / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.2.0"\n', encoding="utf-8")
+    (here / "bundle_manifest.json").write_text(
+        json.dumps({"version": "0.2.0", "built": "2026-10-11T09:00:00"}), encoding="utf-8"
+    )
     venv = here / ".venv"
     venv.mkdir()
     monkeypatch.setattr(module, "ROOT", here)

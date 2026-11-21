@@ -59,7 +59,7 @@ def test_vendors_that_make_work(tmp_path):
     from ap_coder.erp.insights import vendor_workload
 
     store = Store(tmp_path / "w.db")
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     bad = {"issues": [{"severity": "error", "code": "GST_HST_NUMBER_MISSING", "message": "x"},
                       {"severity": "warning", "code": "VENDOR_BANK_CHANGED", "message": "internal"}]}  # fmt: skip
     store.add_invoice(tmp_path / "a.pdf", gt, bad)
@@ -81,7 +81,7 @@ def test_duplicates_stopped_in_the_business_case(tmp_path):
     from ap_coder.erp.insights import compute, report_html
 
     store = Store(tmp_path / "d.db")
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     flagged = {"issues": [{"severity": "error", "code": "DUPLICATE_INVOICE", "message": "x"}]}
     a = store.add_invoice(tmp_path / "a.pdf", gt, flagged)
     store.reject_invoice(a, "Jane", "duplicate")

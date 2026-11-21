@@ -146,7 +146,7 @@ def test_sorting_puts_empty_values_last_either_way(store):
 
 def test_pages_of_a_hundred(tmp_path):
     store = Store(tmp_path / "a.db")
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     for i in range(205):
         store.add_invoice(tmp_path / f"{i}.pdf", {**gt, "invoice_number": f"N-{i}"}, {"issues": []})
     first, last = d.run(store, d.Query()), d.run(store, d.Query(page=99))

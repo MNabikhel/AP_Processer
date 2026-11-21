@@ -62,7 +62,7 @@ def server(tmp_path):
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     record = {"pid": 4242, "port": port, "token": "secret", "folder": state["folder"], "version": "0.2.0"}
-    (data / ".ap_coder_server.json").write_text(json.dumps(record))
+    (data / ".ap_coder_server.json").write_text(json.dumps(record), encoding="utf-8")
     yield state, port, data
     httpd.shutdown()
     httpd.server_close()
@@ -154,7 +154,7 @@ def test_an_ap_coder_0_1_dashboard_is_found_by_its_port_and_stopped(running, tmp
     ``streamlit run ...ap_coder/dashboard.py``, and ended."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    (bindir / "streamlit").write_text(FAKE_STREAMLIT)
+    (bindir / "streamlit").write_text(FAKE_STREAMLIT, encoding="utf-8")
     old = tmp_path / "AP Coder 0.1"
     proc = subprocess.Popen([sys.executable, str(bindir / "streamlit"), "run", str(old / "ap_coder" / "dashboard.py")],
                             stdout=subprocess.PIPE, text=True)  # fmt: skip
@@ -177,8 +177,8 @@ def _fake_worker(tmp_path, command: str) -> subprocess.Popen:
     """A process whose command line is ``python -m ap_coder <command>`` (a stand-in package, so nothing is read)."""
     fake = tmp_path / f"fake-{command}"
     (fake / "ap_coder").mkdir(parents=True)
-    (fake / "ap_coder" / "__init__.py").write_text("")
-    (fake / "ap_coder" / "__main__.py").write_text(FAKE_WATCH)
+    (fake / "ap_coder" / "__init__.py").write_text("", encoding="utf-8")
+    (fake / "ap_coder" / "__main__.py").write_text(FAKE_WATCH, encoding="utf-8")
     proc = subprocess.Popen([sys.executable, "-m", "ap_coder", command, "--every", "60"], cwd=fake,
                             stdout=subprocess.PIPE, text=True)  # fmt: skip
     assert proc.stdout.readline().strip() == "watching"
@@ -187,7 +187,7 @@ def _fake_worker(tmp_path, command: str) -> subprocess.Popen:
 
 def _worker_note(data: Path, proc: subprocess.Popen, command: str, folder: Path, version: str) -> None:
     note = {"pid": proc.pid, "command": command, "folder": str(folder), "version": version, "started": "x"}
-    (data / f".ap_coder_worker-{proc.pid}.json").write_text(json.dumps(note))
+    (data / f".ap_coder_worker-{proc.pid}.json").write_text(json.dumps(note), encoding="utf-8")
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="reads the process's command line through /proc or ps")
@@ -216,9 +216,9 @@ def test_an_older_versions_watch_is_stopped_before_the_update(running, tmp_path)
 
 
 def test_a_worker_note_whose_process_is_gone_is_passed_over(running, tmp_path):
-    (tmp_path / ".ap_coder_worker-1.json").write_text("{not json")
+    (tmp_path / ".ap_coder_worker-1.json").write_text("{not json", encoding="utf-8")
     gone = {"pid": 2**22 + 12345, "command": "watch", "folder": "x", "version": "0.1.0"}
-    (tmp_path / f".ap_coder_worker-{gone['pid']}.json").write_text(json.dumps(gone))
+    (tmp_path / f".ap_coder_worker-{gone['pid']}.json").write_text(json.dumps(gone), encoding="utf-8")
     assert running.take_over(tmp_path, "0.2.0", [], tmp_path, say=lambda m: None) == ("clear", None)
     assert running.workers(tmp_path) == []
 

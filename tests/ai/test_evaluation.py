@@ -6,7 +6,7 @@ from ap_coder.ai.evaluation import evaluate
 
 def _write(d, name, data):
     d.mkdir(parents=True, exist_ok=True)
-    (d / f"{name}.json").write_text(json.dumps(data))
+    (d / f"{name}.json").write_text(json.dumps(data), encoding="utf-8")
 
 
 def test_evaluation_scores_fields(tmp_path, ground_truth):

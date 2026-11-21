@@ -8,7 +8,7 @@ from tests.conftest import SAMPLE_STEM, SAMPLES
 
 
 def _invoice():
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     gt["gl_distribution"] = [
         {"kind": "expense", "line_number": 1, "gl_code": "6010", "cost_center": "CC400", "net_amount": 4350.0,
          "non_recoverable_tax": 0.0, "amount": 4350.0, "description": "=Laptops"},

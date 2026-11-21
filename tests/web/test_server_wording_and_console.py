@@ -365,7 +365,7 @@ def test_doctor_says_what_it_sees_on_the_server(tmp_path, monkeypatch):
     data = tmp_path / "APCoderData"
     (data / "tls").mkdir(parents=True)
     cert, key = data / "tls" / "apcoder.pem", data / "tls" / "apcoder.key.pem"
-    cert.write_text("cert")
+    cert.write_text("cert", encoding="utf-8")
     service.write_config(data, certfile=str(cert), keyfile=str(key), allowed_hosts=["apcoder.company.local"])
     checks = {area: (status, detail) for area, status, detail in service.doctor_checks(data, env={}, windows=False)}
     assert checks["dashboard network"][0] == "PASS" and "this computer only" not in checks["dashboard network"][1]
@@ -375,7 +375,7 @@ def test_doctor_says_what_it_sees_on_the_server(tmp_path, monkeypatch):
     assert checks["server names"] == ("PASS", "apcoder.company.local")
     assert checks["server service"][0] == "SKIP"
     service.write_config(data, allowed_hosts=[])
-    key.write_text("key")
+    key.write_text("key", encoding="utf-8")
 
     def schtasks(cmd, **kwargs):
         return subprocess.CompletedProcess(cmd, 0, stdout="Status: Ready\nRun As User: APCoderService\n")

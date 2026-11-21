@@ -142,7 +142,7 @@ def test_non_recoverable_tax_on_its_own_account_is_spend(tmp_path):
     store = Store(tmp_path / "s.db")
     load_sample_setup(store)
     store.set_tax_treatment("PST", EXPENSE_SEPARATE, "5900")
-    doc = json.loads((SAMPLES / "ground_truth" / "pacific_BC_GST_PST_PO-77120.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / "pacific_BC_GST_PST_PO-77120.json").read_text(encoding="utf-8"))
     output, _ = finalise_coding(InvoiceCoding.model_validate(doc), store.reference_data(), Settings(), store=store)
     store.approve_invoice(store.add_invoice(tmp_path / "p.pdf", output, {}), output, "Jane")
     pst = sum(t["tax_amount"] for t in doc["tax_lines"] if t["tax_type"] == "PST")
