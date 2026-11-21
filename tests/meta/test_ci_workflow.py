@@ -504,7 +504,8 @@ def test_the_nightly_a_run_by_hand_and_a_merge_never_cancel_each_other():
 def test_a_pull_request_runs_the_suite_on_ubuntu_and_the_pilot_laptops_windows_and_main_runs_everything():
     """D-260: a pull request runs the whole suite four times (Ubuntu 3.12, and Windows 3.14 with OCR: the pilot
     laptop's; D-330: Windows 3.12 with OCR too, as Windows before Python 3.13 behaves otherwise; D-334: Ubuntu 3.11,
-    the floor, whose standard library behaves otherwise), every part of each, and the Windows launcher jobs on 3.14
+    the floor, whose standard library behaves as 3.12.0 to 3.12.6's and 3.13.0's do, which no cell runs: each takes
+    its Python's newest patch), every part of each, and the Windows launcher jobs on 3.14
     alone; Mac jobs and the other Pythons run on main (each merge, nightly), where a build is released only once all
     of them passed (.github/workflows/builds.yml)."""
     workflow = yaml.safe_load(CI.read_text(encoding="utf-8"))
