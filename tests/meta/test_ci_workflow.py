@@ -502,10 +502,11 @@ def test_the_nightly_a_run_by_hand_and_a_merge_never_cancel_each_other():
 
 @needs_ci
 def test_a_pull_request_runs_the_suite_on_ubuntu_and_the_pilot_laptops_windows_and_main_runs_everything():
-    """D-260: a pull request runs the whole suite three times (Ubuntu 3.12, and Windows 3.14 with OCR: the pilot
-    laptop's; D-330: Windows 3.12 with OCR too, as Windows before Python 3.13 behaves otherwise), every part of each,
-    and the Windows launcher jobs on 3.14 alone; Mac jobs and the other Pythons run on main (each merge, nightly),
-    where a build is released only once all of them passed (.github/workflows/builds.yml)."""
+    """D-260: a pull request runs the whole suite four times (Ubuntu 3.12, and Windows 3.14 with OCR: the pilot
+    laptop's; D-330: Windows 3.12 with OCR too, as Windows before Python 3.13 behaves otherwise; D-334: Ubuntu 3.11,
+    the floor, whose standard library behaves otherwise), every part of each, and the Windows launcher jobs on 3.14
+    alone; Mac jobs and the other Pythons run on main (each merge, nightly), where a build is released only once all
+    of them passed (.github/workflows/builds.yml)."""
     workflow = yaml.safe_load(CI.read_text(encoding="utf-8"))
     jobs, on = workflow["jobs"], workflow.get("on") or workflow.get(True)
     assert on["push"] == {"branches": ["main"]} and on["schedule"] and "pull_request" in on
@@ -518,6 +519,7 @@ def test_a_pull_request_runs_the_suite_on_ubuntu_and_the_pilot_laptops_windows_a
     for cell in picked:
         shards.setdefault((cell["os"], cell["python"], cell.get("extras")), []).append(cell["shard"])
     assert set(shards) == {
+        ("ubuntu-latest", "3.11", None),
         ("ubuntu-latest", "3.12", None),
         ("windows-latest", "3.12", "ocr,dev"),
         ("windows-latest", "3.14", "ocr,dev"),

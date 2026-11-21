@@ -1,6 +1,6 @@
 [
-  {"os": "ubuntu-latest", "python": "3.11", "shard": "1/2"},
-  {"os": "ubuntu-latest", "python": "3.11", "shard": "2/2"},
+  {"os": "ubuntu-latest", "python": "3.11", "shard": "1/2", "pull_request": true},
+  {"os": "ubuntu-latest", "python": "3.11", "shard": "2/2", "pull_request": true},
   {"os": "ubuntu-latest", "python": "3.12", "shard": "1/2", "pull_request": true},
   {"os": "ubuntu-latest", "python": "3.12", "shard": "2/2", "pull_request": true},
   {"os": "ubuntu-latest", "python": "3.13", "shard": "1/2"},

@@ -119,7 +119,7 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
   launcher changed: it walks the first day too; `--fast`, `--serial`, `--no-walk`.
 - Test: `python -m pytest -q`: all but slow tests, about 7,800 in 15 min serially; `-m ""`: all 8,800 in 37 min on 4
   quiet cores, the browser tests skipping (with Chromium, 13 min more), 1.5 times that beside other runs
-  (docs/REFERENCE.md; in the background: timeout 7,200,000 ms). CI
-  (Ubuntu 3.12, Windows 3.12 and 3.14; every Python and the Mac jobs on main after a merge and nightly, D-330): a
-  pull request about 23 min, main 35. Leave it to CI.
+  (docs/REFERENCE.md; in the background: timeout 7,200,000 ms). CI (Ubuntu 3.11 and 3.12, Windows 3.12 and 3.14; every
+  Python and the Mac jobs on main after a merge and nightly, D-334): a pull request about 23 min, main 35. Leave it to
+  CI.
 - Lint: `ruff check ap_coder tests scripts` and `ruff format --check ap_coder tests scripts`.

@@ -66,7 +66,7 @@ def test_the_plugin_names_a_shared_fixtures_setup_and_the_files_that_used_it(tmp
             kept.unlink()
 
 
-def test_the_test_files_of_some_functions_and_which_of_them_the_map_has(tmp_path):
+def test_the_test_files_of_some_functions_and_which_of_them_the_map_has(tmp_path, monkeypatch):
     """``tests_for``: the files of the keys together, and for each key whether the map has it; a store method asked
     as ``Store.func`` is its part's class's. No map: no file, and no key in it."""
     made = tm.build({TAXMATH: {_body_line(TAXMATH, "invoice_taxes"): [A, "tests/coding/test_gone.py"]},
@@ -80,7 +80,8 @@ def test_the_test_files_of_some_functions_and_which_of_them_the_map_has(tmp_path
     )  # fmt: skip  (a test file deleted since: left out)
     assert tm.tests_for([f"{INVOICES}::Store.final_approve"], test_map)[0] == [B]
     assert tm.load(tmp_path / "none.json.gz") is None
-    assert tm.tests_for([never], tm.load(tmp_path / "none.json.gz")) == ([], {never: False})
+    monkeypatch.setattr(tm, "load", lambda path=None: None)  # (no map in the repository: B-3026)
+    assert tm.tests_for([never]) == ([], {never: False})
 
 
 def test_the_lines_of_a_change_name_the_functions_they_are_in():
@@ -104,6 +105,9 @@ def test_a_key_whose_function_is_gone_is_said_stale_and_the_maps_keys_are_the_co
         return
     gone = set(tm.stale(kept))
     assert all(0 <= i < len(kept.tests) for found in kept.keys.values() for i in found)
+    have: dict[str, set[str]] = {}  # (each file read once: 6,800 keys, B-3026)
     for key in kept.keys:
         path, _, name = key.partition("::")
-        assert key in gone or name in tm.functions((ROOT / path).read_text(encoding="utf-8")), key
+        if path not in have and (ROOT / path).is_file():
+            have[path] = set(tm.functions((ROOT / path).read_text(encoding="utf-8")))
+        assert key in gone or name in have.get(path, set()), key
