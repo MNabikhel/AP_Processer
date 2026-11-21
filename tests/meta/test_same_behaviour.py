@@ -57,6 +57,55 @@ def test_the_jde_and_pages_probes_give_the_same_output_each_run(tmp_path, probe,
     assert first == second and first.count(b"\n") > lines
 
 
+def _probe(name: str):
+    spec = importlib.util.spec_from_file_location(f"{name}_probe", ROOT / "scripts" / "probes" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_jde_probe_leaves_out_only_the_times_the_clock_writes(capsys):
+    """The clock's times (a PO's ``updated_at``) are left out; a date the books give, a keying sheet's cell among
+    them, is printed as it is, so a wrong or swapped date says DIFFERENT."""
+    import datetime as dt
+
+    probe = _probe("jde")
+    cells = {"Keying sheet": [["Invoice date", dt.datetime(2026, 10, 24)]]}
+    probe.emit("x", po={"updated_at": "2026-11-21T03:29:33"}, sheet=cells, gl_date=dt.date(2026, 10, 20))
+    said = capsys.readouterr().out
+    assert '"updated_at": "(time)"' in said
+    assert "2026-10-24" in said and "2026-10-20" in said
+
+
+def _scratch_tree(to: Path) -> Path:
+    import shutil
+
+    for part in ("ap_coder", "data", "samples"):
+        shutil.copytree(ROOT / part, to / part, ignore=shutil.ignore_patterns("__pycache__"))
+    return to
+
+
+@pytest.mark.slow
+def test_the_jde_probe_says_different_for_a_keying_sheet_with_two_dates_swapped(tmp_path):
+    """B-3010: the G/L date and the invoice date swapped on the keying sheet (what the clerk types) gave the same
+    bytes, every date cell having been left out as a time of the clock."""
+    tree = _scratch_tree(tmp_path / "tree")
+    keying = tree / "ap_coder" / "erp" / "jde_keying.py"
+    text = keying.read_text(encoding="utf-8")
+    right = '[("Invoice date", LABEL), (v.invoice_date, DATE), ("G/L date", LABEL), (v.gl_date, DATE)]'
+    assert text.count(right) == 1
+    keying.write_text(text.replace(right, right.replace("v.invoice_date", "v.X").replace("v.gl_date", "v.invoice_date")
+                                   .replace("v.X", "v.gl_date")), encoding="utf-8")  # fmt: skip
+    runs = [subprocess.Popen([sys.executable, str(ROOT / "scripts" / "probes" / "jde.py"), "0", str(tmp_path / name)],
+                             env={**os.environ, "PYTHONPATH": str(base), "PYTHONHASHSEED": "0"},
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            for name, base in (("before", ROOT), ("after", tree))]  # fmt: skip
+    (before, err), (after, _) = (run.communicate() for run in runs)
+    assert all(run.returncode == 0 for run in runs), err[-3000:]
+    assert before != after
+    assert "/sheet/Keying sheet" in _tool().first_difference(before, after)
+
+
 def test_the_pages_probe_leaves_out_what_differs_run_to_run(tmp_path):
     spec = importlib.util.spec_from_file_location("pages_probe", ROOT / "scripts" / "probes" / "pages.py")
     probe = importlib.util.module_from_spec(spec)
