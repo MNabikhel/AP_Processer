@@ -50,24 +50,38 @@ def answers(client, store, n: int) -> list[tuple[str, str]]:
     return asked
 
 
-def fix_the_clock(day: dt.date = DAY) -> None:
+def start_the_app(work: Path, settings) -> None:
+    """The app made as ``python -m ap_coder serve`` makes it (the command line, then the app and its pages), on a
+    database of its own: what stops it from starting (an import cycle) stops the probe, before ``fix_the_clock``
+    imports the rest of the app in its folders' order, which may hide it (B-3028)."""
+    import ap_coder.ops.cli  # noqa: F401 - what python -m ap_coder imports first
+    from ap_coder.core.store import Store
+    from ap_coder.web.app import create_app
+
+    create_app(settings, Store(work / "start" / "ap_coder.db"), start_reader=False)
+
+
+def fix_the_clock(day: dt.date = DAY) -> dict[str, str]:
     """The app's ``date.today()`` and ``datetime.now()`` read ``day`` at noon, then as many seconds as the run has
     taken, so two runs on either side of midnight print the same dates (B-3016). Every module of the app is imported
     first, then each name it holds for ``datetime`` (the module, its ``date``, its ``datetime``) is the probe's: the
     libraries keep theirs (pandas' compiled code is built on the real classes). A date made elsewhere is still a date
-    to the app (``isinstance`` holds both ways)."""
+    to the app (``isinstance`` holds both ways). Returns the modules that could not be imported, with why (a part
+    that needs what this computer lacks, or one a change broke: printed, so that says DIFFERENT)."""
     import importlib
     import pkgutil
     import types
 
     import ap_coder
 
+    failed = {}
+    tree = str(Path(ap_coder.__path__[0]).parent)
     for found in pkgutil.walk_packages(ap_coder.__path__, "ap_coder."):
         if not found.name.endswith("__main__"):
             try:
                 importlib.import_module(found.name)
-            except Exception:  # noqa: BLE001 - a part that needs what this computer lacks (Azure's, Windows')
-                pass
+            except Exception as exc:  # noqa: BLE001 - said in the output
+                failed[found.name] = f"{type(exc).__name__}: {exc}".replace(tree, "(tree)")
     real_date, real_datetime = dt.date, dt.datetime
     start, began = real_datetime.combine(day, dt.time(12)), time.monotonic()
 
@@ -107,25 +121,29 @@ def fix_the_clock(day: dt.date = DAY) -> None:
             for attr, value in list(vars(module).items()):
                 if value is dt or value is real_date or value is real_datetime:
                     setattr(module, attr, {id(dt): shim, id(real_date): Date, id(real_datetime): DateTime}[id(value)])
+    return failed
 
 
 def main() -> None:
     n, work = int(sys.argv[1]), Path(sys.argv[2]).resolve()
-    fix_the_clock()
     work.mkdir(parents=True, exist_ok=True)
     os.chdir(work)  # a data folder under the working folder is shown by its path from there: the same for both trees
     os.environ["AP_PRIVATE_DIR"] = str(work / "private")
     os.environ["AP_USER_SETTINGS"] = str(work / "user.json")
     os.environ["HOME"] = os.environ["USERPROFILE"] = str(work / "home")
+    from ap_coder.core.config import Settings
+
+    settings = Settings()
+    settings = replace(settings, llm=replace(settings.llm, provider="off"))  # no chat model is asked
+    start_the_app(work, settings)
+    for module, why in sorted(fix_the_clock().items()):
+        print(json.dumps({"kind": "not imported", "path": module, "body": why}, sort_keys=True))
     from fastapi.testclient import TestClient
 
-    from ap_coder.core.config import Settings
     from ap_coder.core.store import Store
     from ap_coder.ops.demo import load_company, load_demo
     from ap_coder.web.app import create_app
 
-    settings = Settings()
-    settings = replace(settings, llm=replace(settings.llm, provider="off"))  # no chat model is asked
     for name, load in (("demo", load_demo), ("company", lambda s, c: load_company(s, c, on=ON))):
         store = Store(work / name / "ap_coder.db")
         load(store, settings)
