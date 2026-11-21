@@ -236,7 +236,7 @@ def picks(files: list[str], notes: dict[str, list[str]] | None = None) -> dict[s
                 found[f] |= more
         if mapped and f.startswith("ap_coder/") and f.endswith(".py"):
             module, test_map = mapped
-            ran = [ROOT / t for t in module.tests_for(map_keys(module, f), test_map)[0] if t not in found[f]]
+            ran = [ROOT / t for t in module.tests_for(map_keys(f), test_map)[0] if t not in found[f]]
             taken = {p.relative_to(ROOT).as_posix() for p in quickest(ran, mirror(f), times)} if ran else set()
             left = sorted({p.relative_to(ROOT).as_posix() for p in ran} - taken)
             rest = f"; {len(left)} left to CI (about {estimate(left, times):.0f} s more)" if left else ""
@@ -260,18 +260,35 @@ def load_map(path: Path | None = None) -> tuple[ModuleType, Any] | None:
     return None if test_map is None else (module, test_map)
 
 
-def map_keys(module: ModuleType, f: str) -> set[str]:
-    """The map's keys of the functions of ``f`` the diff touches: in the file as it is and, for the lines taken out,
-    as it was; all of them in a file git doesn't have yet."""
+def map_keys(f: str) -> set[str]:
+    """The map's keys of the functions of ``f`` the diff touches, their signatures and decorators too: in the file as
+    it is and, for the lines taken out, as it was; all of them in a file git doesn't have yet."""
     path = ROOT / f
     text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
     changed = changed_lines(f)
     now, was = (set(range(1, text.count("\n") + 2)), set()) if changed is None else changed
+    keys = {f"{f}::{name}" for name, lines in map_spans(text).items() if lines & now}
+    return keys | ({f"{f}::{name}" for name, lines in map_spans(committed(f)).items() if lines & was} if was else set())
+
+
+def map_spans(text: str) -> dict[str, set[int]]:
+    """The functions of a module as the test map names them (``func``, ``Class.func``; one inside a function is part
+    of that one), each with its lines from its decorators on: the map is made of the lines coverage counts, the body's,
+    but a changed signature or page address changes the function too."""
+    found: dict[str, set[int]] = {}
+
+    def walk(body: list[ast.stmt], prefix: str) -> None:
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                found[prefix + node.name] = span(node)
+            elif isinstance(node, ast.ClassDef):
+                walk(node.body, f"{prefix}{node.name}.")
+
     try:
-        keys = module.keys_for_lines(f, now, text) if now and text else set()
-        return keys | (module.keys_for_lines(f, was, committed(f)) if was else set())
+        walk(ast.parse(text).body, "")
     except SyntaxError:  # (ruff says so)
-        return set()
+        return {}
+    return found
 
 
 def tests_for(files: list[str], found: dict[str, set[str]] | None = None) -> list[str] | None:

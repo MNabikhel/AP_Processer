@@ -293,6 +293,32 @@ def test_with_a_test_map_the_functions_changed_bring_the_tests_that_ran_them(mon
     assert load(tmp_path / "gone.gz") is None
 
 
+def test_the_test_map_takes_a_functions_signature_and_decorators_for_part_of_it(monkeypatch):
+    """B-3030: the map's keys of a diff came from the functions' bodies only (the lines coverage counts), so a changed
+    default value, parameter or page address (``@router.get``) brought none of the tests the map says ran it:
+    Store.final_approve's signature, D-333's own example, among them."""
+    mapped = check.load_map()
+    assert mapped, "tests/test_map.json.gz, the committed map"
+    module, test_map = mapped
+    store, exports = "ap_coder/core/store/invoices.py", "ap_coder/web/pages/exports.py"
+    texts = {f: (ROOT / f).read_text(encoding="utf-8") for f in (store, exports)}
+
+    def head(text: str, name: str) -> set[int]:  # its decorators' and its signature's lines, before its body
+        (node,) = [n for n in check.functions(text) if n.name == name]
+        return set(range(min([node.lineno, *(d.lineno for d in node.decorator_list)]), node.body[0].lineno))
+
+    monkeypatch.setattr(check, "committed", lambda f: texts[f])
+    changed = {
+        store: (head(texts[store], "final_approve"), set()),
+        exports: (set(), head(texts[exports], "exports_page")),
+    }
+    monkeypatch.setattr(check, "changed_lines", lambda f: changed[f])
+    final_approve = f"{store}::InvoicesMixin.final_approve"
+    assert check.map_keys(store) == {final_approve} and test_map.files(final_approve)  # (tests that ran it)
+    assert check.map_keys(exports) == {f"{exports}::exports_page"}  # (its @router lines, taken out)
+    assert set(check.map_spans(texts[store])) == set(module.functions(texts[store]))  # (the map's names, all of them)
+
+
 def test_a_name_too_many_tests_have_brings_none(monkeypatch):
     texts = {ROOT / f"tests/x/test_{i}.py": "main(); ready_problems()" if i < 2 else "main()" for i in range(20)}
     assert check.named_tests({"main", "__init__", "ready_problems", "gone"}, texts) == {
