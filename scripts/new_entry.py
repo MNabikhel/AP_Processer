@@ -1,7 +1,9 @@
 """Write a new bug or decision entry under its number, taken now (D-328): a file of its own, ``docs/bugs/B-NNNN.md``
-or ``docs/decisions/D-NNN.md``, numbered after every entry any branch of this clone has.
+or ``docs/decisions/D-NNN.md`` (a suspicion that didn't reproduce, ``docs/bugs/N-NNN.md``), numbered after every entry
+any branch of this clone has.
 
     python scripts/new_entry.py B 'what broke · severity · `tests/x/test_y.py::test_z`'
+    python scripts/new_entry.py N 'what was suspected · what was checked, and why it is left'
     python scripts/new_entry.py B --file entry.txt     the words in a file (or on stdin: B < entry.txt)
     python scripts/new_entry.py D --file entry.md      a decision, its lines in a file (or on stdin)
 
@@ -9,16 +11,16 @@ The words go in single quotes: in double quotes the shell runs what is in backti
 quote ('), or typed in Windows' cmd (where ' quotes nothing), go in a file (--file) or on stdin.
 
 The text is the entry without its start, ``- **B-NNNN** · ``, which the script writes with the number. A bug is one
-line: what broke · its severity (low, medium, high...) · the test that keeps it fixed. A decision is its first line
-(``**The choice.** (B-, D- it builds on)``) and then its ``  - **Why:**``, ``  - **How:**`` and ``  - *Not chosen:*``
-lines, indented two spaces, each line at most 120 characters with the start.
+line: what broke · its severity (low, medium, high...) · the test that keeps it fixed; a note is one line too. A
+decision is its first line (``**The choice.** (B-, D- it builds on)``) and then its ``  - **Why:**``, ``  - **How:**``
+and ``  - *Not chosen:*`` lines, indented two spaces, each line at most 120 characters with the start.
 
 The number is one more than the highest an entry has in this checkout (docs/BUGS.md and docs/decisions.md, frozen at
-B-2997 and D-327; the archive; docs/bugs/ and docs/decisions/), on every local and remote branch (as last fetched:
-nothing is fetched, no network) and among the numbers this clone's worktrees reserved. It is reserved by a file in
-``<git common dir>/ap-numbers/``, made only if no other run made it first, so two worktrees of one clone never take
-the same number. Then the file is written and added to git, and the number printed. Separate clones can still take
-one number: ``scripts/combine.py`` gives the later branch's entry the next one.
+B-2997 and D-327; the archive, its notes to N-253; docs/bugs/ and docs/decisions/), on every local and remote branch
+(as last fetched: nothing is fetched, no network) and among the numbers this clone's worktrees reserved. It is
+reserved by a file in ``<git common dir>/ap-numbers/``, made only if no other run made it first, so two worktrees of
+one clone never take the same number. Then the file is written and added to git, and the number printed. Separate
+clones can still take one number: ``scripts/combine.py`` gives the later branch's entry the next one.
 """
 
 from __future__ import annotations
@@ -31,12 +33,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-LOGS = {"B": "docs/BUGS.md", "D": "docs/decisions.md"}  # the frozen logs: every entry to B-2997 and D-327
-ARCHIVES = {"B": "docs/archive/bugs-*.md", "D": "docs/archive/decisions-*.md"}
-FOLDERS = {"B": "docs/bugs", "D": "docs/decisions"}  # an entry a file, after the frozen logs
-FROZEN = {"B": 2997, "D": 327}  # the last entry of each frozen log
-FILE_NAME = re.compile(r"([BD])-(\d+)\.md")
-LONGEST = {"B": 2000, "D": 120}  # a bug's line is cut off past 2,000 when read; a decision's lines are wrapped
+# The frozen logs: every entry to B-2997 and D-327, and the N- notes (suspicions that didn't reproduce) to N-253
+LOGS = {"B": "docs/BUGS.md", "D": "docs/decisions.md", "N": "docs/BUGS.md"}
+ARCHIVES = {"B": "docs/archive/bugs-*.md", "D": "docs/archive/decisions-*.md", "N": "docs/archive/bugs-*.md"}
+FOLDERS = {"B": "docs/bugs", "D": "docs/decisions", "N": "docs/bugs"}  # an entry a file, after the frozen logs
+FROZEN = {"B": 2997, "D": 327, "N": 253}  # the last entry of each frozen log (the N- notes': the archive's)
+FILE_NAME = re.compile(r"([BDN])-(\d+)\.md")
+LONGEST = {"B": 2000, "D": 120, "N": 2000}  # a line is cut off past 2,000 when read; a decision's lines are wrapped
 RESERVED = "ap-numbers"
 SEVERITY = re.compile(r"(?:very )?(?:low|medium|high|minor)\b", re.I)  # (medium-low, high (security)...)
 QUOTES = "Words in double quotes lose their backticks and $ to the shell: give them in single quotes, or with --file."
@@ -149,6 +152,8 @@ def entry(kind: str, number: int, text: str) -> str:
     lines = f"- **{kind}-{number}** · {text}".split("\n")
     if kind == "B" and len(lines) > 1:
         raise Refused("A bug is one line: what broke · severity · `the test that keeps it fixed`.")
+    if kind == "N" and len(lines) > 1:
+        raise Refused("A note is one line: what was suspected · what was checked, and why it is left.")
     if kind == "B":
         parts = text.rsplit(" · ", 2)
         if len(parts) < 3:
@@ -187,7 +192,8 @@ def write_entry(kind: str, text: str) -> tuple[int, str]:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="\n\n".join(__doc__.split("\n\n")[:3]),  # (with how to quote)
                                      formatter_class=argparse.RawDescriptionHelpFormatter)  # fmt: skip
-    parser.add_argument("kind", type=str.upper, choices=sorted(LOGS), help="B, a bug; D, a decision")
+    parser.add_argument("kind", type=str.upper, choices=sorted(LOGS),
+                        help="B, a bug; D, a decision; N, a note of a suspicion that didn't reproduce")  # fmt: skip
     parser.add_argument("text", nargs="?", help="the entry's words, without its start, in single quotes (else --file, "
                         "or stdin: for words holding a quote, or in Windows' cmd)")  # fmt: skip
     parser.add_argument("--file", type=Path, help="a file holding the entry's words (a decision's several lines)")

@@ -39,7 +39,9 @@ def read(path: Path) -> str:
 
 
 def entry_files(kind: str) -> list[Path]:
-    return sorted(p for p in (ROOT / new_entry.FOLDERS[kind]).iterdir() if p.name != "README.md")
+    """The files of this kind's entries (the N- notes are in docs/bugs/ with the bugs)."""
+    return sorted(p for p in (ROOT / new_entry.FOLDERS[kind]).iterdir()
+                  if (m := new_entry.FILE_NAME.fullmatch(p.name)) and m[1] == kind)  # fmt: skip
 
 
 def all_entries(kind: str) -> dict[str, list[int]]:
@@ -52,22 +54,23 @@ def all_entries(kind: str) -> dict[str, list[int]]:
 
 
 def test_each_entry_file_holds_the_one_entry_it_is_named_after():
-    """``B-NNNN.md`` is the line ``- **B-NNNN** · ...``; ``D-NNN.md`` is ``- **D-NNN** · **...**`` and its lines,
-    indented two spaces (as at the end of docs/decisions.md; at most 120 characters: test_agent_friendly.py). Nothing
-    else is in the folders but their README."""
+    """``B-NNNN.md`` is the line ``- **B-NNNN** · ...`` (an N- note's ``N-NNN.md`` too); ``D-NNN.md`` is
+    ``- **D-NNN** · **...**`` and its lines, indented two spaces (as at the end of docs/decisions.md; at most 120
+    characters: test_agent_friendly.py). Nothing else is in the folders but their README."""
     bad = []
-    for kind in new_entry.FOLDERS:
-        for path in entry_files(kind):
-            name = f"{new_entry.FOLDERS[kind]}/{path.name}"
-            if not ((m := new_entry.FILE_NAME.fullmatch(path.name)) and m[1] == kind and not m[2].startswith("0")):
-                bad.append(f"{name}: only entries here, each named {kind}-NNN.md")
+    for folder in sorted(set(new_entry.FOLDERS.values())):
+        kinds = [kind for kind, its in new_entry.FOLDERS.items() if its == folder]
+        for path in sorted(p for p in (ROOT / folder).iterdir() if p.name != "README.md"):
+            name = f"{folder}/{path.name}"
+            if not ((m := new_entry.FILE_NAME.fullmatch(path.name)) and m[1] in kinds and not m[2].startswith("0")):
+                bad.append(f"{name}: only entries here, each named {' or '.join(f'{k}-NNN.md' for k in kinds)}")
                 continue
-            text, number = read(path), int(m[2])
-            lines = text.split("\n")
+            text, kind, number = read(path), m[1], int(m[2])
+            lines, one = text.split("\n"), kind != "D"
             if not lines[0].startswith(f"- **{kind}-{number}** · "):
                 bad.append(f"{name}: its first line starts '- **{kind}-{number}** · ' (python scripts/new_entry.py)")
-            if not text.endswith("\n") or text.endswith("\n\n") or (kind == "B" and len(lines) != 2):
-                bad.append(f"{name}: the entry, {'one line' if kind == 'B' else 'its lines'} and one line end")
+            if not text.endswith("\n") or text.endswith("\n\n") or (one and len(lines) != 2):
+                bad.append(f"{name}: the entry, {'one line' if one else 'its lines'} and one line end")
             bad += [f"{name}:{n}: not indented two spaces (each line after the first is)"
                     for n, line in enumerate(lines[1:-1], 2) if not line.startswith("  ")]  # fmt: skip
     assert not bad, "\n".join(bad)
@@ -90,7 +93,10 @@ def test_the_frozen_logs_take_no_new_entry():
         said = f"{path} is frozen: a new entry is a file of its own (python scripts/new_entry.py {kind} ..., D-328)"
         assert (len(numbers), max(numbers)) == (count, last), said
         assert lines[tail].startswith(f"- **{kind}-{last}** · "), f"{said}; nothing after its last entry"
-    assert {kind: last for path, (kind, _, last) in FROZEN.items() if "archive" not in path} == new_entry.FROZEN
+    logs = {kind: last for path, (kind, _, last) in FROZEN.items() if "archive" not in path}
+    notes = {path: new_entry.headers(read(ROOT / path), "N") for path in FROZEN}  # (to N-253, in the archive)
+    assert logs | {"N": max(notes["docs/archive/bugs-2026-10.md"])} == new_entry.FROZEN
+    assert not notes["docs/BUGS.md"], "an N- note is a file of its own (python scripts/new_entry.py N ...)"
 
 
 def test_no_number_has_two_entries():
@@ -282,3 +288,19 @@ def test_words_in_single_quotes_keep_their_backticks_and_dollars_and_in_double_q
     done = subprocess.run(["bash", "-c", f'{command} "{words}"'], capture_output=True, text=True, encoding="utf-8")
     assert (done.returncode, done.stdout) == (1, "") and "in single quotes" in done.stderr, done.stderr
     assert not (clone / "docs" / "bugs" / "B-13.md").exists()
+
+
+def test_a_suspicion_that_did_not_reproduce_is_a_note_of_its_own_numbered_after_every_other(clone, capsys):
+    """B-3004: an N- note had no place the rules took (docs/BUGS.md frozen, docs/bugs/ only B- files, new_entry.py B
+    or D): it is docs/bugs/N-NNN.md, numbered after the archive's and every branch's, as a bug is."""
+    archive = "# Bug log\n\n- **B-01** · first · low · `t`\n- **N-7** · a doubt · left.\n"
+    commit({"docs/archive/bugs-2026-10.md": archive}, clone)
+    git("checkout", "-q", "-b", "old")
+    commit({"docs/BUGS.md": BUGS + "- **N-8** · at the end of the log, before D-328 · left.\n"}, clone)
+    git("checkout", "-q", "main")
+    note = "a crash seen once on Windows · not reproduced in 20 runs; left"
+    code, out, err = write(["n", note], capsys)
+    assert (code, out) == (0, "N-9\n") and "docs/bugs/N-9.md" in err
+    assert read(clone / "docs/bugs/N-9.md") == f"- **N-9** · {note}\n"
+    assert write(["B", "a bug · low · `tests/x.py::test_y`"], capsys)[:2] == (0, "B-12\n")  # (numbered apart)
+    assert write(["N", "two\nlines"], capsys)[0] == 1
