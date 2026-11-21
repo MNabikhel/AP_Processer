@@ -26,6 +26,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6", "httpx>=0.27,<1"]  # httpx: fastapi.testclient
+# scripts/check.py's tests on several cores (pytest -n), a developer's tool: not in dev, which the offline bundle and
+# the installer carry (D-329).
+parallel = ["pytest-xdist==3.8.0"]
 # Azure Document Intelligence (an optional check of the local reading, switched on in the settings) and Azure
 # OpenAI's sign-in: never needed to install or start AP Coder. The offline bundle carries these wheels and the
 # launcher installs them from its wheelhouse when it can (never failing when it can't); code switched on to use
