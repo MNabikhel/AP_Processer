@@ -15,6 +15,16 @@ so both runs see the same ones):
     pipeline  whole files through the offline pipeline into a database (N, default 20; ~5 min)
     migrate   each older release's database (tests/fixtures/old_schemas/), seeded and brought up to date: its schema
               and every table (N invoices in each, default 30; ~10 s)
+    jde       PO matching, JD Edwards vouchers and bulk approval on made-up books: each PO case's match and checks,
+              each batch's checks, dry run, keying sheet and files under 16 settings, then N batches picked by a
+              seed; the queue's bulk approval (N, default 67; ~30 s)
+    pages     every page of the dashboard, each invoice's review screen and the lists it fetches, on the demo and on
+              the made-up JD Edwards company (N review screens a database at most, default 30; ~15 s)
+
+Which probe proves which folder (for a move: ``scripts/moved_same.py`` first): ``capture/`` read and pipeline;
+``ai/`` pipeline; ``coding/`` tax (tax.py, taxmath.py), approve, and jde (po.py, bulk.py); ``core/store/`` approve
+and migrate; ``erp/`` jde (the jde_* modules) and pages (the exports and reports pages); ``web/`` pages. ``intake/``
+and ``ops/``: their tests alone.
 
 Exit code 0 when every probe gives the same output, 1 when one differs (the first difference is shown), 2 when a
 probe failed to run. A difference is a change of behaviour: either intended (then say so in the commit) or a bug.
@@ -35,7 +45,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PROBES = ROOT / "scripts" / "probes"
-DEFAULT_N = {"tax": 20000, "approve": 200, "read": 24, "pipeline": 20, "migrate": 30}
+DEFAULT_N = {"tax": 20000, "approve": 200, "read": 24, "pipeline": 20, "migrate": 30, "jde": 67, "pages": 30}
 DEFAULT = ("tax", "approve", "read")
 
 

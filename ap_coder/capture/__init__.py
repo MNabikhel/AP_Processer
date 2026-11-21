@@ -4,6 +4,14 @@
 ``analyze`` reads one invoice with every reader available and returns, per header field, the value,
 a calibrated confidence, a status (verified / likely / check / missing), the boxes on the page and
 the reasons, plus the cross-field checks.
+
+The modules: ``layout`` (the words and lines with their boxes; ``tables``, ``table_finder``), ``transcript`` (the page
+reader's text laid out as a page), ``reader`` (the rule reader: labels, patterns, positions), ``line_items`` and
+``line_memory`` (the lines, and a supplier's as AP approved them), ``normalize`` (amounts, dates, numbers),
+``locate`` (where a value another reader found is printed), ``confidence`` (the readers combined), ``not_invoice``
+and ``instructions`` (a document that is no invoice, text addressed to software), ``bridge`` (the AI's coding as a
+reader, the vendor master as a check), ``types``. Touchless: ``supplier`` (each supplier's record,
+``touchless_gates``) and ``workflow`` (``autonomy_decision``, learning at an approval).
 """
 
 from __future__ import annotations

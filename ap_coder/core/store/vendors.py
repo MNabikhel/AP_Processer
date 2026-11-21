@@ -289,8 +289,10 @@ class VendorsMixin:
         return [*listed(SKIP_WORDS), STAR] if saved == "\0" else listed(saved)
 
     def vendor_key_for(self, name: str | None, gst_number: Any = None) -> str:
-        """The vendor key an invoice's vendor is kept under (its history, its lessons, its checks): ``vendor_key`` of
-        the name, or the key of the vendor list's second vendor by that name it is (``find_vendor``, B-1021)."""
+        """The vendor an invoice is filed under (its history, its lessons, its terms, its checks): the vendor list's
+        vendor of its name and GST/HST number (``find_vendor``: two suppliers whose names read the same are two
+        vendors, the second kept as "<name> #<supplier number>", B-1021), else the vendor of a name AP corrected
+        (D-119), else ``vendor_key`` of the name. ``vendor_key`` alone is a name's key, for matching names."""
         key = vendor_key(name or "")
         if not key:
             return ""
