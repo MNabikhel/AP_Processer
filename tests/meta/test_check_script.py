@@ -155,6 +155,24 @@ def test_the_rules_run_their_slow_tests_but_no_browser_nor_the_offline_guards_wh
     assert "-m" not in ran[1] and "tests/coding/test_terms.py" in ran[1]
 
 
+def test_asked_for_the_rules_run_once_as_for_a_change_to_code_whatever_changed(monkeypatch, capsys):
+    """B-3014: combine.py's check of docs-only merges ran RULES itself with a bare -m "" (the offline guard's whole
+    walks, every route for every role, the browser tests: about 110 s more), and with pyproject.toml RULES twice.
+    ``--rules`` runs them as check.py's own run does, once, whatever changed."""
+    ran = []
+    monkeypatch.setattr(check, "pytest", lambda args: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
+    rules = sorted(check.RULES)
+    assert check.main(["--rules", "--serial", "--no-walk", "docs/BUGS.md"]) == 0
+    assert ran == [[*check.rules_args(rules), *rules]]  # (the doc's own rules are tests/meta's)
+    ran.clear()
+    assert check.main(["--rules", "--serial", "--no-walk", "pyproject.toml"]) == 0  # (the whole default run too)
+    assert len(ran) == 2 and set(ran[0][-len(rules) :]) == set(rules) and ran[1] == []
+    ran.clear()
+    monkeypatch.setattr(check, "changed_files", lambda: [])
+    assert check.main(["--rules", "--serial", "--no-walk"]) == 0 and ran == [[*check.rules_args(rules), *rules]]
+    assert capsys.readouterr().out.count("Rules: ") == 3
+
+
 def test_a_long_run_goes_on_several_cores(monkeypatch, capsys):
     """pytest-xdist (the parallel extra): a run of over PARALLEL_SECONDS on AP_CHECK_WORKERS cores, else up to 4."""
     ran = []

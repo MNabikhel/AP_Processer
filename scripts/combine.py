@@ -17,9 +17,9 @@ being merged and the ones merged before it each gave to a new entry of their own
 one clone are kept apart by scripts/new_entry.py) is given anew to the branch's entry (the next number no branch has
 and this clone did not reserve), its file renamed, with its mentions in the lines that branch changed (code, tests,
 docs), in a commit on top of the branch; the branch itself is left as it was. Each merge is committed; nothing is
-pushed. The check: ``python scripts/check.py`` on the files the merges changed, the rules that check the whole tree
-(its ``RULES``) run once: by it for a change to code, else first. Exit code 0 when all is merged and checked, 1 when
-something needs a person, 2 when nothing was done.
+pushed. The check: ``python scripts/check.py --rules`` on the files the merges changed: their tests, and the rules
+that check the whole tree (its ``RULES``) whatever changed, run once as check.py runs them. Exit code 0 when all is
+merged and checked, 1 when something needs a person, 2 when nothing was done.
 
 A trial (``--trial``) changes no worktree, index or ref: each merge is made by ``git merge-tree --write-tree`` (git
 2.38 or newer) as objects only, a number given anew and the docs the script settles included, and the next branch is
@@ -43,7 +43,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # scripts/ is no package: new_entry.py is beside this one
 import new_entry  # noqa: E402  (standard library only)
-from check import RULES, checks_whole_tree  # noqa: E402  (the rules that check the whole tree, and what runs them)
 from new_entry import FILE_NAME, FOLDERS, FROZEN, LOGS  # noqa: E402  (the logs, frozen, and the entries' folders)
 
 MENTION = re.compile(r"(?<![A-Za-z0-9_])([BD])-(\d+)(?!\d)")
@@ -612,19 +611,17 @@ def run_step(command: list[str]) -> bool:
 
 
 def check(start: str) -> bool:
-    """scripts/check.py on the files the merges changed, the rules that check the whole tree (its RULES) run once:
-    by it when code changed, else first (only docs changed: it would run only the docs' own rules)."""
+    """scripts/check.py on the files the merges changed, with the rules that check the whole tree (its RULES)
+    whatever changed (``--rules``: docs alone bring only the docs' own rules), run once, as check.py runs them."""
     files = git("diff", "--name-only", start, "HEAD").splitlines()
     if not files:
         print("\nNothing changed: no check needed.")
         return True
-    by_it = any(checks_whole_tree(f) for f in files)
-    print(f"\nChecking: scripts/check.py on the {n_files(len(files))} the merges changed, and the rules that check the "
-          f"whole tree ({'run by it' if by_it else 'run first, as only docs changed'}).", flush=True)  # fmt: skip
-    rules = by_it or run_step([sys.executable, "-m", "pytest", "-q", "-m", "", *RULES])
-    changed = run_step([sys.executable, "scripts/check.py", *files])
-    print("Checks: OK." if rules and changed else "Checks: FAILED: see above; the merges are committed, not pushed.")
-    return rules and changed
+    print(f"\nChecking: scripts/check.py on the {n_files(len(files))} the merges changed, with the rules that check "
+          "the whole tree.", flush=True)  # fmt: skip
+    passed = run_step([sys.executable, "scripts/check.py", "--rules", *files])
+    print("Checks: OK." if passed else "Checks: FAILED: see above; the merges are committed, not pushed.")
+    return passed
 
 
 def main(argv: list[str]) -> int:
@@ -657,9 +654,8 @@ def main(argv: list[str]) -> int:
                 print(f"  Not merged yet: {', '.join(rest)}. Once this merge is committed: "
                       f"python scripts/combine.py {' '.join(rest)}")  # fmt: skip
             if not args.no_check:
-                print(f"  Not checked: once all is merged, python scripts/check.py on the files of git diff "
-                      f"--name-only {start[:10]} HEAD (if they are docs only, python -m pytest -q -m \"\" "
-                      f"{' '.join(RULES)} too).")  # fmt: skip
+                print(f"  Not checked: once all is merged, python scripts/check.py --rules on the files of git diff "
+                      f"--name-only {start[:10]} HEAD.")  # fmt: skip
             return 1
     print(f"\nMerged {len(merged)} of {len(args.branches)} branches: {', '.join(merged) or 'none'}. Nothing pushed.")
     if args.no_check:

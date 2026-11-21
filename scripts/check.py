@@ -5,6 +5,7 @@
     --walk / --no-walk                   run the first-day walk whatever changed / not at all
     --fast                               the default run's tests of the files picked only (no slow ones)
     --serial                             on one core (else a long run takes AP_CHECK_WORKERS, or up to 4)
+    --rules                              the rules that check the whole tree too, whatever changed (combine.py)
 
 The tests picked for a changed module are its own (``tests/<folder>/test_<module>*.py``, the folders mirror
 ap_coder/, or those named in ``OWN``), the test files that import it by name (a script: those that load it; a module
@@ -418,18 +419,26 @@ def rules_args(rules: list[str]) -> list[str]:
     return ["-m", "", "-k", "not in_a_browser", *(a for t in left_out for a in ("--deselect", t))]
 
 
+def run_rules(rules: list[str], times: dict[str, list[float]], serial: bool = False) -> bool:
+    """The rules that check the whole tree (or those of them a change brings), run as every check runs them: their
+    slow tests too, no browser, none of CI's whole walks (``rules_args``), on several cores when long. Whether they
+    passed."""
+    print("Rules:", " ".join(rules), flush=True)
+    return not run_tests(rules_args(rules), rules, estimate(rules, times, slow=False), serial, retry=False)
+
+
 def main(argv: list[str]) -> int:
     if any(a in ("-h", "--help") for a in argv):
         print(__doc__.strip())
         return 0
-    flags = ("--walk", "--no-walk", "--fast", "--serial")
-    force, skip, fast, serial = (flag in argv for flag in flags)
+    flags = ("--walk", "--no-walk", "--fast", "--serial", "--rules")
+    force, skip, fast, serial, all_rules = (flag in argv for flag in flags)
     argv = [a for a in argv if a not in flags]
     files = [f.replace("\\", "/") for f in argv] or changed_files()  # (ap_coder\x.py as typed on Windows)
     if files is None:
         print("Not a git checkout: name the files to check, e.g. python scripts/check.py ap_coder/coding/tax.py")
         return 2
-    if not files and not force:
+    if not files and not (force or all_rules):
         print("Nothing changed since the last commit (name files to check them).")
         return 0
     failed = False
@@ -445,14 +454,15 @@ def main(argv: list[str]) -> int:
     found = picks(files, notes)
     times = read_tests()[1]
     tests = tests_for(files, found) if files else []  # (--walk alone: the walk only)
+    if all_rules and tests is not None:
+        tests = sorted({t for t in tests if not is_rule(t)} | set(RULES))  # (tests/meta's among them)
     rules = list(RULES) if tests is None else [t for t in tests if is_rule(t)]
     if tests == [] and files:
         print("No tests found for these files.")
     for f, said in notes.items():
         print("".join(f"{f}: {line}\n" for line in said), end="")
     if rules:
-        print("Rules:", " ".join(rules), flush=True)
-        failed |= run_tests(rules_args(rules), rules, estimate(rules, times, slow=False), serial, retry=False)
+        failed |= not run_rules(rules, times, serial)
     if tests is None or any(not is_rule(t) for t in tests):
         picked = None if tests is None else [t for t in tests if not is_rule(t)]
         # A page's script, template or stylesheet is tested in a browser: those tests are slow, so asked for here.
