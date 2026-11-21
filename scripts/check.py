@@ -45,10 +45,12 @@ SHARED = {"tests/conftest.py", "tests/webclient.py", "tests/pdfs.py", "tests/scr
           "tests/slow_tests.txt", "tests/stores.py", "pyproject.toml"}  # fmt: skip
 # The rules that check the whole tree (D-329): the code rules (all of tests/meta, its slow tests too, no browser),
 # the offline guard's network touchpoints (its quick tests), the store's parts, a help entry for every check code, a
-# rule for every route and the built-in roles' access. A change far from them breaks them (a module moved, a script
-# added), so any change to the app, the scripts or the tests runs them all: about 30 seconds.
+# rule for every route, the built-in roles' access and an old database for each schema since 27 (that one test: a
+# schema raised in _base.py alone). A change far from them breaks them (a module moved, a script added), so any change
+# to the app, the scripts or the tests runs them all: about 30 seconds.
 RULES = ("tests/meta", "tests/offline/test_offline_guard.py", "tests/core/test_store_package.py",
-         "tests/ops/test_help.py", "tests/web/test_roles.py", "tests/web/test_role_permissions.py")  # fmt: skip
+         "tests/core/test_migrations.py::test_every_schema_since_pr_99s_has_an_old_database", "tests/ops/test_help.py",
+         "tests/web/test_roles.py", "tests/web/test_role_permissions.py")  # fmt: skip
 # The rules every doc is held to (docs/, CLAUDE.md, README.md, .claude/agents/, and .ignore): its lines, the log
 # entries' numbers (the second one only once it is there): a changed doc runs them, and the tests that open it by its
 # path.

@@ -54,7 +54,20 @@ def test_any_change_to_the_app_the_scripts_or_the_tests_runs_the_rules_that_chec
         assert set(check.RULES) <= set(check.tests_for([changed])), changed  # (deleted, not Python, new)
     assert not any(t.startswith("tests/meta/") for t in check.tests_for(["tests/meta/test_caches.py"]))  # (in one)
     for path in check.RULES:
-        assert (ROOT / path).exists(), path
+        file, _, name = path.partition("::")  # (a folder, a file or one test of it)
+        assert (ROOT / file).exists(), path
+        assert not name or f"def {name}(" in (ROOT / file).read_text(encoding="utf-8"), path
+
+
+def test_a_schema_raised_runs_the_rule_that_each_schema_since_27_has_an_old_database():
+    """B-2999: SCHEMA_VERSION is in core/store/_base.py, and a schema raised by new tables alone (29's, 2a7ee29:
+    _base.py, the store's __init__.py, roles.py, users.py) ran no tests/core/test_migrations.py: the check said OK and
+    CI failed on "No old database at schema 33"."""
+    rule = "tests/core/test_migrations.py::test_every_schema_since_pr_99s_has_an_old_database"
+    raised = ["ap_coder/core/store/_base.py", "ap_coder/core/store/__init__.py", "ap_coder/core/store/roles.py",
+              "ap_coder/core/store/users.py"]  # fmt: skip
+    assert rule in check.tests_for(raised[:1]) and rule in check.tests_for(raised)
+    assert "tests/core/test_migrations.py" in check.tests_for(["ap_coder/core/store/migrations.py"])  # (all of it)
 
 
 def test_every_test_named_by_hand_is_there():
@@ -117,7 +130,8 @@ def test_the_rules_run_their_slow_tests_but_no_browser_nor_the_offline_guards_wh
     )
     assert left_out and not any(t.startswith("tests/meta/") for t in left_out)
     assert "tests/coding/test_terms.py" in tests and "-m" not in tests and not set(check.RULES) & set(tests)
-    assert capsys.readouterr().out.startswith("Rules: tests/core/test_store_package.py tests/meta ")
+    migrations = "tests/core/test_migrations.py::test_every_schema_since_pr_99s_has_an_old_database"  # (one test)
+    assert capsys.readouterr().out.startswith(f"Rules: {migrations} tests/core/test_store_package.py tests/meta ")
 
 
 def test_a_changed_function_near_the_length_limit_gets_a_warning(monkeypatch, capsys):
