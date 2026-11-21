@@ -25,12 +25,6 @@ NOT_REVISIONS = {
     "poll in static/js/invoice.js). page_worker.chat_again logs it too, where no screen waits: an open question of "
     "B-2805's kind, for after Monday's test",
 }
-# erp/jde*.py, lowest first: each imports only the ones before it, at the top or inside a function (D-222). The list
-# at the top of erp/jde.py has jde_match before jde_zfiles, which it imports, and no jde_retainage: this is the order
-# the imports keep. After jde.py, the keying sheet and the AIS API's modules.
-ORDER = ("jde_formats", "jde_settings", "jde_prototype", "jde_accounts", "jde_voucher", "jde_retainage", "jde_remarks",
-         "jde_zfiles", "jde_match", "jde_review", "jde", "jde_keying", "jde_worksheet", "jde_ais", "jde_post",
-         "jde_sync")  # fmt: skip
 CHANGES_INVOICES = re.compile(
     r"\b(?:UPDATE|DELETE\s+FROM|(?:INSERT|REPLACE)(?:\s+OR\s+\w+)?\s+INTO)\s+invoices\b", re.I
 )
@@ -88,6 +82,20 @@ def _literal(module: str, name: str):
         n.value for n in tree.body if isinstance(n, ast.Assign) and any(getattr(t, "id", "") == name for t in n.targets)
     ]
     return ast.literal_eval(found[0])
+
+
+def documented_order() -> tuple[str, ...]:
+    """The JD Edwards modules in the order ``ap_coder/erp/__init__.py``'s docstring lists them (its paragraph that
+    starts "JD Edwards E1"; what is in brackets says what a module holds)."""
+    doc = ast.get_docstring(_trees("ap_coder/erp")["ap_coder/erp/__init__.py"]) or ""
+    listed = next((part for part in doc.split("\n\n") if part.startswith("JD Edwards E1")), "")
+    return tuple(re.findall(r"``(jde\w*)``", re.sub(r"\([^()]*\)", "", listed)))
+
+
+# erp/jde*.py, lowest first, as erp/__init__.py documents them: each imports only the ones before it, at the top or
+# inside a function (D-222; test_the_jd_edwards_modules_import_only_the_ones_below_them). The list at the top of
+# erp/jde.py is another: jde_match before jde_zfiles, which it imports, and no jde_retainage.
+ORDER = documented_order()
 
 
 def _revisions() -> tuple[str, ...]:
@@ -331,11 +339,20 @@ def out_of_order(imports: dict[str, set[str]], order: tuple[str, ...]) -> list[s
 
 def test_the_jd_edwards_modules_import_only_the_ones_below_them():
     """D-222: one subject a module, each importing only the ones before it, so there is no cycle and a function has
-    one home (``jde_settings.load``, not ``jde.load``)."""
+    one home (``jde_settings.load``, not ``jde.load``). The order erp/__init__.py documents is one the imports keep, and
+    names every module."""
     trees = _trees("ap_coder/erp")
     imports = {name.rsplit("/", 1)[1][:-3]: jde_imports(tree) for name, tree in trees.items() if "/jde" in name}
     assert set(ORDER) <= set(imports)  # (a module gone leaves ORDER)
     assert out_of_order(imports, ORDER) == []
+
+
+def test_the_order_the_rule_keeps_is_the_one_erp_documents():
+    """B-3011: there is one order of the JD Edwards modules, erp/__init__.py's (CLAUDE.md sends an agent there). The
+    rule had its own, jde_retainage before jde_remarks where the docstring has them the other way round, so an import
+    the docstring allows failed the test and the one it forbids passed. Each module is listed once."""
+    order = documented_order()
+    assert len(order) == len(set(order)) and ORDER == order
 
 
 def test_the_order_rule_finds_an_import_from_above_and_a_module_not_placed():
