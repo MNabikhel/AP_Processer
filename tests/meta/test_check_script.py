@@ -178,9 +178,9 @@ def test_a_long_run_goes_on_several_cores(monkeypatch, capsys):
     assert check.estimate(["tests/coding/test_b.py"], times) == 10.0
 
 
-def _lines_of(path: str, name: str) -> set[int]:
-    """The lines of a function's body in the file as it is."""
-    (node,) = [n for n in check.functions((ROOT / path).read_text(encoding="utf-8")) if n.name == name]
+def _lines_of(text: str, name: str) -> set[int]:
+    """The lines of a function's body in a module's text."""
+    (node,) = [n for n in check.functions(text) if n.name == name]
     return set(range(node.lineno + 1, node.end_lineno + 1))
 
 
@@ -189,7 +189,12 @@ def test_a_change_inside_a_function_brings_the_tests_that_name_it(monkeypatch):
     and B-2970 (701e2fd: ``bulk.queue_facts``, caught by tests/web/test_day_one.py) failed only in CI: those tests
     import neither module by name, and exports.py and bulk.py are used by too many test files for the budget."""
     exports, bulk = "ap_coder/web/pages/exports.py", "ap_coder/coding/bulk.py"
-    changed = {exports: (_lines_of(exports, "ready_problems"), set()), bulk: (set(), _lines_of(bulk, "queue_facts"))}
+    texts = {f: (ROOT / f).read_text(encoding="utf-8") for f in (exports, bulk)}
+    # B-3013: the lines taken out were found in the file as it is, then looked for in HEAD's: an edit not committed
+    # above queue_facts failed this. Both from one text now, whatever the working tree holds.
+    monkeypatch.setattr(check, "committed", lambda f: texts[f])
+    taken_out = _lines_of(texts[bulk], "queue_facts")
+    changed = {exports: (_lines_of(texts[exports], "ready_problems"), set()), bulk: (set(), taken_out)}
     monkeypatch.setattr(check, "changed_lines", lambda f: changed.get(f, (set(), set())))
     assert check.changed_functions(bulk) == {"queue_facts"}  # (lines taken out: found in the file as it was)
     notes: dict[str, list[str]] = {}

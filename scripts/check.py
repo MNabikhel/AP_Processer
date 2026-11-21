@@ -293,10 +293,15 @@ def changed_functions(f: str) -> set[str]:
     lines, taken_out = changed
     names = {node.name for node in now if lines & span(node)}
     if taken_out:
-        was = subprocess.run(["git", "show", f"HEAD:{f}"], cwd=ROOT, capture_output=True, encoding="utf-8",
-                             errors="replace")  # fmt: skip
-        names |= {node.name for node in functions(was.stdout) if taken_out & span(node)}
+        names |= {node.name for node in functions(committed(f)) if taken_out & span(node)}
     return names
+
+
+def committed(f: str) -> str:
+    """``f`` as the last commit has it ("" when it has none)."""
+    was = subprocess.run(["git", "show", f"HEAD:{f}"], cwd=ROOT, capture_output=True, encoding="utf-8",
+                         errors="replace")  # fmt: skip
+    return was.stdout if was.returncode == 0 else ""
 
 
 def named_tests(names: set[str], test_texts: dict[Path, str]) -> dict[str, set[Path]]:
