@@ -64,8 +64,8 @@ def test_the_workflow_tests_skip_where_there_is_no_workflow(tmp_path):
     copy.mkdir(parents=True)
     shutil.copy(__file__, copy / "test_ci_workflow.py")
     out = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-k",
-                          "not looked_up_once and not where_there_is_no_workflow and not one_shard"
-                          " and not older_versions and not weighed_by and not times_are_refreshed", str(copy)],
+                          "not looked_up_once and not where_there_is_no_workflow and not one_shard and not older"
+                          "_versions and not weighed_by and not times_are_refreshed and not suites_time", str(copy)],
                          cwd=tmp_path, capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert out.returncode == 0, out.stdout[-2000:]
 
@@ -416,6 +416,35 @@ def test_the_times_are_refreshed_from_several_reports_and_a_test_over_two_second
                                                           "def test_any():\n    pass\n", encoding="utf-8")  # fmt: skip
     assert times.marked_slow(tmp_path) == {"tests/a/test_kept.py::test_long", "tests/a/test_kept.py::TestGroup::"
                                            "test_inside", "tests/a/test_new.py::test_any"}  # fmt: skip
+
+
+# Each place that gives the suite's time, from where it starts: the default run's minutes come first, the whole run's
+# next (docs/REFERENCE.md says them; the others agree)
+SUITE_TIMES = {
+    "docs/REFERENCE.md": "`pytest` runs all but the slow tests",
+    "docs/HANDOFF.md": "python -m pytest -q               # the default test tier",
+    "CLAUDE.md": "- Test: `python -m pytest -q`",
+    "pyproject.toml": "# The default run leaves out the slow tests",
+    "README.md": "# the default tests,",
+}
+
+
+def test_every_place_giving_the_suites_time_gives_what_its_tests_take():
+    """B-3015: the docs gave 15 and 37 minutes while pyproject.toml and README.md still said 7 and 28, and HANDOFF and
+    REFERENCE.md had the browser tests in the 37, which tests/test_times.json measured with them skipping (their
+    files at 0 s: they need Playwright and Chromium). Each place gives the sums of tests/test_times.json, the default
+    run's (the fast tier's) and the whole suite's, within a quarter, and none says the browser tests are in them."""
+    whole = json.loads((CI.parents[2] / "tests" / "test_times.json").read_text(encoding="utf-8")).values()
+    measured = (sum(t[1] for t in whole) / 60, sum(t[0] for t in whole) / 60)
+    for place, start in SUITE_TIMES.items():
+        text = (CI.parents[2] / place).read_text(encoding="utf-8")
+        assert start in text, place
+        said = text[text.index(start) :][:500]
+        minutes = [int(m) for m in re.findall(r"(\d+) min(?:utes)?\b", said)[:2]]
+        assert len(minutes) == 2 and all(abs(m - t) <= t / 4 for m, t in zip(minutes, measured, strict=True)), (
+            f"{place} says {minutes} minutes, tests/test_times.json {[round(t) for t in measured]}"
+        )
+        assert "browser tests included" not in said, place
 
 
 def test_an_older_versions_test_file_left_in_tests_is_not_run(tmp_path):

@@ -133,7 +133,7 @@ python -m ap_coder doctor         # what is set up and what is missing
 python scripts/pilot_check.py     # reads the 10 sample invoices, compares with samples/ground_truth (no AI needed)
 python scripts/check.py           # after a change: ruff on the changed files, then their tests (a minute or two)
 python -m pytest -q               # the default test tier: all but the slow tests (about 7,800, about 15 minutes)
-python -m pytest -q -m ""         # everything, browser tests included (about 8,700, about 37 minutes; needs Playwright)
+python -m pytest -q -m ""         # everything (about 8,800, about 37 min; browser tests, with Playwright: 13 min more)
 ruff check ap_coder tests scripts && ruff format --check ap_coder tests scripts
 ```
 
