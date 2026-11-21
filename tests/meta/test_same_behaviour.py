@@ -7,9 +7,12 @@ import importlib.util
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
+
+from tests.scripts import load_script
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -35,6 +38,93 @@ def test_the_tax_probe_gives_the_same_output_each_run(tmp_path):
     runs = [subprocess.run([sys.executable, str(ROOT / "scripts" / "probes" / "tax.py"), "300", str(tmp_path / str(i))],
                            env=env, capture_output=True, check=True).stdout for i in range(2)]  # fmt: skip
     assert runs[0] == runs[1] and runs[0].count(b"\n") == 300
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(("probe", "n", "lines"), [("jde", 3, 150), ("pages", 2, 50)])
+def test_the_jde_and_pages_probes_give_the_same_output_each_run(tmp_path, probe, n, lines):
+    """D-331: two runs a second apart, side by side in work folders of their own (as ``same_behaviour.py`` runs the two
+    trees), give the same bytes: the clock's times, the work folder and the review screen's token are left out."""
+    env = {**os.environ, "PYTHONPATH": str(ROOT), "PYTHONHASHSEED": "0"}
+    runs = []
+    for i in range(2):
+        runs.append(subprocess.Popen([sys.executable, str(ROOT / "scripts" / "probes" / f"{probe}.py"), str(n),
+                                      str(tmp_path / str(i))], env=env, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE))  # fmt: skip
+        time.sleep(1)
+    (first, err), (second, _) = (run.communicate() for run in runs)
+    assert all(run.returncode == 0 for run in runs), err[-3000:]
+    assert first == second and first.count(b"\n") > lines
+
+
+def test_the_pages_probe_leaves_out_what_differs_run_to_run(tmp_path):
+    spec = importlib.util.spec_from_file_location("pages_probe", ROOT / "scripts" / "probes" / "pages.py")
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+    work = tmp_path / "pages-after"
+    page = (f'<div title="{work}/demo"></div><input type="hidden" name="screen" value="c31837d4"> read 2026-11-20 '
+            f'23:10:05, at 11:10 PM <dt>Backups</dt><dd><code>{work}/backups</code>, 3 kept</dd> '
+            '<img src="/review/1/page/1.png?v=18e9e46e809e5d9f28b7"> 4,800.00')  # fmt: skip
+    assert probe.masked(page, work) == (
+        '<div title="(work)/demo"></div><input type="hidden" name="screen" value="(screen)"> read (time), at (time) '
+        '<dt>Backups</dt><dd>(backups)</dd> <img src="/review/1/page/1.png?v=(file)"> 4,800.00'
+    )
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-c", "user.name=Pat Tester", "-c", "user.email=pat@example.invalid", *args], cwd=repo,
+                   check=True, capture_output=True)  # fmt: skip
+
+
+MODULE = '''"""A module."""
+
+
+def one():
+    """The first."""
+    return 1
+
+
+def two(x):
+    return x + 2
+
+
+class Kept:
+    def same(self):
+        return "same"
+'''
+
+
+def test_a_move_word_for_word_is_the_same_and_a_token_changed_on_the_way_is_said(tmp_path, capsys):
+    """D-331: ``moved_same.py`` finds every function, class and method of the files changed since the ref once, with
+    the same syntax tree, wherever it went; one token changed, a docstring reworded (unless ``--docstrings``) or a
+    definition kept twice is said, by name and file."""
+    moved = load_script("moved_same", "ap_moved_same")
+    repo = moved.ROOT = tmp_path
+    _git(repo, "init", "-q")
+    (repo / "a.py").write_text(MODULE, encoding="utf-8")
+    _git(repo, "add", "a.py")
+    _git(repo, "commit", "-qm", "a")
+    head, tail = MODULE.split("\n\n\ndef two")
+    (repo / "a.py").write_text(head + "\n", encoding="utf-8")
+    (repo / "b.py").write_text(f'"""B."""\n\n\ndef two{tail}', encoding="utf-8")  # not added to git yet
+    assert moved.main(["HEAD"]) == 0
+    assert capsys.readouterr().out.startswith("4 definitions in 1 files at HEAD: 4 found once and the same")
+
+    (repo / "b.py").write_text(f'"""B."""\n\n\ndef two{tail.replace("x + 2", "x + 3")}', encoding="utf-8")
+    assert moved.main(["HEAD"]) == 1
+    assert "  changed: def two (a.py -> b.py)\n" in capsys.readouterr().out
+
+    (repo / "b.py").write_text(f'"""B."""\n\n\ndef two{tail}', encoding="utf-8")
+    (repo / "a.py").write_text(head.replace("The first.", "The first one.") + "\n", encoding="utf-8")
+    assert moved.main(["HEAD"]) == 1
+    assert "  changed: def one (a.py -> a.py)\n" in capsys.readouterr().out
+    assert moved.main(["HEAD", "--docstrings"]) == 0
+    capsys.readouterr()
+
+    (repo / "c.py").write_text('"""C."""\n\n\ndef two(x):\n    return x + 2\n', encoding="utf-8")
+    assert moved.main(["HEAD", "--docstrings"]) == 1
+    assert "  twice: def two (c.py)\n" in capsys.readouterr().out
+    assert moved.main(["no-such-ref"]) == 2
 
 
 def test_with_no_probes_named_the_default_ones_run():
