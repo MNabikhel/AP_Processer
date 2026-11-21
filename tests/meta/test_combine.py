@@ -210,6 +210,23 @@ def test_a_number_both_sides_gave_entries_alike_is_asked_about_with_both_entries
     assert f"docs, for a person: docs/bugs/B-12.md: {asked}" in capsys.readouterr().out
 
 
+def test_an_n_note_both_sides_gave_alike_words_is_asked_about_as_a_bug_is(repo, capsys):
+    """A suspicion that didn't reproduce is an entry too (new_entry.py N): the same question, not a KeyError
+    (B-3006)."""
+    edited = "- **N-12** · the totals looked wrong on a credit note; not reproduced\n"
+    again = "- **N-12** · the totals looked wrong on a credit memo; not reproduced\n"
+    asked = "N-12 on both sides, the words alike: the same entry edited, or two notes?"
+    branch("edited", {"docs/bugs/N-12.md": edited})
+    branch("again", {"docs/bugs/N-12.md": again})
+
+    assert combine.main(["--trial", "--onto", "main", "edited", "again"]) == 0
+    assert f"docs, for a person: docs/bugs/N-12.md: {asked}" in capsys.readouterr().out
+    assert combine.main(["edited", "again", "--onto", "main", "--no-check"]) == 1
+    said = capsys.readouterr().out
+    assert f"Stopped: these need a person:\n    docs/bugs/N-12.md: {asked}" in said and f"      {again.strip()}" in said
+    assert set(combine.KINDS) == set(combine.LOGS)  # (a word for each kind of entry)
+
+
 def test_a_trial_says_what_each_merge_and_each_two_would_conflict_on_and_changes_nothing(repo, capsys):
     branch("one", {"app.py": "RATE = 2\n", "docs/BUGS.md": BUGS + "- **B-13** · one · low · `t3`\n",
                    "docs/GUIDE.md": "Step 1: open it.\n"})  # fmt: skip

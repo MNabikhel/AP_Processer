@@ -48,7 +48,7 @@ from new_entry import FILE_NAME, FOLDERS, FROZEN, LOGS  # noqa: E402  (the logs,
 
 MENTION = re.compile(r"(?<![A-Za-z0-9_])([BD])-(\d+)(?!\d)")
 ALIKE = 0.6  # two entries of one number this alike (words) are one entry, edited on a side: not two that clash
-KINDS = {"B": "bugs", "D": "decisions"}
+KINDS = {"B": "bugs", "D": "decisions", "N": "notes"}  # (each kind of new_entry.LOGS)
 
 
 class Stop(Exception):
