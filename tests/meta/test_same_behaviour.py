@@ -106,6 +106,20 @@ def test_the_jde_probe_says_different_for_a_keying_sheet_with_two_dates_swapped(
     assert "/sheet/Keying sheet" in _tool().first_difference(before, after)
 
 
+@pytest.mark.slow
+def test_the_pages_probe_prints_its_own_day_whatever_the_day_it_runs(tmp_path):
+    """B-3016: the pages printed the day the probe ran (the activity's range, "in the review queue since", a due
+    date's days ago), so two runs a second apart on either side of midnight differed. The probe's clock now reads a
+    fixed day; only its seconds go on."""
+    import datetime as dt
+
+    env = {**os.environ, "PYTHONPATH": str(ROOT), "PYTHONHASHSEED": "0"}
+    out = subprocess.run([sys.executable, str(ROOT / "scripts" / "probes" / "pages.py"), "1", str(tmp_path / "w")],
+                         env=env, capture_output=True, check=True).stdout.decode("utf-8")  # fmt: skip
+    probe = _probe("pages")
+    assert probe.DAY.isoformat() in out and dt.date.today().isoformat() not in out
+
+
 def test_the_pages_probe_leaves_out_what_differs_run_to_run(tmp_path):
     spec = importlib.util.spec_from_file_location("pages_probe", ROOT / "scripts" / "probes" / "pages.py")
     probe = importlib.util.module_from_spec(spec)
