@@ -45,6 +45,7 @@ UNTIMED = 2.0  # the seconds taken for a test file tests/test_times.json has no 
 NEAR = 110  # a changed function this long (tests/meta/test_function_length.py: at most 120 lines) and
 NEAR_PART = 950  # a part of the store this long (tests/core/test_store_package.py: under 1,000) get a warning
 PARALLEL_SECONDS = 15  # a run longer than this (tests/test_times.json) goes on several cores (pytest-xdist)
+SLOW_SECONDS = 15  # a test file whose slow tests take longer together (tests/test_times.json) leaves them to CI
 OLD_WINDOWS_CLOCK = False  # True: the tests on old Windows' clock (tests/conftest.py, AP_TEST_OLD_WINDOWS_CLOCK)
 
 
@@ -322,10 +323,46 @@ def estimate(tests: list[str], times: dict[str, list[float]], slow: bool = True)
     (tests/meta's always); ``UNTIMED`` each for a file not timed yet."""
     total = 0.0
     for test in tests:
-        column = 0 if slow or test == "tests/meta" or test.startswith("tests/meta/") else 1
-        inside = [both[column] for path, both in times.items() if path == test or path.startswith(test + "/")]
-        total += sum(inside) if inside else UNTIMED
+        whole = slow or test == "tests/meta" or test.startswith("tests/meta/")
+        inside = [both for path, both in times.items() if path == test or path.startswith(test + "/")]
+        total += (
+            sum(both[0 if whole and both[0] - both[1] <= SLOW_SECONDS else 1] for both in inside) if inside else UNTIMED
+        )
     return total
+
+
+def long_slow(tests: list[str], times: dict[str, list[float]]) -> list[str]:
+    """The test files (of these, or in these folders) whose slow tests take over ``SLOW_SECONDS`` together by
+    tests/test_times.json: those are left to CI."""
+    return [path for path, (whole, fast) in sorted(times.items()) if whole - fast > SLOW_SECONDS
+            and any(path == test or path.startswith(test + "/") for test in tests)]  # fmt: skip
+
+
+def slow_tests(path: str) -> list[str]:
+    """A test file's slow tests: those tests/slow_tests.txt lists, and those it marks slow itself
+    (``@pytest.mark.slow``, or every one when its ``pytestmark`` is)."""
+    listed = (TESTS / "slow_tests.txt").read_text(encoding="utf-8").splitlines()
+    found = {line.strip() for line in listed if line.startswith(path + "::")}
+    try:
+        tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return sorted(found)
+    every = any(isinstance(node, ast.Assign) and "pytestmark" in ast.unparse(node.targets[0])
+                and "slow" in ast.unparse(node.value) for node in tree.body)  # fmt: skip
+
+    def walk(body: list[ast.stmt], prefix: str) -> None:
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                walk(node.body, f"{prefix}{node.name}::")
+            elif (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name.startswith("test")
+                and (every or any("mark.slow" in ast.unparse(d) for d in node.decorator_list))
+            ):
+                found.add(f"{path}::{prefix}{node.name}")
+
+    walk(tree.body, "")
+    return sorted(found)
 
 
 def near_limits(files: list[str]) -> list[str]:
@@ -393,16 +430,19 @@ def workers(serial: bool) -> int:
     return max(1, int(asked)) if asked.isdigit() else min(4, os.cpu_count() or 1)
 
 
-def run_tests(tier: list[str], paths: list[str], seconds: float, serial: bool, retry: bool = True) -> bool:
-    """One pytest run of these test files, on several cores when it takes long (``seconds``, its estimate): its
-    failures and its last line printed; whether it failed. ``retry``: when it ran none (each a slow one), run them."""
+def run_tests(tier: list[str], paths: list[str], seconds: float, serial: bool, retry: bool = True,
+              left: list[str] = ()) -> bool:  # fmt: skip
+    """One pytest run of these test files, on several cores when it takes long (``seconds``, its estimate), the tests
+    ``left`` to CI left out: its failures and its last line printed; whether it failed. ``retry``: when it ran none
+    (each a slow one), run them."""
     cores = workers(serial) if seconds > PARALLEL_SECONDS else 1
     print(f"  about {seconds:.0f} s of tests (tests/test_times.json)" + (f", on {cores} cores" if cores > 1 else ""),
           flush=True)  # fmt: skip
     on = ["-n", str(cores)] if cores > 1 else []
-    done = pytest([*on, *tier, *paths])
+    out = [a for test in left for a in ("--deselect", test)]
+    done = pytest([*on, *tier, *out, *paths])
     if done.returncode == 5 and retry:
-        done = pytest([*on, "-m", "", *paths])
+        done = pytest([*on, "-m", "", *out, *paths])
     lines = done.stdout.strip().splitlines()
     failures = [line for line in lines if line.startswith(("FAILED", "ERROR"))]
     print("\n".join(failures[:20] + lines[-1:]))
@@ -411,12 +451,14 @@ def run_tests(tier: list[str], paths: list[str], seconds: float, serial: bool, r
     return done.returncode not in (0, 5)
 
 
-def rules_args(rules: list[str]) -> list[str]:
-    """The rules' pytest arguments: their slow tests too, but no browser, and none of tests/slow_tests.txt outside
-    tests/meta (the offline guard's whole walks are CI's)."""
-    slow = (TESTS / "slow_tests.txt").read_text(encoding="utf-8").splitlines()
-    left_out = [line.strip() for line in slow if line.split("::")[0] in rules and not line.startswith("tests/meta/")]
-    return ["-m", "", "-k", "not in_a_browser", *(a for t in left_out for a in ("--deselect", t))]
+def rules_args(rules: list[str], times: dict[str, list[float]]) -> list[str]:
+    """The rules' pytest arguments: their slow tests too, but no browser, none of the slow tests outside tests/meta
+    (the offline guard's whole walks are CI's), and none of a file's in it that take long (``long_slow``: the probes
+    run twice, D-331)."""
+    outside = [rule for rule in rules if not rule.startswith("tests/meta") and "::" not in rule]
+    inside = [path for path in long_slow(rules, times) if path.startswith("tests/meta/")]
+    left = sorted({test for path in outside + inside for test in slow_tests(path)})
+    return ["-m", "", "-k", "not in_a_browser", *(a for test in left for a in ("--deselect", test))]
 
 
 def run_rules(rules: list[str], times: dict[str, list[float]], serial: bool = False) -> bool:
@@ -424,7 +466,9 @@ def run_rules(rules: list[str], times: dict[str, list[float]], serial: bool = Fa
     slow tests too, no browser, none of CI's whole walks (``rules_args``), on several cores when long. Whether they
     passed."""
     print("Rules:", " ".join(rules), flush=True)
-    return not run_tests(rules_args(rules), rules, estimate(rules, times, slow=False), serial, retry=False)
+    for path in long_slow([rule for rule in rules if rule.startswith("tests/meta")], times):
+        print(f"  {path}: its slow tests left to CI (about {times[path][0] - times[path][1]:.0f} s)")
+    return not run_tests(rules_args(rules, times), rules, estimate(rules, times, slow=False), serial, retry=False)
 
 
 def main(argv: list[str]) -> int:
@@ -470,8 +514,12 @@ def main(argv: list[str]) -> int:
         tier = ["-m", ""] if browser else [] if fast or picked is None else ["-m", "", "-k", "not in_a_browser"]
         print("Tests:", " ".join(picked) if picked else "the whole default run (a file every test uses changed)",
               flush=True)  # fmt: skip
+        long = [] if browser or not tier or picked is None else long_slow(picked, times)
+        for path in long:
+            print(f"{path}: its slow tests left to CI (about {times[path][0] - times[path][1]:.0f} s)")
         seconds = estimate(list(times) if picked is None else picked, times, slow=bool(tier))
-        failed |= run_tests(tier, picked or [], seconds, serial, retry=not browser)
+        left = [test for path in long for test in slow_tests(path)]
+        failed |= run_tests(tier, picked or [], seconds, serial, retry=not browser, left=left)
     for warning in near_limits(files):
         print(f"near the limit: split before adding: {warning}")
     for f in untested(found):

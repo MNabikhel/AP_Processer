@@ -144,7 +144,8 @@ def test_the_rules_run_their_slow_tests_but_no_browser_nor_the_offline_guards_wh
     assert "tests/offline/test_offline_guard.py::test_the_whole_walk_works_in_a_network_namespace_without_network" in (
         left_out
     )
-    assert left_out and not any(t.startswith("tests/meta/") for t in left_out)
+    meta = {t for t in left_out if t.startswith("tests/meta/")}  # (only the slow tests of tests/meta that take long)
+    assert left_out and meta <= set(check.slow_tests("tests/meta/test_same_behaviour.py"))
     # The files picked run with their slow tests, no browser (--fast: the default run's tests only).
     assert tests[:4] == ["-m", "", "-k", "not in_a_browser"] and "tests/coding/test_terms.py" in tests
     assert not set(check.RULES) & set(tests)
@@ -163,14 +164,36 @@ def test_asked_for_the_rules_run_once_as_for_a_change_to_code_whatever_changed(m
     monkeypatch.setattr(check, "pytest", lambda args: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
     rules = sorted(check.RULES)
     assert check.main(["--rules", "--serial", "--no-walk", "docs/BUGS.md"]) == 0
-    assert ran == [[*check.rules_args(rules), *rules]]  # (the doc's own rules are tests/meta's)
+    times = check.read_tests()[1]
+    assert ran == [[*check.rules_args(rules, times), *rules]]  # (the doc's own rules are tests/meta's)
     ran.clear()
     assert check.main(["--rules", "--serial", "--no-walk", "pyproject.toml"]) == 0  # (the whole default run too)
     assert len(ran) == 2 and set(ran[0][-len(rules) :]) == set(rules) and ran[1] == []
     ran.clear()
     monkeypatch.setattr(check, "changed_files", lambda: [])
-    assert check.main(["--rules", "--serial", "--no-walk"]) == 0 and ran == [[*check.rules_args(rules), *rules]]
+    assert check.main(["--rules", "--serial", "--no-walk"]) == 0 and ran == [[*check.rules_args(rules, times), *rules]]
     assert capsys.readouterr().out.count("Rules: ") == 3
+
+
+def test_slow_tests_that_take_long_together_are_left_to_ci(monkeypatch, capsys):
+    """B-3019: D-331's probe test (the jde and pages probes run twice, about 50 s) ran in every check's rules while
+    tests/test_times.json gave its file 0.7 s. A test file whose slow tests take over SLOW_SECONDS together leaves
+    them to CI, in the rules run and among the files picked; a slow rule that takes little still runs."""
+    times = check.read_tests()[1]
+    probe = "tests/meta/test_same_behaviour.py::test_the_jde_and_pages_probes_give_the_same_output_each_run"
+    whole, fast = times["tests/meta/test_same_behaviour.py"]
+    assert whole - fast > check.SLOW_SECONDS  # (53 s measured, 0.7 s of it not slow)
+    assert check.slow_tests("tests/meta/test_same_behaviour.py") == [probe]  # (marked so in the file)
+    args = check.rules_args(sorted(check.RULES), times)
+    assert probe in args and "tests/meta/test_code_rules.py::test_no_sql_placeholders_are_made_one_per_item_of_a_list" \
+        not in args  # fmt: skip
+    assert check.estimate(sorted(check.RULES), times, slow=False) < 40
+    ran = []
+    monkeypatch.setattr(check, "pytest", lambda args: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
+    assert check.main(["tests/erp/test_accruals.py", "tests/coding/test_tax.py", "--serial", "--no-walk"]) == 0
+    left = [ran[1][i + 1] for i, a in enumerate(ran[1]) if a == "--deselect"]
+    assert left and all(t.startswith("tests/erp/test_accruals.py::") for t in left)  # (test_tax.py's: none, 0 s)
+    assert "tests/erp/test_accruals.py: its slow tests left to CI (about 49 s)" in capsys.readouterr().out
 
 
 def test_a_long_run_goes_on_several_cores(monkeypatch, capsys):
