@@ -25,12 +25,6 @@ NOT_REVISIONS = {
     "poll in static/js/invoice.js). page_worker.chat_again logs it too, where no screen waits: an open question of "
     "B-2805's kind, for after Monday's test",
 }
-# erp/jde*.py, lowest first: each imports only the ones before it, at the top or inside a function (D-222). The list
-# at the top of erp/jde.py has jde_match before jde_zfiles, which it imports, and no jde_retainage: this is the order
-# the imports keep. After jde.py, the keying sheet and the AIS API's modules.
-ORDER = ("jde_formats", "jde_settings", "jde_prototype", "jde_accounts", "jde_voucher", "jde_retainage", "jde_remarks",
-         "jde_zfiles", "jde_match", "jde_review", "jde", "jde_keying", "jde_worksheet", "jde_ais", "jde_post",
-         "jde_sync")  # fmt: skip
 CHANGES_INVOICES = re.compile(
     r"\b(?:UPDATE|DELETE\s+FROM|(?:INSERT|REPLACE)(?:\s+OR\s+\w+)?\s+INTO)\s+invoices\b", re.I
 )
@@ -54,9 +48,30 @@ def _calls(trees: dict[str, ast.Module]) -> list[tuple[str, ast.Call]]:
     return [(name, node) for name, tree in trees.items() for node in ast.walk(tree) if isinstance(node, ast.Call)]
 
 
-def _calls_in_the_app(name: str) -> list[ast.Call]:
-    """Each call of ``name`` in ap_coder."""
-    return [call for _, call in _calls(_trees("ap_coder", f"{name}(")) if _called(call) == name]
+Calls = Callable[
+    [str], list[tuple[ast.Call, ast.FunctionDef | None]]
+]  # a name's calls, each with the function it is in
+
+
+def _calls_of(trees: dict[str, ast.Module]) -> Calls:
+    """The calls of a name in these modules, each with the function it is in (None: at the top of its module)."""
+
+    def calls(name: str) -> list[tuple[ast.Call, ast.FunctionDef | None]]:
+        found = []
+        for tree in trees.values():
+            inside: dict[ast.Call, ast.FunctionDef] = {}
+            for fn in ast.walk(tree):  # (outer functions first: a call in an inner one is the inner one's)
+                if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    inside.update((n, fn) for n in ast.walk(fn) if isinstance(n, ast.Call))
+            found += [(n, inside.get(n)) for n in ast.walk(tree) if isinstance(n, ast.Call) and _called(n) == name]
+        return found
+
+    return calls
+
+
+def _calls_in_the_app(name: str) -> list[tuple[ast.Call, ast.FunctionDef | None]]:
+    """Each call of ``name`` in ap_coder, with the function it is in."""
+    return _calls_of(_trees("ap_coder", f"{name}("))(name)
 
 
 def _literal(module: str, name: str):
@@ -67,6 +82,20 @@ def _literal(module: str, name: str):
         n.value for n in tree.body if isinstance(n, ast.Assign) and any(getattr(t, "id", "") == name for t in n.targets)
     ]
     return ast.literal_eval(found[0])
+
+
+def documented_order() -> tuple[str, ...]:
+    """The JD Edwards modules in the order ``ap_coder/erp/__init__.py``'s docstring lists them (its paragraph that
+    starts "JD Edwards E1"; what is in brackets says what a module holds)."""
+    doc = ast.get_docstring(_trees("ap_coder/erp")["ap_coder/erp/__init__.py"]) or ""
+    listed = next((part for part in doc.split("\n\n") if part.startswith("JD Edwards E1")), "")
+    return tuple(re.findall(r"``(jde\w*)``", re.sub(r"\([^()]*\)", "", listed)))
+
+
+# erp/jde*.py, lowest first, as erp/__init__.py documents them: each imports only the ones before it, at the top or
+# inside a function (D-222; test_the_jd_edwards_modules_import_only_the_ones_below_them). The list at the top of
+# erp/jde.py is another: jde_match before jde_zfiles, which it imports, and no jde_retainage.
+ORDER = documented_order()
 
 
 def _revisions() -> tuple[str, ...]:
@@ -115,20 +144,25 @@ store.replace_proposal(6, out, rep, cap, unless_in_use=False)
 # --- (b) What a store function that changes an invoice logs is a revision, or says why not -------------------------
 
 
-def _values(node: ast.expr | None, fn: ast.FunctionDef, calls_of: Callable[[str], list[ast.Call]]) -> set[str] | None:
-    """The strings an argument can be: a constant, either side of ``a if b else c``, a name assigned them in the
-    function, or a parameter: its default and what each call of the function passes it. None: not told."""
+def _values(node: ast.expr | None, fn: ast.FunctionDef | None, calls_of: Calls, seen: frozenset = frozenset()
+            ) -> set[str] | None:  # fmt: skip
+    """The strings an argument of ``fn`` can be: a constant, either side of ``a if b else c``, a name assigned them in
+    the function, or a parameter: its default and what each call of the function passes it, a name there being the
+    caller's. A name met again (``action = ... else action``) adds nothing more. None: not told."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return {node.value}
     if isinstance(node, ast.IfExp):
-        both = (_values(node.body, fn, calls_of), _values(node.orelse, fn, calls_of))
+        both = (_values(node.body, fn, calls_of, seen), _values(node.orelse, fn, calls_of, seen))
         return None if None in both else both[0] | both[1]
-    if not isinstance(node, ast.Name):
+    if not isinstance(node, ast.Name) or fn is None:
         return None
-    sources: list[ast.expr | None] = []
+    if (fn, node.id) in seen:
+        return set()
+    seen = seen | {(fn, node.id)}
+    sources: list[tuple[ast.expr | None, ast.FunctionDef | None]] = []
     for assign in ast.walk(fn):
         if isinstance(assign, ast.Assign) and any(isinstance(t, ast.Name) and t.id == node.id for t in assign.targets):
-            sources.append(assign.value)
+            sources.append((assign.value, fn))
     args = fn.args
     positional = [*args.posonlyargs, *args.args]
     defaults = dict(
@@ -136,17 +170,17 @@ def _values(node: ast.expr | None, fn: ast.FunctionDef, calls_of: Callable[[str]
     )
     defaults.update((a.arg, d) for a, d in zip(args.kwonlyargs, args.kw_defaults, strict=True) if d is not None)
     if node.id in defaults:
-        sources.append(defaults[node.id])
-        sources += [k.value for call in calls_of(fn.name) for k in call.keywords if k.arg == node.id]
+        sources.append((defaults[node.id], fn))
+        sources += [(k.value, caller) for call, caller in calls_of(fn.name) for k in call.keywords if k.arg == node.id]
     elif node.id in {a.arg for a in [*positional, *args.kwonlyargs]}:
         return None  # (a parameter every caller must give: what it is, the callers say)
     if not sources:
         return None
-    found = [_values(s, fn, calls_of) for s in sources]
+    found = [_values(value, where, calls_of, seen) for value, where in sources]
     return None if None in found else set().union(*found)
 
 
-def logged_by_invoice_changes(store: dict[str, ast.Module], calls_of: Callable[[str], list[ast.Call]]) -> dict:
+def logged_by_invoice_changes(store: dict[str, ast.Module], calls_of: Calls) -> dict:
     """Each ``_log`` call of a store function whose SQL changes the invoices table: the actions it can log (None: not
     told), by where it is."""
     found: dict[str, set | None] = {}
@@ -210,14 +244,48 @@ class Mixin:
 store.replace(conn, 1, action="read_again")
 """
     tree = ast.parse(source)
-    logged = logged_by_invoice_changes(
-        {"s.py": tree}, lambda name: [c for _, c in _calls({"s.py": tree}) if _called(c) == name]
-    )
+    logged = logged_by_invoice_changes({"s.py": tree}, _calls_of({"s.py": tree}))
     assert logged == {"s.py:5 park": {"parked_by_hand"}, "s.py:10 answer": {"confirmed", "sent_back"},
                       "s.py:14 replace": {"proposal_updated", "read_again"}, "s.py:18 told": None}  # fmt: skip
     found = unexplained(logged, ("sent_back", "confirmed"), {"proposal_updated": "why"})
     assert found == ["s.py:5 park: ['parked_by_hand']", "s.py:14 replace: ['proposal_updated', 'read_again']",
                      "s.py:18 told: which action, not told"]  # fmt: skip
+
+
+def test_the_store_rule_follows_a_callers_name_in_the_callers_own_function():
+    """B-3007: a caller's name for the action (``action=action``, ``action=chosen``) is the caller's. It was looked up
+    in the store function, so ``action=action`` went round its default and the caller for good (RecursionError) and
+    ``action=chosen`` was not told, on a change that kept what the app does. A name given itself again adds nothing."""
+    source = """
+class Mixin:
+    def replace(self, conn, invoice_id, *, action="proposal_updated"):
+        conn.execute("UPDATE invoices SET ai_output = ? WHERE id = ?", ("{}", invoice_id))
+        self._log(conn, action, invoice_id)
+
+    def correct(self, conn, invoice_id, corrected, action="noted"):
+        action = "verifier_corrected" if corrected else action
+        conn.execute("UPDATE invoices SET status = 'review' WHERE id = ?", (invoice_id,))
+        self._log(conn, action, invoice_id)
+
+
+def chat_again(store):
+    action = "proposal_updated"
+    store.replace(conn, 1, action=action)
+
+
+def corrections(store):
+    chosen = "verifier_corrected"
+    store.replace(conn, 2, action=chosen)
+"""
+    tree = ast.parse(source)
+    logged = logged_by_invoice_changes({"s.py": tree}, _calls_of({"s.py": tree}))
+    assert logged == {"s.py:5 replace": {"proposal_updated", "verifier_corrected"},
+                      "s.py:10 correct": {"verifier_corrected", "noted"}}  # fmt: skip
+    told_nothing = ast.parse(
+        source.replace('    chosen = "verifier_corrected"\n', "") + "\nstore.replace(c, 3, action=x)\n"
+    )
+    logged = logged_by_invoice_changes({"s.py": told_nothing}, _calls_of({"s.py": told_nothing}))
+    assert logged["s.py:5 replace"] is None  # (a name nobody gives a value: not told)
 
 
 # --- (c) Each revision has its words on the screen that is out of date ----------------------------------------------
@@ -271,11 +339,20 @@ def out_of_order(imports: dict[str, set[str]], order: tuple[str, ...]) -> list[s
 
 def test_the_jd_edwards_modules_import_only_the_ones_below_them():
     """D-222: one subject a module, each importing only the ones before it, so there is no cycle and a function has
-    one home (``jde_settings.load``, not ``jde.load``)."""
+    one home (``jde_settings.load``, not ``jde.load``). The order erp/__init__.py documents is one the imports keep, and
+    names every module."""
     trees = _trees("ap_coder/erp")
     imports = {name.rsplit("/", 1)[1][:-3]: jde_imports(tree) for name, tree in trees.items() if "/jde" in name}
     assert set(ORDER) <= set(imports)  # (a module gone leaves ORDER)
     assert out_of_order(imports, ORDER) == []
+
+
+def test_the_order_the_rule_keeps_is_the_one_erp_documents():
+    """B-3011: there is one order of the JD Edwards modules, erp/__init__.py's (CLAUDE.md sends an agent there). The
+    rule had its own, jde_retainage before jde_remarks where the docstring has them the other way round, so an import
+    the docstring allows failed the test and the one it forbids passed. Each module is listed once."""
+    order = documented_order()
+    assert len(order) == len(set(order)) and ORDER == order
 
 
 def test_the_order_rule_finds_an_import_from_above_and_a_module_not_placed():
