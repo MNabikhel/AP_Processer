@@ -115,9 +115,18 @@ def importers(module: str, test_texts: dict[Path, str]) -> list[Path]:
 
 
 def script_users(stem: str, test_texts: dict[Path, str]) -> list[Path]:
-    """Test files that load ``scripts/<stem>.py``: by its path, by name (``_script("upgrade")``) or by import."""
-    pattern = re.compile(rf"scripts[/\\.]{stem}\b|[\"']{stem}(?:\.py)?[\"']|import\s+{stem}\b")
-    return [path for path, text in test_texts.items() if pattern.search(text)]
+    """Test files that load ``scripts/<stem>.py``: by its path, by import, or by its name in quotes in a file that
+    names the scripts folder (``_script("upgrade")``; not the word in ``["coverage", "combine"]``)."""
+    pattern = re.compile(rf"scripts[/\\.]{stem}\b|[\"']{stem}\.py[\"']|import\s+{stem}\b")
+    named, folder = re.compile(rf"[\"']{stem}[\"']"), re.compile(r"[\"']scripts[\"'/\\]|scripts[/\\]|_script\(")
+    return [path for path, text in test_texts.items()
+            if pattern.search(text) or (named.search(text) and folder.search(text))]  # fmt: skip
+
+
+def test_files(pattern: str = "test_*.py") -> set[Path]:
+    """The test files of a name, in tests/' folders: a file directly in tests/ is none (tests/test_map.py, a module:
+    tests/conftest.py's ``collect_ignore_glob``)."""
+    return {path for path in TESTS.rglob(pattern) if path.parent != TESTS}
 
 
 def quickest(users: list[Path], mirror: Path, times: dict[str, list[float]]) -> set[Path]:
@@ -161,10 +170,10 @@ def own_tests(f: str, test_texts: dict[Path, str], times: dict[str, list[float]]
         return doc_tests(f, test_texts)
     if f in OWN:
         return {p for t in OWN[f] for p in ROOT.glob(t)}
-    if path.parts[:1] == ("tests",) and path.name.startswith("test_") and path.suffix == ".py":
+    if path.parts[:1] == ("tests",) and len(path.parts) > 2 and path.name.startswith("test_") and path.suffix == ".py":
         return {ROOT / path} if (ROOT / path).is_file() else set()
     stem = path.parent.name if path.name == "__init__.py" else path.stem.lstrip("_")
-    own = set(TESTS.rglob(f"test_{stem}*.py")) | set(TESTS.rglob(f"test_web_{stem}*.py"))
+    own = test_files(f"test_{stem}*.py") | test_files(f"test_web_{stem}*.py")
     users: list[Path] = []
     if path.parts[:1] == ("ap_coder",) and path.suffix == ".py" and path.name != "__main__.py":
         parts = path.parent.parts if path.name == "__init__.py" else path.with_suffix("").parts
@@ -172,7 +181,7 @@ def own_tests(f: str, test_texts: dict[Path, str], times: dict[str, list[float]]
         if not users and path.name != "__init__.py" and (ROOT / path.parent / "__init__.py").is_file():
             # A part of a package that re-exports it (core/store/invoices.py): tests import the package.
             users = importers(".".join(path.parent.parts), test_texts)
-            own |= set(TESTS.rglob(f"test_{path.parent.name}*.py"))
+            own |= test_files(f"test_{path.parent.name}*.py")
     elif path.parts[:1] == ("scripts",) and path.suffix == ".py":
         users = script_users(path.stem, test_texts)
     if len(users) <= WIDE:
@@ -194,7 +203,7 @@ def checks_whole_tree(f: str) -> bool:
 
 def read_tests() -> tuple[dict[Path, str], dict[str, list[float]]]:
     """Every test file's text, and their seconds (tests/test_times.json: all its tests, those of the default run)."""
-    texts = {p: p.read_text(encoding="utf-8", errors="replace") for p in TESTS.rglob("test_*.py")}
+    texts = {p: p.read_text(encoding="utf-8", errors="replace") for p in sorted(test_files())}
     times_file = TESTS / "test_times.json"
     return texts, json.loads(times_file.read_text(encoding="utf-8")) if times_file.is_file() else {}
 

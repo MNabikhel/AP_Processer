@@ -45,6 +45,22 @@ def test_a_script_the_package_and_the_shared_test_files_bring_their_tests():
     assert check.tests_for(["pyproject.toml", "ap_coder/coding/tax.py"]) is None
 
 
+def test_a_module_directly_in_tests_is_no_test_and_a_word_in_quotes_no_use_of_a_script():
+    """B-3009: tests/test_map.py (the test map's module, D-333) was taken for a test file: run by name, pytest collected
+    ``tests_for`` as a test ("fixture 'keys' not found") and the check failed, for a change to it, to a function named
+    in it, or to scripts/combine.py (its ``coverage combine`` read as a use of the script). Files directly in tests/
+    are no tests (tests/conftest.py's ``collect_ignore_glob``)."""
+    texts, _ = check.read_tests()
+    assert texts and not [p for p in texts if p.parent == ROOT / "tests"]
+    found = check.picks(["tests/test_map.py", "scripts/combine.py"])
+    assert "tests/test_map.py" not in found["tests/test_map.py"] | found["scripts/combine.py"]
+    assert "tests/meta/test_test_map.py" in found["tests/test_map.py"]  # (its own tests, by its name)
+    a, b, c = (ROOT / f"tests/x/test_{n}.py" for n in "abc")
+    texts = {a: 'subprocess.run(["coverage", "combine"])', b: 'load_script("combine", "ap_script_combine")',
+             c: 'names = ("combine", "upgrade")  # each of ROOT / "scripts"'}  # fmt: skip
+    assert check.script_users("combine", texts) == [b, c]
+
+
 def test_any_change_to_the_app_the_scripts_or_the_tests_runs_the_rules_that_check_the_whole_tree():
     """D-329: the KEPT list of tests/meta/test_core_imports.py (a store part moved, 6420278) and the offline guard's
     TOUCHPOINTS (a script added, b4c06bf) failed only in CI: no test named after the files changed checks them."""
