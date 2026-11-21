@@ -60,9 +60,10 @@ jobs:
         # package: nothing is downloaded); the fast tier on the other two. Each is split into even parts run side by
         # side (--shard, tests/conftest.py: whole files, by the times in tests/test_times.json), so the run ends when
         # the slowest part does (D-233). A pull request runs the cells marked "pull_request" (Ubuntu 3.11, the floor,
-        # whose standard library behaves otherwise, D-334, and 3.12; both Windows ones: 3.12 as Windows before Python
-        # 3.13 behaves otherwise, D-330): the rest run on main after each merge and nightly, and a build is released
-        # only once main passed them all (D-260).
+        # whose standard library behaves as the first patches of 3.12 and 3.13 do, which no cell here runs: each takes
+        # its Python's newest patch, D-334; Ubuntu 3.12; both Windows ones: 3.12 as Windows before Python 3.13 behaves
+        # otherwise, D-330): the rest run on main after each merge and nightly, and a build is released only once main
+        # passed them all (D-260).
         include: ${{ fromJSON(needs.plan.outputs.tests) }}
     steps:
       - uses: actions/checkout@v4
