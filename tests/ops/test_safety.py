@@ -118,10 +118,10 @@ def test_a_missing_database_where_there_was_one_is_never_made_again_empty(tmp_pa
     elif sign == "history":
         service.write_config(data, history=[{"result": "updated"}])
     elif sign == "key":
-        (data / "authenticator.key").write_text("k")
+        (data / "authenticator.key").write_text("k", encoding="utf-8")
     elif sign == "access log":
         (data / "logs").mkdir()
-        (data / "logs" / "access.log").write_text("")
+        (data / "logs" / "access.log").write_text("", encoding="utf-8")
     elif sign == "invoice":
         (data / "invoices" / "2026").mkdir(parents=True)
         (data / "invoices" / "2026" / "a.pdf").write_bytes(b"%PDF")
@@ -179,9 +179,11 @@ def test_a_laptop_whose_database_is_gone_while_its_backups_remain_is_told_how_to
 def test_a_fresh_server_starts_with_its_first_database(tmp_path):
     service.write_config(tmp_path, folder="C:\\APCoder\\APProcessor", insecure_http=True)
     (tmp_path / "logs").mkdir()
-    (tmp_path / "logs" / "service.log").write_text("Service host started\n")  # (written before the dashboard starts)
+    (tmp_path / "logs" / "service.log").write_text(
+        "Service host started\n", encoding="utf-8"
+    )  # (written before the dashboard starts)
     assert safety.serve_refusal(tmp_path / "ap_coder.db", server=True) == ""
-    assert json.loads((tmp_path / "server.json").read_text())["folder"]
+    assert json.loads((tmp_path / "server.json").read_text(encoding="utf-8"))["folder"]
 
 
 # --- A data folder that serves a team is never opened without sign-in by accident (D-211) -----------------------------
@@ -227,7 +229,9 @@ def team_server_stand_in(data: Path, *, https: bool = True, server_mode: bool = 
         context.load_cert_chain(str(CERT), str(KEY))
         httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    (data / ".ap_coder_server.json").write_text(json.dumps({"pid": 4242, "port": port, "token": "secret"}))
+    (data / ".ap_coder_server.json").write_text(
+        json.dumps({"pid": 4242, "port": port, "token": "secret"}), encoding="utf-8"
+    )
     return httpd, port
 
 
@@ -301,7 +305,9 @@ def test_server_settings_alone_mark_a_team_servers_data_folder(laptop, started, 
     team = safety.team_server(data, db)
     assert team is not None and not team.running and team.accounts == 0
     assert team.address == "https://apcoder.example:8443"
-    (data / ".ap_coder_server.json").write_text(json.dumps({"pid": 4242, "port": 8502}))  # left by a start that
+    (data / ".ap_coder_server.json").write_text(
+        json.dumps({"pid": 4242, "port": 8502}), encoding="utf-8"
+    )  # left by a start that
     assert safety.team_server(data, db).address == "https://apcoder.example:8443"  # was killed: not the team's port
     assert cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser"]) == 2 and started == []
     said = capsys.readouterr().err
@@ -495,7 +501,7 @@ def test_a_server_whose_setup_code_cant_be_read_says_so_at_its_start(laptop, sta
 
     data, db = laptop
     service.write_config(data, port=8599)
-    (data / SETUP_CODE_FILE).write_text("abcd-efgh-jkmn-pqrs\n")
+    (data / SETUP_CODE_FILE).write_text("abcd-efgh-jkmn-pqrs\n", encoding="utf-8")
     real = Path.read_text
     monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: (_ for _ in ()).throw(PermissionError(13, "no"))
                         if self.name == SETUP_CODE_FILE else real(self, *a, **k))  # fmt: skip
@@ -555,11 +561,11 @@ def test_a_second_laptop_mode_serve_on_the_same_data_is_refused(laptop, started,
     try:
         port = int(first.stdout.readline())
         record = json.dumps({"pid": first.pid, "port": port, "token": "the-first-ones"})
-        (data / ".ap_coder_server.json").write_text(record)
+        (data / ".ap_coder_server.json").write_text(record, encoding="utf-8")
         assert cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser"]) == 2 and started == []
         said = capsys.readouterr().err
         assert f"AP Coder is already open on this data folder ({data}) at http://127.0.0.1:{port}" in said
-        assert (data / ".ap_coder_server.json").read_text() == record and backup_cmd._running(data)
+        assert (data / ".ap_coder_server.json").read_text(encoding="utf-8") == record and backup_cmd._running(data)
     finally:
         first.kill()
         first.wait(10)

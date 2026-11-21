@@ -726,8 +726,8 @@ def test_the_other_names_read_of_a_column_are_readable():
     from pathlib import Path
 
     static = Path(__file__).parents[2] / "ap_coder" / "web" / "static"
-    tokens = dict(re.findall(r"--(lg-[\w-]+):\s*(#[0-9a-fA-F]{6})", (static / "app.css").read_text()))
-    rule = re.search(r"\.imp-also \{([^}]*)\}", (static / "imports.css").read_text()).group(1)
+    tokens = dict(re.findall(r"--(lg-[\w-]+):\s*(#[0-9a-fA-F]{6})", (static / "app.css").read_text(encoding="utf-8")))
+    rule = re.search(r"\.imp-also \{([^}]*)\}", (static / "imports.css").read_text(encoding="utf-8")).group(1)
     colour = tokens[re.search(r"color: var\(--([\w-]+)\)", rule).group(1)]
     assert _contrast(colour, tokens["lg-head"]) >= 4.5
     assert float(re.search(r"font-size: ([\d.]+)px", rule).group(1)) >= 12

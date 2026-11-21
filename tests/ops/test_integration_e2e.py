@@ -109,7 +109,9 @@ def test_a_folder_of_emails_becomes_a_checked_jde_batch(tmp_path, monkeypatch):
     for inv in queue:
         full = store.get_invoice(inv["id"])
         doc = dict(full["final_output"] or full["ai_output"])
-        truth = json.loads((SAMPLES / "ground_truth" / f"{STEMS[doc['invoice_number']]}.json").read_text())
+        truth = json.loads(
+            (SAMPLES / "ground_truth" / f"{STEMS[doc['invoice_number']]}.json").read_text(encoding="utf-8")
+        )
         for line, right in zip(doc["line_items"], truth["line_items"], strict=True):
             for key in ("predicted_gl_code", "predicted_cost_center"):
                 if str(line.get(key) or "UNASSIGNED").upper() == "UNASSIGNED":

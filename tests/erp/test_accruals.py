@@ -17,7 +17,7 @@ END = dt.date(2026, 9, 30)
 
 
 def _coded(store, stem, **changes):
-    doc = {**json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text()), **changes}
+    doc = {**json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text(encoding="utf-8")), **changes}
     output, _ = finalise_coding(InvoiceCoding.model_validate(doc), store.reference_data(), Settings(), store=store)
     return output
 
@@ -306,7 +306,7 @@ def test_an_expected_recurring_invoice_is_not_accrued_beside_its_vendors_receive
     load_sample_setup(store)
     load_sample_purchase_orders(store)
     stem = "chinook_AB_GST_CCO-26-10418"
-    lines = json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text())["line_items"]
+    lines = json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text(encoding="utf-8"))["line_items"]
     doc = _coded(store, stem, line_items=[li for li in lines if "PO-90155" not in li["description"]])
     for i, day in enumerate(("2026-05-31", "2026-06-30", "2026-07-31")):
         inv = {**doc, "invoice_number": f"C-{i}", "invoice_date": day}

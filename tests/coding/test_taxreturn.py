@@ -16,7 +16,7 @@ YEAR = (dt.date(2020, 1, 1), dt.date(2030, 12, 31))
 
 
 def _approved(store, tmp_path, stem, export=True, **changes):
-    doc = {**json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text()), **changes}
+    doc = {**json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text(encoding="utf-8")), **changes}
     output, _ = finalise_coding(InvoiceCoding.model_validate(doc), store.reference_data(), Settings(), store=store)
     invoice_id = store.add_invoice(tmp_path / f"{stem}{len(changes)}.pdf", output, {})
     store.approve_invoice(invoice_id, output, "Jane")
@@ -51,7 +51,7 @@ def test_period_status_and_treatment(tmp_path):
     store = Store(tmp_path / "t.db")
     load_sample_setup(store)
     _approved(store, tmp_path, "northwind_ON_HST_NW-2026-0912", invoice_date="2026-10-02")
-    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text(encoding="utf-8"))
     store.add_invoice(tmp_path / "r.pdf", doc, {})  # still in review
     report = taxreturn.build(store, *Q3)
     assert report.claims == [] and report.not_approved == 1  # the approved one is dated after the quarter
@@ -134,7 +134,9 @@ def test_a_number_from_the_vendor_list_is_a_claim_at_risk(tmp_path):
 
     store = Store(tmp_path / "t.db")
     load_sample_setup(store)
-    doc = json.loads((SAMPLES / "ground_truth" / "montroyal_QC_TPS_TVQ_ACMR-2026-1187.json").read_text())
+    doc = json.loads(
+        (SAMPLES / "ground_truth" / "montroyal_QC_TPS_TVQ_ACMR-2026-1187.json").read_text(encoding="utf-8")
+    )
     output, _ = finalise_coding(InvoiceCoding.model_validate(doc), store.reference_data(), Settings(), store=store)
     output[FROM_VENDOR_LIST] = ["gst_hst_registration_number", "qst_registration_number"]
     invoice_id = store.add_invoice(tmp_path / "m.pdf", output, {})
@@ -150,7 +152,7 @@ def test_a_number_from_the_vendor_list_is_a_claim_at_risk(tmp_path):
 def test_small_invoices_need_no_number(tmp_path):
     store = Store(tmp_path / "t.db")
     load_sample_setup(store)
-    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text(encoding="utf-8"))
     doc.update(gst_hst_registration_number="", subtotal=20.0, tax_total=1.0, grand_total=21.0,
                tax_lines=[{"tax_type": "GST", "province": "", "rate": 0.05, "taxable_amount": 20.0, "tax_amount": 1.0}],
                line_items=[{**doc["line_items"][0], "quantity": 1, "unit_price": 20.0, "amount": 20.0}])  # fmt: skip
@@ -166,7 +168,7 @@ def test_registration_number_needed_from_100_dollars_since_2021(tmp_path):
     is needed on an invoice of $100 or more (it was $30)."""
     store = Store(tmp_path / "t.db")
     load_sample_setup(store)
-    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text(encoding="utf-8"))
     doc.update(gst_hst_registration_number="", subtotal=80.0, tax_total=4.0, grand_total=84.0,
                tax_lines=[{"tax_type": "GST", "province": "", "rate": 0.05, "taxable_amount": 80.0, "tax_amount": 4.0}],
                line_items=[{**doc["line_items"][0], "quantity": 1, "unit_price": 80.0, "amount": 80.0}])  # fmt: skip
@@ -191,7 +193,7 @@ def test_demo_and_default_period(tmp_path, demo_template):
 def test_pst_and_qst_to_self_assess(tmp_path):
     store = Store(tmp_path / "t.db")
     load_sample_setup(store)
-    doc = json.loads((SAMPLES / "ground_truth" / "prairie_SK_GST_PST_PNS-104882.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / "prairie_SK_GST_PST_PNS-104882.json").read_text(encoding="utf-8"))
     no_pst = {**doc, "invoice_number": "X-1", "tax_lines": [t for t in doc["tax_lines"] if t["tax_type"] != "PST"]}
     no_pst["tax_total"] = round(sum(t["tax_amount"] for t in no_pst["tax_lines"]), 2)
     no_pst["grand_total"] = round(no_pst["subtotal"] + no_pst["tax_total"], 2)
@@ -211,7 +213,7 @@ def test_pst_printed_as_zero_is_not_charged(tmp_path):
     the tax checks see it). One from BC's HST years (2010-07 to 2013-03) owes no PST."""
     store = Store(tmp_path / "t.db")
     load_sample_setup(store)
-    doc = json.loads((SAMPLES / "ground_truth" / "pacific_BC_GST_PST_PO-77120.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / "pacific_BC_GST_PST_PO-77120.json").read_text(encoding="utf-8"))
     zero = {**doc, "invoice_number": "Z-1", "tax_lines": [dict(t) for t in doc["tax_lines"]]}
     zero["tax_lines"][1]["tax_amount"] = 0.0
     zero["tax_total"] = zero["tax_lines"][0]["tax_amount"]
@@ -242,7 +244,7 @@ def test_self_assessment_uses_the_place_of_supply_of_the_tax_checks(tmp_path):
     load_sample_setup(store)
     store.set_setting("our_province", "BC")
     store.set_setting("site_provinces", "CCAB=AB")
-    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text(encoding="utf-8"))
     base = {**doc, "ship_to_province": ""}
     bc_vendor = {**base, "invoice_number": "B-1", "supplier_province": "BC",
                  "line_items": [{**li, "predicted_cost_center": "CCAB"} for li in doc["line_items"]]}  # fmt: skip

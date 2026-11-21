@@ -25,7 +25,7 @@ def _stage(folder: Path, order: list[str], when: float, mode: int) -> Path:
     """A bundle folder of a few files, made in ``order``, each dated ``when`` with permissions ``mode``."""
     for rel in order:
         (folder / rel).parent.mkdir(parents=True, exist_ok=True)
-        (folder / rel).write_text(TEXTS[rel])
+        (folder / rel).write_text(TEXTS[rel], encoding="utf-8")
         os.chmod(folder / rel, mode)
         os.utime(folder / rel, (when, when))
     return folder
@@ -97,7 +97,9 @@ def test_two_builds_of_one_commit_are_the_same_zip(tmp_path, monkeypatch):
         assert bundle.main(["--out", str(out), "--no-models", "--python", "3.12", "--no-current"]) == 0
         (zipped,) = out.glob("APProcessor-offline-*.zip")
         made.append(zipped)
-        manifest = json.loads((out / "offline-bundle" / "APProcessor" / "bundle_manifest.json").read_text())
+        manifest = json.loads(
+            (out / "offline-bundle" / "APProcessor" / "bundle_manifest.json").read_text(encoding="utf-8")
+        )
         assert manifest["built"] == bundle.built_text(bundle.build_epoch())
     assert _sha(made[0]) == _sha(made[1])
-    assert made[0].with_name(made[0].name + ".sha256").read_text().split()[0] == _sha(made[0])
+    assert made[0].with_name(made[0].name + ".sha256").read_text(encoding="utf-8").split()[0] == _sha(made[0])

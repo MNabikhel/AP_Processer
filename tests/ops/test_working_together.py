@@ -18,7 +18,7 @@ from tests.conftest import SAMPLE_STEM, SAMPLES, FakeOpenAI, make_completion
 
 def test_erp_column_aliases(tmp_path):
     p = tmp_path / "coa.csv"
-    p.write_text("Main Account,Account Name,Is Active\n610100,Office supplies,Yes\n699900,Old,No\n")
+    p.write_text("Main Account,Account Name,Is Active\n610100,Office supplies,Yes\n699900,Old,No\n", encoding="utf-8")
     table = load_table(p, "GL account", "gl_code")
     assert table.codes == ["610100"]
     assert table.rows[0] == {"gl_code": "610100", "Account Name": "Office supplies"}
@@ -26,7 +26,7 @@ def test_erp_column_aliases(tmp_path):
 
 def test_canonical_column_wins_over_alias(tmp_path):
     p = tmp_path / "coa.csv"
-    p.write_text("gl_code,account,name\n6000,ignored,Office\n")
+    p.write_text("gl_code,account,name\n6000,ignored,Office\n", encoding="utf-8")
     assert load_table(p, "GL account", "gl_code").codes == ["6000"]
 
 
@@ -35,9 +35,9 @@ def test_canonical_column_wins_over_alias(tmp_path):
 
 def _write_prediction(out_dir, stem, doc, requires_review=False):
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / f"{stem}.json").write_text(json.dumps(doc))
+    (out_dir / f"{stem}.json").write_text(json.dumps(doc), encoding="utf-8")
     meta = {"source": f"/x/{stem}.pdf", "status": "ok", "validation": {"requires_review": requires_review}}
-    (out_dir / f"{stem}.validation.json").write_text(json.dumps(meta))
+    (out_dir / f"{stem}.validation.json").write_text(json.dumps(meta), encoding="utf-8")
 
 
 @pytest.mark.parametrize("suffix", [".xlsx", ".csv"])
@@ -117,7 +117,8 @@ def test_inserted_row_inherits_document(tmp_path):
         "reviewed,document,vendor_name,invoice_number,invoice_date,currency,subtotal,tax_total,grand_total,"
         "line_number,description,quantity,unit_price,amount,gl_code,cost_center\n"
         "Y,inv,V,1,2026-01-01,USD,15,0,15,1,a,1,10,10,6000,CC100\n"
-        "Y,,,,,,,,,2,added line,1,5,5,6800,CC100\n"
+        "Y,,,,,,,,,2,added line,1,5,5,6800,CC100\n",
+        encoding="utf-8",
     )
     docs, _ = load_labels(p)
     assert [li["line_number"] for li in docs["inv"]["line_items"]] == [1, 2]
@@ -140,12 +141,14 @@ def test_share_report_is_redacted(tmp_path, settings, reference, ground_truth, s
     key = tmp_path / "key.csv"
     gt_dir = tmp_path / "gt"
     gt_dir.mkdir()
-    (gt_dir / f"{SAMPLE_STEM}.json").write_text((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    (gt_dir / f"{SAMPLE_STEM}.json").write_text(
+        (SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"), encoding="utf-8"
+    )
     text = build_share_report(tmp_path / "out", gt_dir, key_file=key)
     for secret in ("Northwind", "18017", "18,017", "NW-2026", "Latitude", SAMPLE_STEM, "6010", "CC400"):
         assert secret not in text, secret
     assert "doc-01" in text and "GL code accuracy: 100.0%" in text
-    assert SAMPLE_STEM in key.read_text()
+    assert SAMPLE_STEM in key.read_text(encoding="utf-8")
 
     with_codes = build_share_report(tmp_path / "out", gt_dir, include_codes=True)
     assert "codes included: yes" in with_codes
@@ -155,7 +158,7 @@ def test_share_report_failure_category_hides_message(tmp_path):
     out = tmp_path / "out"
     out.mkdir()
     meta = {"source": "/x/acme.pdf", "status": "failed", "error": "CodingError: Model refused: ACME secret 123"}
-    (out / "acme.validation.json").write_text(json.dumps(meta))
+    (out / "acme.validation.json").write_text(json.dumps(meta), encoding="utf-8")
     text = build_share_report(out)
     assert "CodingError/model_refusal" in text
     assert "ACME" not in text and "acme" not in text
@@ -182,7 +185,7 @@ def test_share_report_on_a_database_with_demo_invoices(tmp_path):
     key = tmp_path / "share_key.csv"
     text = build_share_report(tmp_path / "none", key_file=key, db_path=tmp_path / "ap.db")
     assert "tables per invoice: n/a" in text and "doc-01" in text
-    assert key.read_text().startswith("alias,file") and not list(tmp_path.glob("*.partial"))
+    assert key.read_text(encoding="utf-8").startswith("alias,file") and not list(tmp_path.glob("*.partial"))
 
 
 def test_share_report_that_fails_leaves_no_key_file(tmp_path, monkeypatch):
@@ -190,7 +193,9 @@ def test_share_report_that_fails_leaves_no_key_file(tmp_path, monkeypatch):
 
     out = tmp_path / "out"
     out.mkdir()
-    (out / "a.validation.json").write_text(json.dumps({"source": "/x/a.pdf", "status": "failed", "error": "X"}))
+    (out / "a.validation.json").write_text(
+        json.dumps({"source": "/x/a.pdf", "status": "failed", "error": "X"}), encoding="utf-8"
+    )
     monkeypatch.setattr(share_report, "_failure_category", lambda error: 1 / 0)  # any failure while building
     key = tmp_path / "share_key.csv"
     with pytest.raises(ZeroDivisionError):
@@ -233,9 +238,9 @@ def test_doctor_flags_missing_config_and_bad_reference():
 
 def test_doctor_large_chart_falls_back_from_enums(tmp_path):
     coa = tmp_path / "coa.csv"
-    coa.write_text("gl_code,name\n" + "".join(f"{i},Account {i}\n" for i in range(600)))
+    coa.write_text("gl_code,name\n" + "".join(f"{i},Account {i}\n" for i in range(600)), encoding="utf-8")
     cc = tmp_path / "cc.csv"
-    cc.write_text("cost_center,name\nCC1,Ops\n")
+    cc.write_text("cost_center,name\nCC1,Ops\n", encoding="utf-8")
     from ap_coder.core.reference_data import load_reference_data
 
     checks = run_checks(Settings(), lambda: load_reference_data(coa, cc))
@@ -256,8 +261,8 @@ def test_cli_prefers_private_reference(capsys, monkeypatch, tmp_path):
     monkeypatch.delenv("AP_REFERENCE_DIR", raising=False)
     ref = tmp_path / "private" / "reference"
     ref.mkdir(parents=True)
-    (ref / "chart_of_accounts.csv").write_text("Account,Description\n7777,Widgets\n")
-    (ref / "cost_centers.csv").write_text("Cost Centre,Name\nZ1,Zed\n")
+    (ref / "chart_of_accounts.csv").write_text("Account,Description\n7777,Widgets\n", encoding="utf-8")
+    (ref / "cost_centers.csv").write_text("Cost Centre,Name\nZ1,Zed\n", encoding="utf-8")
     assert cli.main(["schema"]) == 0
     schema = json.loads(capsys.readouterr().out)
     line = schema["properties"]["line_items"]["items"]["properties"]
@@ -270,9 +275,9 @@ def test_cli_labels_refuses_to_overwrite(tmp_path, ground_truth, capsys):
     dest = tmp_path / "labels.csv"
     args = ["labels", "--predictions", str(tmp_path / "out"), "-o", str(dest)]
     assert cli.main(args) == 0
-    dest.write_text("corrected by AP team")
+    dest.write_text("corrected by AP team", encoding="utf-8")
     assert cli.main(args) == 2
-    assert dest.read_text() == "corrected by AP team"
+    assert dest.read_text(encoding="utf-8") == "corrected by AP team"
     assert cli.main([*args, "--force"]) == 0
 
 

@@ -108,7 +108,11 @@ def _normalise(text: str) -> str:
 
 @lru_cache(maxsize=16384)  # called for every invoice on many pages; the same names come back
 def vendor_key(name: str) -> str:
-    """Normalised vendor name for matching: accents, punctuation, "&"/"and" and legal forms ignored."""
+    """A name's key, for matching names as people write them: accents, punctuation, "&"/"and" and legal forms
+    ignored ("SILVERTIP SOFTWARE LTD." and "Silvertip Software Inc" give "silvertip software"). Right for comparing
+    printed or typed names, aliases and migrations. Two suppliers whose names read the same share it, so it does not
+    say which vendor an invoice is filed under: for that vendor's own facts (terms, history, lessons, POs) ask
+    ``Store.vendor_key_for``."""
     text = _fold(name).replace("&", " and ")
     text = re.sub(r"\b((?:[a-z]\.){2,})", lambda m: m.group(1).replace(".", ""), text)  # S.E.N.C. -> senc
     words = _normalise(text).split()

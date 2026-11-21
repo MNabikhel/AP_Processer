@@ -270,7 +270,9 @@ def test_the_server_runs_several_workers_and_one_background_process_and_stops_th
         t0 = time.monotonic()
         proc.wait(40)
         took = time.monotonic() - t0
-        assert took < 30 and proc.returncode == 0, f"{took:.1f} s, exit {proc.returncode}: {window.read_text()}"
+        assert took < 30 and proc.returncode == 0, (
+            f"{took:.1f} s, exit {proc.returncode}: {window.read_text(encoding='utf-8')}"
+        )
         assert not (data / ".ap_coder_server.json").exists()
         held = try_lock(data / ".ap_coder_background.lock")
         assert held is not None  # the background process ended with it

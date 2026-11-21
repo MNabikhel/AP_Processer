@@ -122,7 +122,7 @@ def test_csv_saved_as_windows_1252_loads(tmp_path):
 def test_labels_workbook_without_cost_centers(tmp_path, ground_truth):
     out = tmp_path / "out"
     out.mkdir()
-    (out / "inv.json").write_text(json.dumps(ground_truth))
+    (out / "inv.json").write_text(json.dumps(ground_truth), encoding="utf-8")
     reference = load_reference_data(DATA / "chart_of_accounts.csv")
     assert export_labels(out, tmp_path / "l.xlsx", reference=reference) == 1
     assert "Cost Centers" not in load_workbook(tmp_path / "l.xlsx").sheetnames
@@ -132,7 +132,7 @@ def test_extraction_dumps_are_not_predictions(tmp_path, ground_truth):
     out = tmp_path / "out"
     out.mkdir()
     for name in ("inv.json", "inv.di.json", "inv.validation.json", "batch_summary.json"):
-        (out / name).write_text(json.dumps(ground_truth))
+        (out / name).write_text(json.dumps(ground_truth), encoding="utf-8")
     assert [p.name for p in _prediction_files(out)] == ["inv.json"]
     assert [p.name for p in sorted(out.iterdir()) if is_prediction_file(p)] == ["inv.json"]
 
@@ -154,7 +154,7 @@ def test_cli_explicit_files_override_the_database(tmp_path, capsys):
     db = tmp_path / "ap.db"
     Store(db).import_accounts("gl_accounts", [{"code": "6100", "name": "Office"}], "code", "name")
     cc = tmp_path / "cc.csv"
-    cc.write_text("cost_center,name\nZ1,Zed\n")
+    cc.write_text("cost_center,name\nZ1,Zed\n", encoding="utf-8")
     assert cli.main(["--db", str(db), "schema", "--cost-centers", str(cc)]) == 0
     line = _line_props(json.loads(capsys.readouterr().out))
     assert line["predicted_gl_code"]["enum"] == ["6100", "UNASSIGNED"]

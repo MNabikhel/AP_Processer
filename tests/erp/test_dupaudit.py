@@ -26,7 +26,10 @@ def test_one_keystroke(a, b, typo):
 
 
 def _approve(store, tmp_path, **changes):
-    doc = {**json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text()), **changes}
+    doc = {
+        **json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text(encoding="utf-8")),
+        **changes,
+    }
     invoice_id = store.add_invoice(tmp_path / f"{len(store.list_invoices())}.pdf", doc, {})
     store.approve_invoice(invoice_id, doc, "Jane")
     return invoice_id, doc

@@ -37,7 +37,7 @@ class Service(FakeServer):
 
     def stop(self) -> bool:
         service.stop_flag(self.data).parent.mkdir(parents=True, exist_ok=True)
-        service.stop_flag(self.data).write_text("stopped")
+        service.stop_flag(self.data).write_text("stopped", encoding="utf-8")
         return super().stop()
 
     def start(self) -> bool:
@@ -81,7 +81,7 @@ def _cut(server, monkeypatch, step: str = "", cut_in: str = "") -> dict:
 def _runs(server) -> str:
     """The folder the service runs (server.json and run.cmd agree)."""
     folder = Path(service.read_config(server["data"])["folder"])
-    assert str(folder) in service.runner_path(server["data"]).read_text()
+    assert str(folder) in service.runner_path(server["data"]).read_text(encoding="utf-8")
     return folder.name
 
 
@@ -230,7 +230,7 @@ def test_the_host_starts_the_dashboard_once_it_dealt_with_an_update_cut_short(se
         stdout, pid = iter([]), 4242
 
         def wait(self, timeout=None):
-            service.stop_flag(server["data"]).write_text("")
+            service.stop_flag(server["data"]).write_text("", encoding="utf-8")
             return 0
 
     def popen(cmd, **kwargs):
@@ -290,7 +290,7 @@ def _run_host(server, monkeypatch, here: Path) -> tuple[int, list]:
         stdout, pid = iter([]), 4242
 
         def wait(self, timeout=None):
-            service.stop_flag(server["data"]).write_text("")
+            service.stop_flag(server["data"]).write_text("", encoding="utf-8")
             return 0
 
     def popen(cmd, **kwargs):
@@ -305,7 +305,9 @@ def test_mac_cut_at_the_safety_copy_the_old_version_starts_without_a_switch(serv
     the old folder already, yet it switched to it and was refused (B-1957): it kept the `stopped` file and ended
     with 0, so launchd left the service stopped for good."""
     state = _cut(server, monkeypatch, "safety-copy")
-    service.stop_flag(server["data"]).write_text("stopped")  # (service stop's, made just before this step)
+    service.stop_flag(server["data"]).write_text(
+        "stopped", encoding="utf-8"
+    )  # (service stop's, made just before this step)
     tried = _host_cannot_switch(monkeypatch)
     code, started = _run_host(server, monkeypatch, Path(state["from_folder"]))
     assert started, f"the dashboard never started (exit code {code}); launchd leaves a 0 stopped"

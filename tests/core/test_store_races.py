@@ -18,7 +18,7 @@ LINES = [{"line_number": 1, "description": "Widgets", "amount": 100.0, "predicte
 
 def _invoice(tmp_path, store, number="1", total=100.0, currency="CAD", meta=None):
     path = tmp_path / f"inv-{number}.txt"
-    path.write_text(number)
+    path.write_text(number, encoding="utf-8")
     output = {"vendor_name": "Acme Ltd", "invoice_number": number, "invoice_date": "2026-01-01",
               "grand_total": total, "currency": currency, "line_items": LINES}  # fmt: skip
     return store.add_invoice(path, output, {"requires_review": True}, meta=meta), output

@@ -22,7 +22,7 @@ def _approved_by_an_older_version(tmp_path):
     """An approved invoice whose final coding has no stored gl_distribution (approved by an older version)."""
     store = Store(tmp_path / "s.db")
     load_sample_setup(store)
-    doc = json.loads((SAMPLES / "ground_truth" / f"{NORTHWIND}.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / f"{NORTHWIND}.json").read_text(encoding="utf-8"))
     assert "gl_distribution" not in doc
     invoice_id = store.add_invoice(SAMPLES / f"{NORTHWIND}.pdf", doc, {})
     store.approve_invoice(invoice_id, doc, "Jordan")

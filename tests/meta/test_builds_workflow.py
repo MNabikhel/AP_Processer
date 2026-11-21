@@ -54,42 +54,44 @@ def test_what_it_releases_is_what_the_launcher_takes(tmp_path):
     repo = tmp_path / "repo"
     (repo / "ap_coder").mkdir(parents=True)
     (repo / "scripts").mkdir()
-    (repo / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.3.1"\n')
-    (repo / ".gitattributes").write_text("ap_coder/BUILD export-subst\n")
-    (repo / "ap_coder" / "BUILD").write_text("$Format:%h %cI$\n")
-    (repo / "scripts" / "launch.py").write_text("")
+    (repo / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.3.1"\n', encoding="utf-8")
+    (repo / ".gitattributes").write_text("ap_coder/BUILD export-subst\n", encoding="utf-8")
+    (repo / "ap_coder" / "BUILD").write_text("$Format:%h %cI$\n", encoding="utf-8")
+    (repo / "scripts" / "launch.py").write_text("", encoding="utf-8")
     git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
     _run(["git", "init", "-q", "-b", "main"], repo)
     _run([*git, "add", "-A"], repo)
     _run([*git, "commit", "-q", "-m", "First"], repo)
     _run(["git", "tag", "v0.3.1-build.0000000"], repo)  # the last build released
-    (repo / "scripts" / "launch.py").write_text("# faster\n")
+    (repo / "scripts" / "launch.py").write_text("# faster\n", encoding="utf-8")
     _run([*git, "commit", "-q", "-am", "Merge pull request #140: Faster reading of scans from the inbox"], repo)
-    (repo / "scripts" / "launch.py").write_text("# plainer\n")  # GitHub's own merge subject: the title is below it
+    (repo / "scripts" / "launch.py").write_text(
+        "# plainer\n", encoding="utf-8"
+    )  # GitHub's own merge subject: the title is below it
     _run([*git, "commit", "-q", "-am", "Merge pull request #141 from someone/plainer-words\n\nPlainer words"], repo)
     sha = _run(["git", "rev-parse", "HEAD"], repo).strip()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     gh = bin_dir / "gh"  # a stand-in: no release yet; what "release create" was given, recorded
-    gh.write_text('#!/bin/bash\n[ "$2" = view ] && exit 1\nprintf "%s\\n" "$@" > "$GH_ARGS"\n')
+    gh.write_text('#!/bin/bash\n[ "$2" = view ] && exit 1\nprintf "%s\\n" "$@" > "$GH_ARGS"\n', encoding="utf-8")
     gh.chmod(0o755)
     (step,) = [s for s in _workflow()["jobs"]["build"]["steps"] if "run" in s]
     env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "SHA": sha,
            "GH_ARGS": str(tmp_path / "gh_args"), "GH_TOKEN": "unused"}  # fmt: skip
     _run(["bash", "-c", step["run"]], repo, env)
-    created = (tmp_path / "gh_args").read_text().splitlines()
+    created = (tmp_path / "gh_args").read_text(encoding="utf-8").splitlines()
     short = sha[:7]
     tag, name = f"v0.3.1-build.{short}", f"AP_Processer-0.3.1-build.{short}"
     assert created[:3] == ["release", "create", tag] and created[-2:] == [f"dist/{name}.zip", "dist/SHA256SUMS"]
     releases = load_script("releases", "ap_script_releases_workflow")
     assert releases.TAG.match(tag).groups() == ("0.3.1", short)
-    notes = (repo / "notes.md").read_text()
+    notes = (repo / "notes.md").read_text(encoding="utf-8")
     assert notes.startswith("- #141 Plainer words\n- #140 Faster reading of scans from the inbox\n")
     assert "First" not in notes
     built = releases.BUILT.search(notes)
     assert built and built.group(1) == short and releases.paths._utc(built.group(2))
     archive = repo / "dist" / f"{name}.zip"
-    sums = (repo / "dist" / "SHA256SUMS").read_text()
+    sums = (repo / "dist" / "SHA256SUMS").read_text(encoding="utf-8")
     assert releases._sum_for(sums, archive.name) == hashlib.sha256(archive.read_bytes()).hexdigest()
     with zipfile.ZipFile(archive) as z:
         assert releases._top_folder(z.namelist()) == name

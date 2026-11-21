@@ -98,7 +98,7 @@ def test_an_image_without_dpi_and_a_multi_frame_tiff(tmp_path):
 
 def test_unknown_and_missing_files(tmp_path):
     other = tmp_path / "notes.txt"
-    other.write_text("not an invoice")
+    other.write_text("not an invoice", encoding="utf-8")
     assert page_sizes(other) == []
     with pytest.raises(IndexError):
         page_png(other, 1)

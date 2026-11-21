@@ -136,11 +136,11 @@ Every place the network could be touched: [docs/HOW_IT_RUNS.md](docs/HOW_IT_RUNS
 
 ```bash
 python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install -e ".[ocr,dev]"
+pip install -e ".[ocr,dev,parallel]"
 python -m ap_coder serve                              # the dashboard: http://127.0.0.1:8501
 python -m ap_coder doctor --online                    # the setup check, as a report
 python scripts/check.py                               # lint and the tests of what you changed
-python -m pytest -q                                   # the default tests, ~7 min (the whole suite: -m "", ~28 min)
+python -m pytest -q                                   # the default tests, ~15 min (the whole suite: -m "", ~37 min)
 ```
 
 The code is in `ap_coder/`: `core` (the database and settings), `capture` (reading a document), `ai` (the pipeline

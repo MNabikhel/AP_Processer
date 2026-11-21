@@ -22,7 +22,7 @@ def _github_zip(folder, version="0.2.0"):
     make_install(folder, version)
     (folder / "bundle_manifest.json").unlink()
     (folder / "data").mkdir()
-    (folder / "data" / "chart_of_accounts.csv").write_text("code,name\n")
+    (folder / "data" / "chart_of_accounts.csv").write_text("code,name\n", encoding="utf-8")
     (folder / "samples").mkdir()
     (folder / "samples" / "a.pdf").write_bytes(b"%PDF")
     return folder

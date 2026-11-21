@@ -58,7 +58,7 @@ def test_a_hidden_file_named_like_an_email_is_never_unpacked_whatever_the_python
 
 def test_unpack_saves_attachments_and_files_the_email(tmp_path):
     (tmp_path / "Invoice from Northwind.eml").write_bytes(_email().as_bytes())
-    (tmp_path / "notes.txt").write_text("x")
+    (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
     assert [p.name for p in emails_in(tmp_path)] == ["Invoice from Northwind.eml"]
     assert unpack_folder(tmp_path) == []  # just written: it may still be being copied
     (result,) = unpack_folder(tmp_path, now=time.time() + 60)

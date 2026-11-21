@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import re
 import subprocess
 import sys
 
@@ -28,6 +29,108 @@ def test_every_text_file_is_read_and_written_with_its_encoding():
         cwd=ROOT, capture_output=True, text=True,
     )  # fmt: skip
     assert run.returncode == 0, "name the encoding (usually encoding='utf-8'):\n" + run.stdout + run.stderr
+
+
+TEXT_MODE = re.compile(r"[rwaxt+]*")  # a mode of open() with no "b": text
+# The keywords pathlib's own take besides the encoding: a call with another (writers=, color=) is not a path's.
+PATH_KEYWORDS = {"read_text": {"errors", "newline"}, "write_text": {"errors", "newline"},
+                 "open": {"mode", "buffering", "errors", "newline"}}  # fmt: skip
+# The way out for a call the rule takes for a path's but is no file's (a PDF page's text, say): on its line, the
+# comment "# encoding: not text (why)", the why said.
+NOT_TEXT = re.compile(r"#\s*encoding: not text \([^)]+\)")
+# Calls of the app the rule below finds, left as they are until after Monday's test (the behaviour freeze): each file
+# and how many. lines.py: the lines benchmark's lines.json, json.dumps' ASCII only, so read alike on any computer.
+NO_ENCODING_KEPT = {"ap_coder/bench/lines.py": 1}
+
+
+def _named(node: ast.AST, name: str) -> bool:
+    """Whether ``node`` is a call of ``name`` (``TextWriter(...)``, ``pymupdf.TextWriter(...)``), or the name."""
+    node = node.func if isinstance(node, ast.Call) else node
+    return getattr(node, "attr", getattr(node, "id", None)) == name
+
+
+def _text_without_encoding(source: str) -> list[int]:
+    """The lines of a path's ``read_text()``, ``write_text(data)`` or ``open(<a text mode>)`` with no encoding, by
+    pathlib's own signatures (an encoding given by position, ``**kwargs`` or a keyword pathlib's has not, a module's
+    function of that name such as tarfile.open, PyMuPDF's TextWriter, ``open()`` with no mode, which a page or a PDF
+    has too, and a call said to be no file's, ``NOT_TEXT``, aside)."""
+    tree = ast.parse(source)
+    lines = source.splitlines()
+    modules = {(alias.asname or alias.name).split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import)
+               for alias in node.names}  # fmt: skip
+    writers = {ast.unparse(target) for node in ast.walk(tree)  # PyMuPDF's TextWriters: made, or a parameter's type
+               if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and _named(node.value, "TextWriter")
+               for target in node.targets}  # fmt: skip
+    writers |= {node.arg for node in ast.walk(tree) if isinstance(node, ast.arg) and node.annotation is not None
+                and "TextWriter" in ast.unparse(node.annotation)}  # fmt: skip
+    found = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+        held = node.func.value
+        if (
+            "encoding" in keywords
+            or None in keywords
+            or set(keywords) - PATH_KEYWORDS.get(node.func.attr, set())
+            or (isinstance(held, ast.Name) and held.id in modules)
+            or ast.unparse(held) in writers
+            or _named(held, "TextWriter")
+            or any(NOT_TEXT.search(line) for line in lines[node.lineno - 1 : node.end_lineno])
+        ):
+            continue
+        name, given = node.func.attr, len(node.args)
+        mode = keywords.get("mode", node.args[0] if node.args else None)
+        text = isinstance(mode, ast.Constant) and isinstance(mode.value, str) and TEXT_MODE.fullmatch(mode.value)
+        if (name, given) in {("read_text", 0), ("write_text", 1)} or (name == "open" and given <= 1 and text):
+            found.append(node.lineno)
+    return sorted(found)
+
+
+def test_every_path_read_or_written_as_text_names_its_encoding():
+    """The rule above where ruff can't tell a path: it knows ``Path(...)`` itself, not a fixture's ``tmp_path / "x"``
+    or a variable, so ``(tmp_path / "a.md").write_text("·")`` went unseen and was written in cp1252 on Windows."""
+    found: dict[str, list[int]] = {}
+    for folder in CODE:
+        for path in sorted((ROOT / folder).rglob("*.py")):
+            if lines := _text_without_encoding(path.read_text(encoding="utf-8")):
+                found[path.relative_to(ROOT).as_posix()] = lines
+    new = {name: lines for name, lines in found.items() if len(lines) > NO_ENCODING_KEPT.get(name, 0)}
+    assert not new, (f"name the encoding (usually encoding='utf-8'); a call that writes no file, such as a PDF page's "
+                     f"text, ends its line with '# encoding: not text (why)': {new}")  # fmt: skip
+    assert {name: len(lines) for name, lines in found.items()} == NO_ENCODING_KEPT, "a call kept no longer is: say so"
+
+
+def test_the_path_encoding_rule_finds_what_it_should():
+    """Not PyMuPDF's write_text, to which an encoding is a TypeError, nor a call said to be no file's (B-3012)."""
+    source = """import tarfile
+(tmp_path / "a.csv").write_text("x")
+path.read_text()
+log.open("w")
+path.open(mode="a")
+path.write_text("x", encoding="utf-8")
+path.read_text("utf-8")
+path.write_text("x", "utf-8")
+path.open("rb")
+path.open("w", **options)
+envfile.read_text(name)
+tarfile.open("old.tar", "r")
+pymupdf.open()
+page.open()
+archive.open("word/document.xml")
+writer = pymupdf.TextWriter(page.rect)
+writer.write_text(page)
+def stamp(page, writer: pymupdf.TextWriter):
+    writer.write_text(page)
+pymupdf.TextWriter(page.rect).write_text(page)
+page.write_text(page.rect, writers=writer)
+self.writer = pymupdf.TextWriter(page.rect)
+self.writer.write_text(page)
+held.write_text(page)  # encoding: not text (a PDF page's text, PyMuPDF's)
+held.write_text(page)  # encoding: not text
+held.write_text(page)
+"""
+    assert _text_without_encoding(source) == [2, 3, 4, 5, 25, 26]  # (25: the way out says why, or it isn't one)
 
 
 def _is_mark(node: ast.AST) -> bool:

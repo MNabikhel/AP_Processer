@@ -326,7 +326,9 @@ def test_an_emailed_statement_stays_listed_however_many_emails_were_sorted_after
             "documents": [{"name": "stmt.pdf", "kind": "statement", "file": "statements/s - stmt.pdf"}]}  # fmt: skip
     newer = [{"id": f"inv{n:04d}", "kind": "invoice", "needs_person": False, "documents": []} for n in range(600)]
     (tmp_path / "emails").mkdir()
-    (tmp_path / "emails" / "triage.jsonl").write_text("".join(json.dumps(e) + "\n" for e in [stmt, *newer]))
+    (tmp_path / "emails" / "triage.jsonl").write_text(
+        "".join(json.dumps(e) + "\n" for e in [stmt, *newer]), encoding="utf-8"
+    )
     assert [s["id"] for s in inbox.statements(_NoEvents(), tmp_path)] == ["stmt01"]
 
 

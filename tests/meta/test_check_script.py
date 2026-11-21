@@ -45,6 +45,22 @@ def test_a_script_the_package_and_the_shared_test_files_bring_their_tests():
     assert check.tests_for(["pyproject.toml", "ap_coder/coding/tax.py"]) is None
 
 
+def test_a_module_directly_in_tests_is_no_test_and_a_word_in_quotes_no_use_of_a_script():
+    """B-3009: tests/test_map.py (the test map's module, D-333) was taken for a test file: run by name, pytest collected
+    ``tests_for`` as a test ("fixture 'keys' not found") and the check failed, for a change to it, to a function named
+    in it, or to scripts/combine.py (its ``coverage combine`` read as a use of the script). Files directly in tests/
+    are no tests (tests/conftest.py's ``collect_ignore_glob``)."""
+    texts, _ = check.read_tests()
+    assert texts and not [p for p in texts if p.parent == ROOT / "tests"]
+    found = check.picks(["tests/test_map.py", "scripts/combine.py"])
+    assert "tests/test_map.py" not in found["tests/test_map.py"] | found["scripts/combine.py"]
+    assert "tests/meta/test_test_map.py" in found["tests/test_map.py"]  # (its own tests, by its name)
+    a, b, c = (ROOT / f"tests/x/test_{n}.py" for n in "abc")
+    texts = {a: 'subprocess.run(["coverage", "combine"])', b: 'load_script("combine", "ap_script_combine")',
+             c: 'names = ("combine", "upgrade")  # each of ROOT / "scripts"'}  # fmt: skip
+    assert check.script_users("combine", texts) == [b, c]
+
+
 def test_any_change_to_the_app_the_scripts_or_the_tests_runs_the_rules_that_check_the_whole_tree():
     """D-329: the KEPT list of tests/meta/test_core_imports.py (a store part moved, 6420278) and the offline guard's
     TOUCHPOINTS (a script added, b4c06bf) failed only in CI: no test named after the files changed checks them."""
@@ -103,7 +119,7 @@ def test_no_module_of_the_app_goes_without_tests():
 
 
 def test_a_changed_module_no_test_is_picked_for_fails_the_check(monkeypatch, capsys):
-    monkeypatch.setattr(check, "picks", lambda files: {f: set() for f in files})
+    monkeypatch.setattr(check, "picks", lambda files, notes=None: {f: set() for f in files})
     code, out, _ = _checked(monkeypatch, capsys, ["ap_coder/coding/tax.py", "docs/BUGS.md", "--no-walk"])
     assert code == 1 and "NO TESTS RAN FOR ap_coder/coding/tax.py" in out and "check: OK" not in out
     assert "docs/BUGS.md" not in out  # (a doc is no module)
@@ -121,17 +137,155 @@ def test_a_run_from_another_folder_picks_the_same_tests(monkeypatch, tmp_path):
 def test_the_rules_run_their_slow_tests_but_no_browser_nor_the_offline_guards_whole_walks(monkeypatch, capsys):
     ran = []
     monkeypatch.setattr(check, "pytest", lambda args: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
-    assert check.main(["ap_coder/coding/terms.py", "--no-walk"]) == 0
+    assert check.main(["ap_coder/coding/terms.py", "--no-walk", "--serial"]) == 0
     rules, tests = ran
     assert rules[:4] == ["-m", "", "-k", "not in_a_browser"] and set(rules[-len(check.RULES) :]) == set(check.RULES)
     left_out = [rules[i + 1] for i, a in enumerate(rules) if a == "--deselect"]
     assert "tests/offline/test_offline_guard.py::test_the_whole_walk_works_in_a_network_namespace_without_network" in (
         left_out
     )
-    assert left_out and not any(t.startswith("tests/meta/") for t in left_out)
-    assert "tests/coding/test_terms.py" in tests and "-m" not in tests and not set(check.RULES) & set(tests)
+    meta = {t for t in left_out if t.startswith("tests/meta/")}  # (only the slow tests of tests/meta that take long)
+    assert left_out and meta <= set(check.slow_tests("tests/meta/test_same_behaviour.py"))
+    # The files picked run with their slow tests, no browser (--fast: the default run's tests only).
+    assert tests[:4] == ["-m", "", "-k", "not in_a_browser"] and "tests/coding/test_terms.py" in tests
+    assert not set(check.RULES) & set(tests)
     migrations = "tests/core/test_migrations.py::test_every_schema_since_pr_99s_has_an_old_database"  # (one test)
-    assert capsys.readouterr().out.startswith(f"Rules: {migrations} tests/core/test_store_package.py tests/meta ")
+    assert f"Rules: {migrations} tests/core/test_store_package.py tests/meta " in capsys.readouterr().out
+    ran.clear()
+    assert check.main(["ap_coder/coding/terms.py", "--no-walk", "--serial", "--fast"]) == 0
+    assert "-m" not in ran[1] and "tests/coding/test_terms.py" in ran[1]
+
+
+def test_asked_for_the_rules_run_once_as_for_a_change_to_code_whatever_changed(monkeypatch, capsys):
+    """B-3014: combine.py's check of docs-only merges ran RULES itself with a bare -m "" (the offline guard's whole
+    walks, every route for every role, the browser tests: about 110 s more), and with pyproject.toml RULES twice.
+    ``--rules`` runs them as check.py's own run does, once, whatever changed."""
+    ran = []
+    monkeypatch.setattr(check, "pytest", lambda args: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
+    rules = sorted(check.RULES)
+    assert check.main(["--rules", "--serial", "--no-walk", "docs/BUGS.md"]) == 0
+    times = check.read_tests()[1]
+    assert ran == [[*check.rules_args(rules, times), *rules]]  # (the doc's own rules are tests/meta's)
+    ran.clear()
+    assert check.main(["--rules", "--serial", "--no-walk", "pyproject.toml"]) == 0  # (the whole default run too)
+    assert len(ran) == 2 and set(ran[0][-len(rules) :]) == set(rules) and ran[1] == []
+    ran.clear()
+    monkeypatch.setattr(check, "changed_files", lambda: [])
+    assert check.main(["--rules", "--serial", "--no-walk"]) == 0 and ran == [[*check.rules_args(rules, times), *rules]]
+    assert capsys.readouterr().out.count("Rules: ") == 3
+
+
+def test_slow_tests_that_take_long_together_are_left_to_ci(monkeypatch, capsys):
+    """B-3019: D-331's probe test (the jde and pages probes run twice, about 50 s) ran in every check's rules while
+    tests/test_times.json gave its file 0.7 s. A test file whose slow tests take over SLOW_SECONDS together leaves
+    them to CI, in the rules run and among the files picked; a slow rule that takes little still runs."""
+    times = check.read_tests()[1]
+    probe = "tests/meta/test_same_behaviour.py::test_the_jde_and_pages_probes_give_the_same_output_each_run"
+    whole, fast = times["tests/meta/test_same_behaviour.py"]
+    assert whole - fast > check.SLOW_SECONDS  # (53 s measured, 0.7 s of it not slow)
+    assert probe in check.slow_tests("tests/meta/test_same_behaviour.py")  # (marked so, with others: B-3024)
+    args = check.rules_args(sorted(check.RULES), times)
+    assert probe in args and "tests/meta/test_code_rules.py::test_no_sql_placeholders_are_made_one_per_item_of_a_list" \
+        not in args  # fmt: skip
+    assert check.estimate(sorted(check.RULES), times, slow=False) < 40
+    ran = []
+    monkeypatch.setattr(check, "pytest", lambda args: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
+    assert check.main(["tests/erp/test_accruals.py", "tests/coding/test_tax.py", "--serial", "--no-walk"]) == 0
+    left = [ran[1][i + 1] for i, a in enumerate(ran[1]) if a == "--deselect"]
+    assert left and all(t.startswith("tests/erp/test_accruals.py::") for t in left)  # (test_tax.py's: none, 0 s)
+    assert "tests/erp/test_accruals.py: its slow tests left to CI (about 49 s)" in capsys.readouterr().out
+
+
+def test_a_long_run_goes_on_several_cores(monkeypatch, capsys):
+    """pytest-xdist (the parallel extra): a run of over PARALLEL_SECONDS on AP_CHECK_WORKERS cores, else up to 4."""
+    ran = []
+    monkeypatch.setattr(check, "pytest", lambda args: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
+    monkeypatch.setattr(check.importlib.util, "find_spec", lambda name: object())  # (as if it were there)
+    monkeypatch.setenv("AP_CHECK_WORKERS", "3")
+    assert check.main(["ap_coder/coding/terms.py", "--no-walk"]) == 0
+    assert ran[0][:2] == ["-n", "3"] and "on 3 cores" in capsys.readouterr().out  # the rules: about 20 s
+    assert check.workers(serial=True) == 1
+    monkeypatch.delenv("AP_CHECK_WORKERS")
+    assert 1 <= check.workers(serial=False) <= 4
+    monkeypatch.setattr(check.importlib.util, "find_spec", lambda name: None)  # not installed: one core
+    assert check.workers(serial=False) == 1
+    ran.clear()
+    check.run_tests([], ["tests/coding/test_tax.py"], check.PARALLEL_SECONDS, serial=False)
+    assert ran == [["tests/coding/test_tax.py"]]  # (short: one core)
+    times = {"tests/meta/test_a.py": [3.0, 1.0], "tests/coding/test_b.py": [10.0, 2.0]}
+    assert check.estimate(["tests/meta", "tests/coding/test_b.py", "tests/x/test_new.py"], times, slow=False) == (
+        3.0 + 2.0 + check.UNTIMED
+    )
+    assert check.estimate(["tests/coding/test_b.py"], times) == 10.0
+
+
+def _lines_of(text: str, name: str) -> set[int]:
+    """The lines of a function's body in a module's text."""
+    (node,) = [n for n in check.functions(text) if n.name == name]
+    return set(range(node.lineno + 1, node.end_lineno + 1))
+
+
+def test_a_change_inside_a_function_brings_the_tests_that_name_it(monkeypatch):
+    """B-2950 (22082a4: ``ready_problems`` read the files of every invoice, caught by tests/bench/test_seed_volume.py)
+    and B-2970 (701e2fd: ``bulk.queue_facts``, caught by tests/web/test_day_one.py) failed only in CI: those tests
+    import neither module by name, and exports.py and bulk.py are used by too many test files for the budget."""
+    exports, bulk = "ap_coder/web/pages/exports.py", "ap_coder/coding/bulk.py"
+    texts = {f: (ROOT / f).read_text(encoding="utf-8") for f in (exports, bulk)}
+    # B-3013: the lines taken out were found in the file as it is, then looked for in HEAD's: an edit not committed
+    # above queue_facts failed this. Both from one text now, whatever the working tree holds.
+    monkeypatch.setattr(check, "committed", lambda f: texts[f])
+    taken_out = _lines_of(texts[bulk], "queue_facts")
+    changed = {exports: (_lines_of(texts[exports], "ready_problems"), set()), bulk: (set(), taken_out)}
+    monkeypatch.setattr(check, "changed_lines", lambda f: changed.get(f, (set(), set())))
+    assert check.changed_functions(bulk) == {"queue_facts"}  # (lines taken out: found in the file as it was)
+    notes: dict[str, list[str]] = {}
+    found = check.picks([exports, bulk], notes)
+    assert "tests/bench/test_seed_volume.py" in found[exports] and "tests/web/test_day_one.py" in found[bulk]
+    assert any(n.startswith("ready_problems (changed) is named in ") for n in notes[exports])
+    assert "tests/web/test_day_one.py" in check.tests_for([exports, bulk], found)
+    monkeypatch.setattr(check, "changed_lines", lambda f: None)  # a new file: every function of it
+    assert {"ready_problems", "queue_facts"} <= check.changed_functions(exports) | check.changed_functions(bulk)
+
+
+def test_with_a_test_map_the_functions_changed_bring_the_tests_that_ran_them(monkeypatch, tmp_path, capsys):
+    """B-3021: D-333 said check.py reads the test map (tests/test_map.json.gz), and it read none. With a map, the
+    functions the diff touches bring the test files that ran them, the quickest within BUDGET, the rest left to CI and
+    said so; with none, the picks are as before."""
+    from tests.test_map import write
+
+    taxmath = "ap_coder/coding/taxmath.py"
+    text = (ROOT / taxmath).read_text(encoding="utf-8")
+    monkeypatch.setattr(check, "committed", lambda f: text)
+    lines = {taxmath: (_lines_of(text, "invoice_taxes"), set())}
+    monkeypatch.setattr(check, "changed_lines", lambda f: lines.get(f, (set(), set())))
+    load = check.load_map
+    monkeypatch.setattr(check, "load_map", lambda: None)  # no map: as before
+    without = check.picks([taxmath])[taxmath]
+    volume, day_one = "tests/erp/test_jde_sync_volume.py", "tests/web/test_day_one.py"  # (118 s and 3.5 s)
+    write({"format": 1, "tests": [volume, day_one], "map": {f"{taxmath}::invoice_taxes": [0, 1]}}, tmp_path / "m.gz")
+    monkeypatch.setattr(check, "load_map", lambda: load(tmp_path / "m.gz"))
+    notes: dict[str, list[str]] = {}
+    found = check.picks([taxmath], notes)[taxmath]
+    assert found - without == {day_one} and volume not in found
+    assert any("the test map" in n and day_one in n and "1 left to CI" in n for n in notes[taxmath]), notes
+    assert load(tmp_path / "gone.gz") is None
+
+
+def test_a_name_too_many_tests_have_brings_none(monkeypatch):
+    texts = {ROOT / f"tests/x/test_{i}.py": "main(); ready_problems()" if i < 2 else "main()" for i in range(20)}
+    assert check.named_tests({"main", "__init__", "ready_problems", "gone"}, texts) == {
+        "ready_problems": {ROOT / "tests/x/test_0.py", ROOT / "tests/x/test_1.py"}
+    }
+
+
+def test_the_old_windows_clock_is_one_switch_away(monkeypatch):
+    """tests/conftest.py's coarse clock (AP_TEST_OLD_WINDOWS_CLOCK, B-2997): off until it passes as CI does."""
+    asked = []
+    monkeypatch.setattr(check.subprocess, "run", lambda cmd, **kw: asked.append(kw["env"]) or None)
+    check.pytest(["tests/coding/test_tax.py"])
+    monkeypatch.setattr(check, "OLD_WINDOWS_CLOCK", True)
+    check.pytest(["tests/coding/test_tax.py"])
+    assert asked[0] is None and asked[1]["AP_TEST_OLD_WINDOWS_CLOCK"] == "1"
 
 
 def test_a_changed_function_near_the_length_limit_gets_a_warning(monkeypatch, capsys):
@@ -142,7 +296,7 @@ def test_a_changed_function_near_the_length_limit_gets_a_warning(monkeypatch, ca
     warned = check.near_limits(["ap_coder/bench/__main__.py", "ap_coder/core/store/summary.py", "docs/BUGS.md"])
     assert any(w.startswith("ap_coder/bench/__main__.py::main: ") for w in warned)  # (265 lines)
     assert any(w.startswith("ap_coder/core/store/summary.py: ") for w in warned)  # (997 lines)
-    monkeypatch.setattr(check, "changed_lines", lambda f: {1})  # the docstring only: no function changed
+    monkeypatch.setattr(check, "changed_lines", lambda f: ({1}, set()))  # the docstring only: no function changed
     assert check.near_limits(["ap_coder/bench/__main__.py"]) == []
     code, out, _ = _checked(monkeypatch, capsys, ["ap_coder/core/store/summary.py", "--no-walk"])
     assert code == 0 and "near the limit: split before adding: ap_coder/core/store/summary.py" in out

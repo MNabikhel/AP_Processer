@@ -23,9 +23,17 @@
   5.0,
   1.6
  ],
+ "tests/ai/test_corrections.py": [
+  5.4,
+  5.4
+ ],
  "tests/ai/test_credit_notes_and_history_cap.py": [
   0.3,
   0.3
+ ],
+ "tests/ai/test_di_http.py": [
+  1.2,
+  1.2
  ],
  "tests/ai/test_evaluation.py": [
   0.0,
@@ -87,6 +95,10 @@
   43.9,
   0.6
  ],
+ "tests/ai/test_prompt_guard.py": [
+  2.9,
+  0.0
+ ],
  "tests/ai/test_reader_outcomes.py": [
   2.6,
   0.3
@@ -131,6 +143,10 @@
   3.9,
   3.9
  ],
+ "tests/bench/test_adversarial.py": [
+  7.6,
+  2.6
+ ],
  "tests/bench/test_bench.py": [
   11.6,
   2.1
@@ -151,9 +167,17 @@
   1.7,
   1.7
  ],
+ "tests/bench/test_companies_speed.py": [
+  0.8,
+  0.8
+ ],
  "tests/bench/test_day.py": [
   45.8,
-  45.8
+  0.2
+ ],
+ "tests/bench/test_di_compare.py": [
+  208.6,
+  0.7
  ],
  "tests/bench/test_fake_model.py": [
   4.1,
@@ -161,11 +185,19 @@
  ],
  "tests/bench/test_jde_exports.py": [
   39.0,
-  39.0
+  6.2
  ],
  "tests/bench/test_jde_invoices.py": [
   0.5,
   0.5
+ ],
+ "tests/bench/test_jde_po_vouchers.py": [
+  10.0,
+  4.3
+ ],
+ "tests/bench/test_pilot_day.py": [
+  5.6,
+  0.4
  ],
  "tests/bench/test_seed_volume.py": [
   24.2,
@@ -187,9 +219,25 @@
   2.5,
   0.6
  ],
+ "tests/capture/test_confidence_di.py": [
+  0.1,
+  0.1
+ ],
+ "tests/capture/test_di_reader.py": [
+  0.5,
+  0.5
+ ],
+ "tests/capture/test_di_with_ocr.py": [
+  0.7,
+  0.7
+ ],
  "tests/capture/test_document_kind.py": [
   0.5,
   0.5
+ ],
+ "tests/capture/test_instructions.py": [
+  0.7,
+  0.7
  ],
  "tests/capture/test_line_item_recall.py": [
   0.0,
@@ -205,7 +253,7 @@
  ],
  "tests/capture/test_long_invoices.py": [
   12.3,
-  12.3
+  0.3
  ],
  "tests/capture/test_not_invoice.py": [
   0.3,
@@ -246,6 +294,10 @@
  "tests/capture/test_reader_line_items.py": [
   0.1,
   0.1
+ ],
+ "tests/capture/test_reader_progress.py": [
+  0.2,
+  0.2
  ],
  "tests/capture/test_reader_scans.py": [
   0.6,
@@ -343,9 +395,17 @@
   0.1,
   0.1
  ],
+ "tests/coding/test_companies.py": [
+  3.8,
+  3.8
+ ],
  "tests/coding/test_corrections_and_place_of_supply.py": [
   3.8,
   2.2
+ ],
+ "tests/coding/test_duplicates_by_company.py": [
+  0.7,
+  0.7
  ],
  "tests/coding/test_guesses_and_learned_codes.py": [
   3.6,
@@ -390,6 +450,14 @@
  "tests/coding/test_po.py": [
   17.2,
   13.8
+ ],
+ "tests/coding/test_po_companies.py": [
+  0.6,
+  0.6
+ ],
+ "tests/coding/test_posting_edits.py": [
+  1.2,
+  1.2
  ],
  "tests/coding/test_remark.py": [
   2.3,
@@ -461,7 +529,7 @@
  ],
  "tests/coding/test_vendor_info.py": [
   12.7,
-  12.7
+  1.3
  ],
  "tests/coding/test_vendor_mail.py": [
   0.0,
@@ -503,9 +571,17 @@
   0.2,
   0.2
  ],
+ "tests/core/test_chart_companies.py": [
+  0.6,
+  0.6
+ ],
  "tests/core/test_chart_file.py": [
   14.5,
   1.2
+ ],
+ "tests/core/test_chart_index.py": [
+  1.7,
+  1.7
  ],
  "tests/core/test_chart_lists.py": [
   1.1,
@@ -579,9 +655,13 @@
   0.1,
   0.1
  ],
+ "tests/core/test_peek.py": [
+  0.1,
+  0.1
+ ],
  "tests/core/test_queue_changes.py": [
   26.9,
-  26.9
+  0.8
  ],
  "tests/core/test_reference_data.py": [
   0.1,
@@ -590,6 +670,10 @@
  "tests/core/test_reports.py": [
   0.4,
   0.4
+ ],
+ "tests/core/test_roles_store.py": [
+  2.7,
+  2.7
  ],
  "tests/core/test_rules_store.py": [
   0.8,
@@ -683,6 +767,10 @@
   6.1,
   6.1
  ],
+ "tests/erp/test_import_specs.py": [
+  3.2,
+  3.2
+ ],
  "tests/erp/test_insights.py": [
   1.8,
   0.5
@@ -711,6 +799,10 @@
   3.9,
   3.9
  ],
+ "tests/erp/test_jde_companies.py": [
+  3.1,
+  3.1
+ ],
  "tests/erp/test_jde_gl_mode.py": [
   0.1,
   0.1
@@ -725,13 +817,17 @@
  ],
  "tests/erp/test_jde_post_runs.py": [
   78.3,
-  74.9
+  13.0
  ],
  "tests/erp/test_jde_post_safety.py": [
   8.4,
   8.4
  ],
  "tests/erp/test_jde_readiness.py": [
+  0.2,
+  0.2
+ ],
+ "tests/erp/test_jde_settings.py": [
   0.2,
   0.2
  ],
@@ -758,6 +854,10 @@
  "tests/erp/test_jde_terms.py": [
   1.0,
   1.0
+ ],
+ "tests/erp/test_jde_zfiles.py": [
+  0.1,
+  0.1
  ],
  "tests/erp/test_journal.py": [
   2.1,
@@ -871,9 +971,17 @@
   0.1,
   0.1
  ],
+ "tests/launcher/test_releases.py": [
+  14.8,
+  14.8
+ ],
  "tests/launcher/test_running.py": [
   7.7,
   3.0
+ ],
+ "tests/launcher/test_screens.py": [
+  0.0,
+  0.0
  ],
  "tests/launcher/test_update.py": [
   0.3,
@@ -903,6 +1011,10 @@
   0.0,
   0.0
  ],
+ "tests/meta/test_builds_workflow.py": [
+  0.2,
+  0.2
+ ],
  "tests/meta/test_caches.py": [
   0.9,
   0.9
@@ -918,6 +1030,10 @@
  "tests/meta/test_code_rules.py": [
   2.8,
   0.6
+ ],
+ "tests/meta/test_combine.py": [
+  2.3,
+  2.3
  ],
  "tests/meta/test_core_imports.py": [
   0.4,
@@ -943,6 +1059,10 @@
   0.0,
   0.0
  ],
+ "tests/meta/test_lockstep.py": [
+  5.0,
+  5.0
+ ],
  "tests/meta/test_moved_modules.py": [
   0.3,
   0.3
@@ -950,6 +1070,10 @@
  "tests/meta/test_nested_writes.py": [
   0.6,
   0.6
+ ],
+ "tests/meta/test_old_windows_clock.py": [
+  2.9,
+  0.0
  ],
  "tests/meta/test_package_data.py": [
   0.0,
@@ -959,9 +1083,13 @@
   0.2,
   0.2
  ],
+ "tests/meta/test_role_words.py": [
+  1.6,
+  1.6
+ ],
  "tests/meta/test_same_behaviour.py": [
-  0.7,
-  0.7
+  97.5,
+  1.3
  ],
  "tests/meta/test_sql_in_store.py": [
   1.4,
@@ -1013,7 +1141,7 @@
  ],
  "tests/ops/test_demo_company.py": [
   2.0,
-  2.0
+  0.2
  ],
  "tests/ops/test_demo_day.py": [
   1.3,
@@ -1131,9 +1259,21 @@
   0.0,
   0.0
  ],
+ "tests/web/test_admin_panel.py": [
+  2.6,
+  2.6
+ ],
+ "tests/web/test_admin_roles.py": [
+  4.3,
+  4.3
+ ],
  "tests/web/test_chart_company_walk.py": [
   9.8,
   9.8
+ ],
+ "tests/web/test_chart_eligible.py": [
+  2.2,
+  2.2
  ],
  "tests/web/test_dashboard_and_launcher_review.py": [
   2.1,
@@ -1159,6 +1299,10 @@
   12.3,
   6.6
  ],
+ "tests/web/test_first_sign_in.py": [
+  3.6,
+  3.6
+ ],
  "tests/web/test_guessed_accounts.py": [
   0.4,
   0.4
@@ -1170,6 +1314,10 @@
  "tests/web/test_header_details.py": [
   2.3,
   2.1
+ ],
+ "tests/web/test_laptop_sign_in.py": [
+  5.0,
+  5.0
  ],
  "tests/web/test_maintenance.py": [
   1.4,
@@ -1209,7 +1357,11 @@
  ],
  "tests/web/test_refresh.py": [
   43.5,
-  43.5
+  24.6
+ ],
+ "tests/web/test_role_permissions.py": [
+  0.3,
+  0.3
  ],
  "tests/web/test_roles.py": [
   10.0,
@@ -1225,7 +1377,7 @@
  ],
  "tests/web/test_server_capacity.py": [
   40.1,
-  12.7
+  10.6
  ],
  "tests/web/test_server_capture.py": [
   1.8,
@@ -1237,7 +1389,7 @@
  ],
  "tests/web/test_server_https.py": [
   12.2,
-  9.3
+  5.8
  ],
  "tests/web/test_server_role_pages.py": [
   10.6,
@@ -1299,6 +1451,10 @@
   12.3,
   4.3
  ],
+ "tests/web/test_web_companies.py": [
+  5.6,
+  5.6
+ ],
  "tests/web/test_web_ctxmenu.py": [
   0.3,
   0.2
@@ -1319,6 +1475,10 @@
   3.1,
   1.5
  ],
+ "tests/web/test_web_imports.py": [
+  21.2,
+  14.8
+ ],
  "tests/web/test_web_invoice.py": [
   14.3,
   7.4
@@ -1334,6 +1494,10 @@
  "tests/web/test_web_jde_loaded.py": [
   1.1,
   1.1
+ ],
+ "tests/web/test_web_jde_workbook.py": [
+  5.1,
+  5.1
  ],
  "tests/web/test_web_joined.py": [
   6.9,

@@ -408,8 +408,10 @@ def test_a_cost_center_no_longer_in_the_list_is_not_proposed(tmp_path, reference
         store.approve_invoice(store.add_invoice(tmp_path / f"{n}.pdf", out, None), out, "pat")
     line = _plain_line(store, reference, "N-8", "Copy paper case of 10", "Northwind Supply Ltd.").line_items[0]
     assert (line.predicted_gl_code, line.predicted_cost_center) == ("6000", "CC200")
-    centers = (DATA / "cost_centers.csv").read_text().splitlines()
-    (tmp_path / "cc.csv").write_text("\n".join(r for r in centers if not r.startswith("CC200")) + "\n")
+    centers = (DATA / "cost_centers.csv").read_text(encoding="utf-8").splitlines()
+    (tmp_path / "cc.csv").write_text(
+        "\n".join(r for r in centers if not r.startswith("CC200")) + "\n", encoding="utf-8"
+    )
     retired = load_reference_data(DATA / "chart_of_accounts.csv", tmp_path / "cc.csv", DATA / "tax_gl_mapping.csv",
                                   DATA / "coding_policy.md")  # fmt: skip
     line = _plain_line(store, retired, "N-9", "Copy paper case of 10", "Northwind Supply Ltd.").line_items[0]

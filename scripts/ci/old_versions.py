@@ -326,7 +326,9 @@ def seed_inside(folder: Path, how: str, out: Path) -> None:
     if how == "cli":  # the first version: a command line writing to output/, its .env in the code folder
         out_dir = folder / "output"
         out_dir.mkdir(exist_ok=True)
-        (out_dir / "batch_summary.json").write_text('[{"file": "contoso_invoice_INV-2026-04471.pdf"}]\n')
+        (out_dir / "batch_summary.json").write_text(
+            '[{"file": "contoso_invoice_INV-2026-04471.pdf"}]\n', encoding="utf-8"
+        )
         env = _set_env(folder / ".env")
         summary = {"invoices": [], "feedback": 0, "export_batches": 0, "settings": {}, "vendors": [], "rules": [],
                    "schema_version": None, "env_file": str(env), "folder": str(folder), "how": how,

@@ -90,7 +90,7 @@ def test_a_credit_line_printed_as_a_positive_quantity_and_price_is_no_line_math(
 
     from tests.conftest import SAMPLES
 
-    credit = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_CN-2026-0047.json").read_text())
+    credit = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_CN-2026-0047.json").read_text(encoding="utf-8"))
     credit["line_items"][1]["quantity"] = 4  # 4 × 150.00, the amount -600.00
     assert "LINE_MATH" not in _codes(validate_coding(InvoiceCoding.model_validate(credit), reference))
     credit["line_items"][1]["quantity"] = 3  # 3 × 150.00 is not 600.00, whatever the sign

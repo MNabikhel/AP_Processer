@@ -661,7 +661,7 @@ def test_a_worker_of_the_server_is_started_afresh_and_no_request_or_login_is_los
                str(port), "--workers", "2"]  # fmt: skip
     root = Path(__file__).resolve().parents[2]
     log = tmp_path / "server.log"  # a file, not a pipe: a worker left running can't hold the test up
-    out = log.open("w")
+    out = log.open("w", encoding="utf-8")
     proc = subprocess.Popen(command, cwd=root, env=env, stdout=out, stderr=subprocess.STDOUT)
     base = f"http://127.0.0.1:{port}"
     direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -1399,7 +1399,7 @@ def test_the_real_server_works_its_reports_and_each_workers_memories_out_then_se
     def started(n: int) -> str:
         """The server started, until it answered and was stopped: its window."""
         window = tmp_path / f"server-{n}.log"  # a file, not a pipe: a worker left running can't hold the test up
-        with window.open("w") as out:
+        with window.open("w", encoding="utf-8") as out:
             proc = subprocess.Popen(command, cwd=root, env=env, stdout=out, stderr=subprocess.STDOUT)
             try:
                 deadline = time.monotonic() + 120
@@ -1409,7 +1409,7 @@ def test_the_real_server_works_its_reports_and_each_workers_memories_out_then_se
                             assert answer.status == 200
                             break
                     except OSError:
-                        assert time.monotonic() < deadline and proc.poll() is None, window.read_text()
+                        assert time.monotonic() < deadline and proc.poll() is None, window.read_text(encoding="utf-8")
                         time.sleep(0.3)
                 token = json.loads((data / ".ap_coder_server.json").read_text(encoding="utf-8"))["token"]
                 stop = urllib.request.Request(base + "/shutdown", data=b"", method="POST",

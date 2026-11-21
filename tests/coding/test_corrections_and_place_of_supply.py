@@ -158,7 +158,7 @@ def test_a_receipt_with_amounts_without_a_leading_zero_reads_them(tmp_path):
             "Invoice # 55013\nDate: October 1, 2026\n\nDescription            Amount\nDog chew               $.99\n\n"
             "Subtotal               $.99\nHST 13%                $.13\nTotal                  $1.12\n")  # fmt: skip
     path = tmp_path / "leading_point.txt"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     r = analyze(str(path))
     assert r.fields["subtotal"].value == 0.99 and r.fields["hst_amount"].value == 0.13
     assert r.fields["grand_total"].value == 1.12 and r.fields["subtotal"].status == "verified"
@@ -206,7 +206,7 @@ def test_a_final_approval_from_a_stale_page_is_refused(tmp_path, monkeypatch):
     store = Store(tmp_path / "private" / "ap_coder.db")
     load_sample_setup(store)
     store.set_setting("approval_limit", "10000")
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     iid = store.add_invoice(tmp_path / "a.pdf", gt, {})
     store.approve_invoice(iid, gt, "Jane")
     client = client_for(store)
@@ -536,7 +536,7 @@ def test_an_old_date_is_a_check_not_a_failed_check(tmp_path):
 
     text = PRAIRIE.replace("October 1, 2026", "March 3, 2021")
     path = tmp_path / "old.txt"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     r = analyze(str(path), today=dt.date(2026, 10, 22))
     date = r.fields["invoice_date"]
     assert date.value == "2021-03-03" and date.status == "check"
@@ -629,7 +629,7 @@ def test_a_vendor_read_from_the_bill_to_is_check(tmp_path):
     text = ("Northern Pet Supply Ltd.\n12 King St W, Toronto ON M5H 1A1\nBill to:\nFabrikam Canada Ltée\n"
             "1000 rue De La Gauchetière O., Montréal QC H3B 4W5\nINVOICE\nInvoice # 77\n")  # fmt: skip
     path = tmp_path / "billto.txt"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     layout = build_layout(path)
 
     def marked(name, checks=()):
@@ -750,7 +750,7 @@ def test_a_one_word_vendor_approved_before_for_this_supplier_is_not_check(tmp_pa
     from ap_coder.capture.types import FieldResult
 
     path = tmp_path / "telus.txt"
-    path.write_text("TELUS\n510 W Georgia St, Vancouver BC V6B 0M3\nINVOICE\n")
+    path.write_text("TELUS\n510 W Georgia St, Vancouver BC V6B 0M3\nINVOICE\n", encoding="utf-8")
     layout = build_layout(path)
     approved = Template(documents={"sha-1": {"vendor_name": ["telus"]}})
 

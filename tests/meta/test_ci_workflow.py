@@ -1,6 +1,7 @@
 """The CI workflow is one GitHub accepts: a file it rejects runs no job at all, so nothing is tested."""
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -63,8 +64,8 @@ def test_the_workflow_tests_skip_where_there_is_no_workflow(tmp_path):
     copy.mkdir(parents=True)
     shutil.copy(__file__, copy / "test_ci_workflow.py")
     out = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-k",
-                          "not looked_up_once and not where_there_is_no_workflow and not one_shard"
-                          " and not older_versions and not weighed_by", str(copy)],
+                          "not looked_up_once and not where_there_is_no_workflow and not one_shard and not older"
+                          "_versions and not weighed_by and not times_are_refreshed and not suites_time", str(copy)],
                          cwd=tmp_path, capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert out.returncode == 0, out.stdout[-2000:]
 
@@ -246,6 +247,64 @@ def test_every_cells_parts_are_all_there_and_the_test_windows_leaves_out_runs_on
     assert 'pytest -q -m "" -o faulthandler_timeout=2400 ${{ env.SYNC_VOLUME }}' in job["steps"][-1]["run"]  # B-2727
 
 
+FLAKY = """
+from pathlib import Path
+
+
+def test_always_fails():
+    assert False
+
+
+def test_fails_the_first_time_only():
+    ran = Path(__file__).with_name("ran-once")
+    if not ran.exists():
+        ran.write_text("")
+        assert False
+
+
+def test_passes():
+    pass
+"""
+
+
+@needs_ci
+def test_after_failed_tests_each_runs_again_and_the_summary_says_if_it_passed_then(tmp_path):
+    """A red run did not say whether a failure was a flake, and each needed a whole job run again (20 minutes or
+    more). In the jobs of tests, a step after a failed Tests step runs the failed tests once more and says of each, in
+    the run's summary and as an annotation, "passed when run again (likely flaky)" or "failed again"; the job stays red
+    either way (no step may hide a failure). Here its script runs on a failing test, a flaky one and one that passes."""
+    jobs = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
+    scripts = set()
+    for name in ("tests", "browser-tests"):
+        steps = jobs[name]["steps"]
+        tests = next(n for n, step in enumerate(steps) if step.get("id") == "tests")
+        again = steps[tests + 1]
+        assert again["if"] == "failure() && steps.tests.outcome == 'failure'" and "continue-on-error" not in again
+        assert steps[tests].get("env") == again.get("env") and "continue-on-error" not in steps[tests], name
+        scripts.add(again["run"])
+    assert len(scripts) == 1  # (the same in both jobs)
+    script = scripts.pop().split("<<'EOF'\n", 1)[1].rsplit("EOF", 1)[0]
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (tmp_path / "test_flaky.py").write_text(FLAKY, encoding="utf-8")
+    summary = tmp_path / "summary.md"
+    env = {**os.environ, "GITHUB_STEP_SUMMARY": str(summary)}
+    first = subprocess.run([sys.executable, "-m", "pytest", "-q"], cwd=tmp_path, env=env,
+                           capture_output=True, text=True, timeout=120)  # fmt: skip
+    assert first.returncode == 1 and "2 failed, 1 passed" in first.stdout, first.stdout
+    done = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True,
+                          timeout=120)  # fmt: skip
+    assert done.returncode == 0, done.stderr
+    assert summary.read_text(encoding="utf-8").splitlines() == [
+        "### The failed tests, run again",
+        "",
+        "- failed again: `test_flaky.py::test_always_fails`",
+        "- passed when run again (likely flaky): `test_flaky.py::test_fails_the_first_time_only`",
+    ]
+    assert "::error title=failed again::test_flaky.py::test_always_fails" in done.stdout
+    assert "::warning title=passed when run again (likely flaky)::test_flaky.py::test_fails_the_" in done.stdout
+    assert "1 failed, 1 passed" in done.stdout  # (the two failed ones alone ran again)
+
+
 def test_every_test_runs_in_exactly_one_shard():
     """CI splits the Windows run with --shard K/N (tests/conftest.py): whole files, each in one part, none left out."""
     from tests.conftest import _shard
@@ -313,6 +372,81 @@ def test_the_parts_are_weighed_by_the_tests_each_run_really_runs(tmp_path, monke
     assert all((Path(conftest.__file__).parents[1] / path).is_file() for path in whole)  # no file that is gone
 
 
+def test_the_times_are_refreshed_from_several_reports_and_a_test_over_two_seconds_goes_on_the_slow_list(tmp_path):
+    """tests/times.py: the files the reports measured get their times, the others keep theirs and a file that is gone
+    leaves (a folder at a time, or CI's parts, add up); ``--slow-over 2`` puts each default-run test over 2 s on
+    tests/slow_tests.txt, in order under its comment, as its rule says (one at 16.5 s had stayed in the default run)."""
+    from tests import times
+
+    for name in ("test_new", "test_kept"):
+        (tmp_path / "tests" / "a").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "tests" / "a" / f"{name}.py").write_text("", encoding="utf-8")
+    report = tmp_path / "part.xml"
+    report.write_text(
+        "<testsuites><testsuite>"
+        '<testcase classname="tests.a.test_new" name="test_waits[one]" time="3.5"/>'
+        '<testcase classname="tests.a.test_new" name="test_waits[two]" time="0.5"/>'
+        '<testcase classname="tests.a.test_new" name="test_quick" time="1.0"/>'
+        '<testcase classname="tests.a.test_new" name="test_in_a_browser_page" time="9.0"/>'
+        '<testcase classname="tests.a.test_new" name="test_listed" time="6.0"/>'
+        "</testsuite></testsuites>", encoding="utf-8")  # fmt: skip
+    listed = tmp_path / "slow_tests.txt"
+    listed.write_text("# the rule\ntests/z.py::test_last\ntests/a/test_new.py::test_listed\n", encoding="utf-8")
+    kept = tmp_path / "test_times.json"
+    kept.write_text(
+        json.dumps({"tests/a/test_kept.py": [4.0, 1.0], "tests/a/test_gone.py": [9.0, 9.0]}), encoding="utf-8"
+    )
+    slow = {"tests/z.py::test_last", "tests/a/test_new.py::test_listed"}
+    new, measured = times.refresh([report], slow, 2.0, tmp_path, kept, listed)
+    assert new == {"tests/a/test_new.py::test_waits"}  # (all its parameters: the list names a test without them)
+    assert listed.read_text(encoding="utf-8").splitlines() == [
+        "# the rule",
+        "tests/a/test_new.py::test_listed",
+        "tests/a/test_new.py::test_waits",
+        "tests/z.py::test_last",
+    ]
+    assert measured == {"tests/a/test_kept.py": [4.0, 1.0], "tests/a/test_new.py": [20.0, 1.0]}
+    assert json.loads(kept.read_text(encoding="utf-8")) == measured
+    assert times.refresh([report], slow | new, None, tmp_path, kept, listed) == (set(), measured)  # (nothing more)
+    # a test marked slow in its own file is slow too, though the report doesn't say so
+    marked = "import pytest\n\n\n@pytest.mark.slow\ndef test_long():\n    pass\n\n\ndef test_short():\n    pass\n\n\n"
+    marked += "class TestGroup:\n    @pytest.mark.slow\n    def test_inside(self):\n        pass\n"
+    (tmp_path / "tests" / "a" / "test_kept.py").write_text(marked, encoding="utf-8")
+    (tmp_path / "tests" / "a" / "test_new.py").write_text("import pytest\n\npytestmark = pytest.mark.slow\n\n\n"
+                                                          "def test_any():\n    pass\n", encoding="utf-8")  # fmt: skip
+    assert times.marked_slow(tmp_path) == {"tests/a/test_kept.py::test_long", "tests/a/test_kept.py::TestGroup::"
+                                           "test_inside", "tests/a/test_new.py::test_any"}  # fmt: skip
+
+
+# Each place that gives the suite's time, from where it starts: the default run's minutes come first, the whole run's
+# next (docs/REFERENCE.md says them; the others agree)
+SUITE_TIMES = {
+    "docs/REFERENCE.md": "`pytest` runs all but the slow tests",
+    "docs/HANDOFF.md": "python -m pytest -q               # the default test tier",
+    "CLAUDE.md": "- Test: `python -m pytest -q`",
+    "pyproject.toml": "# The default run leaves out the slow tests",
+    "README.md": "# the default tests,",
+}
+
+
+def test_every_place_giving_the_suites_time_gives_what_its_tests_take():
+    """B-3015: the docs gave 15 and 37 minutes while pyproject.toml and README.md still said 7 and 28, and HANDOFF and
+    REFERENCE.md had the browser tests in the 37, which tests/test_times.json measured with them skipping (their
+    files at 0 s: they need Playwright and Chromium). Each place gives the sums of tests/test_times.json, the default
+    run's (the fast tier's) and the whole suite's, within a quarter, and none says the browser tests are in them."""
+    whole = json.loads((CI.parents[2] / "tests" / "test_times.json").read_text(encoding="utf-8")).values()
+    measured = (sum(t[1] for t in whole) / 60, sum(t[0] for t in whole) / 60)
+    for place, start in SUITE_TIMES.items():
+        text = (CI.parents[2] / place).read_text(encoding="utf-8")
+        assert start in text, place
+        said = text[text.index(start) :][:500]
+        minutes = [int(m) for m in re.findall(r"(\d+) min(?:utes)?\b", said)[:2]]
+        assert len(minutes) == 2 and all(abs(m - t) <= t / 4 for m, t in zip(minutes, measured, strict=True)), (
+            f"{place} says {minutes} minutes, tests/test_times.json {[round(t) for t in measured]}"
+        )
+        assert "browser tests included" not in said, place
+
+
 def test_an_older_versions_test_file_left_in_tests_is_not_run(tmp_path):
     """B-1411: the tests live in folders since D-116. Unzipping a newer GitHub ZIP over an older copy (no manifest, so
     nothing is pruned) left the older version's tests/test_*.py, and pytest ran them against the new code."""
@@ -320,9 +454,9 @@ def test_an_older_versions_test_file_left_in_tests_is_not_run(tmp_path):
 
     tests = tmp_path / "tests"
     (tests / "core").mkdir(parents=True)
-    (tests / "conftest.py").write_text(f"collect_ignore_glob = {conftest.collect_ignore_glob!r}\n")
-    (tests / "test_left_by_an_older_version.py").write_text("def test_old():\n    assert False\n")
-    (tests / "core" / "test_this_version.py").write_text("def test_new():\n    assert True\n")
+    (tests / "conftest.py").write_text(f"collect_ignore_glob = {conftest.collect_ignore_glob!r}\n", encoding="utf-8")
+    (tests / "test_left_by_an_older_version.py").write_text("def test_old():\n    assert False\n", encoding="utf-8")
+    (tests / "core" / "test_this_version.py").write_text("def test_new():\n    assert True\n", encoding="utf-8")
     out = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"],
                          cwd=tmp_path, capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert out.returncode == 0 and "1 passed" in out.stdout, out.stdout[-2000:]
@@ -339,7 +473,7 @@ def test_the_release_zip_covers_every_python_the_guides_promise():
     from scripts.build_offline_bundle import DEFAULT_PYTHONS
 
     root = Path(__file__).resolve().parents[2]
-    text = (root / ".github" / "workflows" / "release.yml").read_text()
+    text = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     built = re.search(r"build_offline_bundle\.py[^\n]*--python ((?:3\.\d+ ?)+)", text)
     assert built and built.group(1).split() == DEFAULT_PYTHONS
     assert DEFAULT_PYTHONS[0] == "3.11"

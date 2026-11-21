@@ -67,9 +67,9 @@ tag list names commits a route B repository doesn't have). A schema raised needs
 releases from before the handoff, whose history isn't there, keep the files they have.
 
 **Python and packages.** Python 3.11 to 3.14 (3.12 recommended). With a package index reachable:
-`python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"`. `pyproject.toml` asks only for minimum versions;
-the exact set this release was tested with is `docs/tested-packages.txt` (`pip install -c docs/tested-packages.txt
--e ".[ocr,dev]"` when a newer package breaks something).
+`python -m venv .venv`, activate it, `pip install -e ".[ocr,dev,parallel]"`. `pyproject.toml` asks only for minimum
+versions; the exact set this release was tested with is `docs/tested-packages.txt` (`pip install -c
+docs/tested-packages.txt -e ".[ocr,dev,parallel]"` when a newer package breaks something).
 With no internet, use a wheelhouse. The person who handed this over may also have given you the laptop release's
 offline install zip (`APProcessor-offline-0.3.0-<date>.zip` of the release `v0.3.0-pilot9`; Windows, Python
 3.11–3.14): its `wheelhouse/` folder installs everything on Windows with `pip install --no-index --find-links <that
@@ -132,8 +132,8 @@ python -m ap_coder serve          # the dashboard on http://127.0.0.1:8501 or th
 python -m ap_coder doctor         # what is set up and what is missing
 python scripts/pilot_check.py     # reads the 10 sample invoices, compares with samples/ground_truth (no AI needed)
 python scripts/check.py           # after a change: ruff on the changed files, then their tests (a minute or two)
-python -m pytest -q               # the default test tier: all but the slow tests (about 5,400, about 7 minutes)
-python -m pytest -q -m ""         # everything, browser tests included (about 6,000, about 28 minutes; needs Playwright)
+python -m pytest -q               # the default test tier: all but the slow tests (about 7,800, about 15 minutes)
+python -m pytest -q -m ""         # everything (about 8,800, about 37 min; browser tests, with Playwright: 13 min more)
 ruff check ap_coder tests scripts && ruff format --check ap_coder tests scripts
 ```
 

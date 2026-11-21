@@ -208,9 +208,11 @@ def test_a_release_whose_history_is_not_here_keeps_its_file_and_one_with_no_file
         return subprocess.CompletedProcess(args, 0 if args[2][:7] in here else 128, b"", b"")
 
     monkeypatch.setattr(old_schemas, "git", git)
-    monkeypatch.setattr(old_schemas, "code_of", lambda sha, folder: folder.mkdir() or (folder / "sha").write_text(sha))
+    monkeypatch.setattr(
+        old_schemas, "code_of", lambda sha, folder: folder.mkdir() or (folder / "sha").write_text(sha, encoding="utf-8")
+    )
     monkeypatch.setattr(old_schemas, "made_by", lambda folder, work: folder / "sha")
-    monkeypatch.setattr(old_schemas, "dump", lambda db: made[db.read_text()])
+    monkeypatch.setattr(old_schemas, "dump", lambda db: made[db.read_text(encoding="utf-8")])
     kept = tmp_path / "schema-14-1111111.sql"
     as_it_was = (b"-- A new database as AP Coder made it at 1111111 (PR #1); the same at 2222222 (PR #2) "
                  b"(scripts/old_schemas.py)\n-- schema 14\nA;\n")  # fmt: skip

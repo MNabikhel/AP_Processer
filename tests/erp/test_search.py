@@ -20,7 +20,7 @@ def test_find_by_vendor_number_po_and_amount(tmp_path, demo_template):
 
 def test_where_each_invoice_stands(tmp_path):
     store = Store(tmp_path / "s.db")
-    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text(encoding="utf-8"))
     a = store.add_invoice(tmp_path / "a.pdf", doc, {})
     assert search.where(search.find(store, "chinook")[0].row).startswith("In the review queue")
     store.park_invoice(a, "Jane", "buyer to confirm", "2026-10-20")
@@ -59,14 +59,14 @@ def test_french_amounts_zeros_accents_and_punctuation(tmp_path, demo_template):
 
 def test_vendor_name_with_digits(tmp_path):
     store = Store(tmp_path / "s.db")
-    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text(encoding="utf-8"))
     store.add_invoice(tmp_path / "a.pdf", {**doc, "vendor_name": "Acme 3M Supplies"}, {})
     assert [h.row["vendor_name"] for h in search.find(store, "acme 3m")] == ["Acme 3M Supplies"]
 
 
 def test_an_exported_invoice_is_not_shown_again_from_the_erp_register(tmp_path):
     store = Store(tmp_path / "s.db")
-    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
+    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text(encoding="utf-8"))
     a = store.add_invoice(tmp_path / "a.pdf", doc, {})
     store.approve_invoice(a, doc, "Jane")
     store.create_export_batch([a], "csv")
@@ -79,7 +79,7 @@ def test_another_vendors_erp_bill_with_the_same_number_and_amount_is_still_found
     """Only the exported invoice's own ERP entry is hidden: another vendor's bill (or a credit) with the same
     number and amount is a different document."""
     store = Store(tmp_path / "s.db")
-    doc = {**json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text()),
+    doc = {**json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text(encoding="utf-8")),
            "invoice_number": "1001", "grand_total": 500.0}  # fmt: skip
     a = store.add_invoice(tmp_path / "a.pdf", doc, {})
     store.approve_invoice(a, doc, "Jane")

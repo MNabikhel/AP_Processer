@@ -13,76 +13,69 @@ code in, the connection points, the company's information to gather, and the ord
 Code: `ap_coder/` (`core` store and settings, `ai` pipeline and models, `coding` tax and checks, `erp` exports and
 reports, `intake` pictures and emails, `ops` command line and doctor, `capture` document reading, `web` the dashboard,
 `bench` the accuracy benchmark). `scripts/`: launcher, installer, update, offline bundle. `tests/`: pytest. `docs/`:
-guides, the bug log (BUGS.md), decisions (decisions.md) and the owner's to-do list (TODO.md), their older entries in full in `docs/archive/`. Search the code to find things; the code is the reference.
+guides, the bug log (BUGS.md), decisions (decisions.md; new entries: docs/bugs/, docs/decisions/) and the owner's to-do
+list (TODO.md), their older entries in full in `docs/archive/`. Search the code to find things; the code is the
+reference.
 
 ## Where things live
+A package's map is its `__init__.py` docstring: read it before searching.
 - One invoice, start to end: `ai/pipeline.py` (`finalise_coding`); the schema: `core/schema.py`. Reading: the rule
   reader `capture/reader/` (parts: labels, values, spatial, patterns, totals, line_items, entry: `read_fields`); the
-  vision model `ai/page_reader.py`; their merged result `ai/reading.py`; the plain text `capture/transcript.py`.
-  The AI reviewer (the chat model checks the whole invoice, in the background) `ai/verifier.py`; its corrections
-  the math confirms, for an invoice with a problem `ai/corrections.py` (D-263).
-- The database (`Store`): the package `core/store/`, one part per subject (list in its `__init__.py`): `invoices.py`
-  (approvals `approve_invoice`/`final_approve`), `_base.py` (schema, `SCHEMA_VERSION`), `accounts.py` (`events`),
-  backups `backups.py` + `backup_files.py` (D-143; command line `ops/backup_cmd.py`), people `users.py`, managers
-  confirming the coding `managers.py` (D-138; their email `coding/manager_mail.py`, page `web/pages/manager.py`). Who
-  the reviewer is: `web/identity.py`. Server mode: `web/roles.py` (every route needs a rule naming a permission,
-  `tests/web/test_roles.py`), the permissions and built-in roles `core/permissions.py` (D-250; the built-in roles'
-  access frozen in `tests/web/test_role_permissions.py`), roles an Admin makes `core/store/roles.py`, the Admin panel
-  `web/pages/admin.py` + `admin_roles.py` + `users.py` (D-249), `web/access.py`, `web/pages/login.py`; service and
-  updates `ops/service.py`, `ops/server_update.py`; the owner's laptop serving a few colleagues `ops/share.py` (D-224;
-  Windows CI `scripts/ci/share_end_to_end.py`); the pilot tester's guide followed step by step `scripts/ci/first_day.py`
-  (D-225; Windows CI `windows-first-day`).
-- With a JD Edwards chart of accounts loaded (D-209 to D-214; the one-laptop guide: `docs/PROTOTYPE.md`): a line's
-  account string `business unit.object.subsidiary` is joined and split only in `core/chart.py` (`AccountPairs`: which
-  pairs exist and can be posted to), answered from the database, never held in memory (`core/store/chart_index.py`,
-  D-267); the chart's tables `core/store/chart.py`, its reader `core/chart_file.py`; the past
-  invoice coding (journal) `erp/journal.py` + `core/store/journal.py`, the suggestions from it `ai/supplier_prior.py`;
-  the 30-character remark `coding/remark.py`; each line's taxes `coding/taxmath.py` (`invoice_taxes`); the keying sheet
-  `erp/jde_keying.py`; the review row with one Account box `web/account_lines.py`; the uploads `web/pages/jde_files.py`
-  (all in one workbook `web/pages/jde_workbook.py`; the pilot tester's ReportsNow build sheet `bench/jde_exports.py`
-  `BUILD_SHEET`, D-266);
-  scoring against past coding `ops/journal_score.py`, `ops/proposed_score.py`; a made-up company for tests
-  `bench/jde_company.py`, `jde_exports.py`, `jde_invoices.py` (fixture `chart_company`).
-- What is loaded of JD Edwards' files, row by row, and what a person changed by hand in it (D-221):
-  `core/store/loaded.py`, `core/store/by_hand.py`, `web/pages/jde_loaded.py`. The vendor information list, the second
-  supplier export (D-219): its reader `coding/vendor_info.py`, kept by supplier number in `vendor_info`
-  (`core/store/vendor_master.py`). The bank account on the voucher (D-220): `Store.bank_accounts`, the Bank accounts
-  tab of `web/pages/accounts.py`.
+  vision model `ai/page_reader.py` (its queue `page_worker.py`); their merged result `ai/reading.py`; the plain text
+  `capture/transcript.py`. The local chat model (LM Studio): found `ai/local_llm.py`, asked `ai/inference.py`; with
+  none, `ai/offline_coder.py`. The AI reviewer (checks the whole invoice in the background) `ai/verifier.py`; its
+  corrections the math confirms, for an invoice with a problem `ai/corrections.py`.
+- Touchless (approved with no person): `capture/workflow.py` (`autonomy_decision`), what always needs a person
+  `capture/supplier.py` (`touchless_gates`). Learning from approvals: `core/memory.py` (`vendor_key`: a name's key; the
+  vendor an invoice is filed under: `Store.vendor_key_for`), GL suggestions `ai/suggest.py`, AP's corrections
+  `ai/lessons.py`. Purchase orders: matching `coding/po.py`, kept in `core/store/purchasing.py`.
+- The database (`Store`): `core/store/`, one part per subject; its schema `_base.py` (`SCHEMA_VERSION`), an older one
+  brought up to date `migrations.py`; SQL only in the store, SQLite's own behind `dialect.py`. Settings
+  `core/config.py`, the data folder `core/paths.py`, the dashboard's HTML pieces `core/ui.py`, the command line
+  `ops/cli.py` (`build_parser`). Who the reviewer is: `web/identity.py`. Server mode: `web/roles.py` (every route needs
+  a rule naming a permission, `tests/web/test_roles.py`), the permissions and built-in roles `core/permissions.py`
+  (their access frozen in `tests/web/test_role_permissions.py`), the Admin panel `web/pages/admin.py`, `web/access.py`,
+  `web/pages/login.py`; service and updates `ops/service.py`, `ops/server_update.py`; the owner's laptop serving a few
+  colleagues `ops/share.py`; the pilot tester's guide followed step by step `scripts/ci/first_day.py` (Windows CI
+  `windows-first-day`). How it starts, updates and touches the network: `docs/HOW_IT_RUNS.md`.
+- With a JD Edwards chart of accounts loaded (the one-laptop guide: `docs/PROTOTYPE.md`): a line's account string
+  `business unit.object.subsidiary` is joined and split only in `core/chart.py` (`AccountPairs`: which pairs exist and
+  can be posted to), answered from the database, never held in memory (`core/store/chart_index.py`); the chart's tables
+  `core/store/chart.py`, its reader `core/chart_file.py`; the past invoice coding (journal) `erp/journal.py` +
+  `core/store/journal.py`, the suggestions from it `ai/supplier_prior.py`; the 30-character remark `coding/remark.py`;
+  each line's taxes `coding/taxmath.py` (`invoice_taxes`); the review row with one Account box `web/account_lines.py`;
+  the uploads `web/pages/jde_files.py` (all in one workbook `web/pages/jde_workbook.py`; the pilot tester's ReportsNow
+  build sheet `bench/jde_exports.py` `BUILD_SHEET`); a made-up company for tests `bench/jde_company.py`,
+  `jde_exports.py`, `jde_invoices.py` (fixture `chart_company`).
+- What is loaded of JD Edwards' files, row by row, and what a person changed by hand in it: `core/store/loaded.py`,
+  `core/store/by_hand.py`, `web/pages/jde_loaded.py`. The vendor information list (the second supplier export):
+  `coding/vendor_info.py`, kept by supplier number in `core/store/vendor_master.py`. The bank account on the voucher:
+  `Store.bank_accounts`, the Bank accounts tab of `web/pages/accounts.py`.
+- JD Edwards E1 vouchers: `erp/jde*.py`, one subject a module (their order in `erp/__init__.py`); why a voucher is held
+  from a batch: `erp/jde.py` `validate` (its own problems from `jde_voucher.py` `_prepare`); the batch files
+  `jde_zfiles.py`, the keying sheet `jde_keying.py`, a PO-matched voucher's rows `jde_match.py`; the AIS API
+  `jde_ais.py`, `jde_sync.py`, `jde_post.py`.
 - Checks (findings with a code): `coding/validation.py` (`validate_coding` gathers them), payment terms
-  `coding/terms.py`, tax `coding/tax.py` (`check_taxes`, `place_of_supply`), the Tax check `coding/taxmath.py`, line
-  tax codes `coding/line_tax.py`, ITCs and self-assessment `coding/taxreturn.py`, vendors `coding/vendors.py`, which JD Edwards company an invoice is for `coding/companies.py` (D-267; made-up
-  companies `bench/jde_group.py`, speed `bench/companies_speed.py`). Every
-  check code needs a `CheckHelp` in `ops/help.py` (`tests/ops/test_help.py` enforces it).
+  `coding/terms.py`, tax `coding/tax.py` (`check_taxes`, `place_of_supply`), the Tax check `coding/taxmath.py`, line tax
+  codes `coding/line_tax.py`, ITCs and self-assessment `coding/taxreturn.py`, vendors `coding/vendors.py`, which JD
+  Edwards company an invoice is for `coding/companies.py`. Every check code needs a `CheckHelp` in `ops/help.py`
+  (`tests/ops/test_help.py`).
 - Exports: `erp/exports.py` (Excel/CSV), Finance Hub `erp/hub/`. Reports: the rest of `erp/`.
-- Imports (D-234, D-236): one spec each of the columns a file needs, from its reader's own tables
-  (`erp/import_specs.py` `SPECS`: `check`, `identify`, `recognise`); uploads, reading and the column picker
-  `web/files.py`; what a page shows of a file `templates/_import.html`, `static/imports.css`, `static/js/imports.js`.
-- JD Edwards E1 vouchers, one subject a module (D-222; each imports only the ones before it, and a name is imported
-  from its home: `jde_settings.load`, not `jde.load`): `erp/jde_formats.py` (dates, amounts), `jde_settings.py`
-  (`JdeSettings`, `load`, `save`, `in_use`, the open period), `jde_prototype.py` (`use_prototype`),
-  `jde_accounts.py` (`resolve_an8`, `account_for`), `jde_voucher.py` (one voucher: `_prepare`, tax area and code,
-  terms, what holds it back), `jde_remarks.py`, `jde_zfiles.py` (columns, `voucher_rows`, `export_batch`),
-  `jde_review.py` (`voucher_findings`, `voucher_view`), `jde_match.py` (a PO-matched voucher's rows and taxes, D-264,
-  D-265), `jde.py` (a batch: `validate`, `build_zip`, `dry_run`). Its
-  AIS API: `erp/jde_ais.py`, `jde_sync.py`, `jde_post.py`; the JDE worksheet `erp/jde_worksheet.py`.
-- The review screen, one subject a module (D-223). What it shows, `web/invoice_<subject>.py`: `form` (the fields,
-  `Draft`), `grid` (line and tax grids, line actions), `reading` (the page as read), `findings` (the checks' words,
-  `FIELD_FLAGS`, `HARD_CODES`, what to fix first), `fields` (notes under the details, dates, currency), `totals`
-  (summary, Tax check, posting), `coding` (why these codes, suggestions, PO, what is learned); `invoice_view.py`
-  (`analyse`) puts them together. Its routes, on one router: `web/pages/invoice.py` (opens the screen) and
-  `pages/invoice_<subject>.py`: `router`, `drafts` (unsaved edits, who has it open), `navigation`, `check`, `lines`,
-  `approve` (approve, park, reject, notes, reopen), `lookups` (vendors/accounts JSON), `document` (pages, the poll,
-  teach). `web/templates/invoice.html`, `web/static/js/invoice.js` (the form) and `invoice_viewer.js` (the PDF
-  beside it). Other pages: `web/pages/<page>.py` + `web/templates/<page>.html`; the review queue is
-  `web/pages/review.py` (`coding/review.py` is the line grid's edits; bulk approval `coding/bulk.py`).
-  A page module's `router = page_router()` (`web/core.py`): each plain handler shares one database connection a
-  request.
+- Imports: one spec each of the columns a file needs, from its reader's own tables (`erp/import_specs.py` `SPECS`:
+  `check`, `identify`, `recognise`); uploads, reading and the column picker `web/files.py`; what a page shows of a file
+  `templates/_import.html`, `static/imports.css`, `static/js/imports.js`.
+- The review screen: `web/invoice_view.py` (`analyse` puts its subjects' modules together, listed in
+  `ap_coder/web/__init__.py`); its routes `web/pages/invoice.py` + `pages/invoice_<subject>.py`, on one router;
+  `web/templates/invoice.html`, `web/static/js/invoice.js` (the form), `invoice_viewer.js` (the PDF beside it). Other
+  pages: `web/pages/<page>.py` + `web/templates/<page>.html`; the review queue `web/pages/review.py` (`coding/review.py`
+  is the line grid's edits; bulk approval `coding/bulk.py`). A page module's `router = page_router()` (`web/core.py`):
+  each plain handler shares one database connection a request.
 - Amounts and dates: `capture/normalize.py` for what is read off an invoice, `core/safe.py` / `core/csvio.py` for
   imported files; column headers: `core/headers.py` (`match_columns`).
-- Tests: `tests/<folder>/test_<module>.py`, the folders mirroring `ap_coder/` (`core`, `coding`, `capture`, `ai`,
-  `erp`, `intake`, `ops`, `web`, `bench`) plus `launcher` (scripts/), `offline` and `meta` (CI, docs, code rules);
-  fixtures `tests/conftest.py` (`store`, `client`, `reference`, `ground_truth`, the demo templates); helpers
-  `tests/webclient.py` (`client_for`, `add_clean`), `tests/pdfs.py`, `tests/scripts.py`, `tests/browser.py`.
+- Tests: `tests/<folder>/test_<module>.py`, the folders mirroring `ap_coder/` (`core`, `coding`, `capture`, `ai`, `erp`,
+  `intake`, `ops`, `web`, `bench`) plus `launcher` (scripts/), `offline` and `meta` (CI, docs, code rules); fixtures
+  `tests/conftest.py` (`store`, `client`, `reference`, `ground_truth`, the demo templates); helpers `tests/webclient.py`
+  (`client_for`, `add_clean`), `tests/pdfs.py`, `tests/scripts.py`, `tests/browser.py`.
 
 ## Rules
 - Fully offline at run time: nothing connects to the internet unless `AP_ALLOW_INTERNET=1` (developers, the bundle
@@ -111,7 +104,7 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
   `grep -rnw "B-1234" docs`: the logs, the archive and the entry files.
 - A refactor, clean-up or speed-up is proven to change nothing with `python scripts/same_behaviour.py` (probes on
   origin/main and this checkout, compared; D-124), plus the tests.
-- Merge parallel branches: `python scripts/combine.py BRANCH... [--onto REF]` (D-325: logs settled, then checked).
+- Merge parallel branches: `python scripts/combine.py BRANCH... [--onto REF]` (D-325; --trial: what conflicts).
 - See a page as a person does: `python scripts/screens.py /jde-files --data company` saves full-page pictures at
   1366, 911, 683 and 390 px (laptop zoom, phone) and prints what is past the right edge.
 - Bench runs (`python -m ap_coder.bench run|learn|lines|speed|coding|triage`): add `--quick` to check a change in
@@ -119,14 +112,14 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
   at `--scanned 0.1` takes ~40 min, `lines` 6 x 8 at `--scanned 1` ~6 min, `run --n 60` ~2.5 min.
 
 ## Run and test
-- Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"` (or double-click `APProcessor.bat` / `APProcessor.command`).
+- Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev,parallel]"` (or double-click `APProcessor.bat` / `APProcessor.command`).
 - Run: `python -m ap_coder serve` (http://127.0.0.1:8501); `python -m ap_coder doctor`; `python scripts/pilot_check.py`.
-- Check a change: `python scripts/check.py`: ruff, the changed files' tests and the whole tree's rules (about 30 s,
-  D-329); a module no test is picked for fails it. A page, its words (`ops/help.py`), `docs/PROTOTYPE.md` or the
-  launcher changed: it walks the pilot tester's first day too (two minutes more); `--walk` / `--no-walk` force or
-  skip it.
-- Test: `python -m pytest -q` runs all but the slow tests (about 7 minutes; serially, no xdist). The whole suite with
-  the browser tests, `python -m pytest -q -m ""`, takes about 28 minutes (docs/REFERENCE.md): CI runs it on pull requests
-  (Ubuntu 3.12, Windows 3.12 and 3.14; every Python and the Mac jobs on main after a merge and nightly, D-330), so leave
-  it to CI.
+- Check a change: `python scripts/check.py`: ruff, the tests of the changed files and functions (on 4 cores) and the
+  whole tree's rules (D-329); a module no test is picked for fails it. A page, its words, `docs/PROTOTYPE.md` or the
+  launcher changed: it walks the first day too; `--fast`, `--serial`, `--no-walk`.
+- Test: `python -m pytest -q`: all but slow tests, about 7,800 in 15 min serially; `-m ""`: all 8,800 in 37 min on 4
+  quiet cores, the browser tests skipping (with Chromium, 13 min more), 1.5 times that beside other runs
+  (docs/REFERENCE.md; in the background: timeout 7,200,000 ms). CI
+  (Ubuntu 3.12, Windows 3.12 and 3.14; every Python and the Mac jobs on main after a merge and nightly, D-330): a
+  pull request about 23 min, main 35. Leave it to CI.
 - Lint: `ruff check ap_coder tests scripts` and `ruff format --check ap_coder tests scripts`.

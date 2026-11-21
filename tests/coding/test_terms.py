@@ -97,7 +97,7 @@ def test_describe():
 
 def test_store_keeps_the_due_date_and_the_default(tmp_path):
     store = Store(tmp_path / "a.db")
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     printed = store.add_invoice(tmp_path / "a.pdf", gt, {})
     store.set_setting("default_terms_days", "10")
     assert store.default_terms_days() == 10
@@ -113,7 +113,7 @@ def test_store_keeps_the_due_date_and_the_default(tmp_path):
 def test_upgrade_fills_in_due_dates(tmp_path):
     path = tmp_path / "old.db"
     store = Store(path)
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     store.add_invoice(tmp_path / "a.pdf", gt, {})
     with sqlite3.connect(path) as conn:
         conn.execute("UPDATE invoices SET due_date = NULL")

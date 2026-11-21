@@ -24,7 +24,7 @@ def test_end_to_end_from_markdown(tmp_path, settings, reference, ground_truth, s
     names = sorted(p.name for p in written)
     assert names == [f"{SAMPLE_STEM}.json", f"{SAMPLE_STEM}.validation.json"]
 
-    out = json.loads((tmp_path / f"{SAMPLE_STEM}.json").read_text())
+    out = json.loads((tmp_path / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"))
     distribution = out.pop("gl_distribution")
     # Target schema fields exactly as coded, each line's account marked the chat model's (B-894), on the line's
     # record of what decided it too (D-212).
@@ -37,7 +37,9 @@ def test_end_to_end_from_markdown(tmp_path, settings, reference, ground_truth, s
 
     gt_dir = tmp_path / "gt"
     gt_dir.mkdir()
-    (gt_dir / f"{SAMPLE_STEM}.json").write_text((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    (gt_dir / f"{SAMPLE_STEM}.json").write_text(
+        (SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text(encoding="utf-8"), encoding="utf-8"
+    )
     report = evaluate(tmp_path, gt_dir)
     assert report.meets_target and report.gl_accuracy == 1.0
 
@@ -58,7 +60,7 @@ def test_failure_is_captured_not_raised(tmp_path, settings, reference, sample_ma
     result = pipe.process(sample_markdown_path)
     assert not result.ok and "refused" in result.error
     write_outputs(result, tmp_path)
-    meta = json.loads((tmp_path / f"{SAMPLE_STEM}.validation.json").read_text())
+    meta = json.loads((tmp_path / f"{SAMPLE_STEM}.validation.json").read_text(encoding="utf-8"))
     assert meta["status"] == "failed"
     assert result.summary()["status"] == "failed"
 
@@ -89,7 +91,7 @@ def test_local_model_suggestions_only_fill_uncoded_lines(monkeypatch):
     import ap_coder.ai.inference as inference
     from ap_coder.core.schema import InvoiceCoding
 
-    data = json.loads((SAMPLES / "ground_truth" / "pacific_BC_GST_PST_PO-77120.json").read_text())
+    data = json.loads((SAMPLES / "ground_truth" / "pacific_BC_GST_PST_PO-77120.json").read_text(encoding="utf-8"))
     data["line_items"][1]["line_number"] = 1  # lines numbered 1, 1, 3
     data["line_items"][1]["predicted_gl_code"] = "UNASSIGNED"
     coding = InvoiceCoding.model_validate(data)

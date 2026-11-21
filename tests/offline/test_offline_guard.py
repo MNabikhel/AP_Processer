@@ -143,6 +143,8 @@ TOUCHPOINTS = {
     "scripts/new_entry.py": "git for-each-ref, cat-file and add in this clone, for the next log number (D-328): its "
     "branches as last fetched, nothing fetched (no network)",
     "scripts/same_behaviour.py": "git worktree of a local ref, to compare its code with this checkout (no network)",
+    "scripts/moved_same.py": "git diff and git show of a local ref, to compare its definitions with this checkout's "
+    "(no network)",
     "scripts/old_schemas.py": "git archive of an older commit in this clone, for the database it made (no network); "
     "never run by the launcher",
     "scripts/check_deps.py": "urllib.request.url2pathname only (a file: URL), no connection",
@@ -468,12 +470,12 @@ def test_the_launcher_never_asks_github_for_a_release_offline(offline_guard, lau
     _bait(monkeypatch)
     here = tmp_path / "AP_Processer"
     (here / "ap_coder").mkdir(parents=True)
-    (here / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.3.0"\n')
+    (here / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.3.0"\n', encoding="utf-8")
     monkeypatch.setattr(launch_module, "ROOT", here)
     monkeypatch.setattr(launch_module.fetch_models, "BUNDLE_MODELS", here / "models")
     monkeypatch.delenv("AP_UPDATE_CHECK", raising=False)
     if how == "offline bundle":
-        (here / "bundle_manifest.json").write_text("{}")
+        (here / "bundle_manifest.json").write_text("{}", encoding="utf-8")
     else:
         monkeypatch.setenv("AP_ALLOW_INTERNET", "0")
     monkeypatch.setattr(launch_module.releases, "newest", lambda: pytest.fail("GitHub asked"))
