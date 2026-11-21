@@ -273,7 +273,8 @@ def test_words_on_stdin_are_read_as_utf_8_whatever_the_code_page(clone):
     env = {**os.environ, "PYTHONIOENCODING": "cp1252"}  # (Windows' code page, as in tests/launcher/)
     done = subprocess.run([sys.executable, str(ROOT / "scripts" / "new_entry.py"), "D"], input=decision.encode(),
                           capture_output=True, env=env)  # fmt: skip
-    assert done.stdout == b"D-7\n", done.stderr.decode("utf-8", "replace")
+    # (a line: a Windows console ends it in \r\n, B-3005)
+    assert done.stdout.splitlines() == [b"D-7"], done.stderr.decode("utf-8", "replace")
     assert read(clone / "docs/decisions/D-7.md") == "- **D-7** · " + decision
 
 
