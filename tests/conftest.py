@@ -36,22 +36,18 @@ sqlite3.connect = _connect_without_syncing
 # --- Windows' clock before Python 3.13, on any computer: AP_TEST_OLD_WINDOWS_CLOCK=1 --------------------------------
 
 OLD_WINDOWS_CLOCK = os.environ.get("AP_TEST_OLD_WINDOWS_CLOCK") == "1"
-_precise_time, _precise_time_ns = time.time, time.time_ns
-_STEPS = 64  # a second's steps of that clock (15.625 ms)
+_precise_time = time.time
 
 
 def _old_windows_time() -> float:
-    """``time.time()`` as Windows gives it before Python 3.13: in steps of 1/64 s, so a file written just now has a
-    time a few milliseconds after it (B-2997, found only on CI's Windows 3.12). Files' own times stay precise."""
-    return math.floor(_precise_time() * _STEPS) / _STEPS
-
-
-def _old_windows_time_ns() -> int:
-    return _precise_time_ns() // (10**9 // _STEPS) * (10**9 // _STEPS)
+    """``time.time()`` as Windows gives it before Python 3.13: in steps of 1/64 s (15.625 ms), so a file written just
+    now has a time a few milliseconds after it (B-2997, found only on CI's Windows 3.12). Files' own times stay
+    precise, and so does ``time.time_ns()``: tests stamp a file "now" with it, as precise as a file system's own."""
+    return math.floor(_precise_time() * 64) / 64
 
 
 if OLD_WINDOWS_CLOCK:  # for the whole run, in the test process only (as the SQLite syncs above)
-    time.time, time.time_ns = _old_windows_time, _old_windows_time_ns
+    time.time = _old_windows_time
 
 
 OLD_CLOCK_SAID = "clock: time.time() in steps of 1/64 s, as on Windows before Python 3.13 (AP_TEST_OLD_WINDOWS_CLOCK=1)"
