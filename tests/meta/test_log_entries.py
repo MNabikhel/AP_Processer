@@ -4,6 +4,7 @@ each number has one entry, and the lookup the docs give finds it."""
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import shutil
@@ -257,6 +258,17 @@ def test_a_decision_comes_from_a_file_or_stdin_and_a_text_that_would_break_a_rul
         assert (code, out) == (1, "") and why in err, err
     assert sorted(p.name for p in (clone / ".git" / "ap-numbers").iterdir()) == ["D-7", "D-8"]  # none taken
     assert not (clone / "docs" / "bugs").exists()
+
+
+def test_words_on_stdin_are_read_as_utf_8_whatever_the_code_page(clone):
+    """B-3001: stdin was read in the code page (Windows before Python 3.15: cp1252), so a decision piped from a UTF-8
+    file was written garbled ("QuÃ©bec"), or stopped at a byte cp1252 has no character for (” ends in 0x9D)."""
+    decision = "**Québec’s rate · “the one rule”** (D-5).\n  - **Why:** a café’s receipt.\n"
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252"}  # (Windows' code page, as in tests/launcher/)
+    done = subprocess.run([sys.executable, str(ROOT / "scripts" / "new_entry.py"), "D"], input=decision.encode(),
+                          capture_output=True, env=env)  # fmt: skip
+    assert done.stdout == b"D-7\n", done.stderr.decode("utf-8", "replace")
+    assert read(clone / "docs/decisions/D-7.md") == "- **D-7** · " + decision
 
 
 @pytest.mark.skipif(sys.platform == "win32" or shutil.which("bash") is None, reason="bash's own quoting")

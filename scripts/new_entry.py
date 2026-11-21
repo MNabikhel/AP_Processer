@@ -197,7 +197,7 @@ def main(argv: list[str]) -> int:
     elif args.file is not None:
         text = args.file.read_text(encoding="utf-8")
     elif not sys.stdin.isatty():
-        text = sys.stdin.read()
+        text = sys.stdin.buffer.read().decode("utf-8")  # as --file: not the code page (Windows before Python 3.15)
     else:
         text = ""
     try:
