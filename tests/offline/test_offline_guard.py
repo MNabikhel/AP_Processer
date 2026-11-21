@@ -141,6 +141,8 @@ TOUCHPOINTS = {
     "scripts/combine.py": "git merge and commit of this clone's own branches, a developer's tool (D-325): nothing "
     "fetched or pushed (no network)",
     "scripts/same_behaviour.py": "git worktree of a local ref, to compare its code with this checkout (no network)",
+    "scripts/moved_same.py": "git diff and git show of a local ref, to compare its definitions with this checkout's "
+    "(no network)",
     "scripts/old_schemas.py": "git archive of an older commit in this clone, for the database it made (no network); "
     "never run by the launcher",
     "scripts/check_deps.py": "urllib.request.url2pathname only (a file: URL), no connection",
