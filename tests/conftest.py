@@ -1,6 +1,7 @@
 import contextlib
 import functools
 import json
+import math
 import os
 import sqlite3
 import time
@@ -31,6 +32,34 @@ def _connect_without_syncing(*args, **kwargs):
 
 
 sqlite3.connect = _connect_without_syncing
+
+# --- Windows' clock before Python 3.13, on any computer: AP_TEST_OLD_WINDOWS_CLOCK=1 --------------------------------
+
+OLD_WINDOWS_CLOCK = os.environ.get("AP_TEST_OLD_WINDOWS_CLOCK") == "1"
+_precise_time = time.time
+
+
+def _old_windows_time() -> float:
+    """``time.time()`` as Windows gives it before Python 3.13: in steps of 1/64 s (15.625 ms), so a file written just
+    now has a time a few milliseconds after it (B-2997, found only on CI's Windows 3.12). Files' own times stay
+    precise, and so does ``time.time_ns()``: tests stamp a file "now" with it, as precise as a file system's own."""
+    return math.floor(_precise_time() * 64) / 64
+
+
+if OLD_WINDOWS_CLOCK:  # for the whole run, in the test process only (as the SQLite syncs above)
+    time.time = _old_windows_time
+
+
+OLD_CLOCK_SAID = "clock: time.time() in steps of 1/64 s, as on Windows before Python 3.13 (AP_TEST_OLD_WINDOWS_CLOCK=1)"
+
+
+def pytest_report_header(config):
+    return OLD_CLOCK_SAID if OLD_WINDOWS_CLOCK else None
+
+
+def pytest_terminal_summary(terminalreporter):
+    if OLD_WINDOWS_CLOCK and terminalreporter.verbosity < 0:  # (-q shows no header: said at the end instead)
+        terminalreporter.write_line(OLD_CLOCK_SAID)
 
 
 def _import_the_pages() -> None:

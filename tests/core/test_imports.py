@@ -30,12 +30,28 @@ def _files(folder: Path, n: int, tag: str = "") -> list[tuple]:
     return out
 
 
+# A child's SQLite error ends with SQLite's own name for it, which "database is locked" alone does not tell: plain
+# SQLITE_BUSY, SQLITE_BUSY_RECOVERY, SQLITE_BUSY_SNAPSHOT... (the flake on CI's Windows 3.12)
+NAMED = """
+import sqlite3, sys
+
+
+def _named(kind, exc, trace, said=sys.excepthook):
+    if isinstance(exc, sqlite3.Error):
+        exc.add_note(f"{exc.sqlite_errorname}: {exc}")
+    said(kind, exc, trace)
+
+
+sys.excepthook = _named
+"""
+
+
 def _python(code: str, *args: str) -> subprocess.Popen:
     """A child Python running ``code``; its stderr is kept, so a child that failed says why (``_error``), not empty
     output to parse."""
     env = {**os.environ, "PYTHONPATH": str(ROOT)}
     return subprocess.Popen(
-        [sys.executable, "-c", code, *args], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        [sys.executable, "-c", NAMED + code, *args], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
 
 

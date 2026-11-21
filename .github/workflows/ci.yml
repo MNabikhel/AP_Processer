@@ -72,9 +72,40 @@ jobs:
       - name: Install
         run: python -m pip install -e ".[${{ matrix.extras || 'dev' }}]"
       - name: Tests
+        id: tests
         # the slowest 15 tests are listed at the end, so a test that grows slow shows up in the log. On Windows the
         # JD Edwards sync at the company's size (20 minutes there, one test) is left to windows-sync-volume below.
         run: python -m pytest -q ${{ matrix.tier != 'fast' && '-m ""' || '' }} ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} ${{ matrix.os == 'windows-latest' && format('--deselect {0}', env.SYNC_VOLUME) || '' }} --durations=15
+      - name: The failed tests, run again (a flake, or failed again?)
+        # Only once the tests failed: each test that failed runs once more (pytest's list of the last failures,
+        # --lf), and the run's summary says of each "passed when run again (likely flaky)" or "failed again", flakes
+        # to be logged in docs/BUGS.md too. The job stays red either way: passing the second time is no pass.
+        if: failure() && steps.tests.outcome == 'failure'
+        shell: bash
+        run: |
+          python - <<'EOF'
+          import json, os, subprocess, sys
+          from pathlib import Path
+
+          cache = Path(".pytest_cache/v/cache/lastfailed")
+          failed = lambda: set(json.loads(cache.read_text(encoding="utf-8"))) if cache.is_file() else set()
+          before = sorted(failed())
+          lines = ["### The failed tests, run again", ""]
+          if not before:
+              lines.append("No test is listed as failed: the tests did not run to their end, or the step failed "
+                           "outside them (see its log).")
+          elif len(before) > 20:
+              lines.append(f"{len(before)} tests failed: too many to run again (see the step's log).")
+          else:
+              subprocess.run([sys.executable, "-m", "pytest", "-q", "-m", "", "--lf", "--lfnf=none"])
+              still = failed()
+              for test in before:
+                  said = "failed again" if test in still else "passed when run again (likely flaky)"
+                  lines.append(f"- {said}: `{test}`")
+                  print(f"::{'error' if test in still else 'warning'} title={said}::{test}")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n".join(lines) + "\n")
+          EOF
 
   windows-sync-volume:
     # The slowest test by far: 600,000 vouchers synced four times, about 20 minutes on Windows (2 on Ubuntu, where
@@ -149,9 +180,42 @@ jobs:
             python -m playwright install chromium
           }
       - name: Browser tests
+        id: tests
         env:
           AP_REQUIRE_BROWSER: "1"
         run: python -m pytest -q -m "" -k "in_a_browser" tests/ --durations=15
+      - name: The failed tests, run again (a flake, or failed again?)
+        # Only once the tests failed: each test that failed runs once more (pytest's list of the last failures,
+        # --lf), and the run's summary says of each "passed when run again (likely flaky)" or "failed again", flakes
+        # to be logged in docs/BUGS.md too. The job stays red either way: passing the second time is no pass.
+        if: failure() && steps.tests.outcome == 'failure'
+        env:
+          AP_REQUIRE_BROWSER: "1"
+        shell: bash
+        run: |
+          python - <<'EOF'
+          import json, os, subprocess, sys
+          from pathlib import Path
+
+          cache = Path(".pytest_cache/v/cache/lastfailed")
+          failed = lambda: set(json.loads(cache.read_text(encoding="utf-8"))) if cache.is_file() else set()
+          before = sorted(failed())
+          lines = ["### The failed tests, run again", ""]
+          if not before:
+              lines.append("No test is listed as failed: the tests did not run to their end, or the step failed "
+                           "outside them (see its log).")
+          elif len(before) > 20:
+              lines.append(f"{len(before)} tests failed: too many to run again (see the step's log).")
+          else:
+              subprocess.run([sys.executable, "-m", "pytest", "-q", "-m", "", "--lf", "--lfnf=none"])
+              still = failed()
+              for test in before:
+                  said = "failed again" if test in still else "passed when run again (likely flaky)"
+                  lines.append(f"- {said}: `{test}`")
+                  print(f"::{'error' if test in still else 'warning'} title={said}::{test}")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n".join(lines) + "\n")
+          EOF
 
   load-smoke:
     # D-191: ten people for a minute on two web workers over a data folder of 2,000 seeded invoices, the benches'

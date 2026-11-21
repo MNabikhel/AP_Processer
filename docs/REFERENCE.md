@@ -538,10 +538,13 @@ tests/               offline test suite (Azure clients and LM Studio mocked)
 ```
 
 Check a change with `python scripts/check.py` (ruff on the changed files, then their tests: a minute or two).
-`pytest` runs all but the slow tests: about 5,400 tests in about 7 minutes. `pytest -m ""` runs everything, the
-browser tests included, as CI does: about 6,000 tests in about 28 minutes. Both serially, on a 4-core machine
-(November 2026); CI splits the whole suite across its machines. Lint with `ruff check ap_coder tests scripts && ruff
-format --check ap_coder tests scripts`.
+`pytest` runs all but the slow tests: about 7,800 tests in about 15 minutes. `pytest -m ""` runs everything, as CI
+does: about 8,700 tests in about 37 minutes, the browser tests included where Chromium is installed (they skip
+without it; CI runs them in a job of their own, about 13 minutes). Both serially on a quiet 4-core machine (November
+2026: the sums of tests/test_times.json, refreshed with `python -m tests.times`); beside other runs on the same cores,
+about one and a half times that. CI splits the whole suite across its machines: a pull request's checks take about
+23 minutes, main's after a merge about 35. Lint with `ruff check ap_coder tests scripts && ruff format --check
+ap_coder tests scripts`.
 
 ## Phase 2 hooks (beyond the pilot)
 
