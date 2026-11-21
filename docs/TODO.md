@@ -40,6 +40,9 @@ decision number then says what was done).
     name for the error, so read it from the next failure first; every call opens and closes its own connection
     (`core/store/_base.py`), so the WAL files come and go between processes.
   - `ap_coder/bench/lines.py` writes `lines.json` with no encoding (ASCII only, a developer's benchmark).
+  - A new vendor's review screen asks `Store.has_other_vendors` (`core/store/vendors.py`), whose `vendor_key != ?`
+    scans `invoices` (LIMIT 1: it stops at another vendor's first invoice; listed in the hot pages test's
+    `HOT_SCANS`, B-3034). `vendor_key > '' AND vendor_key != ?` would use the vendor index instead.
 - **Keep the test map and the test times fresh (after Monday).** CI keeps no per-test times: add `--junitxml` and an
   upload to each tests part, then a nightly job that refreshes `tests/test_times.json` and records
   `tests/test_map.json.gz` (`python -m tests.test_map record`, D-333) and opens a pull request with both.
