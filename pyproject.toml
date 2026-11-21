@@ -26,6 +26,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6", "httpx>=0.27,<1"]  # httpx: fastapi.testclient
+# The recorder of the function-level test map (python -m tests.test_map record): for developers and CI only, never in
+# the offline bundle (its DEFAULT_EXTRAS) and never needed to run AP Coder or its tests.
+testmap = ["coverage==7.17.4"]
 # Azure Document Intelligence (an optional check of the local reading, switched on in the settings) and Azure
 # OpenAI's sign-in: never needed to install or start AP Coder. The offline bundle carries these wheels and the
 # launcher installs them from its wheelhouse when it can (never failing when it can't); code switched on to use
