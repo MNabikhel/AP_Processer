@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
 from functools import cache
 from pathlib import Path
 
@@ -115,9 +116,21 @@ def test_every_path_and_name_of_claudes_map_is_there():
 
 
 def test_claude_md_is_no_bigger_than_when_its_map_was_first_checked():
-    """It is read on every turn: a line added takes one out (or a package's own map holds it)."""
-    size = len(CLAUDE.read_bytes())
+    """It is read on every turn: a line added takes one out (or a package's own map holds it). Counted with LF line
+    ends, as Linux checks it out (a Windows checkout's CRLF is a byte more a line)."""
+    size = len(CLAUDE.read_bytes().replace(b"\r\n", b"\n"))
     assert size <= MOST_BYTES, f"CLAUDE.md is {size:,} bytes, over {MOST_BYTES:,}: move a detail into the package's map"
+
+
+def test_the_size_is_the_same_whatever_the_line_ends_a_checkout_has(tmp_path, monkeypatch):
+    """B-3020: a Windows checkout ends each line in CRLF, so a CLAUDE.md within the limit on Linux was over it there
+    (a byte more a line). Its size is counted with LF line ends."""
+    text = CLAUDE.read_text(encoding="utf-8")
+    near = text + "x" * (MOST_BYTES - len(text.encode("utf-8")) - 1) + "\n"  # at the limit, with LF
+    windows = tmp_path / "CLAUDE.md"
+    windows.write_bytes(near.encode("utf-8").replace(b"\n", b"\r\n"))
+    monkeypatch.setattr(sys.modules[__name__], "CLAUDE", windows)
+    test_claude_md_is_no_bigger_than_when_its_map_was_first_checked()
 
 
 def package_maps() -> list[tuple[Path, str]]:
