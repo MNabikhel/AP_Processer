@@ -39,6 +39,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # scripts/ is no package: new_entry.py is beside this one
@@ -371,49 +372,60 @@ def give_anew(base: str, head: str, tip: str, later: list[str], keep: bool = Tru
 # One merge.
 
 
-def move_out(path: str, text: str, prefix: str, notes: list[str], person: list[str]) -> None:
-    """The entries a frozen log has past its last (a branch made before D-328 added them) moved to files of their
-    own; a person is asked when such a file is there with another entry."""
-    late = {n: entry for n, entry in entries(text, prefix) if n > FROZEN[prefix]}
-    files = {n: f"{FOLDERS[prefix]}/{prefix}-{n}.md" for n in late}
-    other = [files[n] for n in late if Path(files[n]).is_file() and read(files[n]).strip() != late[n].strip()]
-    if other:
-        person.append(f"{path}: entries past its last ({prefix}-{FROZEN[prefix]}) whose file holds another entry: "
-                      f"{', '.join(other)}")  # fmt: skip
-        return
-    if late:
-        for n, entry in late.items():
-            Path(files[n]).parent.mkdir(parents=True, exist_ok=True)
-            write(files[n], entry + "\n")
-        write(path, without(text, prefix, set(late)))
-        said = ", ".join(f"{prefix}-{n}" for n in late)
-        notes.append(f"Moved {said} from {path}, which stops at {prefix}-{FROZEN[prefix]}, into files of their own.")
-        print(f"  {notes[-1]}")
+def tidied(head: str, merged: Callable[[str], str | None]) -> tuple[dict[str, str], list[str], list[tuple[str, str]]]:
+    """The logs after a merge, from ``merged`` (a merged file's text, None where there is none): the files to write
+    (each log's newest entries sorted by number, the entries past a frozen log's last, a branch made before D-328's,
+    moved to files of their own), the notes, and each file that needs a person and why (a number newly written twice
+    differently, newest entries that can't be sorted, an entry to move whose file holds another)."""
+    files: dict[str, str] = {}
+    notes: list[str] = []
+    person: list[tuple[str, str]] = []
 
+    def now(path: str) -> str | None:  # (B and N share the bug log: the second kind reads it as the first left it)
+        return files[path] if path in files else merged(path)
 
-def tidy_logs(head: str, notes: list[str], person: list[str]) -> None:
-    """After a merge: each log's newest entries sorted by number, a number newly written twice differently given to
-    a person, and the entries past a frozen log's last moved to files of their own."""
     for prefix, path in LOGS.items():
-        if not Path(path).is_file() or "<<<<<<<" in (text := read(path)):
+        if (text := now(path)) is None or "<<<<<<<" in text:
             continue
         asked = len(person)
         before = show(head, path)
         added = numbers(text, prefix) - numbers(before, prefix)
         tidy = sort_newest(text, prefix, min(added)) if added else text
         if tidy is None:
-            person.append(f"{path}: its newest entries could not be sorted by number (something other than entries "
-                          "comes after them)")  # fmt: skip
+            person.append((path, "its newest entries could not be sorted by number (something other than entries "
+                                 "comes after them)"))  # fmt: skip
         elif tidy != text:
-            write(path, tidy)
+            files[path] = text = tidy
             notes.append(f"Sorted the newest entries of {path} by number.")
-            print(f"  {notes[-1]}")
-            text = tidy
         for n in sorted(doubled(text, prefix) - doubled(before, prefix)):
             versions = list(dict.fromkeys(entry for m, entry in entries(text, prefix) if m == n))
-            person.append(f"{path}: {alike_said(prefix, n, versions)}")
-        if len(person) == asked:
-            move_out(path, text, prefix, notes, person)
+            person.append((path, alike_said(prefix, n, versions)))
+        late = {n: entry for n, entry in entries(text, prefix) if n > FROZEN[prefix]}
+        if len(person) > asked or not late:
+            continue
+        own = {n: f"{FOLDERS[prefix]}/{prefix}-{n}.md" for n in late}
+        other = [own[n] for n in late if (there := now(own[n])) is not None and there.strip() != late[n].strip()]
+        if other:
+            person.append((path, f"entries past its last ({prefix}-{FROZEN[prefix]}) whose file holds another entry: "
+                                 f"{', '.join(other)}"))  # fmt: skip
+            continue
+        files |= {own[n]: entry + "\n" for n, entry in late.items()}
+        files[path] = without(text, prefix, set(late))
+        said = ", ".join(f"{prefix}-{n}" for n in late)
+        notes.append(f"Moved {said} from {path}, which stops at {prefix}-{FROZEN[prefix]}, into files of their own.")
+    return files, notes, person
+
+
+def tidy_logs(head: str, notes: list[str], person: list[str]) -> None:
+    """After a merge, the logs tidied in the checkout (:func:`tidied`)."""
+    files, said, asked = tidied(head, lambda path: read(path) if Path(path).is_file() else None)
+    for path, text in files.items():
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        write(path, text)
+    for note in said:
+        print(f"  {note}")
+    notes += said
+    person += [f"{path}: {why}" for path, why in asked]
 
 
 def merge(branch: str, later: list[str]) -> bool:
@@ -483,9 +495,10 @@ def merge_tree(ours: str, theirs: str) -> tuple[str, dict[str, dict[str, str]]]:
 
 
 def utf8(object_name: str) -> str | None:
-    """A blob's text (``<tree>:<path>``, or its id), None when it is not UTF-8."""
+    """A blob's text (``<tree>:<path>``, or its id), None when there is none or it is not UTF-8."""
+    done = run_git(["show", object_name])
     try:
-        return run_git(["show", object_name]).stdout.decode("utf-8")
+        return None if done.returncode else done.stdout.decode("utf-8")
     except UnicodeDecodeError:
         return None
 
@@ -523,6 +536,10 @@ def try_merge(head: str, branch: str, later: list[str]) -> tuple[str, list[str],
         verdicts[path] = unsettled(path, set(stages), text, sides)
         if verdicts[path] is None:
             settled[path] = settle(text)
+    if run_git(["merge-base", "--is-ancestor", head, tip]).returncode:  # (not a fast-forward: the logs are tidied)
+        files, _, person = tidied(head, lambda path: settled[path] if path in settled else utf8(f"{tree}:{path}"))
+        settled |= files
+        verdicts |= dict(person)
     commit = git("commit-tree", with_files(tree, settled), "-p", head, "-p", tip, "-m", f"Trial merge of {branch}")
     return commit, notes, verdicts
 

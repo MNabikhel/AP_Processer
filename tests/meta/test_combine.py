@@ -268,6 +268,29 @@ def test_a_trial_of_docs_the_script_settles_exits_0_with_a_number_it_would_give_
     assert git("branch", "--list") == branches and not Path(".git", "ap-numbers").exists()  # nothing kept
 
 
+def test_a_trial_stops_for_a_person_where_the_real_run_would_once_the_logs_are_tidied(repo, monkeypatch, capsys):
+    """After git's merge the logs are tidied (``tidy_logs``), which can need a person where git settled all or found
+    no conflict: a number written twice, an entry moved out of a frozen log whose file holds another. A trial says it
+    as the real run does (B-3008)."""
+    monkeypatch.setattr(combine, "FROZEN", {**combine.FROZEN, "B": 11})  # (the bug log here stops at B-11)
+    edited = "- **B-12** · the totals were wrong on a credit note · low · `t1`\n"
+    again = "- **B-12** · the totals were wrong on a credit memo · low · `t1`\n"
+    branch("log-edited", {"docs/BUGS.md": BUGS + edited})
+    branch("log-again", {"docs/BUGS.md": BUGS + again})
+    branch("file", {"docs/bugs/B-12.md": edited})
+    twice = "docs/BUGS.md: B-12 on both sides, the words alike: the same entry edited, or two bugs?"
+    held = "docs/BUGS.md: entries past its last (B-11) whose file holds another entry: docs/bugs/B-12.md"
+
+    for one, other, why in (("log-edited", "log-again", twice), ("file", "log-again", held)):
+        assert combine.main(["--trial", "--onto", "main", one, other]) == 0  # (docs only)
+        tried = capsys.readouterr().out
+        assert f"  docs, for a person: {why}" in tried and "combine.py would stop for a person on" in tried
+        assert combine.main([one, other, "--onto", "main", "--no-check"]) == 1
+        assert f"Stopped: these need a person:\n    {why}" in capsys.readouterr().out
+        git("merge", "--abort")
+        git("checkout", "-q", "main")
+
+
 def test_a_conflict_in_code_stops_with_the_merge_left_for_a_person(repo, capsys):
     branch("one", {"app.py": "RATE = 2\n", "docs/BUGS.md": BUGS + "- **B-13** · one · low · `t3`\n",
                    "docs/GUIDE.md": "Step 1: open it.\n"})  # fmt: skip
