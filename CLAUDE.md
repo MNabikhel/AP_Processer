@@ -121,11 +121,11 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
 ## Run and test
 - Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev,parallel]"` (or double-click `APProcessor.bat` / `APProcessor.command`).
 - Run: `python -m ap_coder serve` (http://127.0.0.1:8501); `python -m ap_coder doctor`; `python scripts/pilot_check.py`.
-- Check a change: `python scripts/check.py`: ruff, the tests of the changed files and functions (on 4 cores) and
-  the whole tree's rules (D-329); a module no test is picked for fails it. A page, its words (`ops/help.py`),
-  `docs/PROTOTYPE.md` or the launcher changed: it walks the first day too; `--fast`, `--serial`, `--no-walk`.
-- Test: `python -m pytest -q` runs all but the slow tests (about 7 minutes; serially, no xdist). The whole suite with
-  the browser tests, `python -m pytest -q -m ""`, takes about 28 minutes (docs/REFERENCE.md): CI runs it on pull requests
-  (Ubuntu 3.12, Windows 3.12 and 3.14; every Python and the Mac jobs on main after a merge and nightly, D-330), so leave
-  it to CI.
+- Check a change: `python scripts/check.py`: ruff, the tests of the changed files and functions (on 4 cores) and the
+  whole tree's rules (D-329); a module no test is picked for fails it. A page, its words, `docs/PROTOTYPE.md` or the
+  launcher changed: it walks the first day too; `--fast`, `--serial`, `--no-walk`.
+- Test: `python -m pytest -q`: all but slow tests, about 7,800 in 15 min serially; `-m ""`: all 8,700 in 37 min on 4
+  quiet cores, 1.5 times that beside other runs (docs/REFERENCE.md; in the background: timeout 7,200,000 ms). CI
+  (Ubuntu 3.12, Windows 3.12 and 3.14; every Python and the Mac jobs on main after a merge and nightly, D-330): a
+  pull request about 23 min, main 35. Leave it to CI.
 - Lint: `ruff check ap_coder tests scripts` and `ruff format --check ap_coder tests scripts`.
