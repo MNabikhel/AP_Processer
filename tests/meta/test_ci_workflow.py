@@ -393,7 +393,9 @@ def test_the_times_are_refreshed_from_several_reports_and_a_test_over_two_second
     listed = tmp_path / "slow_tests.txt"
     listed.write_text("# the rule\ntests/z.py::test_last\ntests/a/test_new.py::test_listed\n", encoding="utf-8")
     kept = tmp_path / "test_times.json"
-    kept.write_text(json.dumps({"tests/a/test_kept.py": [4.0, 1.0], "tests/a/test_gone.py": [9.0, 9.0]}))
+    kept.write_text(
+        json.dumps({"tests/a/test_kept.py": [4.0, 1.0], "tests/a/test_gone.py": [9.0, 9.0]}), encoding="utf-8"
+    )
     slow = {"tests/z.py::test_last", "tests/a/test_new.py::test_listed"}
     new, measured = times.refresh([report], slow, 2.0, tmp_path, kept, listed)
     assert new == {"tests/a/test_new.py::test_waits"}  # (all its parameters: the list names a test without them)
