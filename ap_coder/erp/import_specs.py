@@ -634,15 +634,13 @@ def _text(value: Any) -> str:
 
 @dataclass(frozen=True)
 class HeaderCheck:
-    """A header row against a spec: ``found`` {field: the file's header}, the required columns ``missing``, the
-    optional ones not there, ``none_of`` (the ``one_of`` columns when none is there) and the file's ``unused``
-    headers, in the file's order."""
+    """A header row against a spec: ``found`` {field: the file's header}, the required columns ``missing``,
+    ``none_of`` (the ``one_of`` columns when none is there) and the file's ``unused`` headers, in the file's order."""
 
     spec: ImportSpec
     headers: tuple[str, ...]
     found: dict[str, str] = field(default_factory=dict)
     missing: tuple[Column, ...] = ()
-    missing_optional: tuple[Column, ...] = ()
     none_of: tuple[Column, ...] = ()
     unused: tuple[str, ...] = ()
     twice: tuple[Column, ...] = ()  # needed columns whose header the file has more than once: which is it?
@@ -712,7 +710,6 @@ def check(spec: ImportSpec, headers: Iterable[Any]) -> HeaderCheck:
     found = spec.find([h for h in named if h]) if any(named) else {}
     used = set(found.values())
     missing = tuple(c for c in spec.required if c.field not in found)
-    optional = tuple(c for c in spec.optional if c.field not in found)
     none_of = tuple(spec.column(f) for f in spec.one_of) if spec.one_of and not set(spec.one_of) & set(found) else ()
     unused = tuple(h for h in named if h and h not in used)
     present = set(named)
@@ -724,7 +721,7 @@ def check(spec: ImportSpec, headers: Iterable[Any]) -> HeaderCheck:
                   and (c.field, key) not in first)  # fmt: skip
     guessed = tuple(f for f, h in found.items() if spec.guess and header_key(h) not in {
         header_key(n) for n in (spec.column(f).header, *spec.column(f).names) if "…" not in n})  # fmt: skip
-    return HeaderCheck(spec, tuple(named), found, missing, optional, none_of, unused, twice, guessed)
+    return HeaderCheck(spec, tuple(named), found, missing, none_of, unused, twice, guessed)
 
 
 def identify(headers: Iterable[Any], keys: Iterable[str] = IDENTIFIED) -> ImportSpec | None:

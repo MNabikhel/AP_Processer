@@ -184,12 +184,13 @@ def test_two_charts_with_the_same_lists_never_share_kept_pairs(tmp_path):
 
 def test_a_business_unit_and_a_supplier_are_retired_by_the_same_words_kept_in_one_place(store):
     """One default, one setting and one way to find the word in a name, for the chart and the supplier master."""
+    from ap_coder.core.store import vendor_master
     from ap_coder.core.store import vendors as store_vendors
 
     assert (
         store_vendors.SKIP_WORDS_SETTING is chart.SKIP_WORDS_SETTING and chart.SKIP_WORDS_SETTING in chart.SETTING_KEYS
     )
-    assert store_vendors._markers is chart.markers
+    assert vendor_master._markers is chart.markers
     assert (
         store.skip_words() == list(store.chart_settings().skip_words) == list(chart.SKIP_WORDS) == ["DO NOT USE", "DNU"]
     )

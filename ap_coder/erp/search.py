@@ -18,7 +18,7 @@ from ..coding.po import po_key
 from ..coding.vendors import norm_invoice_number
 from ..core.keys import plain as _plain
 from ..core.keys import raw_number as _raw
-from ..core.keys import register_keys, search_keys  # noqa: F401  (the names this module had)
+from ..core.keys import register_keys  # noqa: F401  (the name this module had)
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
 from ..core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
