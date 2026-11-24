@@ -39,12 +39,6 @@ def env_file(tmp_path, monkeypatch):
     os.environ.update(before)
 
 
-@pytest.fixture
-def client(store):
-    s = Settings()
-    return TestClient(create_app(replace(s, llm=replace(s.llm, provider="off")), store), base_url="http://localhost")
-
-
 def post(client, url, data=None, **kwargs):
     return client.post(url, data=data or {}, headers=PAGE, **kwargs)
 

@@ -34,6 +34,7 @@ from ap_coder.web import app as web_app
 from ap_coder.web import core, roles, security, server
 from ap_coder.web.app import create_app
 from ap_coder.web.jobs import Jobs
+from tests.browser import free_port
 from tests.webclient import PAGE, enrol, sign_in, web_settings
 
 GOOD = "correct horse battery"
@@ -636,18 +637,12 @@ def test_this_processs_memory_and_the_computers_are_known():
     assert used is not None and total is not None and 10 < used < total
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 def test_a_worker_of_the_server_is_started_afresh_and_no_request_or_login_is_lost(tmp_path):
     """The real server, two workers, each ended after a few requests: the supervisor starts others in their place,
     every request is answered, and the login made before still works after."""
     from ap_coder.core import authenticator
 
-    data, port = tmp_path / "data", _free_port()
+    data, port = tmp_path / "data", free_port()
     store = Store(data / "ap_coder.db")
     uid = store.add_user("boss", GOOD, role="admin", display_name="Boss")
     with store._conn() as conn:
@@ -810,7 +805,7 @@ def test_through_uvicorn_a_busy_workers_answer_closes_its_connection_and_a_free_
 
     busy = {"now": False}
     monkeypatch.setattr(server, "worker_busy", lambda: busy["now"])
-    port = _free_port()
+    port = free_port()
     config = uvicorn.Config(server.HandBack(_ok), host="127.0.0.1", port=port, lifespan="off", log_level="warning",
                             timeout_keep_alive=server.KEEP_ALIVE_SECONDS)  # fmt: skip
     running = uvicorn.Server(config)
@@ -969,7 +964,7 @@ def test_the_server_works_its_reports_out_before_its_port_opens_and_only_with_se
             monkeypatch.setenv("AP_SERVER_MODE", "1")
         else:
             monkeypatch.delenv("AP_SERVER_MODE", raising=False)
-        server.serve("127.0.0.1", _free_port(), open_browser=False, store=store, insecure_http=True, workers=1)
+        server.serve("127.0.0.1", free_port(), open_browser=False, store=store, insecure_http=True, workers=1)
     assert done == ["served", "served"]
 
 
@@ -1383,7 +1378,7 @@ def test_the_real_server_works_its_reports_and_each_workers_memories_out_then_se
     from ap_coder.web import refresh
     from tests.webclient import add_clean
 
-    data, port = tmp_path / "data", _free_port()
+    data, port = tmp_path / "data", free_port()
     add_clean(Store(data / "ap_coder.db"))
     every = len(refresh.DEFAULTS)
     (tmp_path / "empty.env").write_text("", encoding="utf-8")

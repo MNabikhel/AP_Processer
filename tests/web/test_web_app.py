@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import replace
 from pathlib import Path
 
 import anyio
@@ -16,19 +15,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 import ap_coder
-from ap_coder.core.config import Settings
 from ap_coder.web import core, server
 from ap_coder.web.app import CODE_FOLDER, create_app
 from ap_coder.web.jobs import DONE, ERROR, Job
 from ap_coder.web.pages import PAGES
-from tests.webclient import PAGE
+from tests.webclient import PAGE, web_settings
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def web_settings() -> Settings:
-    s = Settings()
-    return replace(s, llm=replace(s.llm, provider="off"))
 
 
 @pytest.fixture

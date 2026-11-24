@@ -12,14 +12,8 @@ import pytest
 
 from ap_coder.ops import offline
 from ap_coder.web import server
+from tests.browser import free_port
 from tests.conftest import until
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
 
 # --- B-1271: a port nothing listens on is free, whatever answers a connection to it --------------------------------
 
@@ -29,7 +23,7 @@ def test_a_free_port_is_not_taken_for_one_in_use_when_something_answers_every_co
     # An office proxy or an endpoint agent that intercepts connections answers on any port, so asking "does something
     # answer there?" says yes for a port nothing on this computer listens on.
     monkeypatch.setattr(offline, "listening", lambda port, host="127.0.0.1": True)
-    port = _free_port()
+    port = free_port()
     assert server.port_refusal("127.0.0.1", port) == ""
     assert server.port_refusal("0.0.0.0", port) == ""
     with socket.socket() as taken:  # a program listening there is still found
@@ -48,7 +42,7 @@ def test_the_port_check_does_not_fail_on_a_computer_without_ipv6(monkeypatch):
         return real(family, *args, **kwargs)
 
     monkeypatch.setattr(socket, "socket", no_ipv6)
-    assert server.port_refusal("::", _free_port()) == ""  # (uvicorn then says what is wrong itself)
+    assert server.port_refusal("::", free_port()) == ""  # (uvicorn then says what is wrong itself)
 
 
 # --- B-1272: a stop ends the server within 30 seconds, however long its requests take ------------------------------
@@ -68,7 +62,7 @@ def test_a_stop_ends_the_server_within_its_grace_even_with_a_long_request_under_
         started.set()
         await asyncio.sleep(120)
 
-    port = _free_port()
+    port = free_port()
     config = server.server_config(slow_report, "127.0.0.1", port, None, None, None)
     config.lifespan = "off"
     running = uvicorn.Server(config)
@@ -223,7 +217,7 @@ def test_the_server_runs_several_workers_and_one_background_process_and_stops_th
 
     from ap_coder.core.paths import try_lock
 
-    data, port = tmp_path / "data", _free_port()
+    data, port = tmp_path / "data", free_port()
     data.mkdir()
     (tmp_path / "empty.env").write_text("", encoding="utf-8")
     env = {**os.environ, "AP_PRIVATE_DIR": str(data), "BROWSER": "none", "AP_ALLOWED_HOSTS": "127.0.0.1"}

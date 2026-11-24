@@ -6,18 +6,16 @@ from __future__ import annotations
 
 import re
 import shutil
-from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.core.config import Settings
 from ap_coder.core.store import Store
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import PAGES
 from ap_coder.web.pages import exports as exports_page
 from tests.browser import browser_on
-from tests.webclient import PAGE
+from tests.webclient import PAGE, web_settings
 
 # The Simple menu's names in the whole menu too (D3)
 CORE = ["To review", "Add invoices", "Find an invoice", "Exports", "GL accounts & tax", "Settings", "Help"]
@@ -25,14 +23,9 @@ MORE = ["Rules", "Manager confirmations", "Month-end", "Sales tax", "Vendor stat
         "Vendors", "Purchase orders", "What was learned", "Spend", "Insights", "Activity"]  # fmt: skip
 
 
-def _settings() -> Settings:
-    s = Settings()
-    return replace(s, llm=replace(s.llm, provider="off"))
-
-
 @pytest.fixture
 def client(store):
-    return TestClient(create_app(_settings(), store, start_reader=False), base_url="http://localhost")
+    return TestClient(create_app(web_settings(), store, start_reader=False), base_url="http://localhost")
 
 
 @pytest.fixture
@@ -100,7 +93,7 @@ def test_with_jd_edwards_words_the_pages_say_supplier_and_vendor_without_them(de
     from ap_coder.web import core
 
     store = demo_store
-    client = TestClient(create_app(_settings(), store, start_reader=False), base_url="http://localhost")
+    client = TestClient(create_app(web_settings(), store, start_reader=False), base_url="http://localhost")
     invoice = store.list_invoices()[0]["id"]
 
     def pages() -> str:
@@ -136,7 +129,7 @@ def test_with_jd_edwards_words_the_pages_say_supplier_and_vendor_without_them(de
 
 @pytest.fixture
 def browser(chromium, demo_store):
-    with browser_on(chromium, create_app(_settings(), demo_store, start_reader=False)) as opened:
+    with browser_on(chromium, create_app(web_settings(), demo_store, start_reader=False)) as opened:
         yield opened
 
 
@@ -246,7 +239,7 @@ def test_check_again_from_the_welcome_page_comes_back_to_it(client):
 def test_without_lm_studio_the_ai_reviewer_says_to_start_it_and_check_again(client):
     from ap_coder.ai import reading
 
-    status = reading.reading_status(_settings(), None)
+    status = reading.reading_status(web_settings(), None)
     line = status.reader(reading.REVIEWER)
     assert line.state == reading.WAITING and "Start server" in line.detail and "Check again" in line.detail
     assert "Waiting for LM Studio" in client.get("/settings/reading").text
@@ -341,7 +334,7 @@ def test_touchless_is_not_the_pages_main_button_and_says_to_leave_it_off(client)
 
 
 def test_supplier_learning_says_how_many_more_invoices_once(client, demo_store):
-    demo = TestClient(create_app(_settings(), demo_store, start_reader=False), base_url="http://localhost")
+    demo = TestClient(create_app(web_settings(), demo_store, start_reader=False), base_url="http://localhost")
     page = demo.get("/learning?tab=suppliers").text
     assert "accuracy at least" not in page
     rows = page.split("an-supplier")[1:]
@@ -378,7 +371,7 @@ def test_who_is_a_proper_page_linking_to_settings(client, monkeypatch):
 
 
 def _demo_client(demo_store) -> TestClient:
-    return TestClient(create_app(_settings(), demo_store, start_reader=False), base_url="http://localhost")
+    return TestClient(create_app(web_settings(), demo_store, start_reader=False), base_url="http://localhost")
 
 
 def test_the_queue_figures_are_plain_and_the_coding_memory_has_one_name(demo_store):
@@ -601,7 +594,7 @@ def test_settings_review_on_a_laptop_says_how_colleagues_sign_in_and_names_only_
 
 def test_in_a_browser_the_review_screen_says_in_the_supplier_list_with_jd_edwards(chromium, chart_company):
     """D3 (D-252): with JD Edwards the line under the review screen's Supplier box said "In the vendor list · AN8"."""
-    app = create_app(_settings(), chart_company.store, start_reader=False)
+    app = create_app(web_settings(), chart_company.store, start_reader=False)
     with browser_on(chromium, app) as (browser, base):
         page = browser.new_page(viewport={"width": 1366, "height": 800})
         page.goto(f"{base}/review/{chart_company.invoices['four_lines'][1]}")
