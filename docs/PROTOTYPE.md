@@ -143,6 +143,10 @@ E1 → Accounts AP posts to, where a code JD Edwards' own list does not have wai
 | 7 | Payment terms (optional) | what each supplier's terms code means (N: Net 30), for the due date | F0014 from ReportsNow |
 | 8 | Tax areas (optional) | JD Edwards' tax areas and rates, compared with the ones Settings gives each province | F4008 from ReportsNow |
 
+With box 6 loaded, tick **PO-matched vouchers** (Settings → JD Edwards E1) only if you key an invoice on a PO by
+matching the PO or its receipts in JD Edwards (Voucher Match); left off, as it starts, each voucher is keyed with its
+G/L lines, so check that each line is on its PO line's job (*Use the PO's coding* puts it there).
+
 Each card says which report to export and how (**How to get it**), the columns it needs and the optional ones (the
 other names each is read by under *What each column is*), and has **Download a blank template** with those column
 names to compare with your export. The columns can be in any order. Choose (or drag in) the file and click **Check
