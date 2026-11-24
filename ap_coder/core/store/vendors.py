@@ -591,9 +591,12 @@ class VendorsMixin:
         return rows, spend
 
     def has_other_vendors(self, key: str) -> bool:
+        """Whether another vendor has an invoice that did not fail. ``vendor_key > ''`` leaves out what ``!= ''`` did
+        (no vendor: NULL or ''), and seeks the vendor index, where ``!=`` read the invoices until it found one
+        (B-3039)."""
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT 1 FROM invoices WHERE vendor_key != ? AND vendor_key != '' AND status != ? LIMIT 1",
+                "SELECT 1 FROM invoices WHERE vendor_key > '' AND vendor_key != ? AND status != ? LIMIT 1",
                 (key, FAILED),
             ).fetchone()
         return row is not None

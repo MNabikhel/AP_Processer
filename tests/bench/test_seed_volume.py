@@ -449,9 +449,6 @@ def test_a_seed_on_a_file_system_out_of_links_for_a_template_copies_it_and_goes_
 # no full scans on hot paths, guarded by tests). A new one fails the test; one gone must leave the list too.
 HOT_PAGES = ("/review", "/review/{invoice_id:int}", "/search", "/process", "/review/vendors.json")
 HOT_SCANS = {
-    ("invoices", "/review/{invoice_id:int}", "table"): "whether another vendor has an invoice at all, for a vendor "
-    "not in the master with none approved (VENDOR_NEW; the USD sample waiting for a second approval): LIMIT 1, the "
-    "first invoice of another vendor stops it",
     ("feedback", "/review/{invoice_id:int}", "table"): "the learning memory's stamp and its read: kept by the process "
     "until a lesson is added, FEEDBACK_READ lessons at most (D-173, D-195)",
     ("vendors", "/review/{invoice_id:int}", "table"): "the vendor list and the master's numbers: kept by the process "
