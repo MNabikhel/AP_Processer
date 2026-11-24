@@ -32,13 +32,13 @@ A package's map is its `__init__.py` docstring: read it before searching.
 - The database (`Store`): `core/store/`, one part per subject; its schema `_base.py` (`SCHEMA_VERSION`), an older one
   brought up to date `migrations.py`; SQL only in the store, SQLite's own behind `dialect.py`. Settings
   `core/config.py` (the .env; the data's own: `Store.get_setting`), the data folder `core/paths.py`, the dashboard's
-  HTML pieces `core/ui.py`, the command line
-  `ops/cli.py` (`build_parser`). Who the reviewer is: `web/identity.py`. Server mode: `web/roles.py` (every route needs
-  a rule naming a permission, `tests/web/test_roles.py`), the permissions and built-in roles `core/permissions.py`
-  (their access frozen in `tests/web/test_role_permissions.py`), the Admin panel `web/pages/admin.py`, `web/access.py`,
-  `web/pages/login.py`; service and updates `ops/service.py`, `ops/server_update.py`; the owner's laptop serving a few
-  colleagues `ops/share.py`; the pilot tester's guide followed step by step `scripts/ci/first_day.py` (Windows CI
-  `windows-first-day`). How it starts, updates and touches the network: `docs/HOW_IT_RUNS.md`.
+  HTML pieces `core/ui.py`, the command line `ops/cli.py` (`build_parser`). Who the reviewer is: `web/identity.py`.
+  Server mode: `web/roles.py` (every route needs a rule naming a permission, `tests/web/test_roles.py`), the permissions
+  and built-in roles `core/permissions.py` (their access frozen in `tests/web/test_role_permissions.py`), the Admin
+  panel `web/pages/admin.py`, `web/access.py`, `web/pages/login.py`; service and updates `ops/service.py`,
+  `ops/server_update.py`; the owner's laptop serving a few colleagues `ops/share.py`; the pilot tester's guide followed
+  step by step `scripts/ci/first_day.py` (Windows CI `windows-first-day`). How it starts, updates and touches the
+  network: `docs/HOW_IT_RUNS.md`.
 - With a JD Edwards chart of accounts loaded (the one-laptop guide: `docs/PROTOTYPE.md`): a line's account string
   `business unit.object.subsidiary` is joined and split only in `core/chart.py` (`AccountPairs`: which pairs exist and
   can be posted to), answered from the database, never held in memory (`core/store/chart_index.py`); the chart's tables
