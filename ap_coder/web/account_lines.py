@@ -12,7 +12,7 @@ The no-chart row (GL account and cost center pickers) uses none of this.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ap_coder.ai.supplier_prior import prior_for
 from ap_coder.coding import posting_edits
@@ -22,6 +22,9 @@ from ap_coder.coding.taxmath import INSIDE, OWN_LINE, READ, InvoiceTaxes, LineTa
 from ap_coder.core import chart
 from ap_coder.core.memory import pair_lines
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData
+
+if TYPE_CHECKING:
+    from ap_coder.core.store.chart_index import IndexedPairs
 
 LINE_ACCOUNT = "line_account"  # a line's whole account string, one box a row, posted in order
 FIX, CHECK = "fix", "check"  # a row's state: Approve is closed until it is fixed; to look at before approving
@@ -61,7 +64,7 @@ def account_text(gl: Any, cc: Any) -> str:
     return chart.join_account(cc, gl) if gl else cc
 
 
-def posted(text: Any, pairs: chart.AccountPairs | None = None) -> tuple[str, str]:
+def posted(text: Any, pairs: IndexedPairs | None = None) -> tuple[str, str]:
     """The Account box as posted, as the line's (GL code, business unit); ("", "") when it is empty. What was typed
     is kept as typed: the parts pasted with spaces or tabs between them are joined with dots, and a text with no
     business unit the chart knows that is one of its GL codes is the code alone."""
@@ -170,7 +173,7 @@ def _sentence(text: str) -> str:
     return f"{text[:1].upper()}{text[1:]}"
 
 
-def _offered(pairs: chart.AccountPairs, gl: str) -> list[dict[str, str]]:
+def _offered(pairs: IndexedPairs, gl: str) -> list[dict[str, str]]:
     """The business units that do have the account, as candidates for a line whose own business unit does not."""
     units = sorted(pairs.bus_of(gl), key=lambda unit: unit != pairs.settings.home_business_unit)[:OFFERED_MOST]
     return [{"account": chart.join_account(unit, gl), "name": pairs.description(unit, gl),
@@ -178,7 +181,7 @@ def _offered(pairs: chart.AccountPairs, gl: str) -> list[dict[str, str]]:
             for unit in units]  # fmt: skip
 
 
-def _candidates(pairs: chart.AccountPairs, kept: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+def _candidates(pairs: IndexedPairs, kept: list[dict[str, Any]] | None) -> list[dict[str, str]]:
     return [{"account": str(c.get("account") or ""), "name": str(c.get("name") or ""),
              "unit": pairs.name_of(c.get("business_unit")), "reason": str(c.get("reason") or "")}
             for c in kept or [] if c.get("account")]  # fmt: skip

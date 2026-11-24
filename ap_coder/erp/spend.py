@@ -4,8 +4,10 @@ Spend is the cost to the company: each expense line's amount plus any sales tax 
 (recoverable GST/HST/QST is left out, as it is claimed back). Credit notes reduce it. Amounts stay in
 each invoice's currency; currencies are never added together.
 
-Entry points: ``parts`` (the Spend page's lines, from the invoices' summary), ``total_by``,
-``by_month_and_category``, ``currencies``, ``in_cad``, and ``workbook`` (the full data download).
+Entry points: ``figures`` and ``spend_currencies`` (what the Spend page shows, summed by SQLite: D-156),
+``default_period``, ``accounts_by_code``, and ``workbook`` / ``write_workbook`` (the full data download). ``parts``,
+``lines``, ``currencies``, ``in_cad``, ``total_by`` and ``by_month_and_category`` are the page worked out line by line
+in Python, as it was before SQLite summed it: the tests' reference (tests/reports_reference.py).
 """
 
 from __future__ import annotations
@@ -77,8 +79,9 @@ def spend_parts(doc: dict[str, Any], treatments: dict[str, Any]) -> list[tuple[A
 
 def parts(store: Store, start: dt.date, end: dt.date) -> list[SpendLine]:
     """The cost lines of approved invoices dated from ``start`` to ``end`` (inclusive), by invoice, GL account and
-    cost center (``spend_parts``), from the invoices' summary (D-110): what the Spend page totals. ``total_by``,
-    ``by_month_and_category``, ``currencies`` and ``in_cad`` give what they give for ``lines``."""
+    cost center (``spend_parts``), from the invoices' summary (D-110): what the Spend page's ``figures`` are the sums
+    of, which the tests total in Python (D-156). ``total_by``, ``by_month_and_category``, ``currencies`` and ``in_cad``
+    give what they give for ``lines``."""
     first, last = start.isoformat(), end.isoformat()
     rows = store.summary_fetch(
         "SELECT s.id, substr(s.f_date, 1, 7) month, s.p_vendor, s.p_currency, p.gl_code, p.cost_center, p.amount, "

@@ -11,10 +11,13 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from .chart import AccountPairs
 from .csvio import read_csv_rows
 from .tax_setup import TaxRateTable, TaxSetup, TaxTreatment, load_tax_mapping
+
+if TYPE_CHECKING:
+    from .store.chart_index import IndexedPairs
 
 UNASSIGNED = "UNASSIGNED"
 
@@ -164,7 +167,7 @@ class ReferenceData:
     notes: list[str] = field(default_factory=list)
     # Which GL code exists on which cost center (a JD Edwards business unit) and may be posted to, when a chart of
     # accounts was imported (D-209); None: every GL code goes with every cost center, as before.
-    pairs: AccountPairs | None = None
+    pairs: IndexedPairs | None = None
     # What the store built it from, as it compares it (``Store.reference_stamp``); "" when read from files. Checks
     # made with it say so (``ValidationReport.reference_stamp``), so an invoice checked against lists that changed
     # before it was saved is checked again (B-2094).
