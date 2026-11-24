@@ -194,19 +194,23 @@ class _TaxCheck:
     foreign: float = 0.0  # non-Canadian tax charged (OTHER): US sales tax, said once
     not_charged: set[str] = field(default_factory=set)  # taxes lines are marked with that the invoice does not charge
     two_provinces: bool = False  # GST lines and HST lines, each tax on lines of its own: said once
+    holdback: float = 0.0  # a progress billing's holdback as read off it (D-274): a tax may be charged on the rest
 
     def add(self, severity: str, code: str, message: str, line: int | None = None) -> None:
         self.findings.append(TaxFinding(severity, code, message, line))
 
 
 def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = None,
-                erp_posts: frozenset[str] = frozenset(), canadian: bool = True) -> list[TaxFinding]:  # fmt: skip
+                erp_posts: frozenset[str] = frozenset(), canadian: bool = True,
+                holdback: float = 0.0) -> list[TaxFinding]:  # fmt: skip
     """The tax findings of an invoice as coded, in the order the review screen lists them: the tax lines' sums,
     each tax line's amount, rate and province, which lines carry each tax, the regime of the place of supply, a
     non-Canadian tax, exemptions to confirm, the registration numbers and the GL accounts the taxes post to.
     ``erp_posts``: the taxes JD Edwards posts itself from the voucher's pay item (``jde_review.taxes_e1_posts``).
-    ``canadian``: False for a company not checked for Canadian tax (a US one, D-267): its tax lines' sums only."""
+    ``canadian``: False for a company not checked for Canadian tax (a US one, D-267): its tax lines' sums only.
+    ``holdback``: a progress billing's holdback as read off it (D-274), 0 for any other invoice."""
     check = _start_tax_check(coding, setup)
+    check.holdback = holdback
     _tax_lines_add_up(check)
     if not canadian:
         return check.findings
@@ -423,7 +427,9 @@ def _gst_under_hst(check: _TaxCheck) -> float | None:
 def _lines_carry_each_tax(check: _TaxCheck) -> None:
     """Which invoice lines carry each tax (their tax code, D-64), and does their sum match the taxable amount?
     Compared per tax type, because the same tax can be printed more than once (e.g. on goods and on freight). A tax
-    line of nothing (GST 0.00 on a zero-rated line) is on no line: its taxable amount is not counted (B-2485)."""
+    line of nothing (GST 0.00 on a zero-rated line) is on no line: its taxable amount is not counted (B-2485). A
+    progress billing may charge it on the work less its holdback (the Excise Tax Act's holdback rule, D-273): the
+    lines less the holdback are its taxable amount too."""
     coding, tol = check.coding, check.tol
     places = currency_places(getattr(coding, "currency", ""))
     for tax_type in sorted(check.charged):
@@ -437,7 +443,7 @@ def _lines_carry_each_tax(check: _TaxCheck) -> None:
                       "to")  # fmt: skip
             continue
         base = add_up(li.amount for li in flagged)
-        if within(base, taxable, tol):
+        if within(base, taxable, tol) or (check.holdback and within(base - check.holdback, taxable, tol)):
             continue
         # In the size of the amounts: a credit note reverses an invoice line for line (ETA s.232).
         sign = -1 if (taxable or base) < 0 else 1

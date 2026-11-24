@@ -182,10 +182,12 @@ CHECKS: dict[str, CheckHelp] = {
         "on others): a voucher's pay item has one tax area, so it is two pay items, which AP Coder does not make "
         "yet.",
         "Check the Place of supply; if it is right, ask the pilot tester to set the tax area in Settings → JD "
-        "Edwards E1. For two rates, check each line's tax code, then key the voucher by hand in JD Edwards as the "
-        "finding spells out (each pay item's tax area, taxable and tax amounts), and approve it with a reason. For "
-        "the receipts of one expense claim, the finding names the receipts of each tax area: make them separate "
-        "invoices again, then choose each tax area's receipts again on Add invoices as a claim of their own.",
+        "Edwards E1. For two rates, check each line's tax code. If they are right, the invoice can't be approved in AP "
+        "Coder, not even with Approve anyway: key the voucher by hand in JD Edwards as the pay items the finding "
+        "spells out (each one's tax area, taxable and tax amounts), then reject it in AP Coder with the reason that "
+        "it was keyed by hand (two tax areas), so it leaves the queue. For the receipts of one expense claim, the "
+        "finding names the receipts of each tax area: make them separate invoices again, then choose each tax area's "
+        "receipts again on Add invoices as a claim of their own.",
     ),
     "JDE_NO_ACCOUNT": CheckHelp(
         ERP, "GL account not mapped to JD Edwards",

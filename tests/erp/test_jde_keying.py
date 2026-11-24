@@ -1255,6 +1255,64 @@ def test_a_charge_not_on_the_po_holds_the_voucher_unless_an_account_is_chosen_fo
     assert next(r for r in rows if r[0] == "Check")[1:3] == ["Amounts matched + tax on the rows = gross", 989.84]
 
 
+def test_a_po_matched_voucher_the_sheet_would_hold_stays_in_ready_to_export_with_why(
+    chart_company, chart_company_client, tmp_path
+):
+    """B-3044: with PO-matched vouchers on (nothing else changed), an approved invoice with freight and a fuel
+    surcharge its PO has no line for was listed as ready for the keying sheet and went on its batch: "Batch 1 created
+    with 2 invoices", Ready to export 0, the sheet "Voucher 1 of 1" and the invoice only on its "Not ready" sheet,
+    counted as exported, so never keyed or paid. The keying sheet's own hold is now a reason the list gives: the
+    invoice stays in Ready to export with why and only the other goes; loading its PO again with those lines makes it
+    ready."""
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.bench import jde_exports, jde_po_vouchers
+    from tests.bench.test_jde_po_vouchers import load_pos
+    from tests.review_page import ReviewPage
+    from tests.webclient import follow, post, web_settings
+
+    store, client = chart_company.store, chart_company_client
+    js = jde_settings.load(store)
+    js.po_matched = True  # Settings → JD Edwards E1 → PO-matched vouchers ("Charges not on the PO": hold the voucher)
+    jde_settings.save(store, js)
+    folder = tmp_path / "set"
+    made = {case.name: case for case in jde_po_vouchers.write(folder, chart_company.truth)}
+    load_pos(store, {jde_po_vouchers.OPEN_PO_FILE: (folder / jde_po_vouchers.OPEN_PO_FILE).read_bytes()})
+    pipeline = InvoicePipeline(web_settings(), store.reference_data(), store=store)
+    ids = []
+    for name in ("ab_gst", "ab_freight_not_on_po"):
+        page = ReviewPage(client, pipeline.process(folder / f"{name}.pdf").invoice_id)
+        for n in range(1, len(page.lines) + 1):
+            page.set_account(n, "0021061010.7410.4107")  # the PO's account
+        assert page.approve()["ok"], name
+        ids.append(page.id)
+    paper, freight = ids
+    page = client.get(f"/exports?fmt={jde_keying.FORMAT}").text
+    assert "1 invoice cannot go to JD Edwards yet" in page and "Export 1 invoice" in page
+    assert "line 2 “Freight” matches no line of PO 41110 (none is guessed)" in page
+    assert "disabled" in page.split(f'name="ids" value="{freight}"', 1)[1].split(">", 1)[0]
+
+    text = follow(client, post(client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": ids}))
+    assert "Batch 1 created with 1 invoice." in text
+    assert "1 ticked invoice is not ready for JD Edwards and stays in Ready to export" in text
+    (batch,) = store.export_batches()
+    assert store.batch_invoice_ids(batch["id"]) == [paper]
+    assert [i["id"] for i in store.unexported_approved()] == [freight]
+    wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/exports/batches/{batch['id']}/download").content))
+    assert len(blocks(wb[jde_keying.SHEET])) == 1 and wb[jde_keying.NOT_READY].max_row == 1
+
+    # Its PO loaded again with the freight and the surcharge on lines of their own: ready at once
+    case = made["ab_freight_not_on_po"]
+    (docking,) = case.po_lines
+    charges = [replace(docking, line=Decimal(n), description=words, ordered=Decimal(1), unit_cost=Decimal(cost))
+               for n, words, cost in ((2, "FREIGHT", "38.00"), (3, "FUEL SURCHARGE", "6.84"))]  # fmt: skip
+    load_pos(store, {jde_po_vouchers.OPEN_PO_FILE: jde_exports.open_po_lines_xlsx([docking, *charges])})
+    page = client.get(f"/exports?fmt={jde_keying.FORMAT}").text
+    assert "cannot go to JD Edwards yet" not in page and "Export 1 invoice" in page
+
+
 def test_a_line_charged_part_of_what_its_tax_area_holds_is_held_unless_its_po_line_has_an_area_of_its_own(tmp_path):
     """D-265: JD Edwards works out every tax its area holds on a row taxed Y: on BC's GST + PST area (code C), a line
     charged the GST and not the PST can't be keyed on it, and no area is guessed: the voucher is held with why. When

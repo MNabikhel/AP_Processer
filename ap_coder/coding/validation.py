@@ -216,7 +216,9 @@ def validate_coding(
     checks = _totals_checks(coding, reference, add)
     # --- Canadian sales tax ------------------------------------------------------
     known = set(reference.chart_of_accounts.codes)
-    for f in check_taxes(coding, reference.tax, known, erp_posts_tax, canadian=canadian_tax):
+    # a progress billing's holdback as read (D-274): a tax may be charged on the work less it (B-3045)
+    holdback = ((extraction.progress if extraction is not None else None) or {}).get("holdback") or 0.0
+    for f in check_taxes(coding, reference.tax, known, erp_posts_tax, canadian=canadian_tax, holdback=holdback):
         add(f.severity, f.code, f.message, f.line_number)
     checks["tax_lines"] = [f"{t.tax_type} {t.province} {t.rate:g}".strip() for t in coding.tax_lines]
 
