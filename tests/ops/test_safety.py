@@ -228,7 +228,7 @@ def team_server_stand_in(data: Path, *, https: bool = True, server_mode: bool = 
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(str(CERT), str(KEY))
         httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
     (data / ".ap_coder_server.json").write_text(
         json.dumps({"pid": 4242, "port": port, "token": "secret"}), encoding="utf-8"
     )

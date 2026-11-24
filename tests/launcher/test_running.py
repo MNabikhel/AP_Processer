@@ -59,7 +59,7 @@ def server(tmp_path):
 
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     port = httpd.server_address[1]
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
     thread.start()
     record = {"pid": 4242, "port": port, "token": "secret", "folder": state["folder"], "version": "0.2.0"}
     (data / ".ap_coder_server.json").write_text(json.dumps(record), encoding="utf-8")
