@@ -63,10 +63,10 @@ SHARED = {"tests/conftest.py", "tests/webclient.py", "tests/pdfs.py", "tests/scr
 RULES = ("tests/meta", "tests/offline/test_offline_guard.py", "tests/core/test_store_package.py",
          "tests/core/test_migrations.py::test_every_schema_since_pr_99s_has_an_old_database", "tests/ops/test_help.py",
          "tests/web/test_roles.py", "tests/web/test_role_permissions.py")  # fmt: skip
-# The rules every doc is held to (docs/, CLAUDE.md, README.md, .claude/agents/, and .ignore): its lines, the log
-# entries' numbers (the second one only once it is there): a changed doc runs them, and the tests that open it by its
+# The rules every doc is held to (docs/, CLAUDE.md, README.md, .claude/agents/, and .ignore): its lines, its links, the
+# log entries' numbers (the last one only once it is there): a changed doc runs them, and the tests that open it by its
 # path.
-DOC_RULES = ("tests/meta/test_agent_friendly.py", "tests/meta/test_log_entries.py")
+DOC_RULES = ("tests/meta/test_agent_friendly.py", "tests/meta/test_doc_links.py", "tests/meta/test_log_entries.py")
 # The tests of a file that its name and imports miss (named otherwise, reached through a page's address or a command,
 # a doc the Help page shows): these, in place of those its name finds (a doc's: besides the rules every doc is held to).
 OWN = {

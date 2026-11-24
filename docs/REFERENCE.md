@@ -196,6 +196,7 @@ coding nothing silently. Speed and model advice are in [docs/PILOT.md](PILOT.md)
 | `AP_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | any address LM Studio shows; Ollama: `http://127.0.0.1:11434/v1`. On this computer or the office network only: a server on the internet is never asked (developers: `AP_ALLOW_INTERNET=1`) |
 | `AP_LLM_MODEL` | empty | empty = the chat model LM Studio has (never an embedding model or OvisOCR2) |
 | `AP_LLM_BACKUP_URL` | empty | a second model server with the same models (D-180): the calls go there while the first doesn't answer, and back once it answers well again. The page reader's too, unless `AP_PAGE_READER_BASE_URL` gives it a server of its own (then `AP_PAGE_READER_BACKUP_URL`). On the office network only, as `AP_LLM_BASE_URL`; *Settings → Reading → For IT*, or server.json's `llm_backup_url` / `page_reader_backup_url` |
+| `AP_LLM_VISION` | `auto` | whether the chat model also reads each invoice's header from the page images: `auto` when the loaded model can see pages; `on` or `off` to force it |
 | `AP_LLM_MAX_PROMPT_CHARS` | `24000` | invoice text sent; a longer one keeps its start and end |
 | `AP_LLM_TIMEOUT_SECONDS`, `AP_LLM_MAX_TOKENS` | `600`, `4096` | a laptop without a graphics card is slow |
 
@@ -204,10 +205,10 @@ coding nothing silently. Speed and model advice are in [docs/PILOT.md](PILOT.md)
 Reading) as one more reader beside AP Coder's own; it contacts only its saved endpoint. Otherwise Azure Document
 Intelligence and Azure OpenAI are used only when the internet is allowed (`AP_ALLOW_INTERNET=1`) and they are set in
 *Settings → Reading → Developer: cloud services* (shown only then); those services then do the reading and
-coding instead. The offline installer asks no cloud questions. There is nothing else to choose: the older
-settings `AP_PAGE_READER`, `AP_PAGE_READER_SCOPE`, `AP_LLM_PROVIDER`, `AP_VISION` and `AP_LLM_VISION` are
-no longer needed. They use strict Structured Outputs, and every check after
-coding is the same.
+coding instead (`AP_VISION` and `AP_VISION_MAX_PAGES`, default off and 5: whether Azure OpenAI is sent the page
+images, and how many). They use strict Structured Outputs, and every check after coding is the same. The offline
+installer asks no cloud questions. There is nothing else to choose: the older settings `AP_PAGE_READER`,
+`AP_PAGE_READER_SCOPE` and `AP_LLM_PROVIDER` are no longer needed.
 
 ### Page reader: OvisOCR2 reads every invoice as a second reader
 
@@ -461,61 +462,7 @@ Next to the AI coder, AP Coder reads every invoice itself and shows *where* each
 ## Project layout
 
 ```
-ap_coder/            the package; old flat imports (ap_coder.store...) still work (a table in __init__.py)
-  core/              the foundations
-    store/           local SQLite, one part per subject (its __init__.py lists them): accounts, tax setup,
-                     invoices, feedback, POs, vendors, exports, audit trail
-    schema.py        strict JSON Schema + Pydantic mirror
-    memory.py        learning memory: example selection, history comparison
-    config.py · paths.py · envfile.py · reference_data.py · csvio.py · safe.py · audit.py · ui.py
-  ai/                reading and AI
-    pipeline.py      extract → code → validate → capture → store
-    extraction.py    Document Intelligence → ExtractionResult (+ cache)
-    inference.py     Structured Outputs (Azure or local), model profiles, repair loop, account suggestions
-    offline_coder.py coding with no model: rules, vendor history, vendor master, account names
-    local_llm.py     LM Studio / Ollama: finding the server and model, reading a small model's JSON
-    reading.py       how every invoice is read, and each reader's state (Settings → Reading, the doctor, the banner)
-    page_reader.py   the page reader: OvisOCR2 in LM Studio transcribes each page (loop and cut-off checks, a
-                     cache);  page_worker.py: its queue, background thread and automatic self-test
-    training_export.py approved invoices as a training set (page images + approved fields), local ZIP
-    prompts.py       system prompt (extraction, Canadian tax, GL coding, learning rules)
-    suggest.py       GL suggestions, and when one is strong enough to code a line
-    line_match.py    how alike two line descriptions are (shortened words, plurals, accents, word order)
-    labels.py · evaluation.py · verifier.py · azure_check.py · lessons.py · history.py · imaging.py · figures.py
-  coding/            the coding checks
-    tax.py           Canadian rates, tax checks, GL distribution
-    validation.py    deterministic controls, adjusted confidence, review flag
-    vendors.py       vendor master, fraud and duplicate signals
-    po.py            purchase orders: import, 2- and 3-way matching
-    terms.py         payment terms, due dates, early-payment discounts
-    review.py        grid edits → InvoiceCoding
-    bulk.py · rules.py · taxmath.py · taxreturn.py · vendor_mail.py
-  erp/               ERP files and reports
-    jde.py           JD Edwards E1 F0411Z1/F0911Z1 export: a batch's checks, its ZIP and the dry run. Its parts, one
-                     subject each (D-222): jde_formats.py (dates, amounts) · jde_settings.py · jde_prototype.py
-                     (the department's preset) · jde_accounts.py (supplier numbers, accounts) · jde_voucher.py
-                     (one voucher) · jde_remarks.py · jde_zfiles.py (columns, rows, CSVs) · jde_review.py (the
-                     review screen);  jde_ais.py · jde_post.py · jde_sync.py: the AIS API
-    hub/             the finance hub feed (tables, landing folder, OneLake)
-    statements.py    vendor statement reconciliation;  accruals.py: month-end accruals
-    recurring.py     recurring vendors
-    exports.py · insights.py · controls.py · export_layout.py · jde_worksheet.py · registers.py · stamp.py ·
-    directory.py · search.py · spend.py · dupaudit.py
-  intake/            pictures.py (pictures to PDF) · mailbox.py · msgfile.py · triage.py · inbox.py
-  ops/               cli.py · doctor.py · offline.py · demo.py · help.py · share_report.py · pilot_score.py ·
-                     service.py (server mode's service: its host, status) · service_windows.py (the
-                     scheduled task) · service_macos.py (the LaunchDaemon) · service_linux.py (the systemd
-                     unit) · server_update.py · share.py (a laptop shared with sign-in) ·
-                     jde_cmd.py
-  capture/           invoice capture: layout (text/OCR), rule reader, locate, confidence + checks, supplier
-                     templates and autonomy, calibration.json (measured confidence), transcript.py (reads
-                     the page reader's transcription as one more reader)
-  bench/             random invoices with ground truth: accuracy benchmark, calibration, supplier simulation,
-                     GL coding without an AI model (bench coding)
-  web/               the dashboard, a local FastAPI web app: app.py (the app, /healthz, /shutdown), server.py
-                     (`serve`), security.py (this computer only), pages/ (one module per page; the review
-                     screen's routes, one module a subject: invoice.py and invoice_<subject>.py, as what it
-                     shows is: invoice_view.py and invoice_<subject>.py, D-223), templates/, static/
+ap_coder/            the package: its map is CLAUDE.md's "Where things live", then each package's __init__.py docstring
 data/                sample GL accounts, cost centers, tax rates and mapping, coding policy, POs, a statement
 samples/             10 synthetic invoices (ON, QC, BC, AB, MB, NS, SK, US, a credit note) + ground truth
 scripts/             launch.py (the launcher: set up, start the dashboard, open the running one), running.py (finds

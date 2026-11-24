@@ -176,21 +176,20 @@ table-finder model (1) and one Windows-only test.
 
 ## 4. How the code is organised
 
-About 78,000 lines of Python in `ap_coder/` (plus 13,700 of HTML/JS/CSS), 7,800 in `scripts/`, 68,000 in `tests/`
-(237 test files, about 3,500 test functions before parametrisation). `CLAUDE.md` has the map; in short:
+`CLAUDE.md` has the map; in short:
 
-| Package | Lines | What |
-|---|---|---|
-| `ap_coder/core` | 10,900 | The database (`core/store/`, one part per subject; schema in `_base.py`), settings, paths, imports |
-| `ap_coder/capture` | 11,800 | Reading a document: layout, the rule reader (`capture/reader/`), normalising amounts and dates, supplier learning |
-| `ap_coder/ai` | 9,400 | One invoice start to end (`ai/pipeline.py`), LM Studio (`local_llm.py`), the page reader, the AI reviewer, the optional Azure check |
-| `ap_coder/coding` | 5,900 | Checks: tax (`tax.py`, `taxmath.py`, `line_tax.py`, `taxreturn.py`), vendors, POs, terms, rules, banks, the line grid's edits (`review.py`: splitting) |
-| `ap_coder/erp` | 9,400 | Exports (`exports.py`), JD Edwards (`jde.py` and its parts by subject, `jde_settings.py`, `jde_voucher.py`, `jde_zfiles.py`, `jde_review.py`… listed at its top; `jde_ais.py`, `jde_sync.py`, `jde_post.py`, `jde_worksheet.py`), reports, the Finance Hub (`erp/hub/`) |
-| `ap_coder/intake` | 1,900 | Emails (.eml/.msg), triage, pictures to PDF, the "needs a person" inbox |
-| `ap_coder/ops` | 6,200 | The command line (`python -m ap_coder ...`), doctor, Help's check catalogue, server service and update, users |
-| `ap_coder/web` | 15,900 | The dashboard: one module a page in `web/pages/`, templates, static JS/CSS; roles in `web/roles.py` |
-| `ap_coder/bench` | 6,900 | The accuracy benchmarks and their invoice generators |
-| `scripts/` | 7,800 | The launcher (`launch.py`), installer, updater, offline bundle builder, CI helpers |
+| Package | What |
+|---|---|
+| `ap_coder/core` | The database (`core/store/`, one part per subject; schema in `_base.py`), settings, paths, imports |
+| `ap_coder/capture` | Reading a document: layout, the rule reader (`capture/reader/`), normalising amounts and dates, supplier learning |
+| `ap_coder/ai` | One invoice start to end (`ai/pipeline.py`), LM Studio (`local_llm.py`), the page reader, the AI reviewer, the optional Azure check |
+| `ap_coder/coding` | Checks: tax (`tax.py`, `taxmath.py`, `line_tax.py`, `taxreturn.py`), vendors, POs, terms, rules, banks, the line grid's edits (`review.py`: splitting) |
+| `ap_coder/erp` | Exports (`exports.py`), JD Edwards (`jde.py` and its parts by subject, `jde_settings.py`, `jde_voucher.py`, `jde_zfiles.py`, `jde_review.py`… listed at its top; `jde_ais.py`, `jde_sync.py`, `jde_post.py`, `jde_worksheet.py`), reports, the Finance Hub (`erp/hub/`) |
+| `ap_coder/intake` | Emails (.eml/.msg), triage, pictures to PDF, the "needs a person" inbox |
+| `ap_coder/ops` | The command line (`python -m ap_coder ...`), doctor, Help's check catalogue, server service and update, users |
+| `ap_coder/web` | The dashboard: one module a page in `web/pages/`, templates, static JS/CSS; roles in `web/roles.py` |
+| `ap_coder/bench` | The accuracy benchmarks and their invoice generators |
+| `scripts/` | The launcher (`launch.py`), installer, updater, offline bundle builder, CI helpers |
 
 Starting points: `ai/pipeline.py` (`finalise_coding`), `core/schema.py`, `web/pages/invoice.py` (the review screen),
 `coding/validation.py` (`validate_coding` gathers every check), `ops/help.py` (every check code's plain-English help).
