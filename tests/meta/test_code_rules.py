@@ -38,9 +38,8 @@ PATH_KEYWORDS = {"read_text": {"errors", "newline"}, "write_text": {"errors", "n
 # The way out for a call the rule takes for a path's but is no file's (a PDF page's text, say): on its line, the
 # comment "# encoding: not text (why)", the why said.
 NOT_TEXT = re.compile(r"#\s*encoding: not text \([^)]+\)")
-# Calls of the app the rule below finds, left as they are until after Monday's test (the behaviour freeze): each file
-# and how many. lines.py: the lines benchmark's lines.json, json.dumps' ASCII only, so read alike on any computer.
-NO_ENCODING_KEPT = {"ap_coder/bench/lines.py": 1}
+# Calls the rule below finds, kept as they are: each file and how many, and why (none since B-3038).
+NO_ENCODING_KEPT: dict[str, int] = {}
 
 
 def _named(node: ast.AST, name: str) -> bool:

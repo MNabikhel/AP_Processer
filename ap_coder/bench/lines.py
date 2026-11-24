@@ -212,6 +212,8 @@ def run_lines(suppliers: int, invoices: int, seed: int, scanned: float, out: str
     params = {"suppliers": suppliers, "invoices": invoices, "seed": seed, "scanned": scanned, "no_memory": no_memory,
               "workers": workers, "seconds": round(time.perf_counter() - t0, 1)}  # fmt: skip
     summary = summarize(rows)
-    (out_dir / "lines.json").write_text(json.dumps({"params": params, "summary": summary, "rows": rows}, indent=1))
+    (out_dir / "lines.json").write_text(
+        json.dumps({"params": params, "summary": summary, "rows": rows}, indent=1), encoding="utf-8"
+    )
     (out_dir / "lines.md").write_text(report_md(summary, params), encoding="utf-8")
     return {"params": params, "summary": summary}

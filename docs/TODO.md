@@ -13,38 +13,22 @@ decision number then says what was done).
   `docs/archive/` sooner, keeping only the decision and its reason in decisions.md.
 - **Split `core/store/users.py` before the next feature there.** It is at its 1,000-line limit: people, sign-in
   (lockouts, the authenticator) and sessions in parts of their own, before anything new is added.
-- **The vendor an invoice is filed under, asked one way everywhere (after Monday: a bug fix).** Two suppliers whose
-  names read the same are two vendors, the second kept as "<name> #<supplier number>". Processing looks the payment
-  terms up under the vendor the invoice is filed under (`Store.vendor_key_for`, `ai/pipeline.py`); the review screen
-  (`web/invoice_view.py`, `web/pages/invoice.py`) and the queue's due note (`web/pages/review.py`) under the name's
-  key (`memory.vendor_key`). Measured with the made-up company's SILVERTIP SOFTWARE INC. (supplier 35436, Net 30)
-  and a twin SILVERTIP SOFTWARE LTD. (35437, Net 60): for an invoice from the Ltd., `vendor_key` gives "silvertip
-  software" and Net 30, `vendor_key_for` with its GST/HST number "silvertip software #35437" and Net 60. Seven
-  per-vendor lookups in `web/` and `coding/` use the name's key (terms, open POs, `get_vendor`). Start with a failing
-  test that the screen, the queue, processing and bulk approval agree on terms, due date, open POs and Pay from for
-  two vendors of one name and for a name AP corrected (D-119); then send those lookups through `vendor_key_for`
-  (not every `vendor_key` call: matching names rightly uses a name's key).
-- **What the weekend's checks found in the app, to fix after Monday's test (each a bug fix: a failing test first).**
-  - The command line on older Pythons: `backup` and `journal` refuse an option put between their two names, such as
-    `backup restore --yes NAME`, `backup restore --from FOLDER NAME` or `journal import --dry-run FILE`. This happens
-    on Python 3.11, 3.12.0 to 3.12.6 (Ubuntu 24.04's 3.12.3, the server's) and 3.13.0. The forms the docs give put
-    the options last and work everywhere. Fix it with `parse_intermixed_args`, as `scripts/moved_same.py` did (B-3025).
-  - The page reader's second reading (`ai/page_worker.py` `chat_again`) replaces a proposal without
-    `unless_in_use`, and logs `proposal_updated`, which is not a revision, so a review screen open on it is not told
-    (B-2805's kind; `NOT_REVISIONS` in `tests/meta/test_lockstep.py` names it).
-  - JD Edwards' AIS keep-alive: `erp/jde_ais.py` `_closed_meanwhile` uses `select.select`, which fails once the
-    socket's file number is 1,024 or more, so on a busy Linux server every call opens a new connection. Use
-    `selectors` (keeping `select` on Windows), with a test that holds 1,100 files open.
-  - Windows' "database is locked" when several processes open a Store at once (the four-reader test in
-    `tests/core/test_imports.py`, Python 3.12): a writer held the lock for 30 s. The children now print SQLite's
-    name for the error, so read it from the next failure first; every call opens and closes its own connection
-    (`core/store/_base.py`), so the WAL files come and go between processes.
-  - `ap_coder/bench/lines.py` writes `lines.json` with no encoding (ASCII only, a developer's benchmark).
-  - A new vendor's review screen asks `Store.has_other_vendors` (`core/store/vendors.py`), whose `vendor_key != ?`
-    scans `invoices` (LIMIT 1: it stops at another vendor's first invoice; listed in the hot pages test's
-    `HOT_SCANS`, B-3034). `vendor_key > '' AND vendor_key != ?` would use the vendor index instead.
+- **Open POs of two vendors by one name (after Monday: a bug fix).** The review screen and the queue ask the terms of
+  the vendor an invoice is filed under now, as processing does (B-3035), but the purchase orders are kept under the name
+  on the order (`memory.vendor_key`, `core/store/purchasing.py`), so "this vendor has open POs" (`coding/po.py`
+  `po_findings`, the review screen's "Use PO" in `web/invoice_fields.py`) lists both SILVERTIP SOFTWARE INC.'s and
+  LTD.'s orders for an invoice from either, and none of the corrected vendor's for a name AP corrected (D-119). Telling
+  them apart needs the order's supplier number (as `match_invoice` picks a quoted PO), not `vendor_key_for`.
+- **Fixed, but kept back until after the owner's test (each test-first; on the local branch `pre-test`, to merge
+  after the test).** B-3036: the command line takes options between a command's names on every Python (on 3.11,
+  3.12.0 to 3.12.6, the server's 3.12.3, and 3.13.0, `backup restore --yes NAME`, `backup restore --from FOLDER NAME`
+  and `journal import --dry-run FILE` are refused today; the forms the docs give work everywhere). B-3040 and B-3042:
+  the chat model asked again (`ai/page_worker.py` `chat_again`, server mode) leaves an invoice someone has open alone,
+  tells an open screen, and codes it once it is free; B-3042 still needs its adversarial review.
+- **Windows' "database is locked" when several processes open a Store at once** (the four-reader test in
+  `tests/core/test_imports.py`, Python 3.12): a writer held the lock for 30 s. The children now print SQLite's name for
+  the error, so read it from the next failure first; every call opens and closes its own connection
+  (`core/store/_base.py`), so the WAL files come and go between processes.
 - **Keep the test map and the test times fresh (after Monday).** CI keeps no per-test times: add `--junitxml` and an
   upload to each tests part, then a nightly job that refreshes `tests/test_times.json` and records
   `tests/test_map.json.gz` (`python -m tests.test_map record`, D-333) and opens a pull request with both.
-- **Monday's build.** The weekend's work (PRs 159 to 162: the check, the logs, CI, the probes, the map) changed no
-  app behaviour: only docstrings in `ap_coder/`. The build to test is the newest `v0.3.0-build.<sha>` release.

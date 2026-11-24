@@ -528,6 +528,7 @@ class InvoicesMixin:
         "id", "status", "requires_review", "created_at", "reviewed_at", "reviewer", "second_reviewer",
         "second_reviewed_at", "invoice_date", "due_date", "export_batch", "source_path", "file_name", *_JSON_COLUMNS,
         "extraction_md",  # (its text: the queue's re-check reads the companies' names on it, B-2681)
+        "vendor_key",  # the vendor it is filed under (``vendor_key_for``): the queue's due note asks its terms
     )  # fmt: skip
 
     def check_stamps(self, ids: list[int]) -> dict[int, tuple[str, str]]:

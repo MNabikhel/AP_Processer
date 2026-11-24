@@ -110,14 +110,25 @@ def test_the_jde_probe_says_different_for_a_keying_sheet_with_two_dates_swapped(
 def test_the_pages_probe_prints_its_own_day_whatever_the_day_it_runs(tmp_path):
     """B-3016: the pages printed the day the probe ran (the activity's range, "in the review queue since", a due
     date's days ago), so two runs a second apart on either side of midnight differed. The probe's clock now reads a
-    fixed day; only its seconds go on."""
-    import datetime as dt
-
-    env = {**os.environ, "PYTHONPATH": str(ROOT), "PYTHONHASHSEED": "0"}
-    out = subprocess.run([sys.executable, str(ROOT / "scripts" / "probes" / "pages.py"), "1", str(tmp_path / "w")],
-                         env=env, capture_output=True, check=True).stdout.decode("utf-8")  # fmt: skip
-    probe = _probe("pages")
-    assert probe.DAY.isoformat() in out and dt.date.today().isoformat() not in out
+    fixed day; only its seconds go on. B-3041: this test took today's date anywhere in the output for the clock's, and
+    failed on 24 November 2026, the due date of one of the made-up company's invoices. Two runs side by side on either
+    side of midnight now (12 hours behind UTC and 14 ahead: never the same day) give the same bytes, the fixed day in
+    them."""
+    zones = ("XXX+12", "XXX-14")  # (POSIX time zones: the hours behind UTC)
+    today = [subprocess.run([sys.executable, "-c", "import datetime; print(datetime.date.today())"],
+                            env={**os.environ, "TZ": zone}, capture_output=True, check=True).stdout
+             for zone in zones]  # fmt: skip
+    if today[0] == today[1]:
+        pytest.skip("this computer's clock does not follow TZ")
+    probe = str(ROOT / "scripts" / "probes" / "pages.py")
+    runs = [subprocess.Popen([sys.executable, probe, "1", str(tmp_path / str(i))],
+                             env={**os.environ, "PYTHONPATH": str(ROOT), "PYTHONHASHSEED": "0", "TZ": zone},
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            for i, zone in enumerate(zones)]  # fmt: skip
+    (first, err), (second, _) = (run.communicate() for run in runs)
+    assert all(run.returncode == 0 for run in runs), err[-3000:]
+    assert first == second, _tool().first_difference(first, second)
+    assert _probe("pages").DAY.isoformat().encode() in first
 
 
 @pytest.mark.slow

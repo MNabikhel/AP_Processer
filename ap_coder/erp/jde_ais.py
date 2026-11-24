@@ -53,7 +53,7 @@ import json
 import logging
 import os
 import re
-import select
+import selectors
 import socket
 import ssl
 import threading
@@ -882,9 +882,13 @@ def row_key(spec: Mapping[str, Any], row: Mapping[str, Any]) -> str:
 
 def _closed_meanwhile(sock: socket.socket) -> bool:
     """Whether a connection kept open was closed by AIS meanwhile: readable while no answer is awaited (its end, or
-    bytes nobody asked for), or unusable."""
+    bytes nobody asked for), or unusable. Asked of the system's own selector (poll, epoll, kqueue; select on Windows):
+    select.select refuses a file number of 1,024 or more, and a busy server opened a new connection for every call
+    (B-3037)."""
     try:
-        return bool(select.select([sock], [], [], 0)[0])
+        with selectors.DefaultSelector() as selector:
+            selector.register(sock, selectors.EVENT_READ)
+            return bool(selector.select(0))
     except (OSError, ValueError):
         return True
 

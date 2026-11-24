@@ -777,3 +777,31 @@ def test_a_periods_events_are_read_once_not_again_for_each_batch_and_are_those_t
         ("Renamed Ltd", "R-1"), ("Vendor 3", "E-3"), (None, None)}  # fmt: skip
     assert 1.99 * len(found) < len(twice) < 2.01 * len(found) and len(found) > 400 and twice[0]["id"] > twice[-1]["id"]
     assert more_before > 3 * some_before and more < 2.5 * some, (some_before, more_before, some, more)
+
+
+def test_whether_another_vendor_has_an_invoice_is_asked_of_the_vendor_index_with_the_same_answers(
+    tmp_path, monkeypatch
+):
+    """B-3039: a new vendor's review screen asks whether another vendor has an invoice at all (VENDOR_NEW), and its
+    ``vendor_key != ?`` read the invoices table until it found one (B-3034). ``vendor_key > ''`` seeks the vendor
+    index, and answers as before: an invoice with no vendor (NULL or ''), the vendor's own or a failed one is no
+    other vendor's."""
+    from ap_coder.core.store._base import FAILED, REVIEW
+    from tests.webclient import add_clean
+
+    store = Store(tmp_path / "ap.db")
+    ids = [add_clean(store, invoice_number=f"A-{i}") for i in range(3)]
+    before = "SELECT 1 FROM invoices WHERE vendor_key != ? AND vendor_key != '' AND status != ? LIMIT 1"
+    for keys in ((None, None, None), ("", "", ""), ("acme", "acme", "acme"), ("acme", None, ""), ("acme", "beta", None),
+                 ("beta", "", "acme"), ("zeta", "acme", "acme")):  # fmt: skip
+        for failed in (None, 0, 1, 2):
+            with sqlite3.connect(store.path) as conn:
+                for i, (invoice, key) in enumerate(zip(ids, keys, strict=True)):
+                    conn.execute("UPDATE invoices SET vendor_key = ?, status = ? WHERE id = ?",
+                                 (key, FAILED if i == failed else REVIEW, invoice))  # fmt: skip
+            for key in ("acme", "beta", "zeta", "", "other"):
+                with sqlite3.connect(store.path) as conn:
+                    expected = conn.execute(before, (key, FAILED)).fetchone() is not None
+                assert store.has_other_vendors(key) is expected, (keys, failed, key)
+    plan = _plan(store, monkeypatch, lambda: store.has_other_vendors("acme"), "invoices")
+    assert "invoices_vendor" in plan and "SCAN" not in plan, plan
