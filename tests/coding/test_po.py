@@ -7,6 +7,7 @@ import re
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,7 @@ from ap_coder.coding.po import (
     template_csv,
 )
 from ap_coder.core.caches import Bounded, size_of
+from ap_coder.core.chart import code_of, split_account
 from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_purchase_orders
@@ -1668,3 +1670,86 @@ def test_a_later_kept_match_never_takes_the_line_of_an_invoice_approved_before_i
     store.reopen(a, "Pat Tester", "ours after all", only_rejected=True)
     store.approve_invoice(a, _rebar(60, number="NR-A").model_dump(), "Pat Tester")  # (its match held: none kept)
     assert match_invoice(_rebar(60, number="NR-A"), store, a).lines[0].po_line is None and _billed(store) == ["80", "0"]
+
+
+# --- B-3043: a line coded to another job than its PO line's ---------------------------------------------------------
+
+FUEL = (("REGULAR UNLEADED", 310.0), ("DIESEL", 480.0), ("PROPANE", 95.0), ("MOTOR OIL", 42.0))
+
+
+def _two_jobs(chart_company):
+    """The made-up company's fuel supplier, which AP coded to one account on two jobs (business units) last year (the
+    invoice "split_line" splits a line across them): (the supplier, the first job's account, the other job's)."""
+    invoice, _ = chart_company.invoices["split_line"]
+    first, other = (part.account for part in invoice.lines[1].parts)
+    return invoice.supplier, first, other
+
+
+def _fuel_po(store, supplier, account, number="45120"):
+    """PO ``number`` of ``supplier`` for one job: a line of each of ``FUEL``, all on ``account``."""
+    job, code = split_account(account)
+    store.import_purchase_orders([
+        {"po_number": number, "vendor_name": "", "supplier_number": str(supplier.number), "order_type": "OP",
+         "order_company": "00210", "line_number": n, "erp_line": f"{n}.000", "description": words, "quantity": 1.0,
+         "unit_price": price, "amount": price, "open_quantity": 1.0, "uom": "EA", "gl_code": code, "cost_center": job,
+         "status": "open", "currency": "CAD"}
+        for n, (words, price) in enumerate(FUEL, start=1)])  # fmt: skip
+
+
+def _fuel(supplier, coded, number="45120"):
+    """An invoice of ``FUEL`` on PO ``number``, each line coded to its (business unit, GL code) of ``coded``."""
+    total = sum(price for _, price in FUEL)
+    lines = [{"line_number": n, "description": words, "quantity": 1.0, "unit_price": price, "amount": price,
+              "predicted_gl_code": code, "predicted_cost_center": unit}
+             for n, ((words, price), (unit, code)) in enumerate(zip(FUEL, coded, strict=True), start=1)]  # fmt: skip
+    return InvoiceCoding.model_validate({
+        "vendor_name": supplier.name, "invoice_number": "UF-1", "invoice_date": "2026-10-02", "po_number": number,
+        "currency": "CAD", "subtotal": total, "tax_total": 0.0, "grand_total": total, "confidence_score": 0.9,
+        "line_items": lines})  # fmt: skip
+
+
+def test_a_line_coded_to_another_job_than_its_po_lines_is_a_warning_naming_both(chart_company):
+    """B-3043: an invoice on a PO for one job, its line coded to the same account on another job (the first account
+    offered under it: the supplier's past invoices, every job), was only "Good to know" (PO_CODING_DIFFERS, info),
+    and approved so the other job went to JD Edwards and was learned. A line coded to another business unit than its
+    PO line's is now a warning naming both; a line with no account yet, or on the PO's job with another object, is
+    said as before; the same account written otherwise (JD Edwards' padding) is no difference."""
+    from ap_coder.coding.bulk import needs_a_person
+    from ap_coder.web.invoice_findings import HARD_CODES
+
+    store = chart_company.store
+    supplier, account, other = _two_jobs(chart_company)
+    job, code = split_account(account)
+    _fuel_po(store, supplier, account)
+    elsewhere = next(a for a in chart_company.truth.suggestable()
+                     if a.business_unit == job and code_of(a.object, a.subsidiary) != code)  # fmt: skip
+    coded = [split_account(other), ("", ""), (job, code_of(elsewhere.object, elsewhere.subsidiary)),
+             (f"  {job}", f"{code} ")]  # fmt: skip
+    match = match_invoice(_fuel(supplier, coded), store)
+    assert [m.po_line for m in match.lines] == [1, 2, 3, 4]
+    said = [(level, words, line) for level, finding, words, line in match.findings if finding == "PO_CODING_DIFFERS"]
+    assert said == [
+        ("warning", f"PO 45120 line 1 is for job {job}; this line is coded to {coded[0][0]}: use the PO's coding", 1),
+        ("info", f"PO 45120 line 2 is coded to GL {code} · {job}", 2),
+        ("info", f"PO 45120 line 3 is coded to GL {code} · {job}", 3),
+    ]
+    assert [m.invoice_line for m in match.coding_differs] == [1, 2, 3]
+    # A warning keeps Approve open, but a person looks: never approved in bulk nor touchless.
+    assert "PO_CODING_DIFFERS" not in HARD_CODES and needs_a_person("warning", "PO_CODING_DIFFERS")
+    # The PO's coding used on the lines that differ: nothing left to say.
+    used = [(job, code)] * len(FUEL)
+    assert [f for f in match_invoice(_fuel(supplier, used), store).findings if f[1] == "PO_CODING_DIFFERS"] == []
+
+
+def test_without_a_cost_center_list_a_line_on_another_business_unit_than_its_po_lines_is_a_warning(tmp_path):
+    """B-3043: with no cost center list a PO line's cost center is never copied nor said (B-534), but a line that has
+    a business unit other than the one in its PO line's account is still warned of; a line without one is not."""
+    store = Store(tmp_path / "ap.db")
+    supplier = SimpleNamespace(number=75835, name="UPLAND FUEL STOP")
+    _fuel_po(store, supplier, "0021061014.7830.8307")
+    coded = [("0021062110", "7830.8307"), ("", "7830.8307"), ("", "7830.8307"), ("", "7830.8307")]
+    match = match_invoice(_fuel(supplier, coded), store)
+    said = [(level, words, line) for level, finding, words, line in match.findings if finding == "PO_CODING_DIFFERS"]
+    assert said == [("warning", "PO 45120 line 1 is for job 0021061014; this line is coded to 0021062110: use the "
+                     "PO's coding", 1)]  # fmt: skip
+    assert all(not m.po_cc for m in match.lines)

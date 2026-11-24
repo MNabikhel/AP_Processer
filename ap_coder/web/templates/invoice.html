@@ -389,6 +389,10 @@
             <button type="button" class="btn primary sm" data-fill-go><span class="ms" aria-hidden="true">playlist_add_check</span>Use it on the lines without one</button>
           </div>
         </details>
+        {% if live.po and live.po.differs %}{# the PO's own coding before any offer, which may be another job's (B-3043) #}
+        <button type="button" class="btn sm" data-grid-action="/review/{{ inv.id }}/po-coding" title="Sets the GL account and cost center of these lines to the ones on the PO">
+          <span class="ms" aria-hidden="true">auto_fix_high</span>Use the PO's coding on {{ live.po.differs | plural("line") }}</button>
+        {% endif %}
         {% if grid.lines | map(attribute="acct") | selectattr("state", "equalto", "fix") | selectattr("candidates") | list %}{# D5 #}
         <button type="button" class="btn sm" data-first-offers title="Each line without an account takes the first account offered under it; lines that have one keep theirs. Undo puts them back."><span class="ms" aria-hidden="true">done_all</span>Use each line's first offer</button>
         {% endif %}
