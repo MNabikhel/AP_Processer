@@ -118,6 +118,45 @@ def test_no_module_of_the_app_goes_without_tests():
     assert "tests/ai/test_offline_coding.py" in found["ap_coder/ai/offline_coder.py"]
 
 
+def test_a_changed_helper_of_the_tests_or_test_file_brings_the_test_files_that_import_it():
+    """B-3047: a change to a helper of the tests (tests/fake_ais.py, review_page.py, chart_files.py...) picked no test
+    file, and one to a test file others import (tests/erp/test_jde.py: 17 of them) only itself: the check said OK where
+    CI failed. Each brings the test files that import it by name (one hop; past WIDE the quickest), and
+    tests/jde_exports.py its users, not tests/bench/test_jde_exports.py (of ap_coder/bench/jde_exports.py). The files
+    are given with no times: as they import them today, whatever tests/test_times.json says."""
+    named = ("tests/erp/test_jde_ais.py", "tests/erp/test_jde_terms.py", "tests/bench/test_jde_exports.py",
+             "tests/web/test_web_masterdata.py")  # fmt: skip
+    real = {ROOT / f: (ROOT / f).read_text(encoding="utf-8") for f in named}
+    assert check.own_tests("tests/fake_ais.py", real, {}) == {ROOT / "tests/erp/test_jde_ais.py"}
+    assert check.own_tests("tests/erp/test_jde.py", real, {}) == {ROOT / "tests/erp/test_jde.py", ROOT / named[1]}
+    assert check.own_tests("tests/jde_exports.py", real, {}) == {ROOT / "tests/web/test_web_masterdata.py"}
+    # (made-up names: this file's own text is read as the others' are)
+    a, b, c, d = (ROOT / f"tests/x/test_{n}.py" for n in "abcd")
+    texts = {a: "from tests.x.test_one import AN8", b: "from tests.x import (\n    test_one_more,\n    test_one)",
+             c: "import tests.x.test_one_more", d: "from tests.x.test_one_post import post"}  # fmt: skip
+    assert check.test_users("tests/x/test_one.py", texts) == [a, b]
+    many = {ROOT / f"tests/x/test_{n}.py": "import tests.x.helper" for n in range(check.WIDE + 5)}
+    said: list[str] = []
+    quickest = int(check.BUDGET // check.UNTIMED)  # (not timed: UNTIMED each, up to BUDGET)
+    assert len(check.own_tests("tests/x/helper.py", many, {}, said)) == quickest
+    left = check.WIDE + 5 - quickest
+    assert said == [f"{check.WIDE + 5} test files use it: the quickest {quickest} run, {left} left to CI (about "
+                    f"{left * check.UNTIMED:.0f} s more)"]  # fmt: skip
+
+
+def test_a_changed_helper_of_the_tests_no_test_is_picked_for_fails_the_check():
+    """B-3047, as a module of the app does: not a package's __init__.py (tests/__init__.py: none imports it), nor a
+    file every test uses (SHARED: the whole default run), nor one gone. Each helper of the tests today brings its
+    tests."""
+    found = {f: set() for f in ("tests/fake_ais.py", "tests/__init__.py", "tests/web/__init__.py", "tests/conftest.py",
+                                "tests/gone.py")}  # fmt: skip
+    assert check.untested(found) == ["tests/fake_ais.py"]
+    tests = ROOT / "tests"
+    helpers = [p.relative_to(ROOT).as_posix() for p in sorted(tests.rglob("*.py"))
+               if p.parent == tests or not p.name.startswith("test_")]  # fmt: skip
+    assert len(helpers) > 15 and check.untested(check.picks(helpers)) == []
+
+
 def test_a_changed_module_no_test_is_picked_for_fails_the_check(monkeypatch, capsys):
     monkeypatch.setattr(check, "picks", lambda files, notes=None: {f: set() for f in files})
     code, out, _ = _checked(monkeypatch, capsys, ["ap_coder/coding/tax.py", "docs/BUGS.md", "--no-walk"])
