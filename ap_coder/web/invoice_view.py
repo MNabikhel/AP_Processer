@@ -45,7 +45,7 @@ from ap_coder.coding.taxmath import invoice_taxes, math_check
 from ap_coder.coding.validation import INFO, Issue
 from ap_coder.coding.vendors import MOVED_OFF_HOLD, moved_off_hold
 from ap_coder.core.config import Settings
-from ap_coder.core.memory import pair_lines, vendor_key
+from ap_coder.core.memory import pair_lines
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.core.schema import COMPANY_TAX, FROM_VENDOR_LIST, InvoiceCoding
 from ap_coder.core.store import Store
@@ -320,7 +320,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     errors = [i for i in report.issues if i.severity == "error"]
     warnings = [i for i in report.issues if i.severity == "warning"]
     default_days = store.default_terms_days()
-    terms = store.vendor_terms(vendor_key(coding.vendor_name))
+    terms = store.vendor_terms(store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number))  # B-3035
 
     # The approve bar: never post to UNASSIGNED; where cost centers are used, a line without one isn't posted either.
     # The queue asks the same question (pages/review.py attention), so its Ready means Approve is open here.

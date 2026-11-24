@@ -13,17 +13,12 @@ decision number then says what was done).
   `docs/archive/` sooner, keeping only the decision and its reason in decisions.md.
 - **Split `core/store/users.py` before the next feature there.** It is at its 1,000-line limit: people, sign-in
   (lockouts, the authenticator) and sessions in parts of their own, before anything new is added.
-- **The vendor an invoice is filed under, asked one way everywhere (after Monday: a bug fix).** Two suppliers whose
-  names read the same are two vendors, the second kept as "<name> #<supplier number>". Processing looks the payment
-  terms up under the vendor the invoice is filed under (`Store.vendor_key_for`, `ai/pipeline.py`); the review screen
-  (`web/invoice_view.py`, `web/pages/invoice.py`) and the queue's due note (`web/pages/review.py`) under the name's
-  key (`memory.vendor_key`). Measured with the made-up company's SILVERTIP SOFTWARE INC. (supplier 35436, Net 30)
-  and a twin SILVERTIP SOFTWARE LTD. (35437, Net 60): for an invoice from the Ltd., `vendor_key` gives "silvertip
-  software" and Net 30, `vendor_key_for` with its GST/HST number "silvertip software #35437" and Net 60. Seven
-  per-vendor lookups in `web/` and `coding/` use the name's key (terms, open POs, `get_vendor`). Start with a failing
-  test that the screen, the queue, processing and bulk approval agree on terms, due date, open POs and Pay from for
-  two vendors of one name and for a name AP corrected (D-119); then send those lookups through `vendor_key_for`
-  (not every `vendor_key` call: matching names rightly uses a name's key).
+- **Open POs of two vendors by one name (after Monday: a bug fix).** The review screen and the queue ask the terms of
+  the vendor an invoice is filed under now, as processing does (B-3035), but the purchase orders are kept under the name
+  on the order (`memory.vendor_key`, `core/store/purchasing.py`), so "this vendor has open POs" (`coding/po.py`
+  `po_findings`, the review screen's "Use PO" in `web/invoice_fields.py`) lists both SILVERTIP SOFTWARE INC.'s and
+  LTD.'s orders for an invoice from either, and none of the corrected vendor's for a name AP corrected (D-119). Telling
+  them apart needs the order's supplier number (as `match_invoice` picks a quoted PO), not `vendor_key_for`.
 - **What the weekend's checks found in the app, to fix after Monday's test (each a bug fix: a failing test first).**
   - The command line on older Pythons: `backup` and `journal` refuse an option put between their two names, such as
     `backup restore --yes NAME`, `backup restore --from FOLDER NAME` or `journal import --dry-run FILE`. This happens

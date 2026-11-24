@@ -4,6 +4,7 @@ far it got; safe to leave and come back, one at a time a person, each invoice ap
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import re
 import sqlite3
@@ -667,6 +668,66 @@ def test_the_queue_asks_the_pay_from_rule_of_the_vendor_the_invoice_is_filed_und
                     invoice_number="L-9")  # fmt: skip
     assert inv not in review.attention(store, store.reference_data(), store.list_invoices(REVIEW))
     assert inv not in bulk.sort_for_bulk(store)[1]
+
+
+def test_the_screen_the_queue_processing_and_bulk_approval_ask_the_vendor_the_invoice_is_filed_under(store):
+    """B-3035: of two vendors by one name (B-1021), SILVERTIP SOFTWARE INC. (Net 30) and SILVERTIP SOFTWARE LTD.
+    (Net 60), and for a name AP corrected (D-119) to Northwind's (Net 45), processing and bulk approval took the terms
+    of the vendor the invoice is filed under (``Store.vendor_key_for``), the review screen and the queue's due note
+    those under the name's key: the Ltd.'s invoice was due in 30 days on screen and in the queue, in 60 once approved;
+    the corrected one in the default 30 days, then 45. The four agree on its due date, open POs and Pay from."""
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.coding.vendors import master_columns, master_rows
+    from ap_coder.core.schema import InvoiceCoding
+
+    inc, ltd, nw = "994310787RT0001", "561646050RT0003", "123456782RT0001"
+    records = [{"Name": "SILVERTIP SOFTWARE INC.", "AN8": "35436", "GST/HST Number": inc, "Payment Terms": "Net 30"},
+               {"Name": "SILVERTIP SOFTWARE LTD.", "AN8": "35437", "GST/HST Number": ltd, "Payment Terms": "Net 60"},
+               {"Name": "Northwind IT Solutions Inc.", "AN8": "40110", "GST/HST Number": nw,
+                "Payment Terms": "Net 45"}]  # fmt: skip
+    store.import_vendor_master(master_rows(records, master_columns(list(records[0]))))
+    store.save_bank_accounts([_bank("CAD-A", True), _bank("CAD-B")])
+    line = {"line_number": 1, "description": "Licence", "quantity": 1, "unit_price": 50.0, "amount": 50.0,
+            "received_quantity": 0, "gl_code": "", "cost_center": "", "status": "open"}  # fmt: skip
+    store.import_purchase_orders([{**line, "po_number": f"PO-{r['AN8']}", "vendor_name": r["Name"],
+                                   "supplier_number": r["AN8"]} for r in records])  # fmt: skip
+    # Paid from CAD-B before: the Ltd., and Northwind on the invoice whose name AP corrected from "Nortwind"
+    paid = (("SILVERTIP SOFTWARE LTD.", ltd, "SILVERTIP SOFTWARE LTD."),
+            ("Nortwind IT Solutions", nw, "Northwind IT Solutions Inc."))  # fmt: skip
+    for n, (name, number, approved) in enumerate(paid):
+        earlier = add_clean(store, vendor_name=name, gst_hst_registration_number=number, invoice_number=f"E-{n}",
+                            invoice_date="2025-03-02")  # fmt: skip
+        store.approve_invoice(earlier, {**store.get_invoice(earlier)["ai_output"], "vendor_name": approved,
+                                        "pay_from_account": "CAD-B"}, "Bob")  # fmt: skip
+    assert store.remember_vendor_alias("Nortwind IT Solutions", "Northwind IT Solutions Inc.", invoice_id=earlier)
+    today = dt.date.today()
+    blank = {"payment_terms": "", "due_date": "", "po_number": "", "invoice_date": today.isoformat()}
+    days = {add_clean(store, vendor_name=name, gst_hst_registration_number=number, invoice_number=f"S-{n}",
+                      **blank): n for name, number, n in (("SILVERTIP SOFTWARE INC.", inc, 30),
+                                                          ("SILVERTIP SOFTWARE LTD.", ltd, 60),
+                                                          ("Nortwind IT Solutions", nw, 45))}  # fmt: skip
+    client, reference = client_for(store), store.reference_data()
+    queue = {r["id"]: r["due"] for r in review.queue_rows(store, store.list_invoices(REVIEW), 0.8)}
+    opens_with = {}
+    for invoice_id, n in days.items():
+        due = today + dt.timedelta(days=n)
+        inv = store.get_invoice(invoice_id)
+        coding = InvoiceCoding.model_validate({k: v for k, v in inv["ai_output"].items() if k != "gl_distribution"})
+        output, report = finalise_coding(coding, reference, web_settings(), store=store, exclude_invoice_id=invoice_id)
+        page = client.get(f"/review/{invoice_id}").text
+        assert inv["due_date"] == due.isoformat(), n  # as processing filed it
+        assert queue[invoice_id] == f"Due {due:%b} {due.day}", n
+        assert f"Due in {n} days ({due:%b} {due.day}) (vendor master terms)" in page, n
+        assert f"{due.isoformat()} (from terms)" in page, n
+        listed = next((re.findall(r"PO-\d+", i.message) for i in report.issues if i.code == "PO_NOT_QUOTED"), [])
+        assert re.findall(r"Use (PO-\d+)", page) == listed, n
+        opens_with[invoice_id] = re.findall(r'<option value="(CAD-[A-Z]+)"[^>]*selected', page)
+        assert opens_with[invoice_id] == [output["pay_from_account"]], n
+    assert bulk.bulk_approve(store, reference, web_settings(), list(days), "Pat")["approved"] == list(days)
+    for invoice_id, n in days.items():
+        approved = store.get_invoice(invoice_id)
+        assert approved["due_date"] == (today + dt.timedelta(days=n)).isoformat(), n
+        assert [approved["final_output"]["pay_from_account"]] == opens_with[invoice_id], n
 
 
 def test_a_bulk_approval_job_reads_the_lists_again_only_once_another_connection_wrote(store, monkeypatch):

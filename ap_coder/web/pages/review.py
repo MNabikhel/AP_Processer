@@ -294,9 +294,11 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float, reas
 
     reasons, others, parts = reasons or {}, others or {}, parts or {}
     ids = [i["id"] for i in shown]
-    read = store.invoice_columns(("id", "ai_output", "final_output", "validation"), ids=ids)
+    read = store.invoice_columns(("id", "ai_output", "final_output", "validation", "vendor_key"), ids=ids)
     # a sent-back invoice shows the first approver's corrections, as its review screen does
     outputs = {r["id"]: r["final_output"] or r["ai_output"] or {} for r in read}
+    # the vendor each is filed under (``Store.vendor_key_for``, kept with it), whose terms processing took
+    filed = {r["id"]: r["vendor_key"] for r in read}
     said = [i for i in ids if i in parts]
     today = bulk.issues_today(store, said) if said else {}  # (checked again already by the queue: read, not redone)
     stored = {r["id"]: (r["validation"] or {}).get("issues") or [] for r in read if r["id"] in parts}
@@ -311,7 +313,8 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float, reas
     rows = []
     for inv in shown:
         ai = outputs.get(inv["id"], {})
-        due, tone = due_note(ai, default_days, terms.get(vendor_key(ai.get("vendor_name") or ""), ""))
+        key = filed.get(inv["id"]) or vendor_key(ai.get("vendor_name") or "")
+        due, tone = due_note(ai, default_days, terms.get(key, ""))
         prov = stored_supply(ai)
         confidence = max(0.0, min(1.0, inv.get("adjusted_confidence") or 0.0))
         rows.append({

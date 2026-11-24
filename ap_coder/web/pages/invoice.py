@@ -48,7 +48,6 @@ from fastapi.responses import HTMLResponse
 
 from ap_coder.coding.vendors import mask_account
 from ap_coder.core import audit, ui
-from ap_coder.core.memory import vendor_key
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, coded_blanks
 from ap_coder.core.store.users import same_approver
@@ -166,8 +165,9 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         if float(start.get("grand_total") or 0) > 0:  # a credit note has no due date
             from ap_coder.coding.terms import payment
 
-            computed = payment({**start, **draft.header}, store.default_terms_days(),
-                               store.vendor_terms(vendor_key(draft.header.get("vendor_name") or ""))).due  # fmt: skip
+            # the terms of the vendor it is filed under, as processing looks them up (``Store.vendor_key_for``)
+            key = store.vendor_key_for(draft.header.get("vendor_name"), draft.header.get("gst_hst_registration_number"))
+            computed = payment({**start, **draft.header}, store.default_terms_days(), store.vendor_terms(key)).due
     except (TypeError, ValueError):
         computed = None
     if lm_studio_off(status):  # one short note in the top row: the queue's banner says the rest (B-467)
