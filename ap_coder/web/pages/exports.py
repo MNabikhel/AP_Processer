@@ -222,10 +222,22 @@ def jde_check(store: Store, invoice_ids: list[int],
     settings = jde_settings.load(store)
     blocking = jde_settings.settings_problems(settings) if files else []
     invoices = store.get_invoices(invoice_ids)
-    problems = jde.validate(invoices, settings, store.vendor_ids(), jde.prior_records(store, invoices=invoices),
-                            files=files)  # fmt: skip
+    problems = jde_problems(store, invoices, settings, files)
     ok = [] if blocking else [i["id"] for i in invoices if i["id"] not in problems]
     return ok, problems, blocking
+
+
+def jde_problems(store: Store, invoices: list[dict[str, Any]], settings: jde_settings.JdeSettings,
+                 files: bool) -> dict[int, list[str]]:  # fmt: skip
+    """{invoice: why it can't go to JD Edwards} of approved ``invoices`` (``jde.validate``'s); for the keying sheet
+    (``files`` False), with the PO-matched vouchers its "Not ready" sheet would hold (``jde_keying.match_held``):
+    what a new batch and Ready to export both check (B-3044)."""
+    lookup = store.vendor_ids()
+    problems = jde.validate(invoices, settings, lookup, jde.prior_records(store, invoices=invoices), files=files)
+    if not files:
+        for inv_id, why in jde_keying.match_held(store, invoices, settings, lookup).items():
+            problems.setdefault(inv_id, []).extend(why)
+    return problems
 
 
 def keying_file(store: Store, batch: int) -> tuple[bytes, str, str]:
@@ -279,7 +291,7 @@ def bank_accounts(store: Store) -> dict[str, dict[str, Any]]:
     return {a["code"]: a for a in store.bank_accounts()}
 
 
-READY_FORMAT = "ready-1"  # ``ready_problems``' rows as kept for every process; another when what is kept changes
+READY_FORMAT = "ready-2"  # ``ready_problems``' rows as kept for every process; another when what is kept changes
 
 
 def ready_problems(store: Store, invoice_ids: list[int], files: bool = True) -> list[dict[str, Any]]:
@@ -287,20 +299,21 @@ def ready_problems(store: Store, invoice_ids: list[int], files: bool = True) -> 
     else on its keying sheet), as the page lists them
     (``problem_rows``): ``jde_check``'s, worked out once for every process (D-169) and kept until an invoice, the
     vendor master, the ERP register, JD Edwards' settings or companies, the tax-rate file (the amount sent gross reads
-    it, B-2074) or the day change (0.6 s at 300,000 invoices with 1,100 ready, at every visit before: D-206). Making a
-    batch checks its invoices again (``_create_batch``). Shared: read it, don't change it."""
+    it, B-2074), the purchase orders loaded (a PO-matched voucher's match) or the day change (0.6 s at 300,000
+    invoices with 1,100 ready, at every visit before: D-206). Making a batch checks its invoices again
+    (``_create_batch``). Shared: read it, don't change it."""
     # (checked by the very settings it is kept for, not read again: B-2075), with JD Edwards' companies as a batch
     # made reads them (each one's currency, B-2697)
     text, table = store.get_setting(jde_settings.SETTING_KEY), store.get_setting(companies.COMPANIES_SETTING)
 
     def work() -> list[dict[str, Any]]:
         invoices = store.get_invoices(invoice_ids)
-        problems = jde.validate(invoices, jde_settings.from_texts(text, table), store.vendor_ids(),
-                                jde.prior_records(store, invoices=invoices), files=files)  # fmt: skip
+        problems = jde_problems(store, invoices, jde_settings.from_texts(text, table), files)
         return problem_rows(store, problems, invoices)
 
     asked = (invoice_ids, text, table, dt.date.today().isoformat(), store.rates_stamp(), files)
-    return store.shared_answer("jde_ready", work, version=READY_FORMAT, changes=("register", "vendors"), asked=asked)
+    return store.shared_answer("jde_ready", work, version=READY_FORMAT,
+                               changes=("register", "vendors", "purchase_orders"), asked=asked)  # fmt: skip
 
 
 def problem_rows(store: Store, problems: dict[int, list[str]],

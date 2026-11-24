@@ -26,8 +26,9 @@ PO line is not ready, with why: no PO line is guessed. A subcontract's progress 
 Retained Amount beside its Amount Matched (``jde_retainage``), the retained and the amount due under the gross, and
 its check line is the amounts matched - the retained + the tax = the amount due as printed.
 
-Entry points: ``vouchers`` (the values), ``po_matches`` (the voucher matches of a batch's invoices), ``build_xlsx``
-and ``build`` (a batch's file), ``keying_batches``.
+Entry points: ``vouchers`` (the values), ``po_matches`` (the voucher matches of a batch's invoices), ``match_held``
+(the PO-matched vouchers the sheet would hold, which Ready to export holds too), ``build_xlsx`` and ``build`` (a
+batch's file), ``keying_batches``.
 """
 
 from __future__ import annotations
@@ -199,10 +200,8 @@ def vouchers(
     for inv, (an8, v) in zip(invoices, jde_voucher._vouchers(invoices, settings, vendor_lookup, on), strict=True):
         final = v.final
         why = list((left_out or {}).get(v.inv_id) or []) or (jde_voucher._accounts_once(v) if v.problems else [])
-        keyed = None
-        if v.po_matched and po_matches is not None:
-            matched = po_matches.get(v.inv_id) or po_mod.voucher_match(None, str(final.get("po_number") or ""))
-            keyed = jde_match.keyed_match(v, matched, settings)
+        keyed = _keyed(v, settings, po_matches)
+        if keyed is not None:
             why = why or list(dict.fromkeys(keyed.held))
         if why:
             held.append(Held(v.inv_id, an8, str(final.get("vendor_name") or ""),
@@ -290,6 +289,32 @@ def po_matches(store: Any, invoices: list[dict[str, Any]], charge_account: str =
             invoice_id = int(inv.get("id") or 0)
             out[invoice_id] = po_mod.voucher_match(po_mod.match_invoice(coding, store, invoice_id), number,
                                                    charge_account)  # fmt: skip
+    return out
+
+
+def _keyed(v: jde_voucher._Voucher, settings: jde_settings.JdeSettings,
+           po_matches: Mapping[int, po_mod.VoucherMatch] | None) -> jde_match.KeyedMatch | None:  # fmt: skip
+    """A PO-matched voucher's rows as the sheet keys them (``jde_match.keyed_match``; ``held``: why it can't be),
+    None for one keyed with its G/L lines (or with no ``po_matches`` given)."""
+    if not v.po_matched or po_matches is None:
+        return None
+    matched = po_matches.get(v.inv_id) or po_mod.voucher_match(None, str(v.final.get("po_number") or ""))
+    return jde_match.keyed_match(v, matched, settings)
+
+
+def match_held(store: Any, invoices: list[dict[str, Any]], settings: jde_settings.JdeSettings,
+               vendor_lookup: jde_accounts.VendorLookup = None) -> dict[int, list[str]]:  # fmt: skip
+    """{invoice: why} of the PO-matched ``invoices`` whose voucher match the sheet would put on its "Not ready"
+    sheet (a line no PO line matches, a PO not loaded...): what Ready to export and a new keying batch hold too,
+    beside ``jde.validate``'s, so such a voucher is never batched as if keyed (B-3044). {} with PO-matched vouchers
+    off."""
+    if not settings.po_matched:
+        return {}
+    matches = po_matches(store, invoices, settings.charge_account)
+    out: dict[int, list[str]] = {}
+    for _an8, v in jde_voucher._vouchers(invoices, settings, vendor_lookup):
+        if (keyed := _keyed(v, settings, matches)) is not None and keyed.held:
+            out[v.inv_id] = list(dict.fromkeys(keyed.held))
     return out
 
 
