@@ -77,7 +77,8 @@ jobs:
         id: tests
         # the slowest 15 tests are listed at the end, so a test that grows slow shows up in the log. On Windows the
         # JD Edwards sync at the company's size (20 minutes there, one test) is left to windows-sync-volume below.
-        run: python -m pytest -q ${{ matrix.tier != 'fast' && '-m ""' || '' }} ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} ${{ matrix.os == 'windows-latest' && format('--deselect {0}', env.SYNC_VOLUME) || '' }} --durations=15
+        # Every test's time goes in a --junitxml report, kept by the last step.
+        run: python -m pytest -q ${{ matrix.tier != 'fast' && '-m ""' || '' }} ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} ${{ matrix.os == 'windows-latest' && format('--deselect {0}', env.SYNC_VOLUME) || '' }} --durations=15 --junitxml "${{ runner.temp }}/junit.xml"
       - name: The failed tests, run again (a flake, or failed again?)
         # Only once the tests failed: each test that failed runs once more (pytest's list of the last failures,
         # --lf), and the run's summary says of each "passed when run again (likely flaky)" or "failed again", flakes
@@ -108,6 +109,19 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
               summary.write("\n".join(lines) + "\n")
           EOF
+      - name: Keep the tests' times
+        # This part's --junitxml report, passed or failed, to refresh tests/test_times.json from (python -m tests.times
+        # junit.xml); its name says the OS, the Python and the whole suite or the fast tier. An upload that fails
+        # never turns the job red: it never holds a tested build back (builds.yml).
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.os }}-python-${{ matrix.python }}-${{ matrix.tier || 'whole' }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/junit.xml
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 14
 
   windows-sync-volume:
     # The slowest test by far: 600,000 vouchers synced four times, about 20 minutes on Windows (2 on Ubuntu, where
