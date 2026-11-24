@@ -602,7 +602,8 @@ CHECKS: dict[str, CheckHelp] = {
         "the line is coded to another business unit (another job) than its PO line: approved so, the cost would go to "
         "that job in the export and AP Coder would learn it. Only good to know when the line has no account yet, or "
         "another object on the PO's business unit.",
-        "The PO coding is usually right: use the 'Use the PO's coding' button under the PO match.",
+        "The PO coding is usually right: use the 'Use the PO's coding' button under the PO match (with a chart of "
+        "accounts, also among the buttons under the lines).",
     ),
     "PO_NOT_QUOTED": CheckHelp(
         PO, "No PO on the invoice",

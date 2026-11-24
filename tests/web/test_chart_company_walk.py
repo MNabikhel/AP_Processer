@@ -437,6 +437,24 @@ def test_the_batch_files_of_the_same_invoices_agree_with_the_sheet(chart_company
     assert typed == [(line["VNANI"], line["VNAA"], line["VNEXA"]) for line in lines]
 
 
+def _fuel_po(chart_company) -> tuple[str, str]:
+    """PO 45120 of the fuel supplier (the invoice "split_line"), which AP coded to one account on two jobs last year:
+    each of the invoice's lines, on the first job's account. (That account, the other job's.)"""
+    from ap_coder.core import chart
+
+    invoice, _ = chart_company.invoices["split_line"]
+    account, other = (part.account for part in invoice.lines[1].parts)
+    job, code = chart.split_account(account)
+    chart_company.store.import_purchase_orders([
+        {"po_number": "45120", "vendor_name": "", "supplier_number": str(invoice.supplier.number), "order_type": "OP",
+         "order_company": "00210", "line_number": n, "erp_line": f"{n}.000", "description": line.description,
+         "quantity": float(line.quantity), "unit_price": float(line.unit_price), "amount": float(line.amount),
+         "open_quantity": float(line.quantity), "uom": "EA", "gl_code": code, "cost_center": job, "status": "open",
+         "currency": "CAD"}
+        for n, line in enumerate(invoice.lines, start=1)])  # fmt: skip
+    return account, other
+
+
 def test_a_po_invoice_coded_to_another_job_is_warned_and_the_pos_coding_keys_it_to_the_pos_job(
     chart_company, chart_company_client
 ):
@@ -450,15 +468,8 @@ def test_a_po_invoice_coded_to_another_job_is_warned_and_the_pos_coding_keys_it_
 
     store, client = chart_company.store, chart_company_client
     invoice, invoice_id = chart_company.invoices["split_line"]
-    account, other = (part.account for part in invoice.lines[1].parts)
-    job, code = chart.split_account(account)
-    store.import_purchase_orders([
-        {"po_number": "45120", "vendor_name": "", "supplier_number": str(invoice.supplier.number), "order_type": "OP",
-         "order_company": "00210", "line_number": n, "erp_line": f"{n}.000", "description": line.description,
-         "quantity": float(line.quantity), "unit_price": float(line.unit_price), "amount": float(line.amount),
-         "open_quantity": float(line.quantity), "uom": "EA", "gl_code": code, "cost_center": job, "status": "open",
-         "currency": "CAD"}
-        for n, line in enumerate(invoice.lines, start=1)])  # fmt: skip
+    account, other = _fuel_po(chart_company)
+    job, _ = chart.split_account(account)
     assert not jde_settings.load(store).po_matched
     page = ReviewPage(client, invoice_id)
     for n in range(1, len(invoice.lines) + 1):
@@ -481,6 +492,31 @@ def test_a_po_invoice_coded_to_another_job_is_warned_and_the_pos_coding_keys_it_
     with zipfile.ZipFile(io.BytesIO(data)) as files:
         lines = list(csv.DictReader(io.StringIO(files.read(jde_zfiles.DIST_FILE).decode())))
     assert [line["VNANI"] for line in lines] == [account] * len(invoice.lines)
+
+
+def _toolbar(page) -> str:
+    """The buttons under the lines (Add a line ... Use each line's first offer), as the page has them."""
+    return page.text.split('data-add-row="lines"', 1)[1].split('data-live="taxline"', 1)[0]
+
+
+def test_the_lines_toolbar_offers_the_pos_coding_before_the_first_offers_only_while_lines_differ(
+    chart_company, chart_company_client
+):
+    """B-3043: "Use the PO's coding" was only under the PO match, far below "Use each line's first offer", whose offer
+    may be another job's. While a line differs from its PO line it is in the lines' toolbar too, just before it."""
+    client = chart_company_client
+    _, invoice_id = chart_company.invoices["split_line"]
+    page = ReviewPage(client, invoice_id)
+    assert "data-first-offers" in _toolbar(page) and "/po-coding" not in _toolbar(page)  # (no PO quoted)
+    _fuel_po(chart_company)
+    post(client, f"/review/{invoice_id}/check", {**page.form, "po_number": "45120"})
+    bar = _toolbar(page.open())
+    assert f'data-grid-action="/review/{invoice_id}/po-coding"' in bar
+    assert "Use the PO's coding on 2 lines" in html.unescape(bar)
+    assert bar.index("/po-coding") < bar.index("data-first-offers")
+    assert post(client, f"/review/{invoice_id}/po-coding", page.form).json()["ok"]
+    page.open()
+    assert "/po-coding" not in _toolbar(page)
 
 
 def test_the_excel_exports_by_gl_account_sheet_totals_each_whole_account_string(chart_company, chart_company_client):
