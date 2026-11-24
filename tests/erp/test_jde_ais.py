@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 import time
 
 import pytest
@@ -67,6 +69,36 @@ def test_a_connection_ais_closed_meanwhile_is_not_used(ais):
     c.call("suppliers", {})
     ais.drop_idle()  # AIS closes a connection left unused for a while
     assert c.call("suppliers", {})["Suppliers"] and ais.connections == 2
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows' select takes a socket whatever its number")
+def test_a_connection_kept_open_is_used_again_when_its_file_number_is_past_1024(ais):
+    """B-3037: whether AIS had closed a connection kept open was asked with select.select, which refuses a file number
+    of 1,024 or more: on a busy Linux server (many invoices' files open, many browsers) every call opened a new
+    connection. One kept open is used again, and one AIS closed is still not, past 1,024."""
+    import resource
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    wanted = 1200 if hard == resource.RLIM_INFINITY else min(hard, 1200)
+    if wanted < 1200:
+        pytest.skip(f"this process may open {hard} files at most")
+    resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, wanted), hard))
+    held: list[int] = []
+    try:
+        while not held or held[-1] < 1100:  # every number below 1,100 in use: the next socket's is past it
+            held.append(os.open(os.devnull, os.O_RDONLY))
+        c = jde_ais.AisClient(ais.settings())
+        c.retries = 0
+        for _ in range(3):
+            assert c.call("suppliers", {})["Suppliers"]
+        assert c._open[-1][1].sock.fileno() >= 1024 and ais.connections == 1
+        ais.drop_idle()  # AIS closes it
+        assert c.call("suppliers", {})["Suppliers"] and ais.connections == 2
+        c.close()
+    finally:
+        for fd in held:
+            os.close(fd)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
 
 
 def test_a_connection_found_closed_as_it_is_used_is_asked_again_for_a_read_never_for_a_voucher(ais, monkeypatch):
