@@ -390,6 +390,12 @@ jobs:
                              'Self-check OK: \d+ of \d+')) {
               if ($out -notmatch $m) { throw "the first start did not print: $m" }
             }
+            # This user's notes folder says what it is and is hidden in File Explorer (never said on a first start).
+            $notes = Join-Path $env:USERPROFILE '.ap_coder'
+            $attributes = (Get-Item -LiteralPath $notes -Force -ErrorAction Stop).Attributes
+            if (-not $attributes.HasFlag([IO.FileAttributes]::Hidden)) { throw "$notes is not hidden: $attributes" }
+            if (-not (Test-Path -LiteralPath (Join-Path $notes 'README.txt'))) { throw "no README.txt in $notes" }
+            if ($out -match 'now in a hidden folder') { throw 'the first start said it hid a folder never seen' }
             # Double-click again while it runs: the running dashboard is opened, nothing new is started.
             $sw = [Diagnostics.Stopwatch]::StartNew()
             $out2 = cmd /c "APProcessor.bat --port 8597" 2>&1 | Out-String
@@ -452,6 +458,11 @@ jobs:
           foreach ($m in @("Python $([regex]::Escape($env:PILOT_PYTHON))\.\d+", 'AP Coder readiness:', 'Packages: \d+ needed, all in place', 'Self-check OK at setup')) {
             if ($out -notmatch $m) { throw "the later start did not print: $m" }
           }
+          $notes = Join-Path $env:USERPROFILE '.ap_coder'  # still hidden, and hidden once: nothing said again
+          $attributes = (Get-Item -LiteralPath $notes -Force -ErrorAction Stop).Attributes
+          if (-not $attributes.HasFlag([IO.FileAttributes]::Hidden)) { throw "$notes is not hidden: $attributes" }
+          if (-not (Test-Path -LiteralPath (Join-Path $notes 'README.txt'))) { throw "no README.txt in $notes" }
+          if ($out -match 'now in a hidden folder') { throw 'the later start hid the folder again' }
           $links = @(Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Filter 'AP Coder*.lnk')
           if ($links.Count -ne 1) { throw "expected 1 desktop shortcut, found $($links.Count)" }
 
@@ -519,6 +530,15 @@ jobs:
             Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and ($_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*launch.py*') } |
               ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
           }
+          function NotesHidden($when) {
+            # This user's notes folder says what it is and is hidden in File Explorer, once: it stays where every
+            # version reads it. The start that hid it says so only when the folder was seen before (not a first start).
+            $notes = Join-Path $env:USERPROFILE '.ap_coder'
+            $attributes = (Get-Item -LiteralPath $notes -Force -ErrorAction Stop).Attributes
+            if (-not $attributes.HasFlag([IO.FileAttributes]::Hidden)) { throw "$notes is not hidden $($when): $attributes" }
+            if (-not (Test-Path -LiteralPath (Join-Path $notes 'README.txt'))) { throw "no README.txt in $notes $when" }
+            if ($out -match 'now in a hidden folder') { throw "it said it hid the folder $when" }
+          }
           try {
             Unzip 'old'
             $build = (Get-Content -LiteralPath "$folder\ap_coder\BUILD" -Raw).Trim()
@@ -538,6 +558,7 @@ jobs:
               if ($out -notmatch $m) { throw "the first start did not print: $m" }
             }
             if ($out -match 'AP_ALLOW_INTERNET=1 allows|URLError|Traceback') { throw 'it said something it should not' }
+            NotesHidden 'after the first start'
             # The launcher takes the Mark of the Web off its own launchers (so Windows stops asking "Do you want to run
             # this file?"): gone from APProcessor.bat, still on the rest.
             $motw = Get-Item -LiteralPath "$folder\APProcessor.bat" -Stream Zone.Identifier -ErrorAction SilentlyContinue
@@ -572,6 +593,7 @@ jobs:
               if ($out -notmatch $m) { throw "the update did not print: $m" }
             }
             if ($out -match 'First run|Self-check OK at setup|Installed \d+ packages') { throw 'the update set everything up again, or skipped the self-check' }
+            NotesHidden 'after the newer ZIP'
             if ($oldOut -notmatch 'A newer AP Coder took over; you can close this window') { throw 'the older window did not say a newer AP Coder took over' }
             if (-not $old.HasExited) { throw 'the older window is still running' }
             # The data is kept.
@@ -678,10 +700,15 @@ jobs:
         run: |
           $record = Join-Path $env:USERPROFILE '.ap_coder\settings.json'
           $before = (Get-Content $record -Raw | ConvertFrom-Json).data_dir
+          # The double-click above hid this user's notes folder: demo.bat's copy of the record is made in it all the same.
+          $notes = Join-Path $env:USERPROFILE '.ap_coder'
+          $attributes = (Get-Item -LiteralPath $notes -Force -ErrorAction Stop).Attributes
+          if (-not $attributes.HasFlag([IO.FileAttributes]::Hidden)) { throw "$notes is not hidden: $attributes" }
           cmd /c "scripts\demo.bat --no-start > demo.out 2>&1"
           $code = $LASTEXITCODE
           Get-Content demo.out -Tail 30
           if ($code -ne 0) { throw "scripts\demo.bat --no-start ended with $code" }
+          if (-not (Test-Path -LiteralPath (Join-Path $notes 'demo_settings.json'))) { throw "demo.bat made no demo_settings.json in $notes" }
           if (-not (Test-Path (Join-Path $env:USERPROFILE 'APCoder-demo\invoices'))) { throw 'no APCoder-demo data folder' }
           $after = (Get-Content $record -Raw | ConvertFrom-Json).data_dir
           if ($after -ne $before) { throw "the demo changed the recorded data folder: $before -> $after" }

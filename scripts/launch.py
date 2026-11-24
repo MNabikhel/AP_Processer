@@ -2632,9 +2632,13 @@ def settle_and_check(
     ensure_models(first, state)
     paths.record_install(ident)
     upgrade.write_marker(ROOT, ident)
+    hid = not (server_mode() or demo_start()) and label_notes()
     shortcut = ensure_shortcut()
     step.now = "checking LM Studio and the setup"
     lines = readiness((level, summary), state, force=args.check) + notes + sync_notes(data)
+    if hid and (previous or not first):  # (not on a new computer's first start: that folder was never seen)
+        lines.append(("info", "AP Coder's own notes and logs are now in a hidden folder, so your user folder no longer "
+                              f"shows them. Your data is where it was, in {data}: nothing was moved."))  # fmt: skip
     if shortcut:
         lines.append(("ok" if shortcut.startswith("Desktop") else "warn", shortcut))
     old = older_installs(ident, legacy)
@@ -2675,6 +2679,16 @@ def settle_and_check(
         commit=ident["commit"],
     )
     return lines
+
+
+def label_notes() -> bool:
+    """This user's notes folder labelled and hidden (``paths.label_notes_folder``): True when it was hidden now. A
+    courtesy: a failure is logged and never stops the start."""
+    try:
+        return paths.label_notes_folder()
+    except Exception as exc:  # noqa: BLE001 - the folder is only not hidden: the start goes on as before
+        log(f"Labelling AP Coder's notes folder failed: {exc!r}")
+        return False
 
 
 def run(args: argparse.Namespace, rest: list[str]) -> int:

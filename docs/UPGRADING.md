@@ -153,6 +153,9 @@ these steps, about five minutes:
    backup from that day means the update didn't change the database: keep `ap_coder.db` as it is.
 5. **Double-click APProcessor** in the previous version's folder.
 
+Leave the hidden `.ap_coder` folder in your user folder alone: older versions need it (it says which AP Coder is the
+current one and where your data folder is), and they keep using it as before.
+
 What was done after the update (approvals, imports, settings) is in `ap_coder.db.newer`, not in the database you
 put back: do it again, or, to go forward again later, put `ap_coder.db.newer` back as `ap_coder.db` before starting
 the newer version. Invoice files and the rest of the data folder are not touched by any of this.

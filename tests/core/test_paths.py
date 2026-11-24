@@ -1,10 +1,12 @@
 """``core/paths.py``: the model's answers kept in the data folder (the page reader's readings, the chat model's
-header readings and its accounts) are pruned by age and size, as each is written (D-171)."""
+header readings and its accounts) are pruned by age and size, as each is written (D-171); this user's own notes folder
+(``~/.ap_coder``) says what it is and is hidden on Windows, once."""
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -155,3 +157,185 @@ def test_the_settings_file_is_replaced_even_while_another_process_has_it_open(tm
     with pytest.raises(PermissionError):
         paths.write_user_settings(reviewer="Never")
     assert paths.read_user_settings()["reviewer"] == "After" and len(tries) == 1 and waited == [0.05]
+
+
+# --- This user's notes folder (~/.ap_coder): it says what it is, and is hidden on Windows, once ---------------------
+
+DIRECTORY, ARCHIVE, HIDDEN, NOT_INDEXED = 0x10, 0x20, 0x2, 0x2000  # Windows' file attributes
+NOT_FOUND = 0xFFFFFFFF  # GetFileAttributesW's INVALID_FILE_ATTRIBUTES
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    """A home folder of the test's own, with no AP_USER_SETTINGS (the person's own record, not a demo's or a test's),
+    and its ``.ap_coder`` as a start leaves it: the record written."""
+    folder = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(folder))
+    monkeypatch.setenv("USERPROFILE", str(folder))  # (Windows' home)
+    monkeypatch.delenv("AP_USER_SETTINGS", raising=False)
+    paths.write_user_settings(data_dir=str(folder / "APCoder"))
+    assert paths.user_settings_path() == folder / ".ap_coder" / "settings.json"
+    return folder
+
+
+@pytest.fixture
+def hidden(monkeypatch):
+    """``hide_folder`` as Windows answers it (hidden now): every folder it was asked to hide."""
+    asked: list[Path] = []
+    monkeypatch.setattr(paths, "hide_folder", lambda folder: asked.append(folder) or True)
+    return asked
+
+
+def test_the_notes_folder_says_what_it_is_once_and_is_hidden_then(home, hidden):
+    """The owner asked why their user folder shows two folders, APCoder and .ap_coder. .ap_coder is AP Coder's own
+    notes, which every version, older ones too, reads where it is (the record of installs: which AP Coder is the
+    current one), so it stays there: it says what it is in a README.txt and is hidden in File Explorer, once. Its
+    text names no folder (nothing to go stale, nothing that can't be written); a second start writes nothing."""
+    notes = home / ".ap_coder"
+    assert paths.label_notes_folder() is True and hidden == [notes]
+    readme = notes / "README.txt"
+    text = readme.read_text(encoding="utf-8")
+    assert text == paths.NOTES_TEXT and "Don't delete, move or rename this folder" in text
+    assert "Settings, Data & backups" in text and str(home) not in text and "APCoder" not in text
+    os.utime(readme, (1_000_000_000, 1_000_000_000))
+    assert paths.label_notes_folder() is False and hidden == [notes]
+    assert readme.stat().st_mtime == 1_000_000_000 and readme.read_text(encoding="utf-8") == text
+    assert sorted(p.name for p in notes.iterdir()) == ["README.txt", "settings.json"]  # nothing else written
+
+
+def test_a_notes_folder_with_its_readme_is_never_hidden_again(home, hidden):
+    """Someone who showed the folder again in File Explorer keeps it shown: its README is there, so it is not hidden
+    again, also after going back to an older AP Coder (which never reads it) and forward again. A README of their own
+    words is kept as it is."""
+    readme = home / ".ap_coder" / "README.txt"
+    readme.write_text("my own words", encoding="utf-8")
+    assert paths.label_notes_folder() is False and hidden == []
+    assert readme.read_text(encoding="utf-8") == "my own words"
+
+
+def test_nothing_is_labelled_for_a_demo_a_test_or_a_scratch_record(tmp_path, monkeypatch, hidden):
+    """AP_USER_SETTINGS set (scripts/demo.bat, the tests, the first-day walk, CI's scratch homes): that record is not
+    the person's own folder. Nothing is written beside it, nothing hidden."""
+    folder = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(folder))
+    monkeypatch.setenv("USERPROFILE", str(folder))
+    record = folder / ".ap_coder" / "demo_settings.json"
+    monkeypatch.setenv("AP_USER_SETTINGS", str(record))
+    paths.write_user_settings(reviewer="Demo")
+    assert paths.label_notes_folder() is False and hidden == []
+    assert sorted(p.name for p in record.parent.iterdir()) == ["demo_settings.json"]
+
+
+def test_a_notes_folder_that_cant_be_written_is_left_as_it_is_and_never_raises(home, hidden, monkeypatch):
+    """Labelling is a courtesy: a README Windows refuses to write, or a notes folder not there, is no reason to stop
+    a start. Nothing is written or made, nothing hidden."""
+    notes = home / ".ap_coder"
+
+    def refused(self, *args, **kwargs):
+        raise PermissionError(13, "Access is denied", str(self))
+
+    with monkeypatch.context() as m:
+        m.setattr(Path, "write_text", refused)
+        assert paths.label_notes_folder() is False and hidden == []
+    assert not (notes / "README.txt").exists()
+    for item in notes.iterdir():
+        item.unlink()
+    notes.rmdir()
+    assert paths.label_notes_folder() is False and hidden == [] and not notes.exists()
+
+
+@pytest.fixture
+def kernel32(monkeypatch):
+    """Windows as ``hide_folder`` sees it, its kernel32 a stand-in: each folder's attributes (``attributes``, by
+    name), every call made (``calls``) and the libraries AP Coder opened for itself (``opened``)."""
+    import ctypes
+
+    def get(name):
+        windows.calls.append(("get", name))
+        return windows.attributes.get(name, NOT_FOUND)
+
+    def put(name, value):
+        windows.calls.append(("set", name, value))
+        windows.attributes[name] = (windows.attributes[name] & DIRECTORY) | value  # (a folder stays one)
+        return 1
+
+    def library(name, **options):
+        windows.opened.append(name)
+        return windows
+
+    windows = SimpleNamespace(GetFileAttributesW=get, SetFileAttributesW=put, attributes={}, calls=[], opened=[])
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(ctypes, "WinDLL", library, raising=False)
+    return windows
+
+
+def test_on_windows_the_folder_is_hidden_its_other_attributes_kept_once(kernel32, tmp_path):
+    """Only the folder is hidden (a hidden file can't be written whole any more, and every version writes its files
+    whole), with the attributes it had and Windows lets be set; one already hidden is left alone and gives False.
+    Through a kernel32 handle of AP Coder's own with the calls' types (ops/awake.py: the shared one's are every
+    library's)."""
+    from ctypes import wintypes
+
+    folder = tmp_path / ".ap_coder"
+    name = str(folder)
+    kernel32.attributes[name] = DIRECTORY | ARCHIVE | NOT_INDEXED
+    assert paths.hide_folder(folder) is True
+    assert kernel32.calls == [("get", name), ("set", name, ARCHIVE | NOT_INDEXED | HIDDEN)]
+    assert kernel32.attributes[name] == DIRECTORY | ARCHIVE | NOT_INDEXED | HIDDEN
+    assert paths.hide_folder(folder) is False and kernel32.calls[2:] == [("get", name)]  # hidden already: nothing set
+    assert set(kernel32.opened) == {"kernel32"}
+    get, put = kernel32.GetFileAttributesW, kernel32.SetFileAttributesW
+    assert get.argtypes == [wintypes.LPCWSTR] and get.restype is wintypes.DWORD
+    assert put.argtypes == [wintypes.LPCWSTR, wintypes.DWORD] and put.restype is wintypes.BOOL
+
+
+def test_a_folder_windows_wont_hide_is_simply_shown(kernel32, tmp_path, monkeypatch):
+    """Not found, refused, or no kernel32 to ask: False, nothing raised; off Windows nothing is asked at all."""
+    import ctypes
+
+    folder = tmp_path / ".ap_coder"
+    assert paths.hide_folder(folder) is False and kernel32.calls == [("get", str(folder))]  # not found: nothing set
+    kernel32.attributes[str(folder)] = DIRECTORY
+    kernel32.SetFileAttributesW = lambda name, value: 0  # refused (an antivirus, a policy)
+    assert paths.hide_folder(folder) is False
+
+    def missing(name, **options):
+        raise OSError("no kernel32 here")
+
+    monkeypatch.setattr(ctypes, "WinDLL", missing)
+    assert paths.hide_folder(folder) is False
+    monkeypatch.setattr(sys, "platform", "linux")
+    kernel32.opened.clear()
+    monkeypatch.setattr(ctypes, "WinDLL", lambda name, **options: kernel32.opened.append(name), raising=False)
+    assert paths.hide_folder(folder) is False and kernel32.opened == []
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' own attributes")
+def test_on_windows_itself_the_hidden_folder_is_still_written_as_every_version_writes_it(tmp_path, monkeypatch):
+    """The folder is hidden, its other attributes kept, and hidden once; every write a version makes in it still
+    works: the record written whole and replaced, a log made and appended to, a log replaced by another."""
+    import ctypes
+    import stat
+    from ctypes import wintypes
+
+    folder = tmp_path / ".ap_coder"
+    folder.mkdir()
+    put = ctypes.WinDLL("kernel32", use_last_error=True).SetFileAttributesW
+    put.argtypes, put.restype = [wintypes.LPCWSTR, wintypes.DWORD], wintypes.BOOL
+    assert put(str(folder), stat.FILE_ATTRIBUTE_NOT_CONTENT_INDEXED)
+    assert paths.hide_folder(folder) is True
+    found = os.stat(folder).st_file_attributes
+    assert found & stat.FILE_ATTRIBUTE_HIDDEN and found & stat.FILE_ATTRIBUTE_NOT_CONTENT_INDEXED
+    assert found & stat.FILE_ATTRIBUTE_DIRECTORY and paths.hide_folder(folder) is False
+    monkeypatch.setenv("AP_USER_SETTINGS", str(folder / "settings.json"))
+    paths.write_user_settings(reviewer="Ann")
+    paths.write_user_settings(reviewer="Bea")  # (written whole again, over the one there)
+    assert paths.read_user_settings()["reviewer"] == "Bea"
+    logs = folder / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    for said in ("a start\n", "another\n"):
+        with open(logs / "launch.log", "a", encoding="utf-8") as log:
+            log.write(said)
+    os.replace(logs / "launch.log", logs / "launch.previous.log")
+    assert (logs / "launch.previous.log").read_text(encoding="utf-8") == "a start\nanother\n"
+    assert not os.stat(folder / "settings.json").st_file_attributes & stat.FILE_ATTRIBUTE_HIDDEN

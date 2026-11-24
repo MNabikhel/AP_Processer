@@ -109,6 +109,26 @@ def test_open_folder_still_opens_it_on_a_laptop(store, opened, monkeypatch):
     assert opened and answer["toast"]["text"] == "Opened the invoices folder."
 
 
+def test_report_a_problem_opens_the_logs_folder_on_a_laptop_never_on_the_server(store, opened, monkeypatch):
+    """IT asks for launch.log and dashboard-errors.log, kept in this user's notes folder, which is hidden: Report a
+    problem opens that folder on a laptop. On the server nothing opens on its screen (D-99): no button, the route
+    needs an Admin's role (web/roles.py) and tells an Admin where the folder is."""
+    from ap_coder.core import paths
+
+    monkeypatch.setenv(offline.SERVER_ENV, "0")
+    laptop = client_as(store, base_url="http://localhost")
+    assert 'action="/help/report/open-logs"' in laptop.get("/help/report").text
+    answer = post(laptop, "/help/report/open-logs").json()
+    assert answer["toast"]["text"] == "Opened the logs folder."
+    assert str(opened[-1][-1]) == str(paths.user_settings_path().parent / "logs")
+    monkeypatch.setenv(offline.SERVER_ENV, "1")
+    admin = client_as(store, "admin")
+    assert 'action="/help/report/open-logs"' not in admin.get("/help/report").text
+    assert post(client_as(store, "clerk"), "/help/report/open-logs").status_code == 403
+    told = post(admin, "/help/report/open-logs").json()["toast"]["text"]
+    assert told.startswith("This folder is on the server: ") and len(opened) == 1
+
+
 def test_on_the_server_only_the_service_stops_ap_coder_with_its_token(store, server_on):
     """The service's stop asks POST /shutdown from the server itself with the server file's token; nothing else
     can stop it, and no page offers to."""

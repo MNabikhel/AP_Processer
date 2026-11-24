@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 
@@ -63,6 +64,70 @@ def write_user_settings(**values: object) -> Path:
             time.sleep(wait)
     os.replace(part, path)
     return path
+
+
+# --- This user's notes folder (~/.ap_coder): it says what it is, and is hidden on Windows -----------------------------
+#
+# Every version since the first reads the record of installs in ~/.ap_coder/settings.json, and its "current" is what
+# stops an older AP Coder from opening newer data: the folder stays where it is for good. So that a person's user
+# folder shows only the data folder, it says what it is in a README.txt and is hidden in File Explorer, once.
+
+NOTES_README = "README.txt"  # Notepad opens it; nothing of any version lists the folder or reads it
+NOTES_TEXT = (  # the same for everyone, no folder named: it can't go stale, nor fail to be written
+    "AP Coder's own notes for your account on this computer: which AP Coder is the current one, where your data\n"
+    "folder is, your name, and the logs IT may ask for (launch.log and dashboard-errors.log, in the logs folder).\n"
+    "\n"
+    "Your invoices and database are not here: AP Coder shows where they are under Settings, Data & backups.\n"
+    "\n"
+    "Don't delete, move or rename this folder. AP Coder, and any older version of it, uses it to find your data;\n"
+    "without it AP Coder may start as new and empty.\n"
+)
+FILE_ATTRIBUTE_HIDDEN = 0x2
+# What SetFileAttributesW can set (read-only, hidden, system, archive, temporary, offline, not content indexed): a
+# folder's other attributes are kept with these.
+SETTABLE_ATTRIBUTES = 0x1 | 0x2 | 0x4 | 0x20 | 0x100 | 0x1000 | 0x2000
+INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
+
+
+def hide_folder(folder: Path) -> bool:
+    """Windows: ``folder`` hidden in File Explorer, its other attributes kept. Only a folder: a hidden file can't be
+    written whole any more, and every version writes its files whole. True only when this call hid it (one already
+    hidden, not found, or refused: False; never on another system). Through a kernel32 handle of AP Coder's own with
+    the calls' types set: the shared ``ctypes.windll.kernel32``'s are every library's (as ``ops/awake.py``)."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        get, put = kernel32.GetFileAttributesW, kernel32.SetFileAttributesW
+        get.argtypes, get.restype = [wintypes.LPCWSTR], wintypes.DWORD
+        put.argtypes, put.restype = [wintypes.LPCWSTR, wintypes.DWORD], wintypes.BOOL
+        found = get(str(folder))
+        if found == INVALID_FILE_ATTRIBUTES or found & FILE_ATTRIBUTE_HIDDEN:
+            return False
+        return bool(put(str(folder), (found & SETTABLE_ATTRIBUTES) | FILE_ATTRIBUTE_HIDDEN))
+    except Exception:  # noqa: BLE001 - a courtesy: a folder that can't be hidden is simply shown
+        return False
+
+
+def label_notes_folder() -> bool:
+    """This user's notes folder (``~/.ap_coder``) says what it is in its README.txt, then is hidden (Windows): only
+    when the README is missing, so once. One a person showed again stays shown, also after going back to an older
+    AP Coder and forward again. Nothing with AP_USER_SETTINGS set (a demo, the tests, CI's scratch homes): that is
+    not the person's own folder. True when the folder was hidden now; never raises an OSError."""
+    if os.environ.get("AP_USER_SETTINGS"):
+        return False
+    folder = user_settings_path().parent
+    readme = folder / NOTES_README
+    try:
+        if readme.exists():
+            return False
+        readme.write_text(NOTES_TEXT, encoding="utf-8")
+    except OSError:
+        return False
+    return hide_folder(folder)
 
 
 # --- The installs of AP Coder on this computer ----------------------------------------------------------------------
