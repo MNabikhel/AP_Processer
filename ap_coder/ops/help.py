@@ -598,7 +598,10 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "PO_CODING_DIFFERS": CheckHelp(
         PO, "PO is coded differently",
-        "The purchase order line carries a GL account or cost center different from the invoice line.",
+        "The purchase order line carries a GL account or cost center different from the invoice line. A warning when "
+        "the line is coded to another business unit (another job) than its PO line: approved so, the cost would go to "
+        "that job in the export and AP Coder would learn it. Only good to know when the line has no account yet, or "
+        "another object on the PO's business unit.",
         "The PO coding is usually right: use the 'Use the PO's coding' button under the PO match.",
     ),
     "PO_NOT_QUOTED": CheckHelp(

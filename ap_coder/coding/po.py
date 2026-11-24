@@ -14,7 +14,8 @@ compare what is billed with what was ordered (and received):
 * PO_QTY_OVER (warning): billed so far (this and earlier invoices) exceeds the quantity ordered
 * PO_NOT_RECEIVED (warning): billed so far exceeds the quantity received (3-way match)
 * PO_OVER_BILLED (warning): invoices on this PO add up to more than the PO total
-* PO_CODING_DIFFERS (info): the PO codes a line to another GL account / cost center
+* PO_CODING_DIFFERS (warning): a line is coded to another business unit (job) than its PO line's; (info) the PO codes
+  a line with no account yet, or with another object, to its own GL account / cost center
 * PO_NOT_QUOTED (info): no PO on the invoice although the vendor has open POs
 * PO_MATCHED (info): everything is within tolerance
 
@@ -40,10 +41,11 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from ..core.caches import MB, Bounded, size_of
-from ..core.chart import code_of, join_account, split_account
+from ..core.chart import clean, code_of, join_account, split_account, split_code
 from ..core.headers import jde_names, match_columns
 from ..core.keys import company_code, master_vendor_id, order_key_of, po_key
 from ..core.memory import vendor_key
+from ..core.reference_data import UNASSIGNED
 from ..core.safe import parse_amount
 from ..core.schema import VOUCHER_MATCH
 
@@ -1041,9 +1043,23 @@ def _line_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_now
 
 
 def _coding_findings(m: LineMatch, li: dict[str, Any], result: PoMatch) -> None:
+    """PO_CODING_DIFFERS on a line coded otherwise than its PO line: a warning when the line is on another business
+    unit (another job, which JD Edwards would be keyed with and AP Coder would learn: B-3043), else said (a line with
+    no account yet, or another object). The codes are compared as ``core/chart.py`` reads them; with no cost center
+    list (``po_cc`` blank, B-534) the PO line's business unit is its account's, compared only with a line that has
+    one."""
     number = result.po_number
-    gl, cc = li.get("predicted_gl_code") or "", li.get("predicted_cost_center") or ""
-    if (m.po_gl and m.po_gl != gl) or (m.po_cc and m.po_cc != cc):
+    gl, cc = (clean(li.get(k)) for k in ("predicted_gl_code", "predicted_cost_center"))
+    gl, cc = code_of(*split_code("" if gl == UNASSIGNED else gl)), "" if cc == UNASSIGNED else cc
+    po_gl, po_cc = code_of(*split_code(m.po_gl)), clean(m.po_cc)
+    po_unit = po_cc or (split_account(m.po_account)[0] if m.po_account != po_gl else "")
+    if cc and po_unit and cc != po_unit:
+        m.problems.append("coding")
+        result.findings.append(
+            (WARNING, "PO_CODING_DIFFERS", f"{po_label(number)} line {m.po_line} is for job {po_unit}; this line is "
+             f"coded to {cc}: use the PO's coding", m.invoice_line)
+        )  # fmt: skip
+    elif (po_gl and po_gl != gl) or (po_cc and po_cc != cc):
         m.problems.append("coding")
         target = " · ".join(x for x in (f"GL {m.po_gl}" if m.po_gl else "", m.po_cc) if x)
         result.findings.append(

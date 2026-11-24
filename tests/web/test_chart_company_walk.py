@@ -437,6 +437,52 @@ def test_the_batch_files_of_the_same_invoices_agree_with_the_sheet(chart_company
     assert typed == [(line["VNANI"], line["VNAA"], line["VNEXA"]) for line in lines]
 
 
+def test_a_po_invoice_coded_to_another_job_is_warned_and_the_pos_coding_keys_it_to_the_pos_job(
+    chart_company, chart_company_client
+):
+    """B-3043: the fuel supplier's invoice on a PO for one job, its lines coded to the same account on another job
+    (the first account offered under each may be: the supplier's past invoices, every job), was only "Good to know"
+    and went to JD Edwards on the other job. Now each line is a warning, Approve still open; "Use the PO's coding",
+    then Approve, with PO-matched vouchers off (the default: each voucher keyed with its G/L lines), puts the keying
+    sheet's and the batch files' G/L lines on the PO's job."""
+    from ap_coder.core import chart
+    from ap_coder.web.pages import exports as exports_page
+
+    store, client = chart_company.store, chart_company_client
+    invoice, invoice_id = chart_company.invoices["split_line"]
+    account, other = (part.account for part in invoice.lines[1].parts)
+    job, code = chart.split_account(account)
+    store.import_purchase_orders([
+        {"po_number": "45120", "vendor_name": "", "supplier_number": str(invoice.supplier.number), "order_type": "OP",
+         "order_company": "00210", "line_number": n, "erp_line": f"{n}.000", "description": line.description,
+         "quantity": float(line.quantity), "unit_price": float(line.unit_price), "amount": float(line.amount),
+         "open_quantity": float(line.quantity), "uom": "EA", "gl_code": code, "cost_center": job, "status": "open",
+         "currency": "CAD"}
+        for n, line in enumerate(invoice.lines, start=1)])  # fmt: skip
+    assert not jde_settings.load(store).po_matched
+    page = ReviewPage(client, invoice_id)
+    for n in range(1, len(invoice.lines) + 1):
+        page.set_account(n, other)
+    checked = post(client, f"/review/{invoice_id}/check", {**page.form, "po_number": "45120"}).json()
+    page.open()
+    assert checked["allow"], page.not_ready  # (a warning: Approve stays open)
+    assert f"PO 45120 line 2 is for job {job}; this line is coded to {chart.split_account(other)[0]}" in html.unescape(
+        page.findings["PO_CODING_DIFFERS"]
+    )
+    assert post(client, f"/review/{invoice_id}/po-coding", page.form).json()["ok"]
+    page.open()
+    assert [row.account for row in page.lines] == [account] * len(invoice.lines)
+    assert page.check()["allow"] and "PO_CODING_DIFFERS" not in page.findings
+    assert page.approve()["ok"]
+    batch, workbook = _sheet(client, store, [invoice_id])
+    (block,) = blocks(workbook[jde_keying.SHEET])
+    assert [line for line, _ in _lines(block)] == [account] * len(invoice.lines)
+    data, _name, _mime = exports_page.jde_file(store, batch)
+    with zipfile.ZipFile(io.BytesIO(data)) as files:
+        lines = list(csv.DictReader(io.StringIO(files.read(jde_zfiles.DIST_FILE).decode())))
+    assert [line["VNANI"] for line in lines] == [account] * len(invoice.lines)
+
+
 def test_the_excel_exports_by_gl_account_sheet_totals_each_whole_account_string(chart_company, chart_company_client):
     """B-2620: the Excel export's "By GL account" sheet added up one object and subsidiary across every business unit
     as one account ("7510.5107": ten business units' cell phones as one line), as Month-end did before B-2606. With a
