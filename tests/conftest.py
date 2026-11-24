@@ -433,6 +433,97 @@ def _copy(template: Path, target: Path) -> None:
         source.close()
 
 
+# --- New databases copied from one made as the run starts, in the test process only (D-336) -----------------------
+# A new Store makes the schema and runs every migration on it (35-40 ms), and the tests make about one for every two
+# tests. In the test process a Store on a path where nothing is yet starts from a copy of one new database made the
+# real way when the run starts (so always of this version's schema), with a summary_id and a rule_use_since of its own
+# as a new database writes them; then it starts as on any database already up to date (8 ms in all). A test of how a
+# new database is made marks itself ``real_new_database`` (or makes it inside ``with real_new_databases():``).
+# tests/meta/test_new_databases.py checks a copy is what the real way makes. The app, and the processes a test
+# starts, always make a new database the real way.
+
+_NEW_DATABASE: dict = {"off": False}  # "path": the run's new database; "pid": this process; "init": the real way
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "real_new_database: a new database is made the real way, not copied")
+
+
+def pytest_sessionstart(session):
+    import tempfile
+    import threading
+
+    from ap_coder.core.store import Store, _base
+
+    folder = Path(tempfile.mkdtemp(prefix="ap-coder-new-database-"))
+    with isolated(folder):
+        made = Store(folder / "ap_coder.db").path
+    _NEW_DATABASE.update(path=made, pid=os.getpid(), init=_base.StoreCore.__init__, lock=threading.Lock())
+    _base.StoreCore.__init__ = _new_store
+
+
+def pytest_sessionfinish(session):
+    import shutil
+
+    from ap_coder.core.store import _base
+
+    if "init" in _NEW_DATABASE:
+        _base.StoreCore.__init__ = _NEW_DATABASE.pop("init")
+        shutil.rmtree(_NEW_DATABASE["path"].parent, ignore_errors=True)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    with real_new_databases() if item.get_closest_marker("real_new_database") else contextlib.nullcontext():
+        return (yield)
+
+
+@contextlib.contextmanager
+def real_new_databases():
+    """Inside the block, a new database is made the real way (all of this process's threads)."""
+    was, _NEW_DATABASE["off"] = _NEW_DATABASE["off"], True
+    try:
+        yield
+    finally:
+        _NEW_DATABASE["off"] = was
+
+
+def _new_store(self, path=None):
+    """``StoreCore.__init__`` in the test process: where nothing is at ``path`` yet (no database, nor its journal or
+    write-ahead log left), it first gets a copy of the run's new database."""
+    if path is not None and not _NEW_DATABASE["off"] and _NEW_DATABASE["pid"] == os.getpid():
+        with _NEW_DATABASE["lock"]:
+            if not any(os.path.lexists(f"{path}{end}") for end in ("", "-journal", "-wal", "-shm")):
+                _copy_new_database(Path(path))
+    _NEW_DATABASE["init"](self, path)
+
+
+def _copy_new_database(target: Path) -> None:
+    """The run's new database, with an id and a first day of its own, put at ``target`` whole and only if nothing is
+    there yet (``os.link``: a process making it meanwhile keeps its own). When it can't be, nothing is put there and
+    the real way makes the database (and says what is wrong, as it always did)."""
+    import uuid
+
+    from ap_coder.core.store import migrations
+
+    made = _NEW_DATABASE["path"].with_name(f"copy-{uuid.uuid4().hex}.db")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with (contextlib.closing(_connect_without_syncing(_NEW_DATABASE["path"])) as source,
+              contextlib.closing(_connect_without_syncing(made)) as copy):  # fmt: skip
+            source.backup(copy)
+            with copy:  # as a new database writes them (summary.py, migrations.py)
+                copy.execute("UPDATE settings SET value = ? WHERE key = 'summary_id'", (uuid.uuid4().hex,))
+                copy.execute("UPDATE settings SET value = ? WHERE key = 'rule_use_since'", (migrations._now(),))
+        os.link(made, target)
+    except (OSError, sqlite3.Error):
+        pass
+    finally:
+        for end in ("", "-journal", "-wal", "-shm"):
+            with contextlib.suppress(OSError):
+                os.unlink(f"{made}{end}")
+
+
 @pytest.fixture
 def offline_guard():
     """This computer with no network: any connection or name lookup but 127.0.0.1 / ::1 / localhost is refused and
