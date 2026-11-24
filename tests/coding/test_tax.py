@@ -633,3 +633,36 @@ def test_no_tax_charged_by_a_supplier_outside_canada_says_its_gst_is_self_assess
         "no sales tax charged on a supply in Alberta; confirm it is exempt or zero-rated, or that the vendor is not "
         "registered for GST/HST (a supplier outside Canada not registered for GST/HST charges none: the GST/HST is "
         "paid at the border on goods (the customs entry), and self-assessed on services when it is due)")  # fmt: skip
+
+
+def test_a_billing_charging_its_gst_on_the_work_less_the_holdback_is_no_tax_base_mismatch(
+    chart_company, chart_company_client, tmp_path
+):
+    """B-3045: a subcontractor's progress billing charging the GST on its work less the holdback (60,000.00 of work,
+    6,000.00 held back, the GST on 54,000.00, as the Excise Tax Act's holdback rule allows: D-273) was told "the GST
+    charged looks wrong, ask the vendor for a corrected invoice" (TAX_BASE_MISMATCH) on default settings: the lines
+    were compared with the GST's base and the holdback read off the billing never taken off. Read from its PDF, it
+    has no such warning now; the same billing charged the GST on another base still has it."""
+    from ap_coder.ai.extraction import kept_extraction
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.bench import jde_po_vouchers
+    from tests.review_page import ReviewPage
+    from tests.webclient import web_settings
+
+    store = chart_company.store
+    folder = tmp_path / "set"
+    jde_po_vouchers.write_progress(folder, chart_company.truth)
+    pipeline = InvoicePipeline(web_settings(), store.reference_data(), store=store)
+    invoice_id = pipeline.process(folder / "gst_on_net.pdf").invoice_id
+    page = ReviewPage(chart_company_client, invoice_id)
+    assert "HOLDBACK_BY_HAND" in page.findings and "TAX_BASE_MISMATCH" not in page.findings, page.findings
+
+    inv = store.get_invoice(invoice_id)
+    read = {k: v for k, v in inv["ai_output"].items() if k != "gl_distribution"}
+    (gst,) = read["tax_lines"]
+    assert (gst["taxable_amount"], gst["tax_amount"], read["progress_billing"]["holdback"]) == (54000, 2700, 6000)
+    wrong = {**read, "tax_lines": [{**gst, "taxable_amount": 50000.0, "tax_amount": 2500.0}], "tax_total": 2500.0,
+             "grand_total": read["subtotal"] + 2500.0}  # fmt: skip
+    report = validate_coding(InvoiceCoding.model_validate(wrong), store.reference_data(), kept_extraction(inv))
+    (found,) = [i.message for i in report.issues if i.code == "TAX_BASE_MISMATCH"]
+    assert found.startswith("lines marked GST total 60,000.00 but the GST is charged on 50,000.00"), found
