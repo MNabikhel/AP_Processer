@@ -54,7 +54,7 @@ def test_a_module_directly_in_tests_is_no_test_and_a_word_in_quotes_no_use_of_a_
     assert texts and not [p for p in texts if p.parent == ROOT / "tests"]
     found = check.picks(["tests/test_map.py", "scripts/combine.py"])
     assert "tests/test_map.py" not in found["tests/test_map.py"] | found["scripts/combine.py"]
-    assert "tests/meta/test_test_map.py" in found["tests/test_map.py"]  # (its own tests, by its name)
+    assert "tests/meta/test_test_map.py" in found["tests/test_map.py"]  # (its own tests, which import it)
     a, b, c = (ROOT / f"tests/x/test_{n}.py" for n in "abc")
     texts = {a: 'subprocess.run(["coverage", "combine"])', b: 'load_script("combine", "ap_script_combine")',
              c: 'names = ("combine", "upgrade")  # each of ROOT / "scripts"'}  # fmt: skip
