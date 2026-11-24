@@ -13,7 +13,8 @@ leaving the machine:
   accepted or corrected the AI's coding. This is the learning memory.
 
 One class, ``Store``, built from a part per subject (D-69): ``_base`` (the schema, migrations, connections, shared
-helpers), ``accounts`` (GL accounts, cost centers, the audit trail ``events``, bank accounts, tax setup), ``invoices``
+helpers), ``accounts`` (GL accounts, cost centers, the audit trail ``events``, bank accounts, tax setup, the settings
+table ``get_setting`` / ``set_setting``), ``invoices``
 (saving, approving ``approve_invoice``, the second approval ``final_approve``), ``register`` (the ERP's invoice
 register, JD Edwards' vouchers in it, D-181), ``purchasing`` (POs, export batches), ``capture`` (supplier learning,
 touchless, reader scores, the Azure check's queue), ``page_queue`` (the page reader's queue, D-171), ``lessons``

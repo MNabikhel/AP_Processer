@@ -31,7 +31,8 @@ A package's map is its `__init__.py` docstring: read it before searching.
   `ai/lessons.py`. Purchase orders: matching `coding/po.py`, kept in `core/store/purchasing.py`.
 - The database (`Store`): `core/store/`, one part per subject; its schema `_base.py` (`SCHEMA_VERSION`), an older one
   brought up to date `migrations.py`; SQL only in the store, SQLite's own behind `dialect.py`. Settings
-  `core/config.py`, the data folder `core/paths.py`, the dashboard's HTML pieces `core/ui.py`, the command line
+  `core/config.py` (the .env; the data's own: `Store.get_setting`), the data folder `core/paths.py`, the dashboard's
+  HTML pieces `core/ui.py`, the command line
   `ops/cli.py` (`build_parser`). Who the reviewer is: `web/identity.py`. Server mode: `web/roles.py` (every route needs
   a rule naming a permission, `tests/web/test_roles.py`), the permissions and built-in roles `core/permissions.py`
   (their access frozen in `tests/web/test_role_permissions.py`), the Admin panel `web/pages/admin.py`, `web/access.py`,
@@ -99,8 +100,9 @@ Every step re-reads the whole conversation, so fewer, fuller steps cost less:
 - Put independent lookups in one command (several `grep -n` / `sed -n A,Bp` joined with `;`), and read the lines
   around a match rather than whole files.
 - Make the change, then check once with `python scripts/check.py`; don't wait on the whole suite (CI runs it).
-- Search code with `grep -rn --include=*.py` (skips `__pycache__`). `docs/archive/` (bugs B-01 to B-1441 and
-  decisions in full) is skipped by ripgrep and the Grep tool (`.ignore`): look a number up (or D-34) with
+- Search code with `grep -rn --include=*.py PATTERN ap_coder tests scripts` (skips `__pycache__`; never `.`:
+  `.claude/worktrees/` holds other checkouts). `docs/archive/` (bugs B-01 to B-1441 and decisions in full) is skipped
+  by ripgrep and the Grep tool (`.ignore`): look a number up (or D-34) with
   `grep -rnw "B-1234" docs`: the logs, the archive and the entry files.
 - A refactor, clean-up or speed-up is proven to change nothing with `python scripts/same_behaviour.py` (probes on
   origin/main and this checkout, compared; D-124), plus the tests.
