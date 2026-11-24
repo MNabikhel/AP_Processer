@@ -63,6 +63,17 @@ def test_entries_are_complete():
     assert help_for("NOPE") is None
 
 
+def test_no_help_says_to_approve_anyway_what_approve_anyway_never_covers():
+    """B-3046: the help of JDE_TAX_AREA said to key an invoice taxed for two provinces by hand "and approve it with a
+    reason", but every JD Edwards hold keeps Approve closed, with no "Approve anyway" (``invoice_findings.is_hard``;
+    ``tests/web/test_hard_cases.py::test_o_lines_for_two_provinces_are_held``)."""
+    from ap_coder.web.invoice_findings import HARD_CODES
+
+    told = re.compile(r"\bapprove it\b[^.]*\b(?:anyway|with a reason)\b", re.I)
+    hard = [code for code in CHECKS if code in HARD_CODES or code.startswith("JDE_")]
+    assert len(hard) > 10 and [code for code in hard if told.search(CHECKS[code].action)] == []
+
+
 def test_help_page_search_filters_the_catalog():
     from ap_coder.web.pages.help import matching_checks
 
