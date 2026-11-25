@@ -14,6 +14,7 @@ from ap_coder.core.store.users import LOCKED, WRONG, WRONG_CODE, LoginRefused
 from tests.webclient import enrol
 
 GOOD = "correct horse battery"  # 21 characters
+APP_SCRYPT_N = users.SCRYPT_N  # the app's cost: conftest hashes every test's passwords at a small one
 
 
 @pytest.fixture
@@ -46,7 +47,8 @@ def with_app(store: Store, username: str = "ann") -> int:
 # --- Password hashing and policy -----------------------------------------------------------------------------------
 
 
-def test_a_password_hash_is_scrypt_with_its_settings_and_salt_and_round_trips():
+def test_a_password_hash_is_scrypt_with_its_settings_and_salt_and_round_trips(monkeypatch):
+    monkeypatch.setattr(users, "SCRYPT_N", APP_SCRYPT_N)
     stored = users.hash_password(GOOD)
     kind, n, r, p, salt, digest = stored.split("$")
     assert (kind, n, r, p) == ("scrypt", "16384", "8", "1")

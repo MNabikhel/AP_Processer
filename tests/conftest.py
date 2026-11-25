@@ -274,6 +274,16 @@ def no_local_model(monkeypatch):
     local_llm.forget_status()
 
 
+@pytest.fixture(autouse=True)
+def cheap_password_hashes(monkeypatch):
+    """Passwords are hashed at scrypt's cost 2**4 in the test process, not the app's 2**14 (about 35 ms a hash, over
+    1,300 hashes a run): a hash is checked at the cost written in it, so signing in works the same. Processes a test
+    starts (``python -m ap_coder serve``) hash at the app's cost; tests/core/test_users.py checks that cost."""
+    from ap_coder.core.store import users
+
+    monkeypatch.setattr(users, "SCRYPT_N", 2**4)
+
+
 @pytest.fixture
 def store(tmp_path):
     """A new database in the test's own data folder (a test file may define a ``store`` of its own)."""

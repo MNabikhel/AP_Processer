@@ -331,7 +331,7 @@ def web(tmp_path):
 
     handler = functools.partial(Quiet, directory=str(site))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
     yield site, server.server_address[1]
     server.shutdown()
     server.server_close()
@@ -1288,7 +1288,7 @@ def model_sites(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("AP_ALLOW_INTERNET", "1")  # (the launcher's or the bundle builder's opt-in)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Sites)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
     yield server.server_address[1], served, asked
     server.shutdown()
     server.server_close()
@@ -1846,7 +1846,7 @@ def test_the_ocr_models_are_downloaded_through_the_computers_proxy(launch, monke
             pass
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Proxy)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
     try:
         for name in ("HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"):
             monkeypatch.delenv(name, raising=False)

@@ -21,6 +21,7 @@ from ap_coder.ai.inference import ChatTimeout, CodingError, InvoiceCoder, sugges
 from ap_coder.ai.local_llm import BACKUP, PRIMARY
 from ap_coder.ai.pipeline import ArrivalBreaker, InvoicePipeline
 from ap_coder.bench.fake_model import READER, FakeModel, page_key
+from ap_coder.core import config
 from ap_coder.core.config import Settings
 from ap_coder.core.paths import PROJECT_DIR
 from ap_coder.core.store import Store, load_sample_setup
@@ -116,6 +117,7 @@ def test_without_a_backup_nothing_changes(tmp_path, monkeypatch, reference):
 
 
 def test_the_backup_addresses_are_read_from_the_env(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "_resolved", lambda *a, **k: [])  # not looked up (a failed lookup: 3 s on Windows)
     monkeypatch.setenv("AP_LLM_BASE_URL", "studio.local:1234")
     monkeypatch.setenv("AP_LLM_BACKUP_URL", "http://macmini.local:1234/v1/chat/completions")
     settings = Settings.from_env(tmp_path / "missing.env")
