@@ -11,7 +11,8 @@ The tests picked for a changed module are its own (``tests/<folder>/test_<module
 ap_coder/, or those named in ``OWN``), the test files that import it by name (a script: those that load it; a module
 more than ``WIDE`` of them import: the quickest of them, up to ``BUDGET`` seconds) and those that name a function
 the diff changed (with a test map, tests/test_map.json.gz: those that ran it, up to ``BUDGET`` seconds, D-333); a
-changed test file runs itself; a changed template, page script or stylesheet runs the tests named after it, in a
+changed test file runs itself, and a test file or a helper of the tests the test files that import it (past ``WIDE``
+the quickest, as a module's); a changed template, page script or stylesheet runs the tests named after it, in a
 browser too; a changed doc runs the rules every doc is held to and the tests that open it; a file every test uses
 (conftest.py, pyproject.toml, the shared helpers...) runs the whole default run. Any change to the app, the scripts
 or the tests also runs the rules that check the whole tree (``RULES``, D-329, their slow tests too). A changed
@@ -47,7 +48,7 @@ BUDGET = 20.0  # up to these seconds of the default run (tests/test_times.json),
 UNTIMED = 2.0  # the seconds taken for a test file tests/test_times.json has no time for yet
 NEAR = 110  # a changed function this long (tests/meta/test_function_length.py: at most 120 lines) and
 NEAR_PART = 950  # a part of the store this long (tests/core/test_store_package.py: under 1,000) get a warning
-PARALLEL_SECONDS = 15  # a run longer than this (tests/test_times.json) goes on several cores (pytest-xdist)
+PARALLEL_SECONDS = 8  # a run longer than this (tests/test_times.json) goes on several cores (pytest-xdist)
 SLOW_SECONDS = 15  # a test file whose slow tests take longer together (tests/test_times.json) leaves them to CI
 OLD_WINDOWS_CLOCK = False  # True: the tests on old Windows' clock (tests/conftest.py, AP_TEST_OLD_WINDOWS_CLOCK)
 
@@ -88,6 +89,7 @@ OWN = {
     "docs/QUICK_START.md": ["tests/web/test_web_help.py"],  # shown on the Help page
     "docs/WHATS_NEW.md": ["tests/web/test_web_help.py"],
     "scripts/ci/fake_lm_studio.py": ["tests/bench/test_fake_model.py"],
+    "tests/offline_guard_site/sitecustomize.py": ["tests/offline/test_offline_guard.py"],  # a subprocess's guard
 }
 # What the pilot tester's first day (scripts/ci/first_day.py) walks through: a change to one runs the walk (a folder
 # ends in "/"). Its CI job is Windows only, so a page or wording change otherwise fails it only there.
@@ -181,11 +183,15 @@ def own_tests(f: str, test_texts: dict[Path, str], times: dict[str, list[float]]
         return doc_tests(f, test_texts)
     if f in OWN:
         return {p for t in OWN[f] for p in ROOT.glob(t)}
-    if path.parts[:1] == ("tests",) and len(path.parts) > 2 and path.name.startswith("test_") and path.suffix == ".py":
-        return {ROOT / path} if (ROOT / path).is_file() else set()
-    stem = path.parent.name if path.name == "__init__.py" else path.stem.lstrip("_")
-    own = test_files(f"test_{stem}*.py") | test_files(f"test_web_{stem}*.py")
     users: list[Path] = []
+    if path.parts[:1] == ("tests",) and path.suffix == ".py" and f not in SHARED and path.name != "__init__.py":
+        # A test file runs itself; a test file or a helper of the tests also the test files that import it (one hop),
+        # never the tests of an app module of its name (tests/jde_exports.py is not ap_coder/bench/jde_exports.py).
+        test = len(path.parts) > 2 and path.name.startswith("test_") and (ROOT / path).is_file()
+        own, users = {ROOT / path} if test else set(), test_users(f, test_texts)
+    else:
+        stem = path.parent.name if path.name == "__init__.py" else path.stem.lstrip("_")
+        own = test_files(f"test_{stem}*.py") | test_files(f"test_web_{stem}*.py")
     if path.parts[:1] == ("ap_coder",) and path.suffix == ".py" and path.name != "__main__.py":
         parts = path.parent.parts if path.name == "__init__.py" else path.with_suffix("").parts
         users = importers(".".join(parts), test_texts)
@@ -203,6 +209,17 @@ def own_tests(f: str, test_texts: dict[Path, str], times: dict[str, list[float]]
         said.append(f"{len(users)} test files use it: the quickest {len(taken)} run, {len(left)} left to CI (about "
                     f"{estimate(left, times):.0f} s more)")  # fmt: skip
     return own | taken
+
+
+def test_users(f: str, test_texts: dict[Path, str]) -> list[Path]:
+    """The test files (but itself) that import a test file or a helper of the tests by name: tests/erp/test_jde.py by
+    ``from tests.erp.test_jde import``, ``from tests.erp import test_jde`` or ``import tests.erp.test_jde``."""
+    package, _, name = ".".join(Path(f).with_suffix("").parts).rpartition(".")
+    pattern = re.compile(
+        rf"(?:from|import)\s+{re.escape(package)}\.{name}\b"
+        rf"|from\s+{re.escape(package)}\s+import\s+(?:\([^)]*|[^\n]*)\b{name}\b"
+    )
+    return [path for path, text in test_texts.items() if path != ROOT / f and name in text and pattern.search(text)]
 
 
 def checks_whole_tree(f: str) -> bool:
@@ -303,9 +320,11 @@ def tests_for(files: list[str], found: dict[str, set[str]] | None = None) -> lis
 
 
 def untested(found: dict[str, set[str]]) -> list[str]:
-    """The changed modules of the app (of :func:`picks`) no test file is picked for, the rules aside."""
-    return [f for f, tests in found.items() if f.startswith("ap_coder/") and f.endswith(".py") and not tests
-            and (ROOT / f).is_file()]  # fmt: skip
+    """The changed modules of the app and helpers of the tests (of :func:`picks`) no test file is picked for, the rules
+    aside: not a package's ``__init__.py`` of the tests, nor a file of ``SHARED`` (which runs them all)."""
+    return [f for f, tests in found.items() if f.endswith(".py") and not tests and (ROOT / f).is_file()
+            and (f.startswith("ap_coder/") or (f.startswith("tests/") and f not in SHARED
+                                               and not f.endswith("/__init__.py")))]  # fmt: skip
 
 
 def is_rule(test: str) -> bool:

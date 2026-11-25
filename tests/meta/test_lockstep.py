@@ -6,11 +6,25 @@ self-test showing it finds what it should."""
 from __future__ import annotations
 
 import ast
+import csv
 import functools
+import itertools
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from types import SimpleNamespace
 
+from ap_coder.ai.offline_coder import _OFFICIAL
+from ap_coder.ai.pipeline import CUT_OFF
+from ap_coder.capture import DI_TAX_RATES
+from ap_coder.capture.reader.totals import _RATES
+from ap_coder.coding.bulk import AFTER_PROCESSING
+from ap_coder.coding.line_tax import supply_province
+from ap_coder.coding.tax import PROVINCES
+from ap_coder.coding.terms import parse_terms, payment
+from ap_coder.coding.validation import currency_not_found
+from ap_coder.erp.insights import _may_discount
 from tests.conftest import ROOT
+from tests.ops.test_help import codes_raised_in
 
 # Events a store function that changes an invoice logs which are not a revision: why a review screen drawn before one
 # is still right.
@@ -374,3 +388,149 @@ def later():
     found = out_of_order({"jde_accounts": jde_imports(tree), "jde_formats": set(), "jde_new": set()}, order)
     assert found == ["jde_new: not in ORDER", "jde_accounts imports jde_match", "jde_accounts imports jde_review",
                      "jde_accounts imports jde_voucher", "jde_accounts imports jde_zfiles"]  # fmt: skip
+
+
+# --- (e) A finding made after the coding's checks is kept when the queue checks again --------------------------------
+
+# The modules whose findings are made after the coding's checks (``finalise_coding``): the readers, the AI reviewer and
+# Azure's second reading. Not ai/corrections.py: it reads the coding's own codes (TOTAL_MISMATCH...), it raises none.
+AFTER_THE_CHECKS = ("ap_coder/capture/", "ap_coder/ai/verifier.py", "ap_coder/ai/azure_check.py")
+
+
+def raised_after_the_checks(texts: dict[str, str]) -> set[str]:
+    """The codes the modules of ``texts`` (by their path from the root) raise after the coding's checks."""
+    return set().union(*(codes_raised_in(text) for name, text in texts.items() if name.startswith(AFTER_THE_CHECKS)))
+
+
+def test_a_finding_made_after_the_codings_checks_is_kept_when_the_queue_checks_again():
+    """The queue works today's checks out again (bulk approval, the second approval) and keeps of the stored findings
+    only those in ``bulk.AFTER_PROCESSING`` (``bulk._kept``): a reader's or a reviewer's code left out of it is dropped
+    unseen. The file cut off is the pipeline's own (``pipeline.CUT_OFF``), and a currency not printed is raised from
+    capture/bridge.py through ``validation.currency_not_found``, which a scan by module misses: both named here."""
+    app = sorted((ROOT / "ap_coder").rglob("*.py"))
+    raised = raised_after_the_checks({p.relative_to(ROOT).as_posix(): p.read_text(encoding="utf-8") for p in app})
+    assert len(raised) > 10  # (the scan still finds them)
+    assert (raised | {CUT_OFF, currency_not_found().code}) - AFTER_PROCESSING == set()
+
+
+def test_the_after_the_checks_rule_finds_a_code_a_reader_raises():
+    texts = {
+        "ap_coder/capture/reader/new.py": 'issues.append((WARNING, "READ_NEW", "the reader found something new"))',
+        "ap_coder/ai/verifier.py": 'Issue(INFO, "VERIFIER_NEW", "the reviewer says something new")',
+        "ap_coder/coding/validation.py": 'issues.append(Issue(ERROR, "CODED_NEW", "a check of the coding"))',
+    }
+    assert raised_after_the_checks(texts) == {"READ_NEW", "VERIFIER_NEW"}
+
+
+# --- (f) Learned tax codes are looked up by the province they are recorded under -----------------------------------
+
+
+def supply_rules(tree: ast.Module) -> set[tuple[str, ...]]:
+    """The names each ``ship_to_province or ...`` of ``code_from_capture`` tries in turn: where the offline coder takes
+    an invoice to be supplied, for its tax lines and the tax codes it learned (``line_tax.learned_codes``)."""
+    coder = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "code_from_capture")
+    return {tuple(ast.unparse(v) for v in node.values) for node in ast.walk(coder)
+            if isinstance(node, ast.BoolOp) and ast.unparse(node.values[0]) == "ship_to_province"}  # fmt: skip
+
+
+def recorded_elsewhere(rule: tuple[str, ...]) -> list[tuple[str, str, str]]:
+    """Each (ship-to, our province, the vendor's) of Canadian provinces or none where the first of ``rule``'s names
+    that is set is not ``line_tax.supply_province``, the province an approval records the codes under."""
+    found = []
+    for ship_to, ours, vendor in itertools.product(("", *PROVINCES), repeat=3):
+        known = {"ship_to_province": ship_to, "ours": ours, "supplier_province": vendor}
+        looked_up = next((known[name] for name in rule if known[name]), "")
+        if supply_province(SimpleNamespace(ship_to_province=ship_to, supplier_province=vendor), ours) != looked_up:
+            found.append((ship_to, ours, vendor))
+    return found
+
+
+def test_learned_tax_codes_are_looked_up_by_the_province_they_are_recorded_under():
+    """An approval records each line's tax code under where the invoice was supplied (``line_tax.supply_province``,
+    ``feedback.tax_province``), and the offline coder looks the codes up by its own ``ship_to_province or ours or
+    supplier_province``, taking only rows of that province (``line_tax.learned_codes``): two copies of one rule.
+    Neither has ``tax.supply_source``'s site step (the province of the cost center every line goes to, which the Tax
+    check uses): the coder looks them up from what the page and Settings say, and an approval must record them by the
+    same rule. Canadian provinces and none only: a ship-to outside Canada is recorded under the next province but
+    looked up as it is, and the chat model's lines (``pipeline._model_line_taxes``) are looked up without our
+    province, questions for after the owner's test."""
+    rules = supply_rules(_trees("ap_coder/ai")["ap_coder/ai/offline_coder.py"])
+    assert rules  # (the coder still writes its rule out)
+    assert {rule: recorded_elsewhere(rule)[:3] for rule in rules} == {rule: [] for rule in rules}
+
+
+def test_the_supply_rule_finds_a_lookup_in_another_order():
+    source = "def code_from_capture():\n    f(ship_to_province or ours or supplier_province, a or b)\n"
+    assert supply_rules(ast.parse(source)) == {("ship_to_province", "ours", "supplier_province")}
+    assert recorded_elsewhere(("ship_to_province", "supplier_province", "ours"))[:1] == [("", "AB", "BC")]
+
+
+# --- (g) The discount report reads every invoice whose terms give a discount ----------------------------------------
+
+# Terms as invoices print them and as the vendor master says them (JD Edwards' in words): a discount or none, a net or
+# none, prox, end of month, a fixed day, a late-payment rate that is no discount, words not understood.
+TERMS = ("", "Net 30", "2/10 Net 30", "2% 10 days", "Due on receipt", "As agreed", "Net 30 EOM", "Net 30 prox",
+         "2/10th prox net 30th", "2% 10th prox", "1% 10, 25th prox", "Net 15th prox", "Due end of month",
+         "Due 2026-12-31", "Net 30, 1.5% 10th prox interest on overdue accounts", "2/10 net 12 months", "fin de mois",
+         "1%/15/net 45")  # fmt: skip
+
+
+def discounts_left_out(may_discount: Callable[[str, str], bool]) -> list[tuple[str, str]]:
+    """Each (printed, the vendor's) pair of ``TERMS`` whose discount ``terms.payment`` finds and ``may_discount`` (the
+    Insights page's first sift) leaves out."""
+    coding = {"invoice_date": "2026-09-15", "grand_total": 100}
+    return [(printed, vendor) for printed, vendor in itertools.product(TERMS, repeat=2)
+            if payment({**coding, "payment_terms": printed}, vendor_terms=vendor).discount_by is not None
+            and not may_discount(printed, vendor)]  # fmt: skip
+
+
+def test_the_discount_report_reads_every_invoice_whose_terms_give_a_discount():
+    """``insights._may_discount`` copies ``terms.payment``'s rule for when the vendor master's terms take the place of
+    the printed ones, so that Insights reads only the invoices that may have a discount: one it leaves out is missing
+    from the discounts taken and missed, unseen."""
+    assert discounts_left_out(_may_discount) == []
+
+
+def test_the_discount_rule_finds_a_discount_only_the_vendors_terms_give():
+    def printed_only(printed: str, vendor: str) -> bool:
+        return bool(parse_terms(printed).discount_pct)
+
+    assert ("", "2/10 Net 30") in discounts_left_out(printed_only)
+
+
+# --- (h) Every tax rate in force is one the readers know ------------------------------------------------------------
+
+
+def rates_in_force() -> set[tuple[str, float]]:
+    """(tax, rate) of each rate of data/canada_tax_rates.csv with no end date."""
+    with (ROOT / "data" / "canada_tax_rates.csv").open(encoding="utf-8", newline="") as f:
+        return {(row["tax_type"], float(row["rate"])) for row in csv.DictReader(f) if not row["effective_to"]}
+
+
+def rates_unknown(in_force: set[tuple[str, float]], known: dict[str, dict[str, Iterable[float]]]) -> list[str]:
+    """Each rate in force that a list of the rates by tax (``known``: {where: {tax: rates}}) doesn't have."""
+    return [f"{where}: {tax} {rate:g}" for where, rates in known.items() for tax, rate in sorted(in_force)
+            if rate not in rates.get(tax, ())]  # fmt: skip
+
+
+def test_every_tax_rate_in_force_is_one_the_readers_know():
+    """The rates a Canadian invoice charges are written out three times besides the rate table: the rule reader's
+    (``totals._RATES``), Azure's reading's (``capture.DI_TAX_RATES``) and the offline coder's
+    (``offline_coder._OFFICIAL``, a rate worked out from rounded amounts snaps to one of them). A rate in force left
+    out of one is not known there. ``DI_TAX_RATES`` holds only a rate that names one tax, so a rate two taxes share
+    needn't be in it."""
+    in_force = rates_in_force()
+    shared = {rate for tax, rate in in_force if any(r == rate and t != tax for t, r in in_force)}
+    azure: dict[str, list[float]] = {}
+    for rate, field in DI_TAX_RATES.items():
+        azure.setdefault(field.split("_")[0].upper(), []).append(rate)
+    known = {"totals._RATES": {field.split("_")[0].upper(): rates for field, rates in _RATES.items()},
+             "offline_coder._OFFICIAL": _OFFICIAL}  # fmt: skip
+    assert len(in_force) >= 6
+    assert rates_unknown(in_force, known) == []
+    assert rates_unknown({(t, r) for t, r in in_force if r not in shared}, {"capture.DI_TAX_RATES": azure}) == []
+
+
+def test_the_rates_rule_finds_a_new_rate():
+    known = {"x": {"GST": (0.05,), "PST": (0.06, 0.07)}}
+    assert rates_unknown({("GST", 0.05), ("PST", 0.07), ("PST", 0.09)}, known) == ["x: PST 0.09"]
