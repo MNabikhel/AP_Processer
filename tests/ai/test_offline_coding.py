@@ -8,6 +8,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.store import Store
 from tests.conftest import SAMPLES
+from tests.webclient import web_settings
 
 STEM = "harbourview_NS_HST_HPS-2026-0347"
 
@@ -27,14 +28,9 @@ def test_a_tax_above_the_provinces_rate_is_not_a_partial_base():
     assert (rst.rate, rst.province, rst.taxable_amount) == (0.07, "MB", 900.0)
 
 
-def _offline_settings():
-    s = Settings()
-    return replace(s, llm=replace(s.llm, provider="off"))
-
-
 def test_a_pdf_is_read_and_coded_with_no_azure_and_no_model(tmp_path, reference):
     store = Store(tmp_path / "ap.db")
-    result = InvoicePipeline(_offline_settings(), reference, store=store).process(SAMPLES / f"{STEM}.pdf")
+    result = InvoicePipeline(web_settings(), reference, store=store).process(SAMPLES / f"{STEM}.pdf")
 
     assert result.ok, result.error
     truth = json.loads((SAMPLES / "ground_truth" / f"{STEM}.json").read_text(encoding="utf-8"))
@@ -55,7 +51,7 @@ def test_a_pdf_is_read_and_coded_with_no_azure_and_no_model(tmp_path, reference)
 
 def test_approved_coding_is_reused_for_the_next_invoice_from_that_vendor(tmp_path, reference):
     store = Store(tmp_path / "ap.db")
-    pipe = InvoicePipeline(_offline_settings(), reference, store=store)
+    pipe = InvoicePipeline(web_settings(), reference, store=store)
     first = pipe.process(SAMPLES / f"{STEM}.pdf")
     truth = json.loads((SAMPLES / "ground_truth" / f"{STEM}.json").read_text(encoding="utf-8"))
     final = dict(first.output)
@@ -75,7 +71,7 @@ def test_approved_coding_is_reused_for_the_next_invoice_from_that_vendor(tmp_pat
 def test_every_sample_reads_right_offline(tmp_path, reference):
     """All ten samples, no Azure and no model: header, lines, provinces and tax lines as the ground truth;
     nothing is wrong, only accounts left to pick."""
-    pipe = InvoicePipeline(_offline_settings(), reference, store=Store(tmp_path / "ap.db"))
+    pipe = InvoicePipeline(web_settings(), reference, store=Store(tmp_path / "ap.db"))
     for pdf in sorted(SAMPLES.glob("*.pdf")):
         truth = json.loads((SAMPLES / "ground_truth" / f"{pdf.stem}.json").read_text(encoding="utf-8"))
         result = pipe.process(pdf)
@@ -95,7 +91,7 @@ def test_queue_card_confidence_follows_the_review_screen(tmp_path, reference):
     from ap_coder.core.store import REVIEW
 
     store = Store(tmp_path / "ap.db")
-    result = InvoicePipeline(_offline_settings(), reference, store=store).process(SAMPLES / f"{STEM}.pdf")
+    result = InvoicePipeline(web_settings(), reference, store=store).process(SAMPLES / f"{STEM}.pdf")
     assert store.get_invoice(result.invoice_id)["status"] == REVIEW
     assert store.refresh_confidence(result.invoice_id, 0.42, True)
     assert store.get_invoice(result.invoice_id)["adjusted_confidence"] == 0.42

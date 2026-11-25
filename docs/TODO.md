@@ -42,6 +42,8 @@ decision number then says what was done).
   `tests/core/test_imports.py`, Python 3.12): a writer held the lock for 30 s. The children now print SQLite's name for
   the error, so read it from the next failure first; every call opens and closes its own connection
   (`core/store/_base.py`), so the WAL files come and go between processes.
-- **Keep the test map and the test times fresh (after Monday).** CI keeps no per-test times: add `--junitxml` and an
-  upload to each tests part, then a nightly job that refreshes `tests/test_times.json` and records
-  `tests/test_map.json.gz` (`python -m tests.test_map record`, D-333) and opens a pull request with both.
+- **Keep the test map and the test times fresh (after Monday).** Each tests part of CI now keeps its `--junitxml`
+  report (the artifact `junit-<OS>-python-<version>-<whole or fast>-<n>`, 14 days). Still to do: a nightly job that
+  refreshes `tests/test_times.json` from main's reports (`python -m tests.times`) and records `tests/test_map.json.gz`
+  (`python -m tests.test_map record`, D-333) and opens a pull request with both; then Windows' own times for its
+  parts (`tests/times.py` and `_shard` in `tests/conftest.py`).
