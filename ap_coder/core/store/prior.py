@@ -14,11 +14,9 @@ from itertools import groupby
 from operator import itemgetter
 from typing import Any
 
-from ..memory import ACCEPTED, CODED, CORRECTED
 from .journal import VERSION_KEY, without_voids
 from .summary import fetch_rows
 
-PERSON_DECIDED = (ACCEPTED, CORRECTED, CODED)  # an approval a person gave here, line by line (not bulk, not history)
 DESCRIPTIONS_READ = 400  # of a vendor's approved lines, the latest different ones: what its accounts are told apart by
 _APPROVED = """SELECT final_gl, COALESCE(final_cc, '') AS final_cc, outcome, COUNT(*) AS lines,
     COUNT(DISTINCT invoice_id) AS invoices, MAX(created_at) AS last_at, MAX(id) AS newest

@@ -10,7 +10,6 @@ import re
 import shutil
 import xml.etree.ElementTree as ET
 import zipfile
-from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,7 +17,6 @@ from markupsafe import Markup
 
 from ap_coder.capture.supplier import HELD, SUPERVISED
 from ap_coder.capture.workflow import learn_from_approval
-from ap_coder.core.config import Settings
 from ap_coder.core.store import REVIEW, load_sample_setup
 from ap_coder.erp.insights import Assumptions
 from ap_coder.web import charts
@@ -30,12 +28,6 @@ from tests.webclient import PAGE
 
 SVG = "{http://www.w3.org/2000/svg}"
 PAGES = ("/learning", "/learning?tab=suppliers", "/learning?tab=readers", "/spend", "/insights", "/activity")
-
-
-@pytest.fixture
-def client(store):
-    s = Settings()
-    return TestClient(create_app(replace(s, llm=replace(s.llm, provider="off")), store), base_url="http://localhost")
 
 
 def _approve(store, invoice_id, final, reviewer="Ann"):

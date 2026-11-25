@@ -365,7 +365,9 @@ Everything AP Coder keeps is in one **data folder**, outside the code: by defaul
 (Mac: `~/APCoder`). It holds the database (`ap_coder.db`: setup, invoices, reviews, the learning memory),
 the `invoices` folder, the daily `backups` (the database and the invoice files) and exports. The folder is recorded in
 `C:\Users\<you>\.ap_coder\settings.json`. Don't put the data folder on OneDrive or a network share: the
-open database can be damaged by syncing.
+open database can be damaged by syncing. `.ap_coder` holds AP Coder's own notes for you (that record, your name and the
+logs IT may ask for); AP Coder hides it in File Explorer, and **Settings → Data & backups** names all three places
+(the data folder, the program and that one). Leave it where it is: every version of AP Coder, older ones too, uses it.
 
 ## Backup
 

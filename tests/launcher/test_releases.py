@@ -81,7 +81,7 @@ class GitHub:
 
         self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}"
-        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
         self.publish(release_zip())
 
     def publish(self, data: bytes, listed: bytes | None = None, zip_url: str = "") -> None:

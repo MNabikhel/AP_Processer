@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
-from fastapi.testclient import TestClient
 
-from ap_coder.core.config import Settings
 from ap_coder.core.store import REVIEW
-from ap_coder.web.app import create_app
 from tests.conftest import fill_from
 from tests.webclient import PAGE
 
@@ -17,12 +12,6 @@ from tests.webclient import PAGE
 @pytest.fixture(autouse=True)
 def reviewer_name(monkeypatch):
     monkeypatch.setenv("AP_REVIEWER", "Jordan Lee")
-
-
-@pytest.fixture
-def client(store):
-    s = Settings()
-    return TestClient(create_app(replace(s, llm=replace(s.llm, provider="off")), store), base_url="http://localhost")
 
 
 def test_the_welcome_pages_sample_accounts_never_go_into_an_imported_chart(client, store):

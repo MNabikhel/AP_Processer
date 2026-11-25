@@ -38,8 +38,8 @@ JDE_REGISTER = (
     "CREATE INDEX IF NOT EXISTS erp_vouchers_bill ON erp_vouchers (vendor_key, number_key, total)",
     "CREATE INDEX IF NOT EXISTS erp_vouchers_date ON erp_vouchers (invoice_date, seen)",
 )
-# What a voucher of JD Edwards' voucher list keeps besides (B-2084): its document number and batch, read back onto the
-# reviewed invoice (``erp_vouchers_of``), and the currency of its gross. Added to a table made before them.
+# What a voucher of JD Edwards' voucher list keeps besides (B-2084): its document number and batch, read back by bill
+# (``erp_vouchers_of``), and the currency of its gross. Added to a table made before them.
 VOUCHER_COLUMNS = ("document", "batch", "currency", "gl_date")  # (the G/L date: the period a list covers, B-2164)
 WRITE_ROWS = 500  # vouchers removed in one transaction: each a moment, never long enough to hold up an approval
 # When the register was last cleared or replaced (a setting): what the JD Edwards sync's reads before then wrote is
@@ -380,10 +380,11 @@ class RegisterMixin:
 
     def erp_vouchers_of(self, vendor_name: str, invoice_number: str, total: float | None,
                         an8: str | None = None) -> list[dict[str, Any]]:  # fmt: skip
-        """JD Edwards' vouchers of a bill in the register, each with its key, document number, batch, currency, date
-        and gross: what a reviewed invoice's sign-off says of where it is in JD Edwards. The bill is found as
-        ``in_erp`` finds it (the vendor's name, or its supplier number: ``an8``; None: the vendor list's ERP ID of the
-        vendor) with this invoice number and gross. [] when the register has no voucher for it."""
+        """JD Edwards' vouchers of a bill in the register, each with its key, document number, batch, currency, date and
+        gross: no page asks it (the tests read the voucher list's import back with it; the loaded vouchers' list shows a
+        bill's documents itself, ``loaded._DOCUMENTS``). The bill is found as ``in_erp`` finds it (the vendor's name, or
+        its supplier number: ``an8``; None: the vendor list's ERP ID of the vendor) with this invoice number and gross.
+        [] when the register has no voucher for it."""
         key, number = vendor_key(vendor_name), _norm_number(invoice_number)
         if not number or total is None:
             return []

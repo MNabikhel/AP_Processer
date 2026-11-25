@@ -35,6 +35,8 @@ TEXT_MODE = re.compile(r"[rwaxt+]*")  # a mode of open() with no "b": text
 # The keywords pathlib's own take besides the encoding: a call with another (writers=, color=) is not a path's.
 PATH_KEYWORDS = {"read_text": {"errors", "newline"}, "write_text": {"errors", "newline"},
                  "open": {"mode", "buffering", "errors", "newline"}}  # fmt: skip
+# The rule's names (PATH_KEYWORDS'), each a whole word: a file with none of them holds none of its calls, not parsed.
+PATH_CALL_NAMES = re.compile(r"\b(?:" + "|".join(PATH_KEYWORDS) + r")\b")
 # The way out for a call the rule takes for a path's but is no file's (a PDF page's text, say): on its line, the
 # comment "# encoding: not text (why)", the why said.
 NOT_TEXT = re.compile(r"#\s*encoding: not text \([^)]+\)")
@@ -53,19 +55,24 @@ def _text_without_encoding(source: str) -> list[int]:
     pathlib's own signatures (an encoding given by position, ``**kwargs`` or a keyword pathlib's has not, a module's
     function of that name such as tarfile.open, PyMuPDF's TextWriter, ``open()`` with no mode, which a page or a PDF
     has too, and a call said to be no file's, ``NOT_TEXT``, aside)."""
+    if not PATH_CALL_NAMES.search(source):
+        return []
     tree = ast.parse(source)
     lines = source.splitlines()
-    modules = {(alias.asname or alias.name).split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import)
-               for alias in node.names}  # fmt: skip
-    writers = {ast.unparse(target) for node in ast.walk(tree)  # PyMuPDF's TextWriters: made, or a parameter's type
-               if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and _named(node.value, "TextWriter")
-               for target in node.targets}  # fmt: skip
-    writers |= {node.arg for node in ast.walk(tree) if isinstance(node, ast.arg) and node.annotation is not None
-                and "TextWriter" in ast.unparse(node.annotation)}  # fmt: skip
+    modules: set[str] = set()
+    writers: set[str] = set()  # PyMuPDF's TextWriters: made, or a parameter's type
+    calls: list[ast.Call] = []  # x.read_text(...), x.write_text(...), x.open(...)
+    for node in ast.walk(tree):  # one walk for all three
+        if isinstance(node, ast.Import):
+            modules |= {(alias.asname or alias.name).split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and _named(node.value, "TextWriter"):
+            writers |= {ast.unparse(target) for target in node.targets}
+        elif isinstance(node, ast.arg) and node.annotation is not None and "TextWriter" in ast.unparse(node.annotation):
+            writers.add(node.arg)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in PATH_KEYWORDS:
+            calls.append(node)
     found = []
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
-            continue
+    for node in calls:
         keywords = {keyword.arg: keyword.value for keyword in node.keywords}
         held = node.func.value
         if (

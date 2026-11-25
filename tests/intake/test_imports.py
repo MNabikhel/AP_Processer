@@ -8,26 +8,20 @@ import sqlite3
 import threading
 import time
 from collections import namedtuple
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from ap_coder.core.config import Settings
 from ap_coder.core.store import Store
 from ap_coder.core.store.folder import read_file
 from ap_coder.intake import imports
 from ap_coder.intake.imports import NO_ROOM, Reader, noted, pick_up
 from tests.conftest import SAMPLES
 from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
+from tests.webclient import web_settings
 
 PDFS = sorted(p.name for p in SAMPLES.glob("*.pdf"))[:4]
-
-
-def _settings() -> Settings:
-    s = Settings()
-    return replace(s, llm=replace(s.llm, provider="off"))
 
 
 def _queued(store: Store, names: list[str]) -> list[tuple]:
@@ -46,11 +40,11 @@ def test_a_restart_halfway_reads_each_file_once(store):
     line, and AP Coder started again (a new process, a new reader) reads the rest, none twice."""
     _queued(store, PDFS)
     stop = threading.Event()
-    first = Reader(store, _settings(), "before", on_result=lambda row, result: stop.set())
+    first = Reader(store, web_settings(), "before", on_result=lambda row, result: stop.set())
     assert first.read_all(stop) == 1
     assert store.imports_open() == {"waiting": 3, "reading": 0}
     again = Store(store.path)  # AP Coder started again
-    assert Reader(again, _settings(), "after").read_all() == 3
+    assert Reader(again, web_settings(), "after").read_all() == 3
     with again._conn() as conn:
         assert tuple(conn.execute("SELECT COUNT(*), COUNT(DISTINCT file_sha256) FROM invoices").fetchone()) == (4, 4)
     assert again.import_run()["counts"] == {"done": 4}
@@ -66,7 +60,7 @@ def test_a_full_disk_reads_nothing_and_the_file_stays_in_line(store, monkeypatch
     (read,) = _queued(store, PDFS[:1])
     usage = namedtuple("usage", "total used free")
     monkeypatch.setattr(imports.shutil, "disk_usage", lambda folder: usage(10**12, 10**12 - 10**6, 10**6))
-    reader = Reader(store, _settings(), "r")
+    reader = Reader(store, web_settings(), "r")
     assert reader.read_all() == 0 and reader.paused == NO_ROOM
     assert store.imports_open() == {"waiting": 1, "reading": 0} and Path(read[0]).exists()
     assert store.list_invoices() == []
@@ -90,7 +84,7 @@ def test_each_file_is_hashed_once_on_its_way_to_its_invoice(store, monkeypatch):
 
     monkeypatch.setattr(Store, "add_invoice", add_invoice)
     monkeypatch.setattr(Store, "find_by_hash", lambda *a, **k: looked.append(a) or None)
-    assert Reader(store, _settings(), "r").read_all() == 1
+    assert Reader(store, web_settings(), "r").read_all() == 1
     assert saved == [read[3]] and looked == []
     with store._conn() as conn:
         assert conn.execute("SELECT file_sha256 FROM invoices").fetchone()[0] == read[3]
@@ -101,7 +95,7 @@ def test_a_file_written_over_after_it_came_in_is_hashed_again(store):
     (read,) = _queued(store, PDFS[:1])
     path = Path(read[0])
     path.write_bytes((SAMPLES / PDFS[1]).read_bytes())
-    assert Reader(store, _settings(), "r").read_all() == 1
+    assert Reader(store, web_settings(), "r").read_all() == 1
     with store._conn() as conn:
         assert conn.execute("SELECT file_sha256 FROM invoices").fetchone()[0] == read_file(path)[3] != read[3]
 
@@ -110,7 +104,7 @@ def test_the_pick_up_reads_only_the_files_it_has_not_read(store, monkeypatch):
     """The invoices folder keeps every invoice ever read: a pick-up reads (hashes) only the files whose size and time
     it hasn't noted, or whose content no invoice nor the queue has."""
     _queued(store, PDFS[:2])
-    Reader(store, _settings(), "r").read_all()
+    Reader(store, web_settings(), "r").read_all()
     folder = store.path.parent / "invoices"
     shutil.copy(SAMPLES / PDFS[2], folder / PDFS[2])
     hashed = []
@@ -154,8 +148,8 @@ def test_a_reader_stalled_past_its_lease_stores_nothing_once_another_took_its_fi
     time.sleep(0.05)  # its lease ran out
     other = store.claim_import("other", 60)
     assert other["id"] == stalled["id"]
-    readers = {"the stalled one": (Reader(store, _settings(), "stalled"), stalled),
-               "the other": (Reader(store, _settings(), "other"), other)}  # fmt: skip
+    readers = {"the stalled one": (Reader(store, web_settings(), "stalled"), stalled),
+               "the other": (Reader(store, web_settings(), "other"), other)}  # fmt: skip
     for name in sorted(readers, key=lambda name: name != first):
         reader, row = readers[name]
         reader._read(row)  # (read without a heartbeat, as a stalled one is)
@@ -193,7 +187,7 @@ def test_a_file_whose_end_was_not_noted_is_not_renewed_by_the_next_reads(store, 
         return real(*args, **kwargs)
 
     monkeypatch.setattr(store, "finish_import", locked_once)
-    reader = Reader(store, _settings(), "r", lease=0.6, pipeline=lambda: _Quick({second: 1.5}))
+    reader = Reader(store, web_settings(), "r", lease=0.6, pipeline=lambda: _Quick({second: 1.5}))
     with pytest.raises(sqlite3.OperationalError):
         reader.read_all()
     assert store.imports_open() == {"waiting": 0, "reading": 1}
@@ -217,6 +211,6 @@ def test_the_heartbeat_ends_with_the_read_and_a_database_gone_meanwhile_is_only_
         raise sqlite3.OperationalError("unable to open database file")
 
     monkeypatch.setattr(store, "drop_lease", gone)
-    assert Reader(store, _settings(), "r", pipeline=lambda: _Quick()).read_all() == 1
+    assert Reader(store, web_settings(), "r", pipeline=lambda: _Quick()).read_all() == 1
     assert not [t for t in threading.enumerate() if t.name == "ap-coder-import-heartbeat"]
     assert raised == []

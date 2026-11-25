@@ -648,7 +648,8 @@ BU_UNKNOWN = "bu_unknown"  # its business unit is not in the business units repo
 class AccountPairs:
     """The chart as the checks and the suggestions ask it: which GL code exists on which business unit, and whether a
     line may be coded to the pair (``status``). Built from the chart's rows, the business unit master's and the
-    settings; read it, don't change it."""
+    settings; read it, don't change it. The app asks ``IndexedPairs`` (core/store/chart_index.py), the same answers
+    from the database: this is the reference the tests compare it with."""
 
     def __init__(self, rows: Iterable[ChartRow], units: Iterable[BuRow] = (),
                  settings: ChartSettings | None = None) -> None:  # fmt: skip

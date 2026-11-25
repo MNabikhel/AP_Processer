@@ -3,24 +3,15 @@ lists' actions."""
 
 from __future__ import annotations
 
-from dataclasses import replace
 from urllib.parse import urlencode
 
 import pytest
-from fastapi.testclient import TestClient
 
 from ap_coder.core.config import Settings
 from ap_coder.core.store import APPROVED, PARKED, PENDING, REJECTED, REVIEW, Store
-from ap_coder.web.app import create_app
 from ap_coder.web.pages.review import confidence_pct, filter_queue, sort_queue
 from tests.conftest import fill_from
 from tests.webclient import PAGE
-
-
-@pytest.fixture
-def client(store):
-    s = Settings()
-    return TestClient(create_app(replace(s, llm=replace(s.llm, provider="off")), store), base_url="http://localhost")
 
 
 @pytest.fixture

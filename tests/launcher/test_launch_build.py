@@ -1,7 +1,8 @@
 """Telling builds apart, and what the launcher says while it works (scripts/launch.py, ap_coder/core/paths.py): GitHub's
 ZIP carries a build stamp (ap_coder/BUILD, filled in by git archive), so a newer ZIP unzipped over an older one of the
 same version is an update; the first setup says what it is doing during its silent minutes; a window whose dashboard a
-newer AP Coder stopped says so."""
+newer AP Coder stopped says so; this user's notes folder is labelled and hidden once, and the update that hid it says
+so."""
 
 from __future__ import annotations
 
@@ -506,3 +507,75 @@ def test_the_demo_never_cleans_up_or_takes_over_the_pilot_testers_own_install(la
 def test_demo_bat_marks_its_start_as_a_demo():
     text = (Path(__file__).resolve().parents[2] / "scripts" / "demo.bat").read_text(encoding="utf-8")
     assert 'set "AP_DEMO=1"' in text
+
+
+# --- This user's notes folder: labelled and hidden once, never in the way of a start ------------------------------
+
+
+def _settle(launch, tmp_path, monkeypatch, first: bool = False, previous: dict | None = None):
+    """``settle_and_check`` to its end, each step around the notes folder a stand-in: the lines it returns."""
+    data = tmp_path / "APCoder"
+    data.mkdir(exist_ok=True)
+    monkeypatch.setattr(launch, "ensure_data_folder", lambda: data)
+    monkeypatch.setattr(launch, "settle_settings", lambda data, version: [])
+    monkeypatch.setattr(launch, "database_too_new", lambda data, version: None)
+    monkeypatch.setattr(launch, "backup_before_update", lambda: None)
+    monkeypatch.setattr(launch, "ensure_models", lambda first, state: None)
+    monkeypatch.setattr(launch, "readiness", lambda packages, state=None, force=False: [])
+    monkeypatch.setattr(launch, "sync_notes", lambda data: [])
+    monkeypatch.setattr(launch, "older_installs", lambda ident, legacy: [])
+    monkeypatch.setattr(launch, "self_check", lambda: (True, "Self-check OK: 3 of 3 sample invoices"))
+    args = launch.parse([])[0]
+    return launch.settle_and_check(args, {}, launch.identity(), first, previous, [], ("ok", "", False), launch.Step())
+
+
+def test_an_ordinary_start_labels_the_notes_folder_the_server_and_a_demo_do_not(launch, tmp_path, monkeypatch):
+    """After the start is recorded (an older AP Coder started later still finds this one current): never the company
+    server's (its service account's folder is IT's), nor a demo's (scripts/demo.bat: its own record)."""
+    asked: list[str] = []
+    monkeypatch.setattr(launch.paths, "label_notes_folder", lambda: asked.append("labelled") or False)
+    monkeypatch.delenv("AP_SERVER_MODE", raising=False)
+    monkeypatch.delenv("AP_DEMO", raising=False)
+    assert isinstance(_settle(launch, tmp_path, monkeypatch), list) and asked == ["labelled"]
+    assert launch.paths.current_install()["folder"] == str(launch.ROOT)
+    monkeypatch.setenv("AP_SERVER_MODE", "1")
+    assert isinstance(_settle(launch, tmp_path, monkeypatch), list) and asked == ["labelled"]
+    monkeypatch.delenv("AP_SERVER_MODE")
+    monkeypatch.setenv("AP_DEMO", "1")
+    assert isinstance(_settle(launch, tmp_path, monkeypatch), list) and asked == ["labelled"]
+
+
+def test_a_label_that_fails_never_stops_the_start(launch, tmp_path, monkeypatch):
+    """Hiding the folder is a courtesy: whatever goes wrong in it is logged, and the start goes on as before, with
+    nothing said in the window."""
+
+    def broken():
+        raise ValueError("a folder name Windows can't take")
+
+    monkeypatch.setattr(launch.paths, "label_notes_folder", broken)
+    lines = _settle(launch, tmp_path, monkeypatch)
+    assert isinstance(lines, list) and not any("hidden folder" in text for _, text in lines)
+    launch.close_log()
+    assert "a folder name Windows can't take" in launch.log_path().read_text(encoding="utf-8")
+
+
+HID = "AP Coder's own notes and logs are now in a hidden folder"
+
+
+def test_the_start_that_hid_the_folder_says_so_once_never_on_a_first_run(launch, tmp_path, monkeypatch):
+    """Said by the start that hid it, after an update too (a new folder's first start: its .venv is new), naming the
+    data folder, where nothing moved; not by the first start on a new computer (that folder was never seen), nor by
+    any start that hid nothing."""
+    hid = {"now": True}
+    monkeypatch.setattr(launch.paths, "label_notes_folder", lambda: hid["now"])
+
+    def said(**start):
+        return [(level, text) for level, text in _settle(launch, tmp_path, monkeypatch, **start) if HID in text]
+
+    data = tmp_path / "APCoder"
+    assert said() == [("info", f"{HID}, so your user folder no longer shows them. Your data is where it was, in "
+                               f"{data}: nothing was moved.")]  # fmt: skip
+    assert len(said(first=True, previous={"version": "0.3.0", "build": "2026-11-20T10:00:00"})) == 1  # an update
+    assert said(first=True) == []  # a new computer
+    hid["now"] = False
+    assert said() == [] and said(first=True, previous={"version": "0.3.0", "build": ""}) == []

@@ -6,14 +6,12 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.core.config import Settings
 from ap_coder.core.store import Store
 from ap_coder.ops import offline
 from ap_coder.web import access, core, files, identity
@@ -22,15 +20,10 @@ from ap_coder.web.pages import learning
 from tests.browser import settle
 from tests.conftest import SAMPLES, chromium_path
 from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
-from tests.webclient import PAGE, add_clean, enrol, post, sign_in
+from tests.webclient import PAGE, add_clean, enrol, post, sign_in, web_settings
 
 STEM = "harbourview_NS_HST_HPS-2026-0347"
 OTHER = "northwind_ON_HST_NW-2026-0912"
-
-
-def settings() -> Settings:
-    s = Settings()
-    return replace(s, llm=replace(s.llm, provider="off"))
 
 
 GOOD = "correct horse battery"
@@ -38,7 +31,7 @@ GOOD = "correct horse battery"
 
 def client_as(store, role: str = "", *, base_url: str = "https://localhost") -> TestClient:
     """The dashboard as an account with ``role`` sees it on the server (logged in); no role: the laptop."""
-    app = create_app(settings(), store, start_reader=False, server=bool(role))
+    app = create_app(web_settings(), store, start_reader=False, server=bool(role))
     client = TestClient(app, base_url=base_url, client=("10.0.0.5", 50000))
     if role:
         username = f"{role}-{len(store.list_users())}"
@@ -109,6 +102,26 @@ def test_open_folder_still_opens_it_on_a_laptop(store, opened, monkeypatch):
     assert opened and answer["toast"]["text"] == "Opened the invoices folder."
 
 
+def test_report_a_problem_opens_the_logs_folder_on_a_laptop_never_on_the_server(store, opened, monkeypatch):
+    """IT asks for launch.log and dashboard-errors.log, kept in this user's notes folder, which is hidden: Report a
+    problem opens that folder on a laptop. On the server nothing opens on its screen (D-99): no button, the route
+    needs an Admin's role (web/roles.py) and tells an Admin where the folder is."""
+    from ap_coder.core import paths
+
+    monkeypatch.setenv(offline.SERVER_ENV, "0")
+    laptop = client_as(store, base_url="http://localhost")
+    assert 'action="/help/report/open-logs"' in laptop.get("/help/report").text
+    answer = post(laptop, "/help/report/open-logs").json()
+    assert answer["toast"]["text"] == "Opened the logs folder."
+    assert str(opened[-1][-1]) == str(paths.user_settings_path().parent / "logs")
+    monkeypatch.setenv(offline.SERVER_ENV, "1")
+    admin = client_as(store, "admin")
+    assert 'action="/help/report/open-logs"' not in admin.get("/help/report").text
+    assert post(client_as(store, "clerk"), "/help/report/open-logs").status_code == 403
+    told = post(admin, "/help/report/open-logs").json()["toast"]["text"]
+    assert told.startswith("This folder is on the server: ") and len(opened) == 1
+
+
 def test_on_the_server_only_the_service_stops_ap_coder_with_its_token(store, server_on):
     """The service's stop asks POST /shutdown from the server itself with the server file's token; nothing else
     can stop it, and no page offers to."""
@@ -116,7 +129,7 @@ def test_on_the_server_only_the_service_stops_ap_coder_with_its_token(store, ser
     class FakeServer:
         should_exit = False
 
-    app = create_app(settings(), store, start_reader=False)
+    app = create_app(web_settings(), store, start_reader=False)
     app.state.shutdown_token, app.state.server = "s3cret", FakeServer()
     here = TestClient(app, base_url="https://127.0.0.1:8501", client=("127.0.0.1", 50000))
     other = TestClient(app, base_url="https://127.0.0.1:8501", client=("10.1.2.40", 50000))
@@ -129,7 +142,7 @@ def test_on_the_server_only_the_service_stops_ap_coder_with_its_token(store, ser
 
 
 def test_healthz_says_what_the_update_needs_on_the_server_itself(store, server_on):
-    app = create_app(settings(), store, start_reader=False, address="0.0.0.0")
+    app = create_app(web_settings(), store, start_reader=False, address="0.0.0.0")
     here = TestClient(app, base_url="https://127.0.0.1:8501", client=("127.0.0.1", 50000)).get("/healthz").json()
     assert here["app"] == "ap-coder" and here["folder"] and here["version"]
     other = TestClient(app, base_url="https://10.1.2.3:8501", client=("10.1.2.40", 50000)).get("/healthz").json()
@@ -263,7 +276,7 @@ def test_a_draft_is_keyed_by_the_account_on_the_server():
 def test_two_accounts_keep_drafts_of_their_own(store):
     from ap_coder.web.pages import invoice_drafts
 
-    app = create_app(settings(), store, start_reader=False)
+    app = create_app(web_settings(), store, start_reader=False)
     request = SimpleNamespace(app=app, state=SimpleNamespace())
     token = as_person(user_id=1, username="one", role="clerk")
     try:

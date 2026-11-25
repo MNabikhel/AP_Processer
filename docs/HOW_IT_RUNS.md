@@ -217,6 +217,16 @@ double-clicking its `APProcessor`. Nothing is installed twice; the data is never
 `data_move` (while a move runs) and the reviewer's name. Written whole to a `.part` file, then replaced
 (`write_user_settings`).
 
+**The notes folder** (`paths.label_notes_folder`, D-335): every version reads the record in `~/.ap_coder`, and its
+`current` is what stops an older folder from opening newer data, so that folder never moves. After `write_marker`,
+an ordinary laptop start (not the server, a demo or with `AP_USER_SETTINGS` set) writes `~/.ap_coder/README.txt`
+(what the folder is, in fixed words naming no folder) when it is missing, then hides the folder in File Explorer on
+Windows (`paths.hide_folder`: the folder's attribute alone, its others kept; its files are never hidden, so every
+version still writes them whole). A README already there means it is never hidden again: a folder someone showed
+again stays shown. The start that hid it says so in one line (not a new computer's first start, where it was never
+seen). A failure is logged and never stops the start. To open the hidden folder, type `%USERPROFILE%\.ap_coder` in
+File Explorer's address bar; Help → Report a problem's Open the logs folder opens its `logs`.
+
 **Before anything** (`scripts/launch.py:installed_already`, phase 1, D-231): `scripts/upgrade.py:newer_install` —
 when the current install is another folder holding a newer version (read from that folder's `pyproject.toml` and
 `bundle_manifest.json`, not only the record), this older folder sets up and starts nothing: *AP Coder X is installed
@@ -613,6 +623,7 @@ can corrupt an open SQLite database).
 | `backup-<date>/` | the data set aside by `install --fresh-start` | `install.fresh_start` |
 | `models/` (optional) | the table finder model, if IT puts it there | IT |
 | **`~/.ap_coder/settings.json`** | the record of installs and the data folder (section 6), and your name (per user) | `paths.write_user_settings` |
+| **`~/.ap_coder/README.txt`** | what the folder is and not to delete it, written once; the folder is then hidden on Windows (section 6): type `%USERPROFILE%\.ap_coder` in File Explorer's address bar to open it | `paths.label_notes_folder` |
 | **`~/.ap_coder/logs/launch.log`** | everything each start said, pip's lines and the dashboard's output; `launch.previous.log` past 1 MB | `launch.log` |
 | **Desktop** `AP Coder.lnk` / `AP Coder.command` | the shortcut (Windows / Mac) | `launch.ensure_shortcut` |
 | **Second backup folder** (Settings → Data & backups) | copies of the daily backups, kept by the same rule | `Store.copy_backup` |

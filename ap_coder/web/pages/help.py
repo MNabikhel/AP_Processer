@@ -18,7 +18,7 @@ from dataclasses import replace
 from typing import Any
 
 from fastapi import Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from ap_coder.core import paths
 from ap_coder.erp import jde_settings
@@ -34,6 +34,7 @@ from ap_coder.web.core import (
     data_dir,
     developer_tools,
     get_store,
+    open_folder_here,
     our_words,
     page_meta,
     page_router,
@@ -221,7 +222,14 @@ def report_page(request: Request, codes: bool = False) -> HTMLResponse:
         report_invoices=REPORT_INVOICES,
         codes=codes,
         logs=[short_path(p) for p in shown],
+        open_logs=not server_mode(request),  # (the server's screen is no one's: D-99)
     )
+
+
+@router.post("/help/report/open-logs")
+def open_logs(request: Request) -> JSONResponse:
+    """This user's logs folder, in their hidden notes folder (``~/.ap_coder/logs``), opened in a window."""
+    return open_folder_here(request, paths.user_settings_path().parent / "logs", "logs folder")
 
 
 def _on_the_server(text: str) -> str:

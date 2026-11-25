@@ -7,7 +7,6 @@ import io
 import json
 import sys
 import types
-from dataclasses import replace
 
 import pytest
 from PIL import Image
@@ -24,16 +23,12 @@ from ap_coder.core.config import DocumentIntelligenceSettings, Settings
 from ap_coder.core.store import APPROVED, REVIEW, Store, load_sample_setup
 from ap_coder.ops.help import help_for
 from tests.conftest import SAMPLES
+from tests.webclient import web_settings as _settings
 
 STEM = "harbourview_NS_HST_HPS-2026-0347"
 PDF = SAMPLES / f"{STEM}.pdf"
 TODAY = dt.date(2026, 10, 11)
 MODEL = "ath-maas_ovisocr2"
-
-
-def _settings():
-    s = Settings()
-    return replace(s, llm=replace(s.llm, provider="off"))
 
 
 @pytest.fixture

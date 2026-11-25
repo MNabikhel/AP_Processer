@@ -5,44 +5,29 @@ import re
 from ap_coder.ops.help import AREAS, CHECKS, help_for
 from tests.conftest import ROOT
 
-SOURCES = [
-    "coding/validation.py",
-    "coding/tax.py",
-    "coding/vendors.py",
-    "coding/po.py",
-    "coding/terms.py",
-    "capture/bridge.py",
-    "ai/verifier.py",
-    "ai/azure_check.py",
-    "ai/pipeline.py",
-    "coding/banks.py",
-    "coding/claim.py",
-    "coding/companies.py",
-    "coding/posting_edits.py",
-    "web/invoice_view.py",
-    "web/invoice_fields.py",
-    "erp/jde_review.py",
-    "erp/jde_sync.py",
-]
+
+def codes_raised_in(text: str) -> set[str]:
+    """The check codes a module's source raises: ``Issue(WARNING, "CODE", ...)``, ``(ERROR, "CODE", ...)``."""
+    codes = set(
+        re.findall(r"\b(?:ERROR|WARNING|INFO|\"error\"|\"warning\"|\"info\")\s*,\s*\"([A-Z][A-Z0-9_]+)\"", text)
+    )
+    # a code raised through a constant: Issue(WARNING, ISSUE_CODE, ...) with ISSUE_CODE = "AZURE_DI_DISAGREES"
+    constants = dict(re.findall(r"(?m)^([A-Z][A-Z0-9_]*)\s*=\s*\"([A-Z][A-Z0-9_]+)\"", text))
+    for name in re.findall(r"\b(?:ERROR|WARNING|INFO)\s*,\s*([A-Z][A-Z0-9_]*)\s*,", text):
+        if name in constants:
+            codes.add(constants[name])
+    # codes raised as they come, from a named set: elif code in SAID_AS_IS: out.append((ERROR, code, ...))
+    for name, members in re.findall(r"(?m)^([A-Z][A-Z0-9_]*)\s*=\s*frozenset\(\{([^}]*)\}\)", text):
+        if re.search(rf"\bcode in {name}:\s*\n\s*\S*\(\((?:ERROR|WARNING|INFO), code,", text):
+            codes |= set(re.findall(r"\"([A-Z][A-Z0-9_]+)\"", members))
+    return codes
 
 
 def _raised_codes():
-    codes = set()
-    for name in SOURCES:
-        text = (ROOT / "ap_coder" / name).read_text(encoding="utf-8")
-        codes |= set(
-            re.findall(r"\b(?:ERROR|WARNING|INFO|\"error\"|\"warning\"|\"info\")\s*,\s*\"([A-Z][A-Z0-9_]+)\"", text)
-        )
-        # a code raised through a constant: Issue(WARNING, ISSUE_CODE, ...) with ISSUE_CODE = "AZURE_DI_DISAGREES"
-        constants = dict(re.findall(r"(?m)^([A-Z][A-Z0-9_]*)\s*=\s*\"([A-Z][A-Z0-9_]+)\"", text))
-        for name in re.findall(r"\b(?:ERROR|WARNING|INFO)\s*,\s*([A-Z][A-Z0-9_]*)\s*,", text):
-            if name in constants:
-                codes.add(constants[name])
-        # codes raised as they come, from a named set: elif code in SAID_AS_IS: out.append((ERROR, code, ...))
-        for name, members in re.findall(r"(?m)^([A-Z][A-Z0-9_]*)\s*=\s*frozenset\(\{([^}]*)\}\)", text):
-            if re.search(rf"\bcode in {name}:\s*\n\s*\S*\(\((?:ERROR|WARNING|INFO), code,", text):
-                codes |= set(re.findall(r"\"([A-Z][A-Z0-9_]+)\"", members))
-    return codes
+    """The codes raised anywhere in the app: ops/help.py, which names them all, left out."""
+    help_module = ROOT / "ap_coder" / "ops" / "help.py"
+    modules = [p for p in sorted((ROOT / "ap_coder").rglob("*.py")) if p != help_module]
+    return set().union(*(codes_raised_in(p.read_text(encoding="utf-8")) for p in modules))
 
 
 def test_every_check_has_help():

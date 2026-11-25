@@ -8,4 +8,8 @@ review screen's grids), ``bulk`` (bulk approval), ``vendor_mail`` (the email to 
 email asking a manager to confirm an invoice's cost allocation). Beneath them: ``money`` (the money and tax
 arithmetic they share), ``claim`` (an expense claim's receipts as one voucher) and ``posting_edits`` (what JD Edwards
 requires of a line on an account whose posting edit is L or U).
+
+A new check code: its ``CheckHelp`` in ``ops/help.py``; an INFO finding that must stop touchless and bulk approval in
+``supplier.ALWAYS_A_PERSON``; a code raised after the coding's checks (by the readers or the reviewers) in
+``bulk.AFTER_PROCESSING``; the box it points to in ``invoice_findings.CODE_FIELDS``.
 """

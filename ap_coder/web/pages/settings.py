@@ -542,6 +542,7 @@ def data_context(store: Store, chosen: str = "", server: bool = False) -> dict[s
     return {
         "data_path": str(data_dir(store)),
         "user_path": str(paths.user_settings_path().parent),  # this user's own folder, as it is here (B-2102)
+        "code_path": str(paths.PROJECT_DIR),  # the program's folder
         "db_size": size_text(store.path),
         "invoice_count": invoices,
         "demo_available": demo_available(),

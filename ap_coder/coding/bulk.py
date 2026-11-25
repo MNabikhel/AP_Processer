@@ -10,8 +10,10 @@ Everything else is skipped with the reason, and still needs a person.
 
 Entry points: ``sort_for_bulk`` (the queue's clean invoices, and why each other is left), ``queue_checks`` (what the
 queue reads of its invoices, from the invoices' summary), ``recheck_queue`` and ``QueueRecheck`` (the queue checked
-again after a change of settings, in the background), ``issues_today`` and ``bulk_approve``, and ``approve_in_job``
-(a person's bulk approval as a job, done in the background as them: D-185).
+again after a change of settings, in the background), ``issues_today``, and ``approve_in_job`` (the dashboard's bulk
+approval: a person's, as a job done in the background as them, D-185, which reads the lists again as it goes: B-2967,
+B-2971). ``bulk_approve`` is the tests' and the JD Edwards probe's way in: the same check of each invoice
+(``_still_clean``), the lists read once.
 """
 
 from __future__ import annotations
@@ -616,17 +618,18 @@ def approve_in_job(
     store: Store, settings: Settings, job: dict[str, Any], runner: str, *, stopping: Callable[[], bool] = lambda: False,
     refused: Callable[[], str] = lambda: "",
 ) -> str:  # fmt: skip
-    """Approve the invoices of bulk job ``job`` (claimed by ``runner``) not done yet, in the order asked, each exactly
-    as ``bulk_approve`` does and as the person who asked (``job["person"]``: their name and login on each approval;
-    the caller makes them who the other events name). Each outcome is kept with its approval (``Store.bulk_step``).
-    An invoice is left for a person, with why, when it is no longer the one asked (``CHANGED``: another
-    ``row_identity``, or its stamp moved since the queue listed it, ``Store.bulk_stamps``: approved and undone,
-    parked, read again; ``bulk_step`` looks again in the approval's own transaction), when it is no longer clean, or
-    when someone else has it open on their review screen (``Store.open_by``) or edits of it kept there (``bulk_step``
-    looks there too). Raises ``Stopping`` once ``stopping()`` is true, or the job is no longer ``runner``'s. Returns ""
-    once every invoice is done, else why it stopped: what ``refused()`` says (the person may no longer approve).
-    Each invoice is checked against the lists and settings as they are when the job comes to it (B-2967): read again
-    once another connection has written since (B-2971), as the job's own approvals never change them."""
+    """Approve the invoices of bulk job ``job`` (claimed by ``runner``) not done yet, in the order asked, each checked
+    as ``bulk_approve`` checks one (``_still_clean``) and approved as the person who asked (``job["person"]``: their
+    name and login on each approval; the caller makes them who the other events name). Each outcome is kept with its
+    approval (``Store.bulk_step``). An invoice is left for a person, with why, when it is no longer the one asked
+    (``CHANGED``: another ``row_identity``, or its stamp moved since the queue listed it, ``Store.bulk_stamps``:
+    approved and undone, parked, read again; ``bulk_step`` looks again in the approval's own transaction), when it is no
+    longer clean, or when someone else has it open on their review screen (``Store.open_by``) or edits of it kept there
+    (``bulk_step`` looks there too). Raises ``Stopping`` once ``stopping()`` is true, or the job is no longer
+    ``runner``'s. Returns "" once every invoice is done, else why it stopped: what ``refused()`` says (the person may no
+    longer approve). Each invoice is checked against the lists and settings as they are when the job comes to it
+    (B-2967): read again once another connection has written since (B-2971), as the job's own approvals never change
+    them."""
     person = job["person"]
     taken = set(job["approved"]) | {s[0] for s in job["skipped"]}
     lists: tuple[int | None, ReferenceData, str] | None = None  # (when they were read, the reference data, its stamp)

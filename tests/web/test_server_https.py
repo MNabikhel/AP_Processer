@@ -4,7 +4,6 @@ host names, the security headers, and the computer's own name looked up once (N-
 from __future__ import annotations
 
 import os
-import socket
 import ssl
 import subprocess
 import sys
@@ -19,18 +18,13 @@ from fastapi.testclient import TestClient
 from ap_coder.ops import cli, offline
 from ap_coder.web import security, server
 from ap_coder.web.app import create_app
+from tests.browser import free_port
 from tests.webclient import web_settings
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
 CERT = FIXTURES / "TEST_ONLY_self_signed_localhost.cert.pem"  # a test-only certificate for localhost, never used else
 KEY = FIXTURES / "TEST_ONLY_self_signed_localhost.key.pem"
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 @pytest.fixture

@@ -8,8 +8,9 @@
         server{% if is_admin %}: <code>{{ data_path }}</code>{% else %}.{% endif %}</p>
       {% else %}
       <p class="muted">Everything AP Coder keeps (database, invoices, exports, backups and settings) is in one folder on this
-        computer: <code>{{ data_path }}</code>. Your name and the logs are kept per Windows user, in
-        <code>{{ user_path }}</code>.</p>
+        computer: <code>{{ data_path }}</code>. The program itself is in <code>{{ code_path }}</code> (each update puts
+        the new one beside it). Your name, where that folder is, and the logs are kept for each Windows user in a hidden
+        folder, <code>{{ user_path }}</code>: don't delete it.</p>
       {% endif %}
     </div>
     {% if not server_mode or is_admin %}

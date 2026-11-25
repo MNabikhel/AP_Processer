@@ -3,8 +3,9 @@
 * ``GET /purchase-orders?q=&status=open|closed|all&po=<key>&shown=``: the list, ``POS_SHOWN`` at a time ("Show more",
   D-162), and one PO's lines with what was ordered, received and billed, and the invoices on it.
 * Import: upload (``POST /purchase-orders/upload``), see it and check the columns (``?file=``: its spec,
-  ``import_specs.PURCHASE_ORDERS``), import; the template
-  (``GET /purchase-orders/template.csv``) and the sample POs that go with the sample invoices.
+  ``import_specs.PURCHASE_ORDERS``), import; the blank template (``GET /imports/template/purchase_orders``; the .csv
+  one B-2474 took off the page still answers: ``GET /purchase-orders/template.csv``) and the sample POs that go with
+  the sample invoices.
 * A PO is closed / reopened or deleted (with a confirmation) by POST.
 """
 

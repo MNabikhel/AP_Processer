@@ -51,8 +51,6 @@ from ._base import _held_connections, _in_list
 
 ACCOUNTS_KEPT = 20_000  # the accounts asked lately, each kept with its description and posting edit code
 SEARCH_MOST = 50  # an Account box's search: the accounts it draws at most (more are found by typing more)
-CODE_INDEX = "CREATE INDEX IF NOT EXISTS chart_accounts_code ON chart_accounts (object, subsidiary)"
-UNIT_COMPANY_INDEX = "CREATE INDEX IF NOT EXISTS business_units_company ON business_units (company)"
 
 
 def _globbed(patterns: tuple[str, ...]) -> tuple[str, list[str]] | None:

@@ -57,6 +57,11 @@
     <h4><span class="ms" aria-hidden="true">description</span> If AP Coder would not start, or a page went wrong</h4>
     {% if logs %}
     <p class="muted">The full details are kept in {{ 'two log files' if logs|length > 1 else 'a log file' }} on this computer. Attach {{ 'them' if logs|length > 1 else 'it' }} if you are asked to.</p>
+    {% if open_logs %}
+    <form method="post" action="/help/report/open-logs">
+      <button class="btn" type="submit"><span class="ms" aria-hidden="true">folder_open</span>Open the logs folder</button>
+    </form>
+    {% endif %}
     <details class="st-forit">
       <summary><span class="ms" aria-hidden="true">engineering</span>For IT: where they are</summary>
       <ul>{% for path in logs %}<li><code>{{ path }}</code></li>{% endfor %}</ul>

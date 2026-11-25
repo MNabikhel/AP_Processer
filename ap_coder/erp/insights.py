@@ -5,8 +5,10 @@ counts and token usage, and the audit trail of approvals). Time and price figure
 AP team can edit on the Insights page; they are stored in the database (setting ``insights_assumptions``).
 
 Entry points: ``compute`` (the business case), ``report_html``, ``operations``, ``vendor_workload``,
-``approved_as_coded``; ``invoice_facts``, ``approval_facts``, ``workload_facts`` and ``payment_facts`` are what the
-invoices' summary keeps for them (D-110).
+``approval_counts`` (the approvals as coded, as Activity and Learning show them); ``invoice_facts``,
+``approval_facts``, ``workload_facts`` and ``payment_facts`` are what the invoices' summary keeps for them (D-110).
+``latest_approvals``, ``approved_as_coded`` and ``filled_in_count`` count the same approval by approval: the tests'
+reference for ``approval_counts`` (D-156).
 """
 
 from __future__ import annotations
