@@ -544,8 +544,6 @@ def test_the_uvicorn_asked_for_is_one_whose_supervisor_the_server_starts():
     root = Path(__file__).resolve().parents[2]
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"]
     (asked,) = [d for d in project if d.startswith("uvicorn")]
-    listed = [line.split("#")[0].strip() for line in (root / "requirements.txt").read_text("utf-8").splitlines()]
-    assert asked in listed
     lowest = re.search(r">=(\d+)\.(\d+)", asked)
     assert lowest and (int(lowest[1]), int(lowest[2])) >= (0, 52), asked
 

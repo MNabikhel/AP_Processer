@@ -353,7 +353,8 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
         parts = account.split(".")
         if text("po_charges") == jde_settings.CHARGES_GL and not (
             2 <= len(parts) <= 3 and all(parts) and " " not in account
-            and len(parts[0]) <= 12 and len(parts[1]) <= 6 and len(parts[-1]) <= (8 if len(parts) == 3 else 6)
+            and len(parts[0]) <= chart.BU_MOST and len(parts[1]) <= chart.OBJECT_MOST
+            and len(parts[-1]) <= (chart.SUBSIDIARY_MOST if len(parts) == 3 else chart.OBJECT_MOST)
         ):  # fmt: skip
             return refuse("Give the account charges not on the purchase order go to as JD Edwards writes it: business "
                           "unit.object.subsidiary, e.g. 0021061010.7420.4207.")  # fmt: skip

@@ -17,6 +17,7 @@ from typing import Any
 from ..coding.line_tax import exempt_of, legacy_basis
 from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES
 from ..coding.terms import terms_key
+from ..core.chart import BU_MOST, OBJECT_MOST, SUBSIDIARY_MOST
 from ..core.schema import COMPANY_TAX, PROGRESS_BILLING
 from .jde_accounts import VendorLookup, account_for, ani, resolve_an8
 from .jde_formats import E1_YEARS, NO_DECIMAL_CURRENCIES, _date, _negative, _norm, _units
@@ -741,7 +742,7 @@ def _distribution_entries(v: _Voucher, settings: JdeSettings, dist: list[dict[st
                 "JDE_NO_ACCOUNT",
                 e.get("line_number"),
             )
-        elif len(account.bu) > 12 or len(account.obj) > 6 or len(account.sub) > 8:
+        elif len(account.bu) > BU_MOST or len(account.obj) > OBJECT_MOST or len(account.sub) > SUBSIDIARY_MOST:
             add(
                 f"{where}: JDE account {ani(account)} is too long (BU 12, object 6, subsidiary 8 characters)",
                 "JDE_NO_ACCOUNT",

@@ -69,7 +69,6 @@ FIELDS: dict[str, str] = {
     "pst_registration_number": "PST number", "subtotal": "subtotal", "tax_total": "total tax",
     "grand_total": "total",
 }  # fmt: skip
-AMOUNTS = ("subtotal", "tax_total", "grand_total")
 
 SYSTEM = (
     "You are a careful accounts-payable reviewer at a Canadian company. Before an invoice is posted to JD Edwards, you "

@@ -32,7 +32,6 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -234,18 +233,7 @@ def tax_choices(store: Any) -> dict[str, str]:
     return {company_code(k): v for k, v in jde_settings.load(store).company_tax.items() if v in (ON, OFF)}
 
 
-def currency_of(store: Any, company: str) -> str:
-    """A company's currency as report 9 gives it ("" when not known)."""
-    found = companies(store).get(company_code(company)) if store is not None else None
-    return found.currency if found else ""
-
-
 # --- Which company ---------------------------------------------------------------------------------------------------
-
-
-def _one(found: Iterable[str]) -> str:
-    codes = {company_code(c) for c in found if str(c or "").strip()}
-    return codes.pop() if len(codes) == 1 else ""
 
 
 SHORT_NAME = 3  # a name of this many letters and digits or fewer ("MRB") is named only as a word in capitals (B-2690)

@@ -2,7 +2,7 @@
 read alike (``find_vendor``, ``vendor_key_for``), each vendor's invoices and terms, the Vendors page's summaries, and
 where we are (``our_province``, ``site_provinces``). The vendor master imported from the ERP
 (``import_vendor_master``) and what its rows say (hold codes, retired names, people) are ``vendor_master``'s; its
-names are importable from here as before."""
+names in use are importable from here as before."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from ...coding.terms import JDE_TERMS_SETTING, jde_meaning, jde_table_of
 from ..caches import MB, Bounded, size_of
 from ..chart import SKIP_WORDS_SAVED as SKIP_WORDS  # noqa: F401  (the default as the setting holds it)
 from ..chart import SKIP_WORDS_SETTING  # noqa: F401  (imported from here by the Vendors page)
-from ..chart import markers as _markers  # noqa: F401  (how a word is found in a name: one way for both)
 from ..keys import ADDED_HERE, norm_tax_number, same_tax_number
 from ..memory import vendor_key
 from ._base import (
@@ -33,19 +32,12 @@ from .learning import one_snapshot
 from .reports import OWN_WORK
 from .summary import fetch_rows
 from .vendor_master import (  # noqa: F401  (the names this module had before the vendor master was its own part)
-    HOLD_CODES,
     HOLD_CODES_SETTING,
-    MARKED,
-    MARKED_LIKE,
-    NEVER_HOLD,
     PAYMENTS_ONLY,
     STAR,
-    Person,
-    hold_code,
     listed,
     name_marker,
     person_name,
-    same_person,
     sharing,
     with_number,
 )

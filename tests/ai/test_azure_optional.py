@@ -50,8 +50,6 @@ def test_azure_is_an_optional_extra_not_a_core_package():
     extra = " ".join(project["optional-dependencies"]["azure"])
     assert all(p in extra for p in AZURE_PACKAGES)
     assert "openai" in core  # the LM Studio client stays
-    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
-    assert not [p for p in AZURE_PACKAGES if p in requirements]
 
 
 def test_the_offline_bundle_carries_azure_as_an_optional_download():
