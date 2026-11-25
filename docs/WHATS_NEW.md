@@ -10,6 +10,12 @@ Your existing data is safe. On first start the database upgrades itself (schema 
 backup of AP Coder (the database and the invoice files) is made automatically once a day (the newest 14 are
 kept).
 
+## Your user folder shows only the data folder (D-335)
+
+- **AP Coder's own notes folder is hidden, and says what it is.** `C:\Users\<you>\.ap_coder` (where your data folder
+  is, which AP Coder is the current one, your name, the logs) is hidden in File Explorer and holds a README.txt; nothing
+  moved. Settings → Data & backups names all three places, and Help → Report a problem opens the logs folder.
+
 ## Totals printed as one row; the supplier by its GST/HST number; your company is never the supplier (D-262)
 
 - **Totals printed as a table of one row are read.** "Line-Item Total | Freight Amount | GST Tax | HST Tax | Sub

@@ -43,6 +43,7 @@ import os
 import re
 import socket
 import sqlite3
+import stat
 import struct
 import subprocess
 import sys
@@ -536,6 +537,11 @@ def check(before: dict, new: Path, port: int, old_ports: list[int], old_pids: li
     folders = [Path(e["folder"]).resolve() for e in settings.get("installs", [])]
     c.that(folders == [new.resolve()], f"the only install on record is {new}: {folders}")
     c.that(data.resolve() == (home / "APCoder").resolve(), f"the data folder is ~/APCoder: {data}")
+    notes = home / ".ap_coder"
+    c.that((notes / "README.txt").is_file(), "~/.ap_coder says what it is (README.txt)")
+    if WINDOWS:
+        hidden = os.stat(notes).st_file_attributes & stat.FILE_ATTRIBUTE_HIDDEN
+        c.that(bool(hidden), f"{notes} is hidden in File Explorer")
     old = Path(before["folder"])
     over = old.resolve() == new.resolve()
     if old_gone:

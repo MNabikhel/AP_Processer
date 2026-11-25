@@ -234,7 +234,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /insights/assumptions",
         "GET /settings", "GET /settings/{tab}", "GET /settings/azure-check", "POST /settings/azure-check",
         "POST /settings/azure-check/test", "POST /settings/review",
-        "POST /settings/data/open-folder", "POST /settings/data/backup",
+        "POST /settings/data/open-folder", "POST /help/report/open-logs", "POST /settings/data/backup",
         "POST /settings/data/backup-copy", "GET /settings/data/backups/{name}", "POST /settings/data/restore",
         "POST /settings/data/backup-time",
         "POST /settings/about/show",

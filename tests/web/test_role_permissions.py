@@ -33,8 +33,8 @@ TWINS = {"/month-end/accruals.xlsx", "/statements/reconciliation.xlsx", "/jde-fi
 LOADS = {"/jde-files/workbook/upload", "/jde-files/workbook/load", "/jde-files/{card}/upload-table",
          "/jde-files/{card}/load-table"}  # fmt: skip
 # Settings → JD Edwards E1's cards of the accounts AP posts to (D-268, D-269) and of the US sales and use tax (D-312):
-# an Admin's, as the rest of the tab.
-SETTINGS = {"/settings/jde/posting", "/settings/jde/us-tax"}
+# an Admin's, as the rest of the tab; Report a problem's Open the logs folder, as Data & backups' Open folder.
+SETTINGS = {"/settings/jde/posting", "/settings/jde/us-tax", "/help/report/open-logs"}
 
 
 @pytest.fixture(scope="module")

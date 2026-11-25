@@ -577,6 +577,17 @@ def test_data_tab_backup_now_and_download(client, store):
     assert client.get("/settings/data/backups/nothing.db").status_code == 404
 
 
+def test_the_data_tab_names_the_three_places_ap_coder_keeps_things(client, store, tmp_path, monkeypatch):
+    """The owner asked why their user folder holds two AP Coder folders. On a laptop the Data tab names all three
+    places: the data folder (everything AP Coder keeps), the program folder (each update puts the new one beside it)
+    and this user's own notes and logs, in a hidden folder that must not be deleted (older versions read it)."""
+    monkeypatch.setenv("AP_USER_SETTINGS", str(tmp_path / "home of sam" / ".ap_coder" / "settings.json"))
+    words = " ".join(html.unescape(client.get("/settings/data").text).split())
+    assert f"in one folder on this computer: <code>{settings_page.data_dir(store)}</code>." in words
+    assert f"The program itself is in <code>{paths.PROJECT_DIR}</code> (each update puts the new one beside" in words
+    assert f"in a hidden folder, <code>{tmp_path / 'home of sam' / '.ap_coder'}</code>: don't delete it." in words
+
+
 def test_the_data_tab_counts_everything_in_the_invoices_folder(client, store):
     """The Invoices tile's files: every entry of the folder, hidden files and folders too, as ``glob("*")`` counted
     them before ``os.scandir`` (D-162)."""
