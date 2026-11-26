@@ -145,6 +145,36 @@ def test_an_approval_records_each_lines_tax_code_and_the_coder_learns_it(tmp_pat
     assert tax_code_of(coding.line_items[0]) == "GST~PST" and tax_learned(coding.line_items[0])
 
 
+def test_a_code_learned_on_an_invoice_shipped_to_the_us_is_used_on_the_next_one(tmp_path, reference):
+    """An approval records a line's code under where the offline coder looks it up: a ship-to outside Canada is
+    OUTSIDE_CANADA on both sides, never our province in its place (B-3048)."""
+    from ap_coder.ai.offline_coder import code_from_capture
+    from ap_coder.capture.types import VERIFIED, CaptureResult, FieldResult, LineReading
+
+    store = Store(tmp_path / "s.db")
+    store.set_setting("our_province", "ON")
+    line = {"line_number": 1, "description": "Pump housing - export", "quantity": 1, "unit_price": 400.0,
+            "amount": 400.0, "predicted_gl_code": "6220", "predicted_cost_center": "", "taxes_applied": [],
+            "tax_exempt": [], "tax_status": "zero_rated", "reasoning_justification": ""}  # fmt: skip
+    output = {"vendor_name": VENDOR, "invoice_number": "INV-1", "invoice_date": "2026-08-21", "currency": "CAD",
+              "subtotal": 400.0, "tax_lines": [], "tax_total": 0.0, "grand_total": 400.0, "line_items": [line],
+              "supplier_province": "ON", "ship_to_province": "OUTSIDE_CANADA"}  # fmt: skip
+    ai = {**output, "line_items": [{**line, "taxes_applied": ["HST"], "tax_status": ""}]}
+    store.approve_invoice(store.add_invoice(tmp_path / "INV-1.pdf", ai, None), output, "Clerk")  # a person's pick
+    assert [(r["final_tax_code"], r["tax_province"]) for r in store.feedback_rows()] == [("ZERO", "OUTSIDE_CANADA")]
+    fields = {name: FieldResult(name, value, 0.99, VERIFIED) for name, value in (
+        ("vendor_name", VENDOR), ("invoice_number", "INV-2"), ("invoice_date", "2026-09-01"), ("currency", "CAD"),
+        ("grand_total", 400.0))}  # fmt: skip
+    capture = CaptureResult(fields=fields, line_items=[LineReading("Pump housing - export", 1.0, 400.0, 400.0)])
+    coded = {}
+    for ship_to in ("Great Lakes Pumps Inc.\n1 Main Street\nBuffalo, NY 14202", "Bench Ltd.\nOttawa ON K1P 1A1"):
+        text = f"{VENDOR}\n12 King Street West\nToronto ON M5H 1A1\nShip to: {ship_to}"
+        coding = code_from_capture(capture, reference, store.feedback_rows(), store, text=text).coding
+        coded[coding.ship_to_province] = (tax_code_of(coding.line_items[0]), tax_learned(coding.line_items[0]))
+    # The export's zero rating is learned for the next export, never for one delivered to us in Ontario.
+    assert coded == {"OUTSIDE_CANADA": ("ZERO", True), "ON": ("NONE", False)}
+
+
 def test_schema_17_adds_the_tax_code_and_fills_it_from_approved_invoices(tmp_path):
     path = tmp_path / "old.db"
     store = Store(path)

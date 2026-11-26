@@ -679,7 +679,7 @@ class StoreCore:
         """The tax code of each approved line's feedback row, who decided it and where the invoice was supplied, from
         its invoice's approved coding and what was proposed (schema 17, ``line_tax.tax_vote``). A line approved before
         ``tax_exempt`` existed keeps its exemption only as a contradiction, never a vote (``LEGACY``, B-765)."""
-        from ...coding.line_tax import invoice_uncollected, supply_province, tax_vote
+        from ...coding.line_tax import invoice_uncollected, learned_province, tax_vote
 
         found = conn.execute("SELECT value FROM settings WHERE key = 'our_province'").fetchone()
         ours = str(found[0] if found else "").strip().upper()
@@ -697,7 +697,7 @@ class StoreCore:
                 continue
             lines = [li for li in final.get("line_items") or [] if isinstance(li, dict)]
             proposed = [li for li in ai.get("line_items") or [] if isinstance(li, dict)]
-            province = supply_province(final, ours)
+            province = learned_province(final, ours)
             uncollected = "+".join(invoice_uncollected(ai if proposed else final, province))
             votes = {
                 li.get("line_number"): tax_vote(was, li, proposed, ai.get("tax_lines") or [], lines,

@@ -18,8 +18,8 @@ from ap_coder.ai.pipeline import CUT_OFF
 from ap_coder.capture import DI_TAX_RATES
 from ap_coder.capture.reader.totals import _RATES
 from ap_coder.coding.bulk import AFTER_PROCESSING
-from ap_coder.coding.line_tax import supply_province
-from ap_coder.coding.tax import PROVINCES
+from ap_coder.coding.line_tax import learned_province
+from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCES
 from ap_coder.coding.terms import parse_terms, payment
 from ap_coder.coding.validation import currency_not_found
 from ap_coder.erp.insights import _may_discount
@@ -434,26 +434,26 @@ def supply_rules(tree: ast.Module) -> set[tuple[str, ...]]:
 
 
 def recorded_elsewhere(rule: tuple[str, ...]) -> list[tuple[str, str, str]]:
-    """Each (ship-to, our province, the vendor's) of Canadian provinces or none where the first of ``rule``'s names
-    that is set is not ``line_tax.supply_province``, the province an approval records the codes under."""
+    """Each (ship-to, our province, the vendor's) of a province, outside Canada, one in lower case or none where the
+    first of ``rule``'s names that is set, as ``line_tax.learned_codes`` compares it, is not
+    ``line_tax.learned_province``, the province an approval records the codes under."""
     found = []
-    for ship_to, ours, vendor in itertools.product(("", *PROVINCES), repeat=3):
+    for ship_to, ours, vendor in itertools.product(("", *PROVINCES, OUTSIDE_CANADA, "on"), repeat=3):
         known = {"ship_to_province": ship_to, "ours": ours, "supplier_province": vendor}
-        looked_up = next((known[name] for name in rule if known[name]), "")
-        if supply_province(SimpleNamespace(ship_to_province=ship_to, supplier_province=vendor), ours) != looked_up:
+        looked_up = next((known[name] for name in rule if known[name]), "").strip().upper()
+        if learned_province(SimpleNamespace(ship_to_province=ship_to, supplier_province=vendor), ours) != looked_up:
             found.append((ship_to, ours, vendor))
     return found
 
 
 def test_learned_tax_codes_are_looked_up_by_the_province_they_are_recorded_under():
-    """An approval records each line's tax code under where the invoice was supplied (``line_tax.supply_province``,
+    """An approval records each line's tax code under where the invoice was supplied (``line_tax.learned_province``,
     ``feedback.tax_province``), and the offline coder looks the codes up by its own ``ship_to_province or ours or
     supplier_province``, taking only rows of that province (``line_tax.learned_codes``): two copies of one rule.
     Neither has ``tax.supply_source``'s site step (the province of the cost center every line goes to, which the Tax
     check uses): the coder looks them up from what the page and Settings say, and an approval must record them by the
-    same rule. Canadian provinces and none only: a ship-to outside Canada is recorded under the next province but
-    looked up as it is, and the chat model's lines (``pipeline._model_line_taxes``) are looked up without our
-    province, questions for after the owner's test."""
+    same rule, a ship-to outside Canada as OUTSIDE_CANADA too (not our province in its place). The chat model's lines
+    (``pipeline._model_line_taxes``) are looked up without our province, a question for after the owner's test."""
     rules = supply_rules(_trees("ap_coder/ai")["ap_coder/ai/offline_coder.py"])
     assert rules  # (the coder still writes its rule out)
     assert {rule: recorded_elsewhere(rule)[:3] for rule in rules} == {rule: [] for rule in rules}

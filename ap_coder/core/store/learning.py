@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
-from ...coding.line_tax import invoice_uncollected, supply_province, tax_vote
+from ...coding.line_tax import invoice_uncollected, learned_province, tax_vote
 from ..audit import changed_since
 from ..keys import LINE_FIELDS, line_pattern
 from ..memory import (
@@ -735,7 +735,7 @@ class LearningMixin:
             cost_centers = out.cost_centers = conn.execute("SELECT 1 FROM cost_centers LIMIT 1").fetchone() is not None
         final_lines = final_output.get("line_items", [])
         # Where it is supplied, for the tax code each line is remembered with (D-80).
-        province = supply_province(final_output, self.our_province())
+        province = learned_province(final_output, self.our_province())
         # And the provincial taxes the vendor did not collect, as the coder saw the invoice (what it read).
         missing = "+".join(invoice_uncollected(ai if ai.get("line_items") else final_output, province))
         for suggestion, li in pair_lines(ai.get("line_items", []), final_lines):
