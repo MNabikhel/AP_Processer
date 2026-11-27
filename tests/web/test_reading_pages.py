@@ -234,6 +234,32 @@ def test_check_again_asks_afresh(client, status):
     assert False in status.asked  # not from the cache
 
 
+def test_check_again_looks_up_again_a_model_servers_name_that_resolved_to_nothing(client, status, monkeypatch):
+    """A name that resolved to nothing is kept UNRESOLVED_SECONDS (B-3050); Check again asks afresh, so a Mac Studio
+    switched on is found at once, not after those 10 s (B-3053)."""
+    import socket
+
+    from ap_coder.core import config
+
+    real, asked = socket.getaddrinfo, []
+
+    def getaddrinfo(host, *args, **kwargs):
+        if host != "studio.local":
+            return real(host, *args, **kwargs)
+        asked.append(host)
+        raise OSError("no such name")
+
+    monkeypatch.setattr(config.socket, "getaddrinfo", getaddrinfo)
+    config.forget_resolved()
+    for _ in range(2):  # the settings read twice: one lookup, kept
+        config.normalise_base_url("http://studio.local:1234/v1")
+    assert asked == ["studio.local"]
+    follow(client, post(client, "/settings/reading/check"))
+    config.normalise_base_url("http://studio.local:1234/v1")
+    assert asked == ["studio.local"] * 2
+    config.forget_resolved()
+
+
 def test_the_self_test_runs_in_the_background_and_its_result_is_kept(client, store, status, tested):
     page = follow(client, post(client, "/settings/reading/self-test"))
     assert f"Self-test of {MODEL} started in the background (about 6 minutes)" in _text(page)
