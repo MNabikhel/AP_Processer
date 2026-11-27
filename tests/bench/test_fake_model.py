@@ -17,6 +17,7 @@ from ap_coder.ai.local_llm import parse_lm_studio_listing
 from ap_coder.bench.__main__ import main
 from ap_coder.bench.fake_model import CHAT, EMBED, READER, FakeModel, kind_of, page_key, seconds_range
 from ap_coder.core.config import LocalLLMSettings, PageReaderSettings, Settings
+from tests.conftest import until
 from tests.scripts import load_script
 
 REAL_FETCH = local_llm._fetch_json  # conftest refuses every model server in the tests
@@ -136,17 +137,27 @@ def test_an_answer_takes_its_latency_scaled():
 
 
 def test_slots_answer_that_many_at_once_and_the_rest_wait_in_line():
-    with FakeModel(latency="0.15", slots=2) as fake:
+    """Two slots, four requests: two answered at once, two in line until a slot is free. The two answered are held
+    (``on_request``) until the test has seen the other two in line: those two take a slot only once the held answers
+    are let go, however late each arrived (four threads started 0.02 s apart, as on a busy runner, made a wait of
+    0.11 s where the test asked for 0.12: B-3056)."""
+    answer = threading.Event()
+    with FakeModel(latency="0.15", slots=2, on_request=lambda *_: answer.wait(30) and None) as fake:
         threads = [threading.Thread(target=chat, args=(fake,)) for _ in range(4)]
         started = time.monotonic()
         for t in threads:
             t.start()
+        assert until(lambda: (s := fake.stats())["active"] == 2 and s["waiting"] == 2)
+        let_go = fake.stats()["uptime"]  # (on the fake's clock, as its history's times)
+        answer.set()
         for t in threads:
-            t.join()
+            t.join(30)
         took = time.monotonic() - started
         s = fake.stats()
-        assert s["served"] == 4 and s["max_active"] == 2 and s["max_in_flight"] == 4
-        assert 0.27 <= took < 3.0 and s["queue_wait"]["max"] >= 0.12 and s["queue_wait"]["n"] == 4
+        assert s["served"] == 4 and s["max_active"] == 2 and s["max_in_flight"] == 4 and s["queue_wait"]["n"] == 4
+        slots_taken = sorted(round(h["t"] + h["wait"], 3) for h in fake.history())
+        assert all(at >= let_go - 0.002 for at in slots_taken[2:]), (slots_taken, let_go)  # (each kept to the ms)
+        assert took >= 0.27  # two answers' 0.15 s one after the other: never all four at once
 
 
 def _wait_for(fake, done, seconds=10.0):
