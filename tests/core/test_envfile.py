@@ -141,3 +141,14 @@ def test_the_app_reads_a_line_typed_by_hand_as_the_settings_pages_show_it(tmp_pa
     os.utime(env, ns=(later, later))
     settings()
     assert {name: os.environ.get(name) for name in names if name in os.environ} == {"AP_T_TAB": "b"}
+
+
+def test_a_line_with_no_name_before_its_equals_sign_is_skipped(tmp_path, monkeypatch):
+    """A divider of equals signs typed by hand, or a line starting with "=", names no setting: the app read it into the
+    environment under no name, and every command stopped with "Invalid argument" (B-3049's reader skipped no such
+    line; python-dotenv did: B-3052)."""
+    env = tmp_path / ".env"
+    env.write_text("# --- Reading ---\n==========\n= C:\\APCoder\nAP_REVIEW_THRESHOLD=0.7\n", encoding="utf-8")
+    assert read_env(env) == {"AP_REVIEW_THRESHOLD": "0.7"}
+    monkeypatch.delenv("AP_REVIEW_THRESHOLD", raising=False)
+    assert Settings.from_env(env).engine.review_threshold == 0.7

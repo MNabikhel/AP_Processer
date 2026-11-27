@@ -51,6 +51,8 @@ def read_env(path: Path) -> dict[str, str]:
                 continue
             key, _, value = line.partition("=")
             key = re.sub(r"^export\s+", "", key.strip())
+            if not key:  # "==========" typed as a divider: no setting (the environment takes no name-less one)
+                continue
             value = parse_value(value)
             if PLACEHOLDER not in value:
                 values[key] = value
