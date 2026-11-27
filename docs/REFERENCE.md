@@ -469,7 +469,9 @@ scripts/             launch.py (the launcher: set up, start the dashboard, open 
                      and stops a running AP Coder), upgrade.py (updates over an older install), first_run.py,
                      check_deps.py, fetch_models.py (launcher steps), pilot_check.py, build_offline_bundle.py,
                      sample invoice generator; ci/old_versions.py (installs each older version and checks the
-                     update over it)
+                     update over it); release_proof.py (a release's update test in one command, Linux or a Mac:
+                     an older build unzipped and used, "Update now?" answered in its window, the data compared
+                     table by table; --from OLD --to NEW, each a release tag or a ZIP)
 APProcessor.bat      the one-click launcher (Mac/Linux: APProcessor.command)
 docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), QUICK_START.md
                      (the pilot tester's one printable page), HOW_IT_RUNS.md
