@@ -111,3 +111,26 @@ def test_a_key_whose_function_is_gone_is_said_stale_and_the_maps_keys_are_the_co
         if path not in have and (ROOT / path).is_file():
             have[path] = set(tm.functions((ROOT / path).read_text(encoding="utf-8")))
         assert key in gone or name in have.get(path, set()), key
+
+
+def test_the_maps_of_cis_parts_join_into_one_only_once_every_part_made_its_own(tmp_path):
+    """D-339: the nightly records the map in four parts side by side (``--shard K/4``), each a map of its own test
+    files; joined, each key has every part's files that ran it, the same bytes whatever the order. A part missing (it
+    failed, or ran out of time) writes no map: one of some parts would leave the others' tests out of the pick."""
+    one = {"format": tm.FORMAT, "tests": [A, C], "map": {f"{TAXMATH}::invoice_taxes": [0, 1], "ap_coder/x.py::f": [1]}}
+    two = {"format": tm.FORMAT, "tests": [B], "map": {f"{TAXMATH}::invoice_taxes": [0]}}
+    joined = tm.merge([one, two])
+    assert joined == {"format": tm.FORMAT, "tests": [A, B, C],
+                      "map": {"ap_coder/x.py::f": [2], f"{TAXMATH}::invoice_taxes": [0, 1, 2]}}  # fmt: skip
+    assert tm.merge([two, one]) == joined
+    for k, made in ((1, one), (3, two)):
+        (tmp_path / f"test-map-{k}-of-3").mkdir()
+        tm.write(made, tmp_path / f"test-map-{k}-of-3" / "test_map.json.gz")
+    out = tmp_path / "test_map.json.gz"
+    assert tm.parts_in(tmp_path)[1] == ["test-map-2-of-3"]
+    assert tm.main(["merge", str(tmp_path), "--out", str(out)]) == 0 and not out.exists()
+    (tmp_path / "test-map-2-of-3").mkdir()
+    tm.write({"format": tm.FORMAT, "tests": [], "map": {}}, tmp_path / "test-map-2-of-3" / "test_map.json.gz")
+    assert tm.main(["merge", str(tmp_path), "--out", str(out)]) == 0
+    assert tm.load(out) == tm.TestMap((A, B, C), {"ap_coder/x.py::f": (2,), f"{TAXMATH}::invoice_taxes": (0, 1, 2)})
+    assert tm.parts_in(tmp_path / "none") == ([], ["parts of one split"])

@@ -6,6 +6,7 @@ files that ran a line of that function. Made from a coverage database whose cont
     python -m tests.test_map record -- -m "" -k "not in_a_browser"   the suite under coverage, then the map
     python -m tests.test_map record -- tests/coding tests/erp        a part of it (a map of that part only)
     python -m tests.test_map build DATA                              the map from a coverage database made before
+    python -m tests.test_map merge FOLDER                            one map of CI's parts' (D-339)
 
 ``record`` runs pytest under coverage with this module as a plugin, which names each test's file as the context of what
 it runs (its fixtures' setup and teardown too); any arguments after ``--`` go to pytest. A fixture shared by tests (of a
@@ -174,10 +175,40 @@ def build(contexts: dict[str, dict[int, list[str]]], root: Path = ROOT,
             name = next((n for n, (first, last) in spans if first <= line <= last), None)
             if tests and name:
                 by_key.setdefault(f"{file}::{name}", set()).update(tests)
+    return _made(by_key)
+
+
+def _made(by_key: dict[str, set[str]]) -> dict:
+    """The map of ``{key: its test files}``: the files sorted, each key's as indices into them."""
     tests = sorted(set().union(*by_key.values())) if by_key else []
     index = {t: i for i, t in enumerate(tests)}
     return {"format": FORMAT, "tests": tests,
             "map": {key: sorted(index[t] for t in found) for key, found in sorted(by_key.items())}}  # fmt: skip
+
+
+def merge(parts: list[dict]) -> dict:
+    """One map of the maps of a suite's parts (``--shard K/N``, each recorded alone): each key with every part's test
+    files that ran it."""
+    by_key: dict[str, set[str]] = {}
+    for made in parts:
+        for key, found in made["map"].items():
+            by_key.setdefault(key, set()).update(made["tests"][i] for i in found)
+    return _made(by_key)
+
+
+def parts_in(folder: Path) -> tuple[list[Path], list[str]]:
+    """The maps CI's parts made in ``folder`` (``test-map-K-of-N/test_map.json.gz``, one artifact each), and the
+    parts missing (a part that failed or timed out): a map of some parts only would leave the others' tests out."""
+    found = {}
+    for path in folder.glob("test-map-*-of-*/test_map.json.gz"):
+        k, _, n = path.parent.name.removeprefix("test-map-").partition("-of-")
+        if k.isdigit() and n.isdigit():
+            found[(int(k), int(n))] = path
+    n = max((n for _, n in found), default=0)
+    missing = [f"test-map-{k}-of-{n}" for k in range(1, n + 1) if (k, n) not in found]
+    if not found or any(other != n for _, other in found):
+        missing = missing or ["parts of one split"]
+    return [found[k, n] for k in range(1, n + 1) if (k, n) in found], missing
 
 
 def write(made: dict, path: Path = MAP_FILE) -> int:
@@ -290,9 +321,20 @@ def main(argv: list[str] | None = None) -> int:
     rec.add_argument("--data", type=Path, default=DATA, help=f"the coverage database (default {DATA})")
     made = sub.add_parser("build", help="write the map from a coverage database")
     made.add_argument("data", type=Path, nargs="?", default=DATA)
-    for each in (rec, made):
+    joined = sub.add_parser("merge", help="one map of CI's parts' maps (test-map-K-of-N folders), once all are there")
+    joined.add_argument("folder", type=Path)
+    for each in (rec, made, joined):
         each.add_argument("--out", type=Path, default=MAP_FILE, help=f"the map (default {MAP_FILE.name})")
     args = parser.parse_args(argv)
+    if args.command == "merge":
+        parts, missing = parts_in(args.folder)
+        if missing:
+            print(f"no map written: {', '.join(missing)} missing in {args.folder}")
+            return 0
+        result = merge([json.loads(gzip.decompress(part.read_bytes())) for part in parts])
+        size = write(result, args.out)
+        print(f"{len(result['map'])} functions, {len(result['tests'])} test files: {args.out} ({size:,} bytes)")
+        return 0
     data_file = args.data
     if args.command == "record":
         code = record(args.pytest_args, data_file)

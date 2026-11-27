@@ -49,3 +49,4 @@ tests/fixtures/page_reader/s212-0000.pdf
 tests/fixtures/page_reader/s212-0000.truth.json
 tests/fixtures/role_access_before.json
 tests/test_times.json
+tests/test_times_windows.json

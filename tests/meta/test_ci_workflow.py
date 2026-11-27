@@ -65,7 +65,8 @@ def test_the_workflow_tests_skip_where_there_is_no_workflow(tmp_path):
     shutil.copy(__file__, copy / "test_ci_workflow.py")
     out = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-k",
                           "not looked_up_once and not where_there_is_no_workflow and not one_shard and not older"
-                          "_versions and not weighed_by and not times_are_refreshed and not suites_time", str(copy)],
+                          "_versions and not weighed_by and not times_are_refreshed and not suites_time and not "
+                          "nightly_works_out and not come_into_a_checkout and not windows_own_times", str(copy)],
                          cwd=tmp_path, capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert out.returncode == 0, out.stdout[-2000:]
 
@@ -416,6 +417,172 @@ def test_the_times_are_refreshed_from_several_reports_and_a_test_over_two_second
                                                           "def test_any():\n    pass\n", encoding="utf-8")  # fmt: skip
     assert times.marked_slow(tmp_path) == {"tests/a/test_kept.py::test_long", "tests/a/test_kept.py::TestGroup::"
                                            "test_inside", "tests/a/test_new.py::test_any"}  # fmt: skip
+
+
+def _report(folder: Path, cases: dict[str, float]) -> None:
+    """A part's --junitxml report, ``{"tests.a.test_x::test_y": seconds}``, as its CI artifact keeps it."""
+    folder.mkdir(parents=True)
+    rows = "".join(f'<testcase classname="{case.split("::")[0]}" name="{case.split("::")[1]}" time="{seconds}"/>'
+                   for case, seconds in cases.items())  # fmt: skip
+    (folder / "junit.xml").write_text(f"<testsuites><testsuite>{rows}</testsuite></testsuites>", encoding="utf-8")
+
+
+def test_the_nightly_works_out_each_files_time_on_ubuntu_and_on_windows_from_the_whole_suites_parts(tmp_path):
+    """D-339: from a run's tests parts' reports (an artifact each, named for its cell and part), each file's time on
+    Ubuntu is the mean of the Pythons that ran the whole suite (each cell's parts together), Windows' own from its
+    whole-suite cells (the fast tier's have no slow test's time); a file no report measured keeps the checkout's, one
+    gone leaves; where they came from goes beside them. No report at all: nothing is written."""
+    from tests import times
+
+    for name in ("test_a", "test_b", "test_kept"):
+        (tmp_path / "tests" / "x").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "tests" / "x" / f"{name}.py").write_text("", encoding="utf-8")
+    ci = tmp_path / "artifacts"
+    _report(ci / "junit-ubuntu-latest-python-3.11-whole-0", {"tests.x.test_a::test_one": 3.0, "tests.x.test_a::t2": 1})
+    _report(ci / "junit-ubuntu-latest-python-3.11-whole-1", {"tests.x.test_b::test_one": 2.0})
+    _report(ci / "junit-ubuntu-latest-python-3.12-whole-2", {"tests.x.test_b::test_one": 4.0})
+    _report(ci / "junit-ubuntu-latest-python-3.12-whole-3", {"tests.x.test_a::test_one": 1.0, "tests.x.test_a::t2": 1})
+    _report(ci / "junit-windows-latest-python-3.12-whole-8", {"tests.x.test_a::test_one": 9.0, "tests.x.test_a::t2": 3})
+    _report(ci / "junit-windows-latest-python-3.11-fast-16", {"tests.x.test_b::test_one": 99.0})
+    kept = {"test_times.json": tmp_path / "linux.json", "test_times_windows.json": tmp_path / "none.json"}
+    kept["test_times.json"].write_text(json.dumps({"tests/x/test_kept.py": [5.0, 5.0], "tests/x/test_gone.py": [1, 1],
+                                                   "tests/x/test_a.py": [50.0, 50.0]}), encoding="utf-8")  # fmt: skip
+    out = tmp_path / "data"
+    made = {"commit": "abc1234", "run": "https://example.invalid/run", "date": "2026-11-27"}
+    written = times.from_ci(ci, out, {"tests/x/test_a.py::test_one"}, tmp_path, made, kept)
+    linux = {"tests/x/test_a.py": [3.0, 1.0], "tests/x/test_b.py": [3.0, 3.0], "tests/x/test_kept.py": [5.0, 5.0]}
+    assert written == {"test_times.json": linux, "test_times_windows.json": {"tests/x/test_a.py": [12.0, 3.0]}}
+    for name, measured in written.items():
+        assert json.loads((out / name).read_text(encoding="utf-8")) == measured
+    assert json.loads((out / times.MADE).read_text(encoding="utf-8")) == made
+    with pytest.raises(SystemExit, match="no --junitxml report"):
+        times.from_ci(tmp_path / "empty", out, set(), tmp_path)
+
+
+@needs_ci
+def test_the_artifacts_the_tests_parts_keep_are_the_cells_the_nightly_reads():
+    """The tests job names each part's report junit-<OS>-python-<version>-<whole or fast>-<index>: read back, each
+    cell of .github/ci-tests.json is one cell of its parts, of an OS whose times the nightly works out."""
+    from tests import times
+
+    jobs = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
+    kept = next(step for step in jobs["tests"]["steps"] if step.get("name") == "Keep the tests' times")["with"]
+    assert kept["name"] == ("junit-${{ matrix.os }}-python-${{ matrix.python }}-${{ matrix.tier || 'whole' }}-"
+                            "${{ strategy.job-index }}")  # fmt: skip
+    names = [f"junit-{c['os']}-python-{c['python']}-{c.get('tier') or 'whole'}-{i}" for i, c in enumerate(test_cells())]
+    read = {name.removeprefix("junit-").rpartition("-")[0] for name in names}
+    assert read == {f"{c['os']}-python-{c['python']}-{c.get('tier') or 'whole'}" for c in test_cells()}
+    assert {os_name for os_name, _ in times.FROM_CELLS.values()} == {f"{c['os']}-" for c in test_cells()}
+
+
+def test_the_times_come_into_a_checkout_from_the_data_branch_and_only_a_developer_reaches_the_internet(
+    tmp_path, monkeypatch
+):
+    """``python -m tests.times pull`` (D-339): the data branch's times over the checkout's (a test file added since
+    keeps its own, one gone leaves), the test map as it is, a file it lacks or one not in its format left as it was;
+    from a folder (file://) as from GitHub. An address on the network only with AP_ALLOW_INTERNET=1: without it,
+    nothing is asked."""
+    from tests import test_map, times
+
+    for name in ("test_a", "test_new"):
+        (tmp_path / "tests" / "x").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "tests" / "x" / f"{name}.py").write_text("", encoding="utf-8")
+    branch, into = tmp_path / "branch", tmp_path / "into"
+    branch.mkdir()
+    into.mkdir()
+    pulled = {"tests/x/test_a.py": [4.0, 2.0], "tests/x/test_gone.py": [1, 1]}
+    (branch / "test_times.json").write_text(json.dumps(pulled), encoding="utf-8")
+    (branch / "test_times_windows.json").write_text('{"tests/x/test_a.py": [1.0, 2.0]}', encoding="utf-8")  # no
+    test_map.write({"format": test_map.FORMAT, "tests": ["tests/x/test_a.py"], "map": {"ap_coder/x.py::f": [0]}},
+                   branch / "test_map.json.gz")  # fmt: skip
+    (branch / times.MADE).write_text('{"commit": "abcdef123", "run": "r", "date": "2026-11-27"}', encoding="utf-8")
+    (into / "test_times.json").write_text(json.dumps({"tests/x/test_a.py": [9.0, 9.0], "tests/x/test_new.py": [3, 3]}),
+                                          encoding="utf-8")  # fmt: skip
+    (into / "test_times_windows.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    said = times.pull(branch.as_uri(), into, tmp_path)
+    assert said[0] == "from main at abcdef1, 2026-11-27 (r)"
+    assert json.loads((into / "test_times.json").read_text(encoding="utf-8")) == {
+        "tests/x/test_a.py": [4.0, 2.0], "tests/x/test_new.py": [3, 3]}  # fmt: skip
+    assert (into / "test_times_windows.json").read_text(encoding="utf-8") == "{}\n"  # (its fast beyond its whole)
+    assert test_map.load(into / "test_map.json.gz") == test_map.TestMap(
+        ("tests/x/test_a.py",), {"ap_coder/x.py::f": (0,)}
+    )
+    assert said[2] == "test_times_windows.json: not times in their format, left as it was"
+    (branch / "test_map.json.gz").unlink()
+    assert "test_map.json.gz: not there, left as it was" in times.pull(branch.as_uri(), into, tmp_path)
+    assert test_map.load(into / "test_map.json.gz") is not None
+
+    def asked(*args, **kwargs):
+        raise AssertionError("the network was asked")
+
+    monkeypatch.setattr(times.urllib.request, "urlopen", asked)
+    with pytest.raises(SystemExit, match="only with AP_ALLOW_INTERNET=1"):
+        times.pull(times.RAW, into, tmp_path)
+    assert times.RAW == "https://raw.githubusercontent.com/MNabikhel/AP_Processer/test-times/"
+    assert times.RAW.removeprefix("https://raw.githubusercontent.com/").startswith(_releases_repo() + "/")
+
+
+def _releases_repo() -> str:
+    """The repository the launcher asks for releases (scripts/releases.py ``REPO``)."""
+    text = (CI.parents[2] / "scripts" / "releases.py").read_text(encoding="utf-8")
+    return re.search(r'^REPO = "([^"]+)"', text, re.MULTILINE).group(1)
+
+
+def test_on_windows_the_parts_are_weighed_by_windows_own_times():
+    """D-339: Windows takes two to three times as long as Ubuntu, and not evenly (the scans are read there): its
+    parts are weighed by its own times, Ubuntu's for a file it has none of; elsewhere by Ubuntu's alone."""
+    from tests import conftest
+
+    linux, windows = (json.loads(f.read_text(encoding="utf-8")) for f in (conftest._TIMES_FILE,
+                                                                         conftest._WINDOWS_TIMES_FILE))  # fmt: skip
+    assert conftest._times_for("linux") == linux and conftest._times_for("darwin") == linux
+    assert conftest._times_for("win32") == {**linux, **windows}
+    assert all(len(pair) == 2 and pair[0] >= pair[1] >= 0 for pair in windows.values())
+    assert all((CI.parents[2] / path).is_file() for path in windows)  # no file that is gone
+
+
+@needs_ci
+def test_the_nightlys_data_goes_on_a_branch_of_its_own_never_to_main_and_never_from_a_pull_request_or_a_merge():
+    """D-339: every green run of a merge to main is a release the pilot tester is offered (builds.yml), so the jobs
+    that make the developers' data (the times, the test map) run only nightly or by hand on main, never turn its run
+    red, push one commit holding only their files (no workflow file: no workflow runs on it) to the branch test-times
+    alone, and are the only jobs that may write. The one that writes runs git alone, on a machine of its own: no
+    package installed and none of the checkout's code run where the token could push to main. The map is recorded
+    with the OCR engine, as the map in the repository was: without it the tests that read scans skip, and leave out
+    of the map the functions only they run."""
+    jobs = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
+    only = (
+        "github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == "
+        "'workflow_dispatch')"
+    )
+    assert jobs["test-map"]["if"] == only
+    assert jobs["test-times"]["if"] == f"${{{{ !cancelled() && {only} }}}}"
+    assert jobs["test-times"]["needs"] == ["tests", "test-map"]
+    pushing = jobs["test-times-branch"]
+    assert pushing["needs"] == "test-times"
+    assert pushing["if"] == f"${{{{ !cancelled() && needs.test-times.result == 'success' && {only} }}}}"
+    assert all(jobs[name]["continue-on-error"] is True for name in ("test-map", "test-times", "test-times-branch"))
+    assert {name for name, job in jobs.items() if "write" in str(job.get("permissions", ""))} == {"test-times-branch"}
+    assert pushing["permissions"] == {"contents": "write"}
+    used = [step["uses"] for step in pushing["steps"] if "uses" in step]
+    assert used == ["actions/checkout@v4", "actions/download-artifact@v4"]
+    assert not re.search(r"\b(python|pip|pipx|uv|npm|npx)\b", "\n".join(s.get("run", "") for s in pushing["steps"]))
+    kept = next(step for step in jobs["test-times"]["steps"] if step.get("uses") == "actions/upload-artifact@v4")
+    fetched = next(step for step in pushing["steps"] if step.get("uses") == "actions/download-artifact@v4")
+    assert kept["with"]["name"] == fetched["with"]["name"] and kept["with"]["path"] == fetched["with"]["path"]
+    install = next(step["run"] for step in jobs["test-map"]["steps"] if step.get("name") == "Install")
+    assert install == 'python -m pip install -e ".[ocr,dev,testmap]"'
+    pushed = pushing["steps"][-1]["run"]
+    assert re.findall(r"git push[^\n]*", pushed) == ['git push --force origin "$commit:refs/heads/test-times"']
+    assert 'export GIT_INDEX_FILE="$RUNNER_TEMP/index"' in pushed  # (a tree of the data files alone)
+    assert 'git commit-tree "$(git write-tree)" -m' in pushed and " -p " not in pushed  # (no parent: one commit)
+    parts = jobs["test-map"]["strategy"]["matrix"]["part"]
+    record = jobs["test-map"]["steps"][-2]["run"]
+    assert parts == list(range(1, len(parts) + 1)) and f"--shard ${{{{ matrix.part }}}}/{len(parts)}" in record
+    assert jobs["test-map"]["steps"][-1]["with"]["name"] == f"test-map-${{{{ matrix.part }}}}-of-{len(parts)}"
+    builds = yaml.safe_load((CI.parent / "builds.yml").read_text(encoding="utf-8"))["jobs"]["build"]["if"]
+    assert "github.event.workflow_run.event == 'push'" in builds  # (a nightly's or a run by hand's: no release)
 
 
 # Each place that gives the suite's time, from where it starts: the default run's minutes come first, the whole run's
