@@ -6,6 +6,7 @@ download their packages from PyPI, so only with AP_ALLOW_INTERNET=1)."""
 
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import os
@@ -173,6 +174,20 @@ def test_the_update_line_and_the_time_it_took_are_read_from_the_window():
     assert proof.window_said(UPDATE[:1])["offer"] == ""
 
 
+def test_the_question_for_the_pilot_testers_script_is_the_one_the_window_said(tmp_path, capsys):
+    """What "For the pilot tester's script" says the window asks is the line the old launcher said, not a copy of it
+    kept in the script: a launcher whose question is worded otherwise is shown as it is (B-3060)."""
+    assert proof.window_said(UPDATE)["question"] == ("Update now? Your invoices and settings are kept (a backup is "
+                                                     "made first). [Y/n]")  # fmt: skip
+    worded = [(s, t.replace("Your invoices and settings are kept", "Your data stays")) for s, t in UPDATE]
+    r = proof.Run(argparse.Namespace(old="a.zip", new="b.zip", answer="y", keep=False), tmp_path, proof.Proof())
+    r.seen["window"] = proof.window_said(worded)
+    proof.report(r)
+    said = capsys.readouterr().out
+    assert "Update now? Your data stays (a backup is made first). [Y/n]" in said
+    assert "Your invoices and settings are kept" not in said
+
+
 def test_the_version_line_is_read_from_settings_about():
     page = ('<dl class="about"><dt>Version</dt><dd>0.3.0 &middot; build 0a749b3c, 2026-11-25 17:46</dd>'
             "<dt>Python</dt><dd>3.12.13</dd></dl>")  # fmt: skip
@@ -313,7 +328,8 @@ def test_it_refuses_on_windows(tmp_path, monkeypatch, capsys):
     assert not (tmp_path / "w").exists()
 
 
-def test_a_release_tag_is_not_downloaded_without_the_opt_in(tmp_path, offline_guard, capsys):
+def test_a_release_tag_is_not_downloaded_without_the_opt_in(tmp_path, offline_guard, monkeypatch, capsys):
+    monkeypatch.setattr(proof, "WINDOWS", False)  # (the refusals after Windows': on Windows CI too, B-3061)
     zip_path = _release_zip(tmp_path / "new.zip")
     work = tmp_path / "w"
     assert proof.main(["--from", "v0.3.0-build.0a749b3", "--to", str(zip_path), "--work", str(work)]) == 2
@@ -322,7 +338,43 @@ def test_a_release_tag_is_not_downloaded_without_the_opt_in(tmp_path, offline_gu
     assert offline_guard.attempts == [] and not work.exists()
 
 
-def test_it_refuses_a_work_folder_that_holds_an_earlier_run_and_a_name_that_is_neither(tmp_path, capsys):
+@pytest.mark.parametrize("opt_in", [None, "0"])
+def test_two_zips_are_not_set_up_without_the_opt_in(tmp_path, offline_guard, monkeypatch, capsys, opt_in):
+    """Both first setups download their packages from PyPI: not without AP_ALLOW_INTERNET=1, and never with
+    AP_ALLOW_INTERNET=0, which the launchers started (a person's environment, no AP_ setting) would not be told
+    (B-3059)."""
+    monkeypatch.setattr(proof, "WINDOWS", False)
+    if opt_in is not None:
+        monkeypatch.setenv("AP_ALLOW_INTERNET", opt_in)
+    monkeypatch.setattr(proof, "prove", lambda _r: pytest.fail("the proof started its first setups"))
+    old, new, work = _release_zip(tmp_path / "old.zip"), _release_zip(tmp_path / "new.zip"), tmp_path / "w"
+    assert proof.main(["--from", str(old), "--to", str(new), "--work", str(work)]) == 2
+    assert "AP_ALLOW_INTERNET=1" in capsys.readouterr().err
+    assert offline_guard.attempts == [] and not work.exists()
+
+
+def test_a_proof_stopped_by_an_error_it_did_not_foresee_is_not_proved(tmp_path, monkeypatch, capsys):
+    """A command that took too long, a database that is not there: the proof stops there, said as a failure, never
+    "PROVED" with the checks it made until then (B-3058)."""
+    monkeypatch.setattr(proof, "WINDOWS", False)
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
+
+    def stopped(r):
+        r.proof.check(True, "the two builds")
+        raise subprocess.TimeoutExpired(["python", "-m", "ap_coder", "doctor"], 900)
+
+    monkeypatch.setattr(proof, "prove", stopped)
+    zip_path, work = _release_zip(tmp_path / "new.zip"), tmp_path / "w"
+    with pytest.raises(subprocess.TimeoutExpired):
+        proof.main(["--from", str(zip_path), "--to", str(zip_path), "--work", str(work)])
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    assert report["ok"] is False and report["checks"][-1]["check"] == "stopped"
+    assert "TimeoutExpired" in report["checks"][-1]["detail"]
+    assert "NOT PROVED" in capsys.readouterr().out
+
+
+def test_it_refuses_a_work_folder_that_holds_an_earlier_run_and_a_name_that_is_neither(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(proof, "WINDOWS", False)
     zip_path = _release_zip(tmp_path / "new.zip")
     (tmp_path / "w" / "home").mkdir(parents=True)
     assert proof.main(["--from", str(zip_path), "--to", str(zip_path), "--work", str(tmp_path / "w")]) == 2
@@ -359,7 +411,8 @@ def test_the_whole_proof_on_two_zips_of_this_checkout(tmp_path):
         zips.append(tmp_path / f"{name}.zip")
     work = tmp_path / "work"
     done = subprocess.run([sys.executable, str(ROOT / "scripts" / "release_proof.py"), "--from", str(zips[0]), "--to",
-                           str(zips[1]), "--answer", "y", "--work", str(work)], timeout=3600)  # fmt: skip
+                           str(zips[1]), "--answer", "y", "--work", str(work)], timeout=3600,
+                          env={**os.environ, "AP_ALLOW_INTERNET": "1"})  # fmt: skip
     report = json.loads((work / "report.json").read_text(encoding="utf-8"))
     failed = [c for c in report["checks"] if not c["ok"]]
     assert done.returncode == 0 and report["ok"], f"failed: {failed}"

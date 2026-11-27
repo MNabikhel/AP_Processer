@@ -7,7 +7,9 @@ does.
 OLD and NEW are each a release tag (``v0.3.0-build.<commit>``: its ZIP and SHA256SUMS downloaded from its GitHub
 release, the ZIP checked against SHA256SUMS; only with ``AP_ALLOW_INTERNET=1``) or a ZIP on this computer laid out as a
 release's (one folder ``AP_Processer-<version>-build.<commit>/``, its ap_coder/BUILD stamped by git archive). Linux
-and Macs only: the question is answered in a pseudo-terminal, which Windows has not (there it refuses, exit 2).
+and Macs only: the question is answered in a pseudo-terminal, which Windows has not (there it refuses, exit 2). Only
+with ``AP_ALLOW_INTERNET=1`` whichever they are: both first setups download their packages from PyPI, as a person's
+first start does (D-94), and the launchers started are not told the setting (it refuses, exit 2).
 
 In ``--work`` (a new folder; a temporary one by default), with a home of its own (``home/``: HOME points there, and
 nothing of this computer's AP Coder nor any AP_ setting is used):
@@ -388,17 +390,18 @@ class Window:
 
 
 def window_said(lines: list[tuple[float, str]]) -> dict[str, Any]:
-    """What a launcher's window said about the update: the question's first line (``offer``), the line saying it was
-    updated (``update``) or that this version starts (``kept``), where the dashboard runs (``running``) and the seconds
-    from the answer (or from the start, when nothing was asked) until then."""
-    said: dict[str, Any] = {"offer": "", "update": "", "kept": "", "running": "", "seconds": None}
+    """What a launcher's window said about the update: the question's first line (``offer``) and its last
+    (``question``), the line saying it was updated (``update``) or that this version starts (``kept``), where the
+    dashboard runs (``running``) and the seconds from the answer (or from the start, when nothing was asked) until
+    then."""
+    said: dict[str, Any] = {"offer": "", "question": "", "update": "", "kept": "", "running": "", "seconds": None}
     asked = 0.0
     for seconds, text in lines:
         line = text.strip()
         if line.startswith("A newer AP Coder is available:") and not said["offer"]:
             said["offer"] = line.split(" What's new:", 1)[0]
-        elif QUESTION in line and not asked:
-            asked = seconds
+        elif QUESTION in line and not said["question"]:
+            asked, said["question"] = seconds, line
         elif re.fullmatch(r"Updated AP Coder from .+ to .+\.", line) and not said["update"]:
             said["update"] = line
         elif line.startswith("Starting this version.") and not said["kept"]:
@@ -1013,8 +1016,8 @@ def prove(r: Run) -> None:
 
 def pilot_tester(r: Run) -> dict[str, Any]:
     said = r.seen.get("window") or {}
-    return {"question": said.get("offer", ""), "answer": r.args.answer, "update line": said.get("update", ""),
-            "kept line": said.get("kept", ""), "seconds": said.get("seconds"),
+    return {"question": said.get("offer", ""), "question line": said.get("question", ""), "answer": r.args.answer,
+            "update line": said.get("update", ""), "kept line": said.get("kept", ""), "seconds": said.get("seconds"),
             "version before": r.seen.get("version before", ""),
             "version after": r.seen.get("version after", "")}  # fmt: skip
 
@@ -1036,7 +1039,8 @@ def report(r: Run) -> None:
     print()
     print("For the pilot tester's script")
     print(f"  The window asks:  {told['question'] or '(nothing was asked)'}")
-    print(f"                    {QUESTION} Your invoices and settings are kept (a backup is made first). [Y/n]")
+    if told["question line"]:
+        print(f"                    {told['question line']}")
     if r.args.answer == "y":
         print(f"  After Enter (yes): {told['update line'] or '(no update line)'}")
     else:
@@ -1073,6 +1077,9 @@ def refusal(a: argparse.Namespace) -> str:
             return f"{option} {given} is neither a release tag (v0.3.0-build.<commit>) nor a ZIP on this computer."
     if a.work and ((a.work / "home").exists() or (a.work / "report.json").exists()):
         return f"--work {a.work} holds an earlier run: give a new folder."
+    if not offline.internet_allowed():  # (the launchers it starts get no AP_ setting: AP_ALLOW_INTERNET=0 not either)
+        return ("Both first setups download their Python packages from pypi.org, as a person's first start does: set "
+                "AP_ALLOW_INTERNET=1 to allow it.")  # fmt: skip
     return ""
 
 
@@ -1096,6 +1103,9 @@ def main(argv: list[str] | None = None) -> int:
         prove(r)
     except Failed as exc:
         r.proof.check(False, "stopped", str(exc))
+    except BaseException as exc:  # (not foreseen: a failure too, never "PROVED" with the checks made until then)
+        r.proof.check(False, "stopped", f"{type(exc).__name__}: {exc}")
+        raise
     finally:
         cleanup(r)
         report(r)

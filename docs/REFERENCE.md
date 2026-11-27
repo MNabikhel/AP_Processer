@@ -471,7 +471,7 @@ scripts/             launch.py (the launcher: set up, start the dashboard, open 
                      sample invoice generator; ci/old_versions.py (installs each older version and checks the
                      update over it); release_proof.py (a release's update test in one command, Linux or a Mac:
                      an older build unzipped and used, "Update now?" answered in its window, the data compared
-                     table by table; --from OLD --to NEW, each a release tag or a ZIP)
+                     table by table; --from OLD --to NEW, each a release tag or a ZIP; AP_ALLOW_INTERNET=1)
 APProcessor.bat      the one-click launcher (Mac/Linux: APProcessor.command)
 docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), QUICK_START.md
                      (the pilot tester's one printable page), HOW_IT_RUNS.md
