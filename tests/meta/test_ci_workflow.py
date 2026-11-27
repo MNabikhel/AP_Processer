@@ -547,7 +547,10 @@ def test_the_nightlys_data_goes_on_a_branch_of_its_own_never_to_main_and_never_f
     """D-339: every green run of a merge to main is a release the pilot tester is offered (builds.yml), so the jobs
     that make the developers' data (the times, the test map) run only nightly or by hand on main, never turn its run
     red, push one commit holding only their files (no workflow file: no workflow runs on it) to the branch test-times
-    alone, and are the only jobs that may write."""
+    alone, and are the only jobs that may write. The one that writes runs git alone, on a machine of its own: no
+    package installed and none of the checkout's code run where the token could push to main. The map is recorded
+    with the OCR engine, as the map in the repository was: without it the tests that read scans skip, and leave out
+    of the map the functions only they run."""
     jobs = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
     only = (
         "github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == "
@@ -556,10 +559,21 @@ def test_the_nightlys_data_goes_on_a_branch_of_its_own_never_to_main_and_never_f
     assert jobs["test-map"]["if"] == only
     assert jobs["test-times"]["if"] == f"${{{{ !cancelled() && {only} }}}}"
     assert jobs["test-times"]["needs"] == ["tests", "test-map"]
-    assert all(jobs[name]["continue-on-error"] is True for name in ("test-map", "test-times"))
-    assert {name for name, job in jobs.items() if "write" in str(job.get("permissions", ""))} == {"test-times"}
-    assert jobs["test-times"]["permissions"] == {"contents": "write"}
-    pushed = jobs["test-times"]["steps"][-1]["run"]
+    pushing = jobs["test-times-branch"]
+    assert pushing["needs"] == "test-times"
+    assert pushing["if"] == f"${{{{ !cancelled() && needs.test-times.result == 'success' && {only} }}}}"
+    assert all(jobs[name]["continue-on-error"] is True for name in ("test-map", "test-times", "test-times-branch"))
+    assert {name for name, job in jobs.items() if "write" in str(job.get("permissions", ""))} == {"test-times-branch"}
+    assert pushing["permissions"] == {"contents": "write"}
+    used = [step["uses"] for step in pushing["steps"] if "uses" in step]
+    assert used == ["actions/checkout@v4", "actions/download-artifact@v4"]
+    assert not re.search(r"\b(python|pip|pipx|uv|npm|npx)\b", "\n".join(s.get("run", "") for s in pushing["steps"]))
+    kept = next(step for step in jobs["test-times"]["steps"] if step.get("uses") == "actions/upload-artifact@v4")
+    fetched = next(step for step in pushing["steps"] if step.get("uses") == "actions/download-artifact@v4")
+    assert kept["with"]["name"] == fetched["with"]["name"] and kept["with"]["path"] == fetched["with"]["path"]
+    install = next(step["run"] for step in jobs["test-map"]["steps"] if step.get("name") == "Install")
+    assert install == 'python -m pip install -e ".[ocr,dev,testmap]"'
+    pushed = pushing["steps"][-1]["run"]
     assert re.findall(r"git push[^\n]*", pushed) == ['git push --force origin "$commit:refs/heads/test-times"']
     assert 'export GIT_INDEX_FILE="$RUNNER_TEMP/index"' in pushed  # (a tree of the data files alone)
     assert 'git commit-tree "$(git write-tree)" -m' in pushed and " -p " not in pushed  # (no parent: one commit)

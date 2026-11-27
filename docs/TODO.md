@@ -51,5 +51,5 @@ decision number then says what was done).
   Ubuntu and on Windows (whose parts are now split by its own, `tests/test_times_windows.json`) and records the test
   map in four parts, then puts them on the data branch `test-times`; `python -m tests.times pull` (with
   AP_ALLOW_INTERNET=1) brings them in, to commit with a pull request. Left: see that the first nights' runs push the
-  branch (their test-times job), and that the map's four parts end within their 45 minutes; commit a pull now and
+  branch (their test-times-branch job), and that the map's four parts end within their 45 minutes; commit a pull now and
   then (nothing does it for us, by design).

@@ -127,7 +127,9 @@ jobs:
   test-map:
     # The test map (tests/test_map.json.gz, D-333) recorded again: the whole suite under coverage, about an hour in one
     # process, so in four parts side by side, each its own map, joined by test-times below (D-339). Nightly and by
-    # hand on main only: never in a pull request's or a merge's run (it decides nothing about a build).
+    # hand on main only: never in a pull request's or a merge's run (it decides nothing about a build). With the OCR
+    # engine, as the map in the repository was recorded: without it the tests that read scans skip, and the map
+    # leaves out the functions only they run.
     name: The test map, part ${{ matrix.part }} of 4 (nightly; main only)
     if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
@@ -144,7 +146,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install
-        run: python -m pip install -e ".[dev,testmap]"
+        run: python -m pip install -e ".[ocr,dev,testmap]"
       - name: The part's tests under coverage, then its map
         run: python -m tests.test_map record --out "${{ runner.temp }}/test_map.json.gz" -- -q -m "" -k "not in_a_browser" --shard ${{ matrix.part }}/4
       - name: Keep the part's map
@@ -158,18 +160,14 @@ jobs:
 
   test-times:
     # For developers, every night: each test file's time from the tests parts' --junitxml reports (Ubuntu's, and
-    # Windows' own, which its parts are split by), and the test map once all four parts made theirs, put on the data
-    # branch test-times: one commit, replaced each night. No workflow runs on that branch (it holds none, and a push
-    # with this job's token starts none); python -m tests.times pull brings them into a checkout, to commit with a
-    # pull request (D-339). Nothing here pushes to main or makes a release: builds.yml releases a merge's run only.
+    # Windows' own, which its parts are split by), and the test map once all four parts made theirs, kept for
+    # test-times-branch below to put on the data branch test-times (D-339). Read-only, as every job but that one.
     name: The tests' times and map for developers (nightly; main only)
     needs: [tests, test-map]
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true  # (as test-map; pull says the date its data is from, so data gone stale shows)
-    permissions:
-      contents: write  # (the data branch only: the push below names it)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -191,6 +189,33 @@ jobs:
           python -m tests.times ci "$RUNNER_TEMP/reports" --out "$RUNNER_TEMP/data" --run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           python -m pip install "pytest>=8"  # (tests.test_map is a pytest plugin too)
           python -m tests.test_map merge "$RUNNER_TEMP/maps" --out "$RUNNER_TEMP/data/test_map.json.gz"
+      - name: Keep them for the data branch
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-times-data
+          path: ${{ runner.temp }}/data
+          retention-days: 3
+
+  test-times-branch:
+    # The one job that may write: the data test-times worked out, put on the data branch test-times with git alone, on
+    # a machine of its own (no package installed, none of the checkout's code run, while its token could push to
+    # main). One commit, replaced each night. No workflow runs on that branch (it holds none, and a push with this
+    # job's token starts none); python -m tests.times pull brings them into a checkout, to commit with a pull request
+    # (D-339). Nothing here pushes to main or makes a release: builds.yml releases a merge's run only.
+    name: The tests' times and map onto the branch test-times (nightly; main only)
+    needs: test-times
+    if: ${{ !cancelled() && needs.test-times.result == 'success' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true  # (as test-map)
+    permissions:
+      contents: write  # (the data branch only: the push below names it)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-times-data
+          path: ${{ runner.temp }}/data
       - name: Onto the data branch test-times
         shell: bash
         run: |
