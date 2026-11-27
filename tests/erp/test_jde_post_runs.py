@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 import json
+import threading
 import time
 import zipfile
 
@@ -14,6 +15,7 @@ import pytest
 
 from ap_coder.erp import jde, jde_ais, jde_formats, jde_post, jde_review, jde_settings, jde_zfiles
 from ap_coder.web.pages import exports
+from tests.conftest import until
 from tests.erp.test_jde import AB, BC, ON, QC
 from tests.erp.test_jde_post import batch_of, connect, long_after_the_loss
 from tests.fake_ais import PASSWORD, FakeAis
@@ -67,23 +69,23 @@ def test_a_lost_answer_is_never_sent_again_while_jde_may_still_be_making_it(tmp_
     """B-1858: a voucher whose answer was lost was looked up and, not found, sent again at once ("Try again now" a few
     seconds later): JD Edwards may still be making the first (R04110ZA running), so it could be made twice. Not found
     is taken as not there only once the send is older than Settings → JD Edwards E1's wait (``resend_minutes``).
-    (JD Edwards makes it 2.5 s after the request here: with 0.5 s a slow Windows runner's "at once" came after it was
-    made, and the look-up rightly found it posted.)"""
-    with FakeAis(slow_seconds=2.5) as ais:
+    (JD Edwards makes it when the test says: made 0.5 s and later 2.5 s after the request, it was made before a slow
+    runner's "at once", and the look-up rightly found it posted: B-3057.)"""
+    with FakeAis() as ais:
         store, batch = batch_of(tmp_path, ais)
         connect(store, ais, timeout=0.15)
         settings(store, resend_minutes=10)
         jde_post.dry_run(store, batch)
-        ais.script("voucher_create", "late-made")  # still being made when the client gives up
-        sent = time.monotonic()
+        made = threading.Event()
+        ais.script("voucher_create", lambda: made.wait(30))  # still being made when the client gives up
         jde_post.post(store, batch)
         assert statuses(store, batch)[1] == jde_post.UNKNOWN
         jde_post.retry_queue(store)  # a person's "Try again now" at once
         row = jde_post.postings(store, batch)[0]
-        assert time.monotonic() - sent < 2.4, "the test's own steps took longer than JD Edwards takes to make it"
         assert len(finals(ais)) == 1 and row["status"] == jde_post.UNKNOWN and row["maybe_sent"] == 1
         assert jde_post.undo_problem(store, batch)  # still locked: JD Edwards may have it
-        time.sleep(max(0.0, 2.8 - (time.monotonic() - sent)))  # JD Edwards made it meanwhile
+        made.set()  # JD Edwards made it meanwhile
+        assert until(lambda: len(ais.vouchers()) == 2)
         settings(store, resend_minutes=0.01)
         time.sleep(0.7)
         jde_post.retry_queue(store)
@@ -95,21 +97,27 @@ def test_a_lost_answer_waits_from_when_it_was_lost_never_less_than_a_vouchers_wa
     it be shorter than a voucher's own wait: with a voucher's wait of 900 seconds and the resend wait of 10 minutes,
     an answer lost after 15 minutes was "not there" at its first lookup and sent again while JD Edwards could still
     be making the first. It is counted from when the answer was lost, and is never less than a voucher's wait and a
-    margin (here the voucher's wait 0.5 s, the margin 2 s, the resend wait set to 0.1 s; kept to the second)."""
+    margin (here the voucher's wait 0.5 s, the margin 2 s, the resend wait set to 0.1 s; kept to the second). JD
+    Edwards makes it when the test says, and the safety waits' clock moves when the test moves it: JD Edwards made it
+    1.8 s after the request, and a slow runner's "right after" could come after it, or after the wait (B-3057)."""
     monkeypatch.setattr(jde_settings, "RESEND_MARGIN", 2.0)
-    with FakeAis(slow_seconds=1.8) as ais:  # JD Edwards makes it 1.8 s after the request arrived
+    clock = [dt.datetime.now(dt.UTC)]
+    monkeypatch.setattr(jde_post, "_clock", lambda: clock[0])
+    with FakeAis() as ais:
         store, batch = batch_of(tmp_path, ais)
         connect(store, ais, timeout=0.5)
         settings(store, resend_minutes=0.1 / 60)
         assert jde_settings.load(store).resend_seconds == 2.5
         jde_post.dry_run(store, batch)
-        ais.script("voucher_create", "late-made")
+        made = threading.Event()
+        ais.script("voucher_create", lambda: made.wait(30))  # still being made when the client gives up
         jde_post.post(store, batch)
-        lost = time.monotonic()
         jde_post.retry_queue(store)  # "Try again now" right after: JD Edwards hasn't it yet, and may still make it
         row = jde_post.postings(store, batch)[0]
         assert len(finals(ais)) == 1 and row["status"] == jde_post.UNKNOWN and row["maybe_sent"] == 1
-        time.sleep(max(0.0, 2.6 - (time.monotonic() - lost)))  # past the wait from the loss: JD Edwards made it
+        made.set()  # JD Edwards made it meanwhile
+        assert until(lambda: len(ais.vouchers()) == 2)
+        clock[0] += dt.timedelta(seconds=2.6)  # past the wait from the loss
         jde_post.retry_queue(store)
         assert statuses(store, batch)[1] == jde_post.POSTED and len(finals(ais)) == 1
     assert (
