@@ -4,7 +4,6 @@ local model server (``LocalLLMSettings``), the page reader, the engine, and Azur
 
 from __future__ import annotations
 
-import io
 import ipaddress
 import logging
 import os
@@ -14,8 +13,6 @@ import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-
-from dotenv import dotenv_values
 
 from . import envfile, paths
 
@@ -43,10 +40,10 @@ _FROM_ENV_FILE: dict[str, str] = {}  # what load_env_file put in the environment
 
 
 def load_env_file(path: Path) -> None:
-    """The .env's settings into the environment, those already set winning, and never :func:`process_var` ones."""
-    values = dotenv_values(stream=io.StringIO(envfile.read_text(path)), interpolate=False)
-    for name, value in values.items():
-        if value is not None and not process_var(name) and name not in os.environ:
+    """The .env's settings into the environment, those already set winning, and never :func:`process_var` ones. Read
+    as the Settings pages, the launcher and the installer read it (``envfile.read_env``): one reading of the file."""
+    for name, value in envfile.read_env(path).items():
+        if not process_var(name) and name not in os.environ:
             os.environ[name] = _FROM_ENV_FILE[name] = value
 
 
