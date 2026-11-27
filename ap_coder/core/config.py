@@ -4,7 +4,6 @@ local model server (``LocalLLMSettings``), the page reader, the engine, and Azur
 
 from __future__ import annotations
 
-import io
 import ipaddress
 import logging
 import os
@@ -14,8 +13,6 @@ import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-
-from dotenv import dotenv_values
 
 from . import envfile, paths
 
@@ -43,10 +40,10 @@ _FROM_ENV_FILE: dict[str, str] = {}  # what load_env_file put in the environment
 
 
 def load_env_file(path: Path) -> None:
-    """The .env's settings into the environment, those already set winning, and never :func:`process_var` ones."""
-    values = dotenv_values(stream=io.StringIO(envfile.read_text(path)), interpolate=False)
-    for name, value in values.items():
-        if value is not None and not process_var(name) and name not in os.environ:
+    """The .env's settings into the environment, those already set winning, and never :func:`process_var` ones. Read
+    as the Settings pages, the launcher and the installer read it (``envfile.read_env``): one reading of the file."""
+    for name, value in envfile.read_env(path).items():
+        if not process_var(name) and name not in os.environ:
             os.environ[name] = _FROM_ENV_FILE[name] = value
 
 
@@ -102,6 +99,7 @@ _NAT64 = ipaddress.ip_network("64:ff9b::/96")  # an IPv4 address on the internet
 # a company server) is judged by the addresses its name resolves to, as a bare name is. No other name is looked up.
 COMPANY_DOMAINS_ENV = "AP_COMPANY_DOMAINS"
 RESOLVED_SECONDS = 30.0  # how long a name's addresses are kept (each request to the model server asks)
+UNRESOLVED_SECONDS = 10.0  # a name that resolved to nothing is asked again sooner, so a server switched on is found
 _RESOLVED: dict[str, tuple[float, list[ipaddress.IPv4Address | ipaddress.IPv6Address]]] = {}
 _RESOLVED_LOCK = threading.Lock()
 
@@ -192,25 +190,25 @@ def forget_resolved() -> None:
 
 
 def _resolved(name: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
-    """The addresses ``name`` resolves to, kept RESOLVED_SECONDS (a name that doesn't resolve is asked again)."""
+    """The addresses ``name`` resolves to, kept RESOLVED_SECONDS; none (a name that doesn't resolve) kept
+    UNRESOLVED_SECONDS: each failed lookup takes seconds on Windows, and the settings are read often."""
     now = time.monotonic()
     with _RESOLVED_LOCK:
         kept = _RESOLVED.get(name)
-    if kept and now - kept[0] < RESOLVED_SECONDS:
+    if kept and now - kept[0] < (RESOLVED_SECONDS if kept[1] else UNRESOLVED_SECONDS):
         return kept[1]
     try:
         infos = socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)
     except (OSError, UnicodeError):
-        return []
+        infos = []
     found = []
     for info in infos:
         try:
             found.append(ipaddress.ip_address(str(info[4][0])))  # with its scope (fe80::1%en0): connected to as found
         except ValueError:
             continue
-    if found:
-        with _RESOLVED_LOCK:
-            _RESOLVED[name] = (now, found)
+    with _RESOLVED_LOCK:
+        _RESOLVED[name] = (now, found)
     return found
 
 

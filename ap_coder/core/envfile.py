@@ -1,4 +1,5 @@
-"""Reading and updating the ``.env`` settings file in place.
+"""Reading and updating the ``.env`` settings file in place: the one reading of it, the app's (``config``, the
+dashboard), the Settings pages', the launcher's and the installer's.
 
 Standard library only: the installer uses it before any package is installed.
 """
@@ -16,16 +17,17 @@ _ESCAPES = {'"': re.compile(r'\\([\\"])'), "'": re.compile(r"\\([\\'])")}
 
 
 def parse_value(value: str) -> str:
-    """One value as python-dotenv (what the app reads with) reads it: a quoted value ends at its closing quote
-    (an inline ``# comment`` after it is not part of it), an unquoted one at `` #`` (``abc#def`` is kept).
-    ``KEY= #paste key here`` is empty: the space after ``=`` makes the rest a comment (``KEY=#x`` reads ``#x``)."""
+    """One value: a quoted value ends at its closing quote (an inline ``# comment`` after it is not part of it),
+    a backslash in it escaping only its quote or a backslash (``"C:\\new\\data"`` typed by hand is that folder, no line
+    break), an unquoted one at `` #`` (``abc#def`` is kept). ``KEY= #paste key here`` is empty: the space after ``=``
+    makes the rest a comment (``KEY=#x`` reads ``#x``)."""
     stripped = value.strip()
     quote = stripped[:1]
     if quote in _QUOTED:
         match = _QUOTED[quote].match(stripped)
         if match:
             return _ESCAPES[quote].sub(r"\1", match.group(1))
-        return stripped  # no closing quote: kept as it is (python-dotenv cannot read the line either)
+        return stripped  # no closing quote: kept as it is
     return re.sub(r"\s+#.*", "", value).strip()  # before stripping, so a space after "=" counts
 
 
@@ -49,6 +51,8 @@ def read_env(path: Path) -> dict[str, str]:
                 continue
             key, _, value = line.partition("=")
             key = re.sub(r"^export\s+", "", key.strip())
+            if not key:  # "==========" typed as a divider: no setting (the environment takes no name-less one)
+                continue
             value = parse_value(value)
             if PLACEHOLDER not in value:
                 values[key] = value

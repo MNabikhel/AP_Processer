@@ -55,8 +55,8 @@ def test_a_data_folder_set_with_quotes_on_windows_is_the_folder(tmp_path, monkey
 
 
 def test_an_inline_comment_is_not_part_of_the_value(tmp_path):
-    """Read as python-dotenv (the app) reads it, so the installer and Settings never write a comment back into a
-    key or an endpoint."""
+    """Read as python-dotenv (the app's reader before B-3049) reads it, so the installer and Settings never write a
+    comment back into a key or an endpoint."""
     from dotenv import dotenv_values
 
     env = tmp_path / ".env"
@@ -80,7 +80,7 @@ def test_an_inline_comment_is_not_part_of_the_value(tmp_path):
 
 
 def test_a_comment_right_after_the_equals_sign_is_an_empty_value(tmp_path):
-    """``KEY= #paste key here`` is an empty key (the hint is not the key), as python-dotenv reads it; ``KEY=#x``,
+    """``KEY= #paste key here`` is an empty key (the hint is not the key), as python-dotenv read it; ``KEY=#x``,
     ``abc#def``, a URL's ``#frag`` and quoted values keep their ``#``."""
     from dotenv import dotenv_values
 
@@ -107,3 +107,48 @@ def test_a_value_with_a_line_break_is_refused(tmp_path):
     with pytest.raises(ValueError, match="line break"):
         write_env(env, {"AP_REVIEWER": "Pat\nAP_REVIEW_THRESHOLD=0"})
     assert read_env(env) == {"AP_REVIEWER": "Pat"}
+
+
+def test_the_app_reads_a_line_typed_by_hand_as_the_settings_pages_show_it(tmp_path, monkeypatch):
+    """One reading of the .env: the app's (``Settings.from_env``, the dashboard following the file) is the Settings
+    pages', the launcher's and the installer's (``envfile.read_env``). A backslash in quotes is no escape but for a
+    quote or a backslash (a Windows folder typed by hand); a line with no closing quote, or text after it, is read
+    as the Settings page shows it. And what the Settings pages save reads back as typed (B-3049)."""
+    import os
+
+    from ap_coder.web.app import EnvSettings
+
+    env = tmp_path / ".env"
+    typed = ['AP_T_FOLDER="C:\\new\\data"', 'AP_T_TAB="a\\tb"', 'AP_T_OPEN="abc', 'AP_T_AFTER="abc"def',
+             'AP_T_LINES="first', 'second"']  # fmt: skip
+    env.write_text("\n".join(typed) + "\n", encoding="utf-8")
+    saved = {"AP_T_SAVED": 'C:\\new folder\\tax "2026" #1', "AP_T_PLAIN": "C:\\new\\data", "AP_T_SINGLE": "it's \\t"}
+    write_env(env, saved)
+    shown = read_env(env)
+    assert shown == {"AP_T_FOLDER": "C:\\new\\data", "AP_T_TAB": "a\\tb", "AP_T_OPEN": '"abc', "AP_T_AFTER": "abc",
+                     "AP_T_LINES": '"first', **saved}  # fmt: skip
+    names = ("AP_T_FOLDER", "AP_T_TAB", "AP_T_OPEN", "AP_T_AFTER", "AP_T_LINES", *saved)
+    for name in names:
+        monkeypatch.setenv(name, "")  # (put back as it was after the test)
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("AP_ENV_FILE", str(env))
+    Settings.from_env(env)
+    assert {name: os.environ.get(name) for name in names} == shown
+    settings = EnvSettings()
+    settings()
+    env.write_text("AP_T_TAB=b\n", encoding="utf-8")  # the lines taken out: their values leave the environment
+    later = env.stat().st_mtime_ns + 5_000_000_000
+    os.utime(env, ns=(later, later))
+    settings()
+    assert {name: os.environ.get(name) for name in names if name in os.environ} == {"AP_T_TAB": "b"}
+
+
+def test_a_line_with_no_name_before_its_equals_sign_is_skipped(tmp_path, monkeypatch):
+    """A divider of equals signs typed by hand, or a line starting with "=", names no setting: the app read it into the
+    environment under no name, and every command stopped with "Invalid argument" (B-3049's reader skipped no such
+    line; python-dotenv did: B-3052)."""
+    env = tmp_path / ".env"
+    env.write_text("# --- Reading ---\n==========\n= C:\\APCoder\nAP_REVIEW_THRESHOLD=0.7\n", encoding="utf-8")
+    assert read_env(env) == {"AP_REVIEW_THRESHOLD": "0.7"}
+    monkeypatch.delenv("AP_REVIEW_THRESHOLD", raising=False)
+    assert Settings.from_env(env).engine.review_threshold == 0.7

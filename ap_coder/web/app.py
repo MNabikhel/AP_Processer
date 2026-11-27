@@ -23,7 +23,6 @@ import email.utils
 import getpass
 import hmac
 import importlib
-import io
 import logging
 import os
 import secrets
@@ -36,7 +35,6 @@ from typing import Any
 
 import anyio
 import anyio.to_thread
-from dotenv import dotenv_values
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
@@ -312,8 +310,8 @@ class EnvSettings:
         if self._file is not None and self._file[0] == stamp:
             return
         path = Path(stamp[0]) if stamp[1] is not None else None
-        values = dotenv_values(stream=io.StringIO(envfile.read_text(path)), interpolate=False) if path else {}
-        now = {name: value for name, value in values.items() if value is not None and not process_var(name)}
+        values = envfile.read_env(path) if path else {}  # (as ``config.load_env_file`` reads it in)
+        now = {name: value for name, value in values.items() if not process_var(name)}
         for name, value in (self._file[1] if self._file is not None else {}).items():
             if os.environ.get(name) == value and now.get(name) != value:
                 del os.environ[name]  # Settings.from_env puts the .env's new value in its place

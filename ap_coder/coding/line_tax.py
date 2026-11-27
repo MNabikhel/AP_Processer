@@ -997,14 +997,15 @@ def _exemption(code: str) -> bool:
     return EXEMPT_MARK in code or code in CODE_STATUSES
 
 
-def supply_province(coding: Any, ours: str = "") -> str:
+def learned_province(coding: Any, ours: str = "") -> str:
     """Where an invoice is supplied, for its learned codes: its ship-to, else our province (Settings), else the
-    vendor's, as ``offline_coder.code_from_capture`` works it out; "" when none is known."""
-    from .tax import PROVINCES
+    vendor's, as ``offline_coder.code_from_capture`` looks them up (OUTSIDE_CANADA for one outside Canada, never our
+    province in its place); "" when none is known."""
+    from .tax import OUTSIDE_CANADA, PROVINCES
 
     for province in (_get(coding, "ship_to_province"), ours, _get(coding, "supplier_province")):
         province = str(province or "").strip().upper()
-        if province in PROVINCES:
+        if province in PROVINCES or province == OUTSIDE_CANADA:
             return province
     return ""
 

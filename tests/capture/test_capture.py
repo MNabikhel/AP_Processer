@@ -102,6 +102,18 @@ def test_ids_and_names_compare_loosely():
     assert not same_value("invoice_number", "NW-0912", "NW-0921")
 
 
+def test_a_vendor_name_keeps_a_legal_word_inside_it_and_reads_a_letter_with_a_stroke():
+    """B-3051: vendor names were compared without any legal word wherever it stood, and without the letters accents
+    are not taken off (ø, ł): "Co-op Prairie Feeds Ltd." read as "op prairie feeds", "Lakeshore Company Store" as the
+    same name as "Lakeshore Store", and "Østby Marine" as "stby marine", so two readers' "Østby" and "Ostby" did not
+    agree. Only the legal forms a name ends with are left out now, and ø and ł read as o and l."""
+    assert norm_name("Co-op Prairie Feeds Ltd.") == "co op prairie feeds"
+    assert not same_value("vendor_name", "Lakeshore Company Store", "Lakeshore Store")
+    assert norm_name("Østby Marine Ltd.") == norm_name("OSTBY MARINE") == "ostby marine"
+    assert same_value("vendor_name", "Białek Tile & Co.", "BIALEK TILE AND CO")
+    assert norm_name("Prairie Feeds Co. Ltd.") == norm_name("Prairie Feeds") == "prairie feeds"  # all it ends with
+
+
 # ---------------------------------------------------------------- reading the sample invoices
 
 
