@@ -96,6 +96,8 @@ A package's map is its `__init__.py` docstring: read it before searching.
   (`.claude/agents/developer.md`): `claude --agent developer`, or `subagent_type: "developer"` when an agent starts
   one. It carries only the developer tools, so a task costs about 40% fewer tokens than a general session,
   two thirds fewer in a cloud one (D-106).
+- A review (a branch, a pull request) runs as the `reviewer` agent (`.claude/agents/reviewer.md`, `subagent_type:
+  "reviewer"`, D-338); a release's real update test: `python scripts/release_proof.py --from TAG --to TAG`.
 Every step re-reads the whole conversation, so fewer, fuller steps cost less:
 - Put independent lookups in one command (several `grep -n` / `sed -n A,Bp` joined with `;`), and read the lines
   around a match rather than whole files.

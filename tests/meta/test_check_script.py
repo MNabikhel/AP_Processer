@@ -100,7 +100,8 @@ def test_a_changed_doc_runs_the_rules_every_doc_is_held_to_and_the_tests_that_op
     for doc in ("docs/WHATS_NEW.md", "docs/QUICK_START.md"):  # what the Help page shows
         assert {*rules, "tests/web/test_web_help.py"} <= set(check.tests_for([doc])), doc
     assert "tests/meta/test_how_it_runs_doc.py" in check.tests_for(["docs/HOW_IT_RUNS.md"])
-    assert "tests/meta/test_agent_profile.py" in check.tests_for([".claude/agents/developer.md"])
+    for profile in (".claude/agents/developer.md", ".claude/agents/reviewer.md"):
+        assert "tests/meta/test_agent_profile.py" in check.tests_for([profile]), profile
     assert set(rules) <= set(check.tests_for(["CLAUDE.md"])) and check.tests_for(["notes.txt"]) == []
 
 
