@@ -202,9 +202,10 @@ def test_the_time_is_set_on_settings_and_the_page_says_when_the_last_one_was_mad
 
 def test_a_page_asked_for_never_reads_the_time_from_the_database(tmp_path):
     """Each request lets the daily backup look at the clock (``app.BackupCheck``): it goes by the time as the
-    half-minute watch last read it, and opens no connection of its own."""
+    half-minute watch last read it, and opens no connection of its own. At 9:00, not the real clock: from 17:25 to
+    17:30 its five minutes passed the backup's time, and the backup that started read the time too (B-3054)."""
     store = Store(tmp_path / "ap.db")
-    clock = Clock(dt.datetime.now())
+    clock = Clock(at(9))
     backup = DailyBackup(store, clock=clock.wall, monotonic=clock.monotonic)
     read = []
     store.backup_at = lambda: read.append(1) or HALF_PAST_FIVE
