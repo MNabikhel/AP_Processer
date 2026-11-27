@@ -245,8 +245,10 @@ def test_the_numbered_steps_run_in_the_order_of_their_versions():
 
 
 def _recorded(monkeypatch) -> list[str]:
-    """The names of the steps run from now on, in their order."""
+    """The names of the steps run from now on, in their order: those of the last go at them (a database with something
+    to do is looked at first with every write refused, then brought up to date: ``StoreCore._bring_up_to_date``)."""
     ran: list[str] = []
+    migrate = migrations.migrate
 
     def recording(step):
         def run(store, conn):
@@ -255,7 +257,12 @@ def _recorded(monkeypatch) -> list[str]:
 
         return run
 
+    def going_again(store, conn):
+        ran.clear()
+        migrate(store, conn)
+
     monkeypatch.setattr(migrations, "STEPS", tuple((n, recording(s)) for n, s in migrations.STEPS))
+    monkeypatch.setattr(migrations, "migrate", going_again)
     return ran
 
 
@@ -270,6 +277,35 @@ def test_a_database_gets_the_steps_of_the_versions_it_is_older_than(tmp_path, mo
     ran.clear()
     Store(first)  # PR #1's: every step but the one to 2, in the order of STEPS
     assert sorted(ran) == sorted(every_time + newer) and [r for r in ran if r in newer] == newer
+
+
+@pytest.mark.parametrize("snapshot", ["schema-02-db95511.sql", "schema-31-a6af108.sql"])
+def test_every_step_that_brings_a_database_up_to_date_runs_holding_the_write_lock(snapshot, tmp_path, monkeypatch):
+    """B-3063: two processes opening an older database at once (four at a time: 6 of 120 openings of PR #1's to
+    schema 24's) both read a table's columns, then both added the one missing: the second failed, "duplicate column
+    name". Only the steps after the opening's first write held the write lock. Every step of the go that brings the
+    database up to date now runs under it, so a second opening waits for the first, then finds nothing to do."""
+    db = _old_database(OLD / snapshot, tmp_path / "old")
+    held: dict[str, bool] = {}  # {a step: whether another connection could not take the write lock as it began}
+
+    def looking(step):
+        def run(store, conn):
+            other = sqlite3.connect(db, timeout=0)
+            try:
+                other.execute("BEGIN IMMEDIATE")
+                other.rollback()
+                held[step.__name__] = False
+            except sqlite3.OperationalError:
+                held[step.__name__] = True
+            finally:
+                other.close()
+            step(store, conn)
+
+        return run
+
+    monkeypatch.setattr(migrations, "STEPS", tuple((n, looking(s)) for n, s in migrations.STEPS))
+    assert Store(db).get_setting("schema_version") == str(SCHEMA_VERSION)
+    assert held and [name for name, locked in held.items() if not locked] == []
 
 
 def test_a_journal_loaded_before_its_dates_read_were_kept_says_none(tmp_path):

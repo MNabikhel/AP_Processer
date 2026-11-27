@@ -1,6 +1,10 @@
 """A database made by an older AP Coder brought up to date (D-190), one small step at a time: ``STEPS`` in order,
 run by ``StoreCore._migrate`` in the transaction that opens the store, after ``_SCHEMA`` made the tables a database
-lacks (the capture's and the summary's own come after them: ``SummaryMixin._migrate``).
+lacks (the capture's and the summary's own come after them: ``SummaryMixin._migrate``). Every opening runs them, first
+with every write refused (``StoreCore._bring_up_to_date``, B-3062): an up-to-date database is opened without the write
+lock, never waiting for another process's write; one with something to do is brought up to date holding it, from the
+first step on. So a step writes only when it has something to change, looked for first: a write that changes nothing
+still takes the lock.
 
 * **A numbered step** brings a database older than its number up to it (``MIGRATIONS``: ``{2: _v2_vendor_keys,
   ...}``); a version with no step of its own came by ``_SCHEMA``'s new tables (``SCHEMA_VERSION``'s note says which).
@@ -366,8 +370,9 @@ def _vendor_numbers(store: Any, conn: sqlite3.Connection) -> None:
     for column in ("qst_number", "pst_number", "province", "erp_bank", "erp_hold"):
         if columns and column not in columns:
             dialect.add_column(conn, "vendors", column, "TEXT NOT NULL DEFAULT ''")
-    if columns:  # JD Edwards' "N" is no hold: a sync before B-2081 kept it as one (B-2158)
-        conn.execute("UPDATE vendors SET erp_hold = '' WHERE erp_hold IN ('N', 'n')")
+    no_hold = "WHERE erp_hold IN ('N', 'n')"  # JD Edwards' "N" is no hold: a sync before B-2081 kept it as one (B-2158)
+    if columns and conn.execute(f"SELECT 1 FROM vendors {no_hold} LIMIT 1").fetchone():  # (looked for first: B-3062)
+        conn.execute(f"UPDATE vendors SET erp_hold = '' {no_hold}")
 
 
 def _cost_center_managers(store: Any, conn: sqlite3.Connection) -> None:
@@ -449,7 +454,8 @@ def _answer_work(store: Any, conn: sqlite3.Connection) -> None:
 def _rule_use_since(store: Any, conn: sqlite3.Connection) -> None:
     """The day this database began to keep which lines each fixed coding rule coded (``summary_rules``, D-217),
     written once: the rules page says its counts start then, and guesses nothing of the invoices before."""
-    conn.execute(dialect.insert_or_ignore("INSERT INTO settings (key, value) VALUES (?, ?)"), (USE_SINCE, _now()))
+    if not conn.execute("SELECT 1 FROM settings WHERE key = ?", (USE_SINCE,)).fetchone():  # (no lock once written)
+        conn.execute(dialect.insert_or_ignore("INSERT INTO settings (key, value) VALUES (?, ?)"), (USE_SINCE, _now()))
 
 
 def _po_open_amount(store: Any, conn: sqlite3.Connection) -> None:
