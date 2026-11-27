@@ -6,9 +6,17 @@ decision number then says what was done).
 - **User-facing wording in one place (after the pilot, once the wording settles).** The words people see kept by key in
   one file, with tests that check each key is used and each page's key exists, so a wording change is one edit and
   can't silently break the first-day walk.
-- **A sweep of the timing-sensitive tests.** Beyond B-2634 and B-2635: find the tests that wait on a sleep or race a
-  thread (`time.sleep`, short deadlines, "until" right after a start) and make them wait on an event or a step the test
-  controls.
+- **The timing-sensitive tests the sweep left.** Of the tests CI failed by their timing since 8 November and then
+  passed, all are fixed (the last: B-3054 to B-3057, each waiting on a step it controls) but three, never failed here
+  (the 44 files that sleep or race a thread, four rounds beside other tests and on two CPUs beside CPU hogs; the 65
+  that read the clock, at five times of day): `test_failover.py`'s hang while reviews hold the chat slots moved in 6 s
+  where 3 s (Windows 3.14, once), by the page reads' path ("2 calls in a row"), not by the arrivals behind the silent
+  reviews, and `local_llm` runs on the real clock, so the test can only scale it; the sync at the company's size had a
+  writer wait 4.3 s where 3 s (`test_jde_sync_volume.py`, Windows, once); the load bench had requests with no answer
+  on Windows (`test_bench_load.py`, two runs on 12 November, never since). Still at risk on a runner stalled past
+  them: a stand-in answering after a set time while the client gives up sooner (`tests/fake_ais.py` "slow",
+  "slow-after"), leases and holds renewed on the real clock (`test_kept_answers.py`, `test_web_process_listing.py`),
+  and wall-clock bounds on quick work (`test_caches.py`: 0.05 s).
 - **Shorter docs and docstrings from now on.** Say what a thing does in a line or two; move old decision detail to
   `docs/archive/` sooner, keeping only the decision and its reason in decisions.md.
 - **Split `core/store/users.py` before the next feature there.** It is at its 1,000-line limit: people, sign-in
