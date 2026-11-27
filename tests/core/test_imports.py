@@ -101,12 +101,13 @@ time.sleep(600)  # reading a file that never ends: killed here
 def test_a_reader_killed_mid_file_has_it_read_again_once_then_failed_with_a_reason(tmp_path):
     """A capture process killed while it reads a file (no heartbeat any more): once its lease runs out, the file is
     taken again; killed again, the file is failed with the reason, as an invoice Retry reads again, and its batch
-    is recorded in the audit trail. Nothing else waits on it meanwhile."""
+    is recorded in the audit trail. Nothing else waits on it meanwhile. The lease is the test's to end: a lease of
+    1 s ran out before the test took the other file when a killed child took a second to go (B-3055)."""
     store = Store(tmp_path / "ap.db")
     files = _files(tmp_path / "in", 2)
     store.queue_imports(files, source="folder", person=True)
     for attempt in range(1, IMPORT_TRIES + 1):
-        reader = _python(HOLD, str(store.path), f"capture-{attempt}", "1")
+        reader = _python(HOLD, str(store.path), f"capture-{attempt}", "600")
         line = reader.stdout.readline()
         assert line, _error(reader.communicate(timeout=30)[1])  # (it ended before it took a file: why)
         file_id = int(line)
@@ -116,7 +117,11 @@ def test_a_reader_killed_mid_file_has_it_read_again_once_then_failed_with_a_reas
         assert row is None or row["id"] != file_id
         if row is not None:
             store.finish_import(row["id"], "other", "done")
-        time.sleep(1.2)  # its lease ran out
+        with store._conn() as conn:  # its lease, the 600 s it asked for, ran out, on the database's clock
+            left = conn.execute("SELECT (lease_until - julianday('now')) * 86400 FROM import_files WHERE id = ?",
+                                (file_id,)).fetchone()[0]  # fmt: skip
+            conn.execute("UPDATE import_files SET lease_until = julianday('now') - 1 / 1440.0 WHERE id = ?", (file_id,))
+        assert 500 < left < 601, left
         if attempt < IMPORT_TRIES:
             again = store.claim_import("next", 60)
             assert again["id"] == file_id and again["tries"] == attempt + 1
