@@ -47,14 +47,16 @@ decision number then says what was done).
   unknown-supplier screen's mixed words, a USD voucher's "Gross", an unreadable .msg counted, the Azure card's
   "saved (enabled)" while off, and `demo` on a new folder greeting "AP Coder was updated".
 - **Windows' "database is locked" when several processes open a Store at once** (the four-reader test in
-  `tests/core/test_imports.py`, Python 3.12). The only failure in CI's kept logs (12 to 27 Nov, every failed or rerun
-  job) is 20 Nov's, before the children printed SQLite's name for the error: three of the four readers failed after
-  waiting the 30 s busy timeout (two in a claim's BEGIN IMMEDIATE, one in `Store()`'s start-up, whose every-time
-  migration step `_vendor_numbers` writes, so every Store opened takes the write lock for about 1.5 ms); none since.
-  The next failure now also says each reader's slowest calls on one clock (a reader holding the lock all that time,
-  or the others taking turns meanwhile), whether the write lock is free once all have ended, and the database's
-  files. Read those first; every call opens and closes its own connection (`core/store/_base.py`), so the WAL files
-  come and go between processes.
+  `tests/core/test_imports.py`). Found: main's run 46049010237 (Windows 3.14, with #168's timings) had one reader wait
+  out the 30 s busy timeout in `Store()` and another take 28 s to open, while the other two took turns at the write
+  lock: every opening of an up-to-date database took it, two every-time steps writing with nothing to change. Fixed
+  (B-3062): an opening runs its steps with every write refused first and takes the lock only when one has something to
+  do (an up-to-date database opens while another connection holds BEGIN IMMEDIATE); one with something to do is
+  brought up to date holding it from the first step (B-3063: two openings of an older database at once no longer both
+  add a column). Left: the readers' claims and finishes still take turns at the one write lock, each on a connection of
+  its own, and SQLite's busy handler polls (up to 100 ms between tries), so on a loaded runner one call can lose many
+  turns (that run: a claim waited 12.9 s, a finish 15.5 s). If the test fails again, its timings say which call waited
+  out the 30 s: that unfairness is then the suspect, not the start-up.
 - **Keep the test map and the test times fresh** (D-339). Done: CI's nightly measures each test file's time on
   Ubuntu and on Windows (whose parts are now split by its own, `tests/test_times_windows.json`) and records the test
   map in four parts, then puts them on the data branch `test-times`; `python -m tests.times pull` (with

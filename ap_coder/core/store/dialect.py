@@ -7,7 +7,8 @@ is, docs/POSTGRES.md the plan for a port. Only SQLite is implemented: no Postgre
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from typing import Any
 
 # A bound value's placeholder (PostgreSQL's drivers: ``%s``; or one translation of every ``?`` where the connection
@@ -143,6 +144,23 @@ def begin_write(conn: Any) -> None:
     ... FOR UPDATE`` of the rows read."""
     if not conn.in_transaction:
         conn.execute("BEGIN IMMEDIATE")
+
+
+@contextmanager
+def reads_only(conn: Any) -> Iterator[None]:
+    """Inside, every write on ``conn`` is refused at once, before it takes any lock or waits for one
+    (``refused_write``), and reads go on (``PRAGMA query_only``). PostgreSQL: ``SET SESSION CHARACTERISTICS AS
+    TRANSACTION READ ONLY``, then ``READ WRITE``."""
+    conn.execute("PRAGMA query_only = ON")
+    try:
+        yield
+    finally:
+        conn.execute("PRAGMA query_only = OFF")
+
+
+def refused_write(exc: BaseException) -> bool:
+    """``exc`` is a write refused inside ``reads_only`` (SQLite's SQLITE_READONLY). PostgreSQL: its SQLSTATE 25006."""
+    return isinstance(exc, sqlite3.Error) and (getattr(exc, "sqlite_errorcode", 0) & 0xFF) == sqlite3.SQLITE_READONLY
 
 
 def busy_timeout(conn: Any) -> int:

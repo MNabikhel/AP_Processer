@@ -642,8 +642,8 @@ class StoreCore:
             raise NestedWrite(f"The database {self.path} must be brought up to date first, so a Store of it can't be "
                               "made inside another write.")  # fmt: skip
         with self._conn() as conn:
-            conn.executescript(_SCHEMA)
-            self._migrate(conn)
+            conn.executescript(_SCHEMA)  # (a table there already: nothing written, no lock)
+            self._bring_up_to_date(conn)
             if unsaved:  # said on Settings → Data & backups (``backups.BACKUP_STATUS``)
                 conn.execute(dialect.insert_or_replace("settings", ("key", "value")), ("backup_status", unsaved))
 
@@ -666,6 +666,23 @@ class StoreCore:
         from . import backup_files
 
         return backup_files.before_update(self, found)
+
+    def _bring_up_to_date(self, conn: sqlite3.Connection) -> None:
+        """``_migrate``, holding the write lock only when a step has something to do (B-3062): first with every write
+        refused (``dialect.reads_only``), which an up-to-date database never meets, so opening it writes nothing and
+        never waits for another process's write; else the steps run again from the start under the write lock, each
+        reading what is left to do there, so two processes opening an older database at once take turns (the second
+        finds it done, never adding a column the first just added: B-3063)."""
+        try:
+            with dialect.reads_only(conn):
+                self._migrate(conn)
+            return
+        except sqlite3.Error as exc:
+            if not dialect.refused_write(exc):
+                raise
+        conn.rollback()
+        dialect.begin_write(conn)
+        self._migrate(conn)
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         """Bring a database made by an older version up to date (recorded as settings.schema_version): the steps of

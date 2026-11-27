@@ -75,3 +75,27 @@ def test_the_looks_at_the_schema_and_the_connection(conn):
     assert dialect.busy_timeout(conn) == 200 and isinstance(dialect.data_version(conn), int)
     clock = conn.execute(f"SELECT {dialect.NOW_SECONDS}, {dialect.NOW_DAYS}").fetchone()
     assert abs(clock[0] - (clock[1] - 2440587.5) * 86400) < 1e-3
+
+
+def test_inside_reads_only_every_write_is_refused_at_once_and_reads_go_on(tmp_path):
+    path = tmp_path / "a.db"
+    with sqlite3.connect(path) as made:
+        dialect.settle(made)
+        made.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        made.execute("INSERT INTO settings VALUES ('a', '1')")
+    made.close()
+    writer = sqlite3.connect(path, isolation_level=None)
+    writer.execute("BEGIN IMMEDIATE")  # another connection's write under way: a write would wait for it
+    conn = sqlite3.connect(path, timeout=5)
+    with pytest.raises(sqlite3.OperationalError) as refused, dialect.reads_only(conn):
+        assert conn.execute("SELECT value FROM settings").fetchall() == [("1",)]
+        conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")  # (there)
+        conn.execute("UPDATE settings SET value = '2' WHERE key = 'none'")  # changes nothing, still a write
+    assert dialect.refused_write(refused.value) and not dialect.refused_write(sqlite3.OperationalError("locked"))
+    conn.rollback()
+    writer.rollback()
+    conn.execute("UPDATE settings SET value = '2'")  # outside, it writes
+    conn.commit()
+    assert conn.execute("SELECT value FROM settings").fetchall() == [("2",)]
+    conn.close()
+    writer.close()

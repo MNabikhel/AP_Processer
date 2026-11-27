@@ -5,6 +5,7 @@ within a transaction"; and a ``Store()`` built inside a transaction leaves it op
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from collections.abc import Callable
 
@@ -323,6 +324,67 @@ def test_a_store_built_inside_a_write_with_summary_work_left_never_waits_for_its
         store.set_setting("outer", "1")  # the write lock held from here to the commit
         Store(store.path)
     assert time.monotonic() - started < 5 and store.get_setting("outer") == "1"
+
+
+# --- A Store opened while another process writes ----------------------------------------------------------------------
+
+# What a statement that may write starts with (a CREATE, unless it says IF NOT EXISTS: ``_written``)
+_WRITES = ("INSERT", "UPDATE", "DELETE", "REPLACE", "ALTER", "DROP", "BEGIN", "CREATE")
+
+
+def _written(statements: list[str]) -> list[str]:
+    said = [" ".join(sql.split()) for sql in statements]
+    return [sql for sql in said if sql.split(" ")[0].upper() in _WRITES and "IF NOT EXISTS" not in sql.upper()]
+
+
+def _up_to_date(tmp_path) -> Store:
+    """A database of this version with something in it (a supplier on hold, an invoice), nothing left for an opening."""
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    store.import_vendor_master([{"vendor_name": "Alpha Paper Ltd", "erp_id": "1001"}])
+    store.set_erp_bank_and_hold({"1001": ("", "Y")})
+    store.add_invoice(tmp_path / "a.pdf", {"vendor_name": "Alpha Paper Ltd", "invoice_number": "1", "grand_total": 10,
+                                           "line_items": []}, {})  # fmt: skip
+    return store
+
+
+def test_an_up_to_date_database_opens_while_another_process_holds_the_write_lock(tmp_path, monkeypatch):
+    """B-3062: every Store() of an up-to-date database took the write lock, its start-up's every-time steps writing
+    with nothing to change (``_vendor_numbers``' UPDATE, ``_rule_use_since``'s INSERT OR IGNORE), so each opening
+    waited its turn behind SQLite's one writer: on CI's loaded Windows runner one of four readers waited out the 30 s
+    busy timeout in ``Store()`` (main's run 46049010237). With nothing to do, an opening never waits for a writer."""
+    store = _up_to_date(tmp_path)
+    writer = sqlite3.connect(store.path, isolation_level=None)
+    writer.execute("BEGIN IMMEDIATE")  # another process's write, under way all the time the Store opens
+    connect = sqlite3.connect
+    monkeypatch.setattr(sqlite3, "connect", lambda *args, **kw: connect(*args, **{**kw, "timeout": 0.1}))  # (not 30 s)
+    try:
+        assert [v["display_name"] for v in Store(store.path).held_vendors()] == ["Alpha Paper Ltd"]
+    finally:
+        writer.rollback()
+        writer.close()
+
+
+def test_opening_an_up_to_date_database_writes_nothing(tmp_path, monkeypatch):
+    """B-3062: an opening of an up-to-date database runs reads alone (no write, no transaction begun), so it commits
+    nothing another connection sees."""
+    store = _up_to_date(tmp_path)
+    watcher = sqlite3.connect(store.path)
+    moment = watcher.execute("PRAGMA data_version").fetchone()[0]
+    ran: list[str] = []
+    connect = sqlite3.connect
+
+    def traced(database, *args, **kw):
+        conn = connect(database, *args, **kw)
+        if str(database) == str(store.path):  # (not a probe of what this SQLite can do, in memory)
+            conn.set_trace_callback(ran.append)
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", traced)
+    Store(store.path)
+    monkeypatch.undo()
+    assert ran and _written(ran) == []
+    assert watcher.execute("PRAGMA data_version").fetchone()[0] == moment
+    watcher.close()
 
 
 class _Undo(Exception):
