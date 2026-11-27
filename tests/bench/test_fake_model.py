@@ -155,6 +155,7 @@ def test_slots_answer_that_many_at_once_and_the_rest_wait_in_line():
         took = time.monotonic() - started
         s = fake.stats()
         assert s["served"] == 4 and s["max_active"] == 2 and s["max_in_flight"] == 4 and s["queue_wait"]["n"] == 4
+        assert s["queue_wait"]["max"] == max(h["wait"] for h in fake.history())  # (the longest wait in line)
         slots_taken = sorted(round(h["t"] + h["wait"], 3) for h in fake.history())
         assert all(at >= let_go - 0.002 for at in slots_taken[2:]), (slots_taken, let_go)  # (each kept to the ms)
         assert took >= 0.27  # two answers' 0.15 s one after the other: never all four at once
