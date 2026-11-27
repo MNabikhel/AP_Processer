@@ -47,8 +47,9 @@ decision number then says what was done).
   or the others taking turns meanwhile), whether the write lock is free once all have ended, and the database's
   files. Read those first; every call opens and closes its own connection (`core/store/_base.py`), so the WAL files
   come and go between processes.
-- **Keep the test map and the test times fresh (after Monday).** Each tests part of CI now keeps its `--junitxml`
-  report (the artifact `junit-<OS>-python-<version>-<whole or fast>-<n>`, 14 days). Still to do: a nightly job that
-  refreshes `tests/test_times.json` from main's reports (`python -m tests.times`) and records `tests/test_map.json.gz`
-  (`python -m tests.test_map record`, D-333) and opens a pull request with both; then Windows' own times for its
-  parts (`tests/times.py` and `_shard` in `tests/conftest.py`).
+- **Keep the test map and the test times fresh** (D-339). Done: CI's nightly measures each test file's time on
+  Ubuntu and on Windows (whose parts are now split by its own, `tests/test_times_windows.json`) and records the test
+  map in four parts, then puts them on the data branch `test-times`; `python -m tests.times pull` (with
+  AP_ALLOW_INTERNET=1) brings them in, to commit with a pull request. Left: see that the first nights' runs push the
+  branch (their test-times job), and that the map's four parts end within their 45 minutes; commit a pull now and
+  then (nothing does it for us, by design).
