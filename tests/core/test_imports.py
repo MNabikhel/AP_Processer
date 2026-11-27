@@ -60,18 +60,61 @@ def _error(stderr: str) -> str:
     return (stderr.strip().splitlines() or [""])[-1] + "\n" + stderr
 
 
+# Each reader times its calls on the clock all four share (seconds since the test started them, argv[3]) and says,
+# at its end whatever the end, which took longest: when one fails with "database is locked", the others' say whether
+# one of them held the write lock all that time (a call as long as the wait) or took turns meanwhile (many short ones).
 CLAIM_ALL = """
-import json, sys
+import json, sys, time
 from ap_coder.core.store import Store
-store, taken = Store(sys.argv[1]), []
-while True:
-    row = store.claim_import(sys.argv[2], 60)
-    if row is None:
-        break
-    taken.append(row["id"])
-    store.finish_import(row["id"], sys.argv[2], "done")
+
+calls = []  # (what, began at, took)
+
+
+def timed(what, call, *args):
+    began = time.time()
+    try:
+        return call(*args)
+    finally:
+        calls.append((what, round(began - float(sys.argv[3]), 2), round(time.time() - began, 2)))
+
+
+try:
+    store, taken = timed("Store()", Store, sys.argv[1]), []
+    while True:
+        row = timed("claim", store.claim_import, sys.argv[2], 60)
+        if row is None:
+            break
+        taken.append(row["id"])
+        timed("finish", store.finish_import, row["id"], sys.argv[2], "done")
+finally:
+    ended = max((began + took for _, began, took in calls), default=0)
+    slowest = sorted(calls, key=lambda call: -call[2])[:3]
+    print(f"{sys.argv[2]}: {len(calls)} calls, the last ended at {ended:.2f} s; the slowest (call, began at s, "
+          f"took s): {slowest}", file=sys.stderr, flush=True)
 print(json.dumps(taken))
 """
+
+
+def _readers_said(readers: list[subprocess.Popen], ran: list[tuple[str, str]], db: Path) -> str:
+    """What the readers said, once one failed: each one's end and its slowest calls, then whether the write lock is
+    free now that all have ended (taken still: a lock no process holds, as Windows can leave one for a while) and the
+    database's files (its write-ahead log and shared memory, there or not), then the first failed one's whole stderr."""
+    lines = []
+    for p, (_, err) in zip(readers, ran, strict=True):
+        said = [line for line in err.splitlines() if line.startswith("reader-")]
+        lines.append(f"exit {p.returncode}: {said[-1] if said else '(no timing)'}; {_error(err).splitlines()[0]}")
+    conn = sqlite3.connect(db, timeout=1)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.rollback()
+        lines.append("the write lock, now that they have ended: free")
+    except sqlite3.OperationalError as exc:
+        lines.append(f"the write lock, now that they have ended: still taken ({exc.sqlite_errorname})")
+    finally:
+        conn.close()
+    lines.append(f"its files: {sorted((f.name, f.stat().st_size) for f in db.parent.glob(db.name + '*'))}")
+    first = next(err for p, (_, err) in zip(readers, ran, strict=True) if p.returncode != 0)
+    return "\n".join(lines) + "\n" + first
 
 
 def test_two_processes_never_take_the_same_queued_file(tmp_path):
@@ -79,10 +122,10 @@ def test_two_processes_never_take_the_same_queued_file(tmp_path):
     choice to the mark)."""
     store = Store(tmp_path / "ap.db")
     store.queue_imports(_files(tmp_path / "in", 60), source="upload", person=True)
-    readers = [_python(CLAIM_ALL, str(store.path), f"reader-{n}") for n in range(4)]
+    began = str(time.time())
+    readers = [_python(CLAIM_ALL, str(store.path), f"reader-{n}", began) for n in range(4)]
     ran = [p.communicate(timeout=120) for p in readers]  # (each to its end: none left running when one failed)
-    for p, (_, err) in zip(readers, ran, strict=True):
-        assert p.returncode == 0, _error(err)
+    assert all(p.returncode == 0 for p in readers), _readers_said(readers, ran, store.path)
     taken = [json.loads(out) for out, _ in ran]
     ids = [i for t in taken for i in t]
     assert sorted(ids) == sorted(set(ids)) and len(ids) == 60
