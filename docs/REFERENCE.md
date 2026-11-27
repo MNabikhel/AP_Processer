@@ -469,7 +469,9 @@ scripts/             launch.py (the launcher: set up, start the dashboard, open 
                      and stops a running AP Coder), upgrade.py (updates over an older install), first_run.py,
                      check_deps.py, fetch_models.py (launcher steps), pilot_check.py, build_offline_bundle.py,
                      sample invoice generator; ci/old_versions.py (installs each older version and checks the
-                     update over it)
+                     update over it); release_proof.py (a release's update test in one command, Linux or a Mac:
+                     an older build unzipped and used, "Update now?" answered in its window, the data compared
+                     table by table; --from OLD --to NEW, each a release tag or a ZIP; AP_ALLOW_INTERNET=1)
 APProcessor.bat      the one-click launcher (Mac/Linux: APProcessor.command)
 docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), QUICK_START.md
                      (the pilot tester's one printable page), HOW_IT_RUNS.md
@@ -488,10 +490,10 @@ Check a change with `python scripts/check.py` (ruff on the changed files, then t
 `pytest` runs all but the slow tests: about 7,800 tests in about 15 minutes. `pytest -m ""` runs everything, as CI does:
 about 8,800 tests in about 37 minutes, the browser tests skipping as they do without Playwright and Chromium; with them
 they run too, about 13 minutes more (CI runs them in a job of their own). Both serially on a quiet 4-core machine
-(November 2026: the sums of tests/test_times.json, refreshed with `python -m tests.times`); beside other runs on the
-same cores, about one and a half times that. CI splits the whole suite across its machines: a pull request's checks take
-about 23 minutes, main's after a merge about 35. Lint with `ruff check ap_coder tests scripts && ruff format --check
-ap_coder tests scripts`.
+(November 2026: the sums of tests/test_times.json, which CI measures every night: `python -m tests.times pull`, D-339,
+brings them in); beside other runs on the same cores, about one and a half times that. CI splits the whole suite
+across its machines: a pull request's checks take about 23 minutes, main's after a merge about 35. Lint with `ruff
+check ap_coder tests scripts && ruff format --check ap_coder tests scripts`.
 
 ## Phase 2 hooks (beyond the pilot)
 

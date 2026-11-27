@@ -287,9 +287,10 @@ def company(work: Path) -> tuple[Path, Path, Path, Any, dict[str, Any]]:
 # --- The guide, section by section ------------------------------------------------------------------------------------
 
 
-def first_sign_in(client: Client) -> None:
+def first_sign_in(client: Client) -> str:
     """The first sign-in, as the guide has it (D-243): admin / admin, the tester's own password and name, the
-    authenticator app set up with the key shown (its code worked out here, as the phone does)."""
+    authenticator app set up with the key shown (its code worked out here, as the phone does); that key, as the phone
+    keeps it (scripts/release_proof.py signs in again with it)."""
     step("1. the first sign-in: admin / admin, a password of one's own, the authenticator app")
     status, _body, _ = client.request("GET", "/review")
     check(status == 303, f"the review queue opened before any sign-in ({status})")
@@ -306,6 +307,7 @@ def first_sign_in(client: Client) -> None:
     post(client, "/login/authenticator", {"code": authenticator.code(secret, time.time()), "next": "/review"})
     check(any("session" in cookie for cookie in client.cookies), "no session after the authenticator's code")
     seen(f"signed in as admin ({html.unescape(name.group(1))}), the authenticator app set up")
+    return secret
 
 
 def section_1(client: Client) -> None:

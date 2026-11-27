@@ -4,6 +4,7 @@ import json
 import math
 import os
 import sqlite3
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -109,10 +110,10 @@ def pytest_collection_modifyitems(config, items):
 def _shard(items, spec: str, fast: bool = False, left_out: tuple[str, ...] = ()) -> set:
     """CI splits each run over parallel jobs: whole files (their fixtures set up once) go to N groups of about equal
     time, the heaviest first into the lightest group. A file's time is the one measured in tests/test_times.json for
-    the tests this run runs (all of them, or with ``fast`` those not slow; a whole run on Linux: refresh it with
-    ``python -m tests.times`` when the split grows uneven), else its slow tests at ``SLOW_SECONDS`` each plus the rest
-    at ``FAST_SECONDS``. Tests the run leaves out (``fast``: the slow ones; ``left_out``: --deselect's) weigh
-    nothing. Rough, but every test lands in exactly one group."""
+    the tests this run runs (all of them, or with ``fast`` those not slow; on Windows tests/test_times_windows.json's
+    first: CI measures both every night, ``python -m tests.times pull`` brings them in), else its slow tests at
+    ``SLOW_SECONDS`` each plus the rest at ``FAST_SECONDS``. Tests the run leaves out (``fast``: the slow ones;
+    ``left_out``: --deselect's) weigh nothing. Rough, but every test lands in exactly one group."""
     k, n = (int(part) for part in spec.split("/"))
     if not 1 <= k <= n:
         raise pytest.UsageError(f"--shard {spec}: K must be 1 to N")
@@ -135,7 +136,19 @@ def _shard(items, spec: str, fast: bool = False, left_out: tuple[str, ...] = ())
 
 SLOW_SECONDS, FAST_SECONDS = 2.0, 0.05  # rough per-test times for _shard (tests/slow_tests.txt: over 0.5 s)
 _TIMES_FILE = Path(__file__).parent / "test_times.json"
-_TIMES = json.loads(_TIMES_FILE.read_text(encoding="utf-8")) if _TIMES_FILE.is_file() else {}
+_WINDOWS_TIMES_FILE = Path(__file__).parent / "test_times_windows.json"
+
+
+def _times_for(platform: str) -> dict[str, list[float]]:
+    """The files' times _shard weighs them by: Ubuntu's (tests/test_times.json), on Windows its own over them
+    (tests/test_times_windows.json: two to three times as long, the scans read there, D-339); CI measures both."""
+    found: dict[str, list[float]] = {}
+    for file in (_TIMES_FILE, *([_WINDOWS_TIMES_FILE] if platform == "win32" else [])):
+        found.update(json.loads(file.read_text(encoding="utf-8")) if file.is_file() else {})
+    return found
+
+
+_TIMES = _times_for(sys.platform)
 
 
 def next_second() -> None:

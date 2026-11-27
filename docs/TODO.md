@@ -6,9 +6,17 @@ decision number then says what was done).
 - **User-facing wording in one place (after the pilot, once the wording settles).** The words people see kept by key in
   one file, with tests that check each key is used and each page's key exists, so a wording change is one edit and
   can't silently break the first-day walk.
-- **A sweep of the timing-sensitive tests.** Beyond B-2634 and B-2635: find the tests that wait on a sleep or race a
-  thread (`time.sleep`, short deadlines, "until" right after a start) and make them wait on an event or a step the test
-  controls.
+- **The timing-sensitive tests the sweep left.** Of the tests CI failed by their timing since 8 November and then
+  passed, all are fixed (the last: B-3054 to B-3057, each waiting on a step it controls) but three, never failed here
+  (the 44 files that sleep or race a thread, four rounds beside other tests and on two CPUs beside CPU hogs; the 65
+  that read the clock, at five times of day): `test_failover.py`'s hang while reviews hold the chat slots moved in 6 s
+  where 3 s (Windows 3.14, once), by the page reads' path ("2 calls in a row"), not by the arrivals behind the silent
+  reviews, and `local_llm` runs on the real clock, so the test can only scale it; the sync at the company's size had a
+  writer wait 4.3 s where 3 s (`test_jde_sync_volume.py`, Windows, once); the load bench had requests with no answer
+  on Windows (`test_bench_load.py`, two runs on 12 November, never since). Still at risk on a runner stalled past
+  them: a stand-in answering after a set time while the client gives up sooner (`tests/fake_ais.py` "slow",
+  "slow-after"), leases and holds renewed on the real clock (`test_kept_answers.py`, `test_web_process_listing.py`),
+  and wall-clock bounds on quick work (`test_caches.py`: 0.05 s).
 - **Shorter docs and docstrings from now on.** Say what a thing does in a line or two; move old decision detail to
   `docs/archive/` sooner, keeping only the decision and its reason in decisions.md.
 - **Split `core/store/users.py` before the next feature there.** It is at its 1,000-line limit: people, sign-in
@@ -39,11 +47,17 @@ decision number then says what was done).
   unknown-supplier screen's mixed words, a USD voucher's "Gross", an unreadable .msg counted, the Azure card's
   "saved (enabled)" while off, and `demo` on a new folder greeting "AP Coder was updated".
 - **Windows' "database is locked" when several processes open a Store at once** (the four-reader test in
-  `tests/core/test_imports.py`, Python 3.12): a writer held the lock for 30 s. The children now print SQLite's name for
-  the error, so read it from the next failure first; every call opens and closes its own connection
-  (`core/store/_base.py`), so the WAL files come and go between processes.
-- **Keep the test map and the test times fresh (after Monday).** Each tests part of CI now keeps its `--junitxml`
-  report (the artifact `junit-<OS>-python-<version>-<whole or fast>-<n>`, 14 days). Still to do: a nightly job that
-  refreshes `tests/test_times.json` from main's reports (`python -m tests.times`) and records `tests/test_map.json.gz`
-  (`python -m tests.test_map record`, D-333) and opens a pull request with both; then Windows' own times for its
-  parts (`tests/times.py` and `_shard` in `tests/conftest.py`).
+  `tests/core/test_imports.py`, Python 3.12). The only failure in CI's kept logs (12 to 27 Nov, every failed or rerun
+  job) is 20 Nov's, before the children printed SQLite's name for the error: three of the four readers failed after
+  waiting the 30 s busy timeout (two in a claim's BEGIN IMMEDIATE, one in `Store()`'s start-up, whose every-time
+  migration step `_vendor_numbers` writes, so every Store opened takes the write lock for about 1.5 ms); none since.
+  The next failure now also says each reader's slowest calls on one clock (a reader holding the lock all that time,
+  or the others taking turns meanwhile), whether the write lock is free once all have ended, and the database's
+  files. Read those first; every call opens and closes its own connection (`core/store/_base.py`), so the WAL files
+  come and go between processes.
+- **Keep the test map and the test times fresh** (D-339). Done: CI's nightly measures each test file's time on
+  Ubuntu and on Windows (whose parts are now split by its own, `tests/test_times_windows.json`) and records the test
+  map in four parts, then puts them on the data branch `test-times`; `python -m tests.times pull` (with
+  AP_ALLOW_INTERNET=1) brings them in, to commit with a pull request. Left: see that the first nights' runs push the
+  branch (their test-times-branch job), and that the map's four parts end within their 45 minutes; commit a pull now and
+  then (nothing does it for us, by design).

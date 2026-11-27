@@ -6,18 +6,38 @@ its tests that are not slow (the fast tier's). Refresh it when the parts of a CI
 reports (a folder at a time, a CI part each) add up: the files they measured get these times, the others keep theirs
 (a file that is gone leaves). ``--slow-over 2``: each test of the default run that took over 2 seconds goes on
 tests/slow_tests.txt first, as its rule says. A test marked slow in its own file counts as slow (``marked_slow``).
+
+CI measures them every night (D-339): ``python -m tests.times ci FOLDER --out DIR`` works out, from the reports of a
+run's tests parts (their artifacts, ``junit-<OS>-python-<version>-<whole or fast>-<n>/junit.xml``), each file's time
+on Ubuntu (tests/test_times.json) and on Windows (tests/test_times_windows.json, which ``_shard`` reads there): the
+mean of the Pythons that ran the whole suite. The nightly puts them on the data branch ``test-times``, with the test
+map (``python -m tests.test_map merge``), and ``python -m tests.times pull`` brings them into a checkout before a pull
+request (only with ``AP_ALLOW_INTERNET=1``: it asks raw.githubusercontent.com; ``--from`` another address, or a
+folder's ``file://`` one).
 """
 
 from __future__ import annotations
 
 import ast
+import datetime as dt
+import gzip
 import json
+import os
+import sys
+import urllib.error
+import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TIMES_FILE = Path(__file__).parent / "test_times.json"
+WINDOWS_FILE = Path(__file__).parent / "test_times_windows.json"  # Windows' own (``_shard`` there, D-339)
 SLOW_FILE = Path(__file__).parent / "slow_tests.txt"
+# The data branch the nightly puts them on (D-339), of the repository the releases come from (scripts/releases.py)
+DATA_BRANCH = "test-times"
+RAW = f"https://raw.githubusercontent.com/MNabikhel/AP_Processer/{DATA_BRANCH}/"
+PULLED = ("test_times.json", "test_times_windows.json", "test_map.json.gz")  # into tests/, as named
+MADE = "made.json"  # where they came from: {"commit", "run", "date"}
 
 
 def _cases(junit: Path, root: Path = ROOT) -> list[tuple[str, str, str, float]]:
@@ -101,26 +121,199 @@ def refresh(
     )
     if new:
         put_on_the_slow_list(new, slow_file)
-    kept = json.loads(times_file.read_text(encoding="utf-8")) if times_file.is_file() else {}
+    measured: dict[str, list[float]] = {}
     for report in reports:
-        kept.update(times(report, slow | new, root))
-    measured = {path: kept[path] for path in sorted(kept) if (root / path).is_file()}
-    times_file.write_text(json.dumps(measured, indent=1) + "\n", encoding="utf-8")
-    return new, measured
+        measured.update(times(report, slow | new, root))
+    kept = _merged(_read(times_file), measured, root)
+    _write(times_file, kept)
+    return new, kept
 
 
-if __name__ == "__main__":
+def _read(path: Path) -> dict[str, list[float]]:
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def _write(path: Path, kept: dict[str, list[float]]) -> None:
+    path.write_text(json.dumps(kept, indent=1) + "\n", encoding="utf-8")
+
+
+def _merged(kept: dict[str, list[float]], measured: dict[str, list[float]], root: Path = ROOT) -> dict:
+    """``kept`` with the files ``measured`` has at its times, a file that is gone from ``root`` left out, in order."""
+    both = {**kept, **measured}
+    return {path: both[path] for path in sorted(both) if (root / path).is_file()}
+
+
+def listed_slow(listed: Path = SLOW_FILE) -> set[str]:
+    """The tests on tests/slow_tests.txt, as tests/conftest.py reads them (``_SLOW``), with no pytest to import."""
+    lines = listed.read_text(encoding="utf-8").splitlines()
+    return {line.strip() for line in lines if line.strip() and not line.startswith("#")}
+
+
+# --- CI's reports, every night (D-339) ---------------------------------------------------------------------------
+
+
+def cells(folder: Path) -> dict[str, list[Path]]:
+    """The reports of CI's tests parts in ``folder``, one artifact folder each (``junit-<cell>-<n>/junit.xml``), by
+    cell: ``<OS>-python-<version>-<whole or fast>``, each with its parts' reports."""
+    found: dict[str, list[Path]] = {}
+    for report in sorted(folder.glob("junit-*/junit.xml")):
+        cell = report.parent.name.removeprefix("junit-").rpartition("-")[0]
+        found.setdefault(cell, []).append(report)
+    return found
+
+
+def mean_times(by_cell: list[list[Path]], slow: set[str], root: Path = ROOT) -> dict[str, list[float]]:
+    """Each file's time in each cell (its parts' reports together), then their mean over the cells that ran it."""
+    pairs: dict[str, list[list[float]]] = {}
+    for reports in by_cell:
+        cell: dict[str, list[float]] = {}
+        for report in reports:
+            cell.update(times(report, slow, root))
+        for path, pair in cell.items():
+            pairs.setdefault(path, []).append(pair)
+    return {path: [round(sum(p[0] for p in got) / len(got), 1), round(sum(p[1] for p in got) / len(got), 1)]
+            for path, got in sorted(pairs.items())}  # fmt: skip
+
+
+# Which cells measure each file: those that ran the whole suite (the fast tier's cells have no slow test's time)
+FROM_CELLS = {
+    "test_times.json": ("ubuntu-latest-", TIMES_FILE),
+    "test_times_windows.json": ("windows-latest-", WINDOWS_FILE),
+}
+
+
+def from_ci(folder: Path, out: Path, slow: set[str], root: Path = ROOT, made: dict | None = None,
+            kept: dict[str, Path] | None = None) -> dict[str, dict[str, list[float]]]:  # fmt: skip
+    """tests/test_times.json and tests/test_times_windows.json as the reports in ``folder`` measured them, written in
+    ``out``: each file at the mean of the whole-suite cells of its OS that ran it, the others as the checkout has them
+    (``kept``), a file that is gone left out; and ``made`` (where they came from) as made.json. No report: an error."""
+    found = cells(folder)
+    if not found:
+        raise SystemExit(f"no --junitxml report in {folder} (junit-*/junit.xml): nothing measured, nothing written")
+    out.mkdir(parents=True, exist_ok=True)
+    written = {}
+    for name, (os_name, default) in FROM_CELLS.items():
+        whole = [reports for cell, reports in found.items() if cell.startswith(os_name) and cell.endswith("-whole")]
+        written[name] = _merged(_read((kept or {}).get(name, default)), mean_times(whole, slow, root), root)
+        _write(out / name, written[name])
+    if made is not None:
+        (out / MADE).write_text(json.dumps(made, indent=1) + "\n", encoding="utf-8")
+    return written
+
+
+def _fetch(url: str) -> bytes | None:
+    """The file at ``url``; None when there is none (404, or no such file)."""
+    try:
+        with urllib.request.urlopen(url, timeout=60) as answer:  # noqa: S310 - a developer's command, its own address
+            return answer.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise SystemExit(f"{url}: {exc}") from exc
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, FileNotFoundError):
+            return None
+        raise SystemExit(f"{url}: {exc.reason}") from exc
+
+
+def _good_times(data: bytes) -> dict[str, list[float]] | None:
+    try:
+        got = json.loads(data)
+    except ValueError:
+        return None
+    ok = isinstance(got, dict) and all(isinstance(path, str) and isinstance(pair, list) and len(pair) == 2
+                                       and all(isinstance(t, (int, float)) for t in pair) and pair[0] >= pair[1] >= 0
+                                       for path, pair in got.items())  # fmt: skip
+    return got if ok else None
+
+
+def _good_map(data: bytes) -> bool:
+    try:
+        made = json.loads(gzip.decompress(data))
+    except (OSError, ValueError):
+        return False
+    return isinstance(made, dict) and made.get("format") == 1 and "tests" in made and "map" in made
+
+
+def pull(source: str = RAW, into: Path = TIMES_FILE.parent, root: Path = ROOT) -> list[str]:
+    """The nightly's files from the data branch (``source``: its raw address, or a folder's ``file://`` one) into
+    ``into`` (tests/): the times of the files it measured over this checkout's (one added since keeps its own; one
+    gone leaves), the test map as it is. A file it doesn't have, or not in its format, is left as it was. Asking an
+    address on the network needs ``AP_ALLOW_INTERNET=1`` (a developer's command: the app and its tests never do)."""
+    from ap_coder.ops.offline import INTERNET_ENV, internet_allowed
+
+    if not source.startswith("file:") and not internet_allowed():
+        raise SystemExit(f"pull asks {source}: only with {INTERNET_ENV}=1 (the app and its tests never reach the "
+                         "internet); --from file:///<folder>/ takes them from a folder")  # fmt: skip
+    source = source if source.endswith("/") else source + "/"
+    said = []
+    made = _fetch(source + MADE)
+    if made is not None:
+        try:
+            came = json.loads(made)
+            said.append(
+                f"from main at {str(came.get('commit', ''))[:7]}, {came.get('date', '')} ({came.get('run', '')})"
+            )
+        except ValueError:
+            pass
+    for name in PULLED:
+        data = _fetch(source + name)
+        if data is None:
+            said.append(f"{name}: not there, left as it was")
+        elif name.endswith(".json"):
+            got = _good_times(data)
+            if got is None:
+                said.append(f"{name}: not times in their format, left as it was")
+                continue
+            kept = _merged(_read(into / name), got, root)
+            _write(into / name, kept)
+            said.append(f"{name}: {len(kept)} files, {sum(t[0] for t in kept.values()) / 60:.1f} minutes "
+                        f"({sum(t[1] for t in kept.values()) / 60:.1f} without the slow tests)")  # fmt: skip
+        elif not _good_map(data):
+            said.append(f"{name}: not a test map in its format, left as it was")
+        else:
+            (into / name).write_bytes(data)
+            said.append(f"{name}: {len(data):,} bytes")
+    return said
+
+
+def main(argv: list[str] | None = None) -> int:
     import argparse
 
-    from tests.conftest import _SLOW
-
-    parser = argparse.ArgumentParser(prog="python -m tests.times", description=__doc__.split("\n\n")[0])
+    argv = sys.argv[1:] if argv is None else argv
+    prog = "python -m tests.times"
+    if argv[:1] == ["pull"]:
+        parser = argparse.ArgumentParser(prog=f"{prog} pull", description=pull.__doc__.split("\n\n")[0])
+        parser.add_argument("--from", dest="source", default=RAW, help=f"where from (default {RAW})")
+        args = parser.parse_args(argv[1:])
+        for line in pull(args.source):
+            print(line)
+        print("Commit them with your pull request: CI splits its parts by them, check.py picks tests by them.")
+        return 0
+    if argv[:1] == ["ci"]:
+        parser = argparse.ArgumentParser(prog=f"{prog} ci", description=from_ci.__doc__.split("\n\n")[0])
+        parser.add_argument("folder", type=Path, help="the run's junit-* artifacts, one folder each")
+        parser.add_argument("--out", type=Path, required=True, help="the folder to write them in")
+        parser.add_argument("--commit", default=os.environ.get("GITHUB_SHA", ""), help="the commit the run tested")
+        parser.add_argument("--run", default="", help="the run's address")
+        args = parser.parse_args(argv[1:])
+        made = {"commit": args.commit, "run": args.run, "date": dt.date.today().isoformat()}
+        written = from_ci(args.folder, args.out, listed_slow() | marked_slow(), made=made)
+        for name, kept in written.items():
+            print(f"{args.out / name}: {len(kept)} files, {sum(t[0] for t in kept.values()) / 60:.1f} minutes")
+        return 0
+    parser = argparse.ArgumentParser(prog=prog, description=__doc__.split("\n\n")[0])
     parser.add_argument("reports", nargs="+", type=Path, help="pytest --junitxml reports")
     parser.add_argument(
         "--slow-over", type=float, metavar="SECONDS", help="put default-run tests over it on the slow list"
     )
-    args = parser.parse_args()
-    new, measured = refresh(args.reports, set(_SLOW) | marked_slow(), args.slow_over)
+    args = parser.parse_args(argv)
+    new, measured = refresh(args.reports, listed_slow() | marked_slow(), args.slow_over)
     print(f"{len(new)} tests put on {SLOW_FILE.name}" + "".join(f"\n  {test}" for test in sorted(new)))
     print(f"{len(measured)} files, {sum(t[0] for t in measured.values()) / 60:.1f} minutes "
           f"({sum(t[1] for t in measured.values()) / 60:.1f} without the slow tests): {TIMES_FILE}")  # fmt: skip
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

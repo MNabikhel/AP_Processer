@@ -58,7 +58,8 @@ jobs:
         # installs first) and on the newest (3.14: the one the pilot laptop has), both with the OCR engine, so the
         # tests that read scans run on Windows (they skip without it; its PP-OCRv4 models come inside the rapidocr
         # package: nothing is downloaded); the fast tier on the other two. Each is split into even parts run side by
-        # side (--shard, tests/conftest.py: whole files, by the times in tests/test_times.json), so the run ends when
+        # side (--shard, tests/conftest.py: whole files, by the times in tests/test_times.json, Windows' own on Windows:
+        # tests/test_times_windows.json; the nightly measures both, test-times below), so the run ends when
         # the slowest part does (D-233). A pull request runs the cells marked "pull_request" (Ubuntu 3.11, the floor,
         # whose standard library behaves as the first patches of 3.12 and 3.13 do, which no cell here runs: each takes
         # its Python's newest patch, D-334; Ubuntu 3.12; both Windows ones: 3.12 as Windows before Python 3.13 behaves
@@ -122,6 +123,117 @@ jobs:
           if-no-files-found: ignore
           overwrite: true
           retention-days: 14
+
+  test-map:
+    # The test map (tests/test_map.json.gz, D-333) recorded again: the whole suite under coverage, about an hour in one
+    # process, so in four parts side by side, each its own map, joined by test-times below (D-339). Nightly and by
+    # hand on main only: never in a pull request's or a merge's run (it decides nothing about a build). With the OCR
+    # engine, as the map in the repository was recorded: without it the tests that read scans skip, and the map
+    # leaves out the functions only they run.
+    name: The test map, part ${{ matrix.part }} of 4 (nightly; main only)
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45  # about 15 minutes a part
+    continue-on-error: true  # (developers' data: a part that fails leaves the nightly as main's tests left it)
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ocr,dev,testmap]"
+      - name: The part's tests under coverage, then its map
+        run: python -m tests.test_map record --out "${{ runner.temp }}/test_map.json.gz" -- -q -m "" -k "not in_a_browser" --shard ${{ matrix.part }}/4
+      - name: Keep the part's map
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-map-${{ matrix.part }}-of-4
+          path: ${{ runner.temp }}/test_map.json.gz
+          if-no-files-found: ignore
+          retention-days: 3
+
+  test-times:
+    # For developers, every night: each test file's time from the tests parts' --junitxml reports (Ubuntu's, and
+    # Windows' own, which its parts are split by), and the test map once all four parts made theirs, kept for
+    # test-times-branch below to put on the data branch test-times (D-339). Read-only, as every job but that one.
+    name: The tests' times and map for developers (nightly; main only)
+    needs: [tests, test-map]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true  # (as test-map; pull says the date its data is from, so data gone stale shows)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The tests parts' reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: junit-*
+          path: ${{ runner.temp }}/reports
+      - name: The test map's parts
+        continue-on-error: true  # (none when the test map's jobs failed: the times still go)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-map-*
+          path: ${{ runner.temp }}/maps
+      - name: The times and the map
+        run: |
+          python -m tests.times ci "$RUNNER_TEMP/reports" --out "$RUNNER_TEMP/data" --run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          python -m pip install "pytest>=8"  # (tests.test_map is a pytest plugin too)
+          python -m tests.test_map merge "$RUNNER_TEMP/maps" --out "$RUNNER_TEMP/data/test_map.json.gz"
+      - name: Keep them for the data branch
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-times-data
+          path: ${{ runner.temp }}/data
+          retention-days: 3
+
+  test-times-branch:
+    # The one job that may write: the data test-times worked out, put on the data branch test-times with git alone, on
+    # a machine of its own (no package installed, none of the checkout's code run, while its token could push to
+    # main). One commit, replaced each night. No workflow runs on that branch (it holds none, and a push with this
+    # job's token starts none); python -m tests.times pull brings them into a checkout, to commit with a pull request
+    # (D-339). Nothing here pushes to main or makes a release: builds.yml releases a merge's run only.
+    name: The tests' times and map onto the branch test-times (nightly; main only)
+    needs: test-times
+    if: ${{ !cancelled() && needs.test-times.result == 'success' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true  # (as test-map)
+    permissions:
+      contents: write  # (the data branch only: the push below names it)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-times-data
+          path: ${{ runner.temp }}/data
+      - name: Onto the data branch test-times
+        shell: bash
+        run: |
+          set -euo pipefail
+          data="$RUNNER_TEMP/data"
+          # a night with no map of all four parts keeps the last one
+          if [ ! -f "$data/test_map.json.gz" ] && git fetch -q --depth=1 origin refs/heads/test-times; then
+            git show FETCH_HEAD:test_map.json.gz > "$data/test_map.json.gz" 2> /dev/null || rm -f "$data/test_map.json.gz"
+          fi
+          export GIT_INDEX_FILE="$RUNNER_TEMP/index"
+          for file in "$data"/*; do
+            git update-index --add --cacheinfo "100644,$(git hash-object -w "$file"),$(basename "$file")"
+          done
+          git ls-files --stage
+          export GIT_AUTHOR_NAME="github-actions[bot]" GIT_AUTHOR_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
+          export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+          commit=$(git commit-tree "$(git write-tree)" -m "The tests' times and map from main at ${GITHUB_SHA::7} (run $GITHUB_RUN_ID)")
+          git push --force origin "$commit:refs/heads/test-times"
 
   windows-sync-volume:
     # The slowest test by far: 600,000 vouchers synced four times, about 20 minutes on Windows (2 on Ubuntu, where
