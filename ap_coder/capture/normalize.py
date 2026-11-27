@@ -161,22 +161,24 @@ def qst_valid(value: str | None) -> bool:
 
 # ---------------------------------------------------------------- names and currency
 
-_LEGAL_SUFFIX = re.compile(
-    r"\b(inc|incorporated|ltd|ltee|limited|limitee|llc|llp|lp|corp|corporation|co|company|cie|"
-    r"enr|senc|sa|plc|gmbh|ulc)\b\.?",
-    re.I,
+_LEGAL_SUFFIXES = frozenset(
+    "inc incorporated ltd ltee limited limitee llc llp lp corp corporation co company cie enr senc sa plc gmbh "
+    "ulc".split()
 )
+_STROKED = str.maketrans({"ø": "o", "ł": "l"})  # letters _plain keeps whole: dropped, "Østby" became "stby"
 
 
 def norm_name(text: str | None) -> str:
-    """Vendor names compared without accents, case, punctuation or legal suffixes."""
+    """Vendor names compared without accents, case, punctuation or the legal suffixes they end with ("Co-op Prairie
+    Feeds Ltd." -> "co op prairie feeds")."""
     if not text:
         return ""
-    s = _plain(str(text))
+    s = _plain(str(text)).translate(_STROKED)
     s = re.sub(r"[&+]", " and ", s)
-    s = re.sub(r"[^a-z0-9 ]", " ", s)
-    s = _LEGAL_SUFFIX.sub(" ", s)
-    return " ".join(s.split())
+    words = re.sub(r"[^a-z0-9 ]", " ", s).split()
+    while words and words[-1] in _LEGAL_SUFFIXES:
+        words.pop()
+    return " ".join(words)
 
 
 _CODE = r"(?<![A-Z])(CAD|USD|EUR|GBP)(?![A-Z])"  # also glued by OCR: "TOTALCAD"

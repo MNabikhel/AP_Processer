@@ -99,6 +99,7 @@ _NAT64 = ipaddress.ip_network("64:ff9b::/96")  # an IPv4 address on the internet
 # a company server) is judged by the addresses its name resolves to, as a bare name is. No other name is looked up.
 COMPANY_DOMAINS_ENV = "AP_COMPANY_DOMAINS"
 RESOLVED_SECONDS = 30.0  # how long a name's addresses are kept (each request to the model server asks)
+UNRESOLVED_SECONDS = 10.0  # a name that resolved to nothing is asked again sooner, so a server switched on is found
 _RESOLVED: dict[str, tuple[float, list[ipaddress.IPv4Address | ipaddress.IPv6Address]]] = {}
 _RESOLVED_LOCK = threading.Lock()
 
@@ -189,25 +190,25 @@ def forget_resolved() -> None:
 
 
 def _resolved(name: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
-    """The addresses ``name`` resolves to, kept RESOLVED_SECONDS (a name that doesn't resolve is asked again)."""
+    """The addresses ``name`` resolves to, kept RESOLVED_SECONDS; none (a name that doesn't resolve) kept
+    UNRESOLVED_SECONDS: each failed lookup takes seconds on Windows, and the settings are read often."""
     now = time.monotonic()
     with _RESOLVED_LOCK:
         kept = _RESOLVED.get(name)
-    if kept and now - kept[0] < RESOLVED_SECONDS:
+    if kept and now - kept[0] < (RESOLVED_SECONDS if kept[1] else UNRESOLVED_SECONDS):
         return kept[1]
     try:
         infos = socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)
     except (OSError, UnicodeError):
-        return []
+        infos = []
     found = []
     for info in infos:
         try:
             found.append(ipaddress.ip_address(str(info[4][0])))  # with its scope (fe80::1%en0): connected to as found
         except ValueError:
             continue
-    if found:
-        with _RESOLVED_LOCK:
-            _RESOLVED[name] = (now, found)
+    with _RESOLVED_LOCK:
+        _RESOLVED[name] = (now, found)
     return found
 
 

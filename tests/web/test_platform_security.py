@@ -288,6 +288,25 @@ def test_a_name_outside_the_company_domains_is_not_looked_up_and_a_lookup_is_kep
     assert not config._on_this_network("macstudio.corp.acme-foods.ca:1234")
 
 
+def test_a_name_that_does_not_resolve_is_asked_again_only_after_a_short_while(company_dns, monkeypatch):
+    """B-3050: a model server's name that resolved to nothing (the Mac Studio switched off) was looked up again each
+    time the settings were read, about 2.7 s a lookup on Windows. The failed lookup is now kept a short while, so a
+    server switched on later is still found soon."""
+    from ap_coder.core import config
+
+    answers, asked = company_dns
+    for _ in range(3):  # the settings read three times
+        assert config.normalise_base_url("http://studio.local:1234/api/v1/models") == "http://studio.local:1234/v1"
+    with pytest.raises(OSError, match="can't be found"):
+        config.pinned_addresses("studio.local:1234")  # never connected to
+    assert asked == ["studio.local"]
+    answers["studio.local"] = "192.168.1.20"  # the Mac Studio switched on
+    later = config.time.monotonic() + config.UNRESOLVED_SECONDS + 1
+    monkeypatch.setattr(config.time, "monotonic", lambda: later)
+    assert config.pinned_addresses("studio.local:1234") == ["192.168.1.20"]
+    assert asked == ["studio.local"] * 2
+
+
 # --- 3. A small picture of a huge page is not decoded at full size ------------------------------------------------
 
 

@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse
 
 from ap_coder.ai import page_reader, page_worker
 from ap_coder.core import ui
-from ap_coder.core.config import Settings
+from ap_coder.core.config import Settings, forget_resolved
 from ap_coder.core.envfile import clean_url, read_env
 from ap_coder.core.store import Store
 from ap_coder.ops.help import SERVER_LM_STUDIO
@@ -489,6 +489,7 @@ def check_again(request: Request, back: str = Form(URL)) -> JSONResponse:
     page_reader.forget_reader_failures()  # memory freed: a model that failed to load is tried again
     forget_status()
     forget_setup_report()  # Report a problem's setup report says what is true now
+    forget_resolved()  # a server's name that resolved to nothing is looked up again (kept 10 s: B-3050)
     status = reading_status_or_none(get_settings(request), get_store(request), use_cache=False)
     try:
         check_servers(get_settings(request), get_store(request))  # each model server and its backup (D-180)
