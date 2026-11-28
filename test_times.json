@@ -1,0 +1,1618 @@
+{
+ "tests/ai/test_ai_paths.py": [
+  3.7,
+  0.2
+ ],
+ "tests/ai/test_azure_check.py": [
+  18.6,
+  17.0
+ ],
+ "tests/ai/test_azure_optional.py": [
+  0.7,
+  0.1
+ ],
+ "tests/ai/test_candidates.py": [
+  1.5,
+  1.5
+ ],
+ "tests/ai/test_closed_list.py": [
+  0.8,
+  0.8
+ ],
+ "tests/ai/test_coding_no_ai.py": [
+  4.9,
+  1.4
+ ],
+ "tests/ai/test_corrections.py": [
+  5.1,
+  5.1
+ ],
+ "tests/ai/test_credit_notes_and_history_cap.py": [
+  0.4,
+  0.4
+ ],
+ "tests/ai/test_di_http.py": [
+  0.9,
+  0.9
+ ],
+ "tests/ai/test_evaluation.py": [
+  0.0,
+  0.0
+ ],
+ "tests/ai/test_extraction.py": [
+  0.0,
+  0.0
+ ],
+ "tests/ai/test_failover.py": [
+  36.7,
+  9.3
+ ],
+ "tests/ai/test_figures.py": [
+  0.0,
+  0.0
+ ],
+ "tests/ai/test_imaging.py": [
+  0.6,
+  0.6
+ ],
+ "tests/ai/test_inference.py": [
+  0.1,
+  0.1
+ ],
+ "tests/ai/test_lessons.py": [
+  4.5,
+  2.5
+ ],
+ "tests/ai/test_local_llm.py": [
+  5.2,
+  0.6
+ ],
+ "tests/ai/test_model_reading.py": [
+  1.6,
+  0.4
+ ],
+ "tests/ai/test_offline_coding.py": [
+  2.3,
+  1.7
+ ],
+ "tests/ai/test_offline_edge_cases.py": [
+  0.1,
+  0.1
+ ],
+ "tests/ai/test_page_reader.py": [
+  7.8,
+  1.9
+ ],
+ "tests/ai/test_page_worker.py": [
+  11.0,
+  3.8
+ ],
+ "tests/ai/test_pipeline.py": [
+  1.0,
+  1.0
+ ],
+ "tests/ai/test_pipeline_arrival.py": [
+  44.3,
+  0.7
+ ],
+ "tests/ai/test_prompt_guard.py": [
+  2.8,
+  0.0
+ ],
+ "tests/ai/test_reader_outcomes.py": [
+  2.9,
+  0.3
+ ],
+ "tests/ai/test_reading_and_bench_fixes.py": [
+  0.1,
+  0.1
+ ],
+ "tests/ai/test_reading_and_coding.py": [
+  2.2,
+  2.2
+ ],
+ "tests/ai/test_reading_decisions.py": [
+  2.7,
+  1.0
+ ],
+ "tests/ai/test_real_world.py": [
+  0.5,
+  0.5
+ ],
+ "tests/ai/test_supplier_prior.py": [
+  5.8,
+  5.8
+ ],
+ "tests/ai/test_training_export.py": [
+  6.2,
+  2.9
+ ],
+ "tests/ai/test_uniform_reading.py": [
+  2.5,
+  2.3
+ ],
+ "tests/ai/test_verifier.py": [
+  8.9,
+  7.0
+ ],
+ "tests/ai/test_verifier_pages.py": [
+  4.3,
+  4.3
+ ],
+ "tests/ai/test_why_question.py": [
+  3.2,
+  3.2
+ ],
+ "tests/bench/test_adversarial.py": [
+  9.5,
+  3.3
+ ],
+ "tests/bench/test_bench.py": [
+  13.9,
+  2.6
+ ],
+ "tests/bench/test_bench_lines.py": [
+  1.2,
+  1.2
+ ],
+ "tests/bench/test_bench_load.py": [
+  22.1,
+  0.3
+ ],
+ "tests/bench/test_bench_speed.py": [
+  1.1,
+  0.0
+ ],
+ "tests/bench/test_coding_journal.py": [
+  1.9,
+  1.9
+ ],
+ "tests/bench/test_companies_speed.py": [
+  0.9,
+  0.9
+ ],
+ "tests/bench/test_day.py": [
+  46.5,
+  0.2
+ ],
+ "tests/bench/test_di_compare.py": [
+  0.7,
+  0.7
+ ],
+ "tests/bench/test_fake_model.py": [
+  4.5,
+  2.4
+ ],
+ "tests/bench/test_jde_exports.py": [
+  51.3,
+  6.9
+ ],
+ "tests/bench/test_jde_invoices.py": [
+  0.7,
+  0.7
+ ],
+ "tests/bench/test_jde_po_vouchers.py": [
+  13.8,
+  5.4
+ ],
+ "tests/bench/test_pilot_day.py": [
+  7.4,
+  0.6
+ ],
+ "tests/bench/test_seed_volume.py": [
+  25.9,
+  12.8
+ ],
+ "tests/bench/test_table_columns.py": [
+  17.8,
+  0.0
+ ],
+ "tests/capture/test_capture.py": [
+  0.8,
+  0.8
+ ],
+ "tests/capture/test_capture_edge_cases.py": [
+  1.9,
+  1.6
+ ],
+ "tests/capture/test_coarse_scans.py": [
+  0.2,
+  0.2
+ ],
+ "tests/capture/test_confidence_di.py": [
+  0.2,
+  0.2
+ ],
+ "tests/capture/test_di_reader.py": [
+  0.3,
+  0.3
+ ],
+ "tests/capture/test_di_with_ocr.py": [
+  0.7,
+  0.7
+ ],
+ "tests/capture/test_document_kind.py": [
+  0.5,
+  0.5
+ ],
+ "tests/capture/test_instructions.py": [
+  0.4,
+  0.4
+ ],
+ "tests/capture/test_line_item_recall.py": [
+  0.0,
+  0.0
+ ],
+ "tests/capture/test_line_memory.py": [
+  2.5,
+  2.5
+ ],
+ "tests/capture/test_line_table_columns.py": [
+  6.0,
+  6.0
+ ],
+ "tests/capture/test_long_invoices.py": [
+  20.4,
+  0.5
+ ],
+ "tests/capture/test_not_invoice.py": [
+  0.8,
+  0.8
+ ],
+ "tests/capture/test_page_reads.py": [
+  1.6,
+  1.6
+ ],
+ "tests/capture/test_partial_page_reading.py": [
+  0.1,
+  0.1
+ ],
+ "tests/capture/test_photo_scan_quality.py": [
+  0.2,
+  0.2
+ ],
+ "tests/capture/test_pilot_path_backend.py": [
+  2.4,
+  0.4
+ ],
+ "tests/capture/test_place_of_supply.py": [
+  0.0,
+  0.0
+ ],
+ "tests/capture/test_reader_dates_numbers.py": [
+  0.8,
+  0.8
+ ],
+ "tests/capture/test_reader_english_pdfs.py": [
+  3.6,
+  3.0
+ ],
+ "tests/capture/test_reader_layouts.py": [
+  0.6,
+  0.6
+ ],
+ "tests/capture/test_reader_line_items.py": [
+  0.1,
+  0.1
+ ],
+ "tests/capture/test_reader_progress.py": [
+  0.1,
+  0.1
+ ],
+ "tests/capture/test_reader_scans.py": [
+  0.6,
+  0.6
+ ],
+ "tests/capture/test_reader_terms_po.py": [
+  2.5,
+  2.5
+ ],
+ "tests/capture/test_reader_totals.py": [
+  1.9,
+  1.9
+ ],
+ "tests/capture/test_reader_verified_values.py": [
+  0.6,
+  0.6
+ ],
+ "tests/capture/test_reading_cache.py": [
+  24.2,
+  2.5
+ ],
+ "tests/capture/test_reading_once.py": [
+  0.8,
+  0.4
+ ],
+ "tests/capture/test_scan_text_layers.py": [
+  0.3,
+  0.3
+ ],
+ "tests/capture/test_steady_lessons.py": [
+  3.4,
+  3.4
+ ],
+ "tests/capture/test_supplier.py": [
+  4.3,
+  0.8
+ ],
+ "tests/capture/test_supplier_learning.py": [
+  1.7,
+  1.7
+ ],
+ "tests/capture/test_supplier_repeat.py": [
+  10.1,
+  5.3
+ ],
+ "tests/capture/test_table_reading.py": [
+  0.3,
+  0.3
+ ],
+ "tests/capture/test_tax_columns.py": [
+  0.3,
+  0.3
+ ],
+ "tests/capture/test_template_rollback.py": [
+  4.3,
+  1.5
+ ],
+ "tests/capture/test_text_layer_first.py": [
+  0.1,
+  0.1
+ ],
+ "tests/capture/test_totals_proven.py": [
+  0.0,
+  0.0
+ ],
+ "tests/capture/test_totals_solver.py": [
+  10.2,
+  0.0
+ ],
+ "tests/capture/test_touchless.py": [
+  11.7,
+  9.9
+ ],
+ "tests/capture/test_transcript.py": [
+  0.8,
+  0.8
+ ],
+ "tests/capture/test_turned_pages.py": [
+  1.0,
+  1.0
+ ],
+ "tests/coding/test_bank_accounts.py": [
+  0.0,
+  0.0
+ ],
+ "tests/coding/test_bulk.py": [
+  2.8,
+  2.8
+ ],
+ "tests/coding/test_claim.py": [
+  0.0,
+  0.0
+ ],
+ "tests/coding/test_coding_and_reports.py": [
+  0.1,
+  0.1
+ ],
+ "tests/coding/test_companies.py": [
+  3.5,
+  3.5
+ ],
+ "tests/coding/test_corrections_and_place_of_supply.py": [
+  3.5,
+  2.0
+ ],
+ "tests/coding/test_duplicates_by_company.py": [
+  0.5,
+  0.5
+ ],
+ "tests/coding/test_guesses_and_learned_codes.py": [
+  4.5,
+  2.4
+ ],
+ "tests/coding/test_line_tax.py": [
+  0.3,
+  0.3
+ ],
+ "tests/coding/test_line_tax_capture.py": [
+  0.7,
+  0.7
+ ],
+ "tests/coding/test_line_tax_cpa_review.py": [
+  0.5,
+  0.5
+ ],
+ "tests/coding/test_line_taxes.py": [
+  1.0,
+  1.0
+ ],
+ "tests/coding/test_manager_mail.py": [
+  0.0,
+  0.0
+ ],
+ "tests/coding/test_math_check.py": [
+  0.0,
+  0.0
+ ],
+ "tests/coding/test_meals.py": [
+  1.3,
+  1.3
+ ],
+ "tests/coding/test_money.py": [
+  0.8,
+  0.8
+ ],
+ "tests/coding/test_money_checks.py": [
+  0.2,
+  0.2
+ ],
+ "tests/coding/test_po.py": [
+  22.5,
+  19.1
+ ],
+ "tests/coding/test_po_companies.py": [
+  0.3,
+  0.3
+ ],
+ "tests/coding/test_posting_edits.py": [
+  1.2,
+  1.2
+ ],
+ "tests/coding/test_remark.py": [
+  1.9,
+  1.9
+ ],
+ "tests/coding/test_review.py": [
+  0.0,
+  0.0
+ ],
+ "tests/coding/test_rules.py": [
+  0.2,
+  0.2
+ ],
+ "tests/coding/test_rules_po_statements.py": [
+  0.1,
+  0.1
+ ],
+ "tests/coding/test_samples.py": [
+  0.1,
+  0.1
+ ],
+ "tests/coding/test_split.py": [
+  0.6,
+  0.2
+ ],
+ "tests/coding/test_tax.py": [
+  0.6,
+  0.6
+ ],
+ "tests/coding/test_tax_learning.py": [
+  0.3,
+  0.3
+ ],
+ "tests/coding/test_tax_learning_safety.py": [
+  0.0,
+  0.0
+ ],
+ "tests/coding/test_tax_learning_votes.py": [
+  0.6,
+  0.6
+ ],
+ "tests/coding/test_tax_rows_and_vendors.py": [
+  2.0,
+  2.0
+ ],
+ "tests/coding/test_taxreturn.py": [
+  2.6,
+  2.6
+ ],
+ "tests/coding/test_taxreturn_flags.py": [
+  0.9,
+  0.9
+ ],
+ "tests/coding/test_terms.py": [
+  0.2,
+  0.2
+ ],
+ "tests/coding/test_terms_po_vendors.py": [
+  6.5,
+  1.4
+ ],
+ "tests/coding/test_validation.py": [
+  0.1,
+  0.1
+ ],
+ "tests/coding/test_validation_chart.py": [
+  0.9,
+  0.9
+ ],
+ "tests/coding/test_vendor_info.py": [
+  12.7,
+  0.7
+ ],
+ "tests/coding/test_vendor_mail.py": [
+  0.0,
+  0.0
+ ],
+ "tests/coding/test_vendors.py": [
+  7.5,
+  4.5
+ ],
+ "tests/core/test_audit.py": [
+  0.5,
+  0.5
+ ],
+ "tests/core/test_authenticator.py": [
+  0.0,
+  0.0
+ ],
+ "tests/core/test_backup_time.py": [
+  1.4,
+  1.4
+ ],
+ "tests/core/test_backups.py": [
+  5.4,
+  5.4
+ ],
+ "tests/core/test_bulk_jobs.py": [
+  0.5,
+  0.5
+ ],
+ "tests/core/test_by_hand.py": [
+  5.8,
+  5.8
+ ],
+ "tests/core/test_caches.py": [
+  15.3,
+  15.3
+ ],
+ "tests/core/test_chart.py": [
+  0.3,
+  0.3
+ ],
+ "tests/core/test_chart_companies.py": [
+  0.3,
+  0.3
+ ],
+ "tests/core/test_chart_file.py": [
+  22.2,
+  2.0
+ ],
+ "tests/core/test_chart_index.py": [
+  0.9,
+  0.9
+ ],
+ "tests/core/test_chart_lists.py": [
+  0.7,
+  0.7
+ ],
+ "tests/core/test_chart_store.py": [
+  0.6,
+  0.6
+ ],
+ "tests/core/test_checks_stamp.py": [
+  0.3,
+  0.3
+ ],
+ "tests/core/test_core_figures_and_names.py": [
+  0.8,
+  0.8
+ ],
+ "tests/core/test_core_imports_and_lessons.py": [
+  1.2,
+  0.6
+ ],
+ "tests/core/test_dialect.py": [
+  0.0,
+  0.0
+ ],
+ "tests/core/test_envfile.py": [
+  0.0,
+  0.0
+ ],
+ "tests/core/test_history.py": [
+  0.1,
+  0.1
+ ],
+ "tests/core/test_imports.py": [
+  1.5,
+  0.4
+ ],
+ "tests/core/test_journal_store.py": [
+  3.1,
+  3.1
+ ],
+ "tests/core/test_kept_answers.py": [
+  19.3,
+  14.1
+ ],
+ "tests/core/test_managers.py": [
+  1.1,
+  1.1
+ ],
+ "tests/core/test_memory_store.py": [
+  10.8,
+  3.1
+ ],
+ "tests/core/test_migrations.py": [
+  4.2,
+  4.2
+ ],
+ "tests/core/test_odd_inputs.py": [
+  0.2,
+  0.2
+ ],
+ "tests/core/test_park_notes.py": [
+  0.4,
+  0.2
+ ],
+ "tests/core/test_parsing.py": [
+  6.5,
+  6.5
+ ],
+ "tests/core/test_paths.py": [
+  0.1,
+  0.1
+ ],
+ "tests/core/test_peek.py": [
+  0.0,
+  0.0
+ ],
+ "tests/core/test_queue_changes.py": [
+  24.6,
+  0.7
+ ],
+ "tests/core/test_reference_data.py": [
+  0.1,
+  0.1
+ ],
+ "tests/core/test_reports.py": [
+  0.2,
+  0.2
+ ],
+ "tests/core/test_roles_store.py": [
+  0.6,
+  0.6
+ ],
+ "tests/core/test_rules_store.py": [
+  0.5,
+  0.5
+ ],
+ "tests/core/test_scale.py": [
+  9.0,
+  0.1
+ ],
+ "tests/core/test_schema.py": [
+  0.0,
+  0.0
+ ],
+ "tests/core/test_second_approval.py": [
+  4.2,
+  4.2
+ ],
+ "tests/core/test_store_ephemeral.py": [
+  0.0,
+  0.0
+ ],
+ "tests/core/test_store_matching_reconciliation.py": [
+  0.5,
+  0.5
+ ],
+ "tests/core/test_store_package.py": [
+  0.0,
+  0.0
+ ],
+ "tests/core/test_store_perf.py": [
+  3.9,
+  3.9
+ ],
+ "tests/core/test_store_races.py": [
+  1.7,
+  1.1
+ ],
+ "tests/core/test_store_register.py": [
+  0.2,
+  0.2
+ ],
+ "tests/core/test_store_session.py": [
+  0.2,
+  0.2
+ ],
+ "tests/core/test_store_transaction.py": [
+  1.4,
+  1.4
+ ],
+ "tests/core/test_update_database.py": [
+  0.2,
+  0.2
+ ],
+ "tests/core/test_users.py": [
+  5.4,
+  1.3
+ ],
+ "tests/core/test_vendor_changes.py": [
+  7.6,
+  7.6
+ ],
+ "tests/core/test_vendor_master.py": [
+  5.1,
+  3.5
+ ],
+ "tests/erp/test_accruals.py": [
+  51.9,
+  5.2
+ ],
+ "tests/erp/test_controls.py": [
+  0.8,
+  0.8
+ ],
+ "tests/erp/test_directory.py": [
+  6.2,
+  0.5
+ ],
+ "tests/erp/test_dupaudit.py": [
+  1.9,
+  1.9
+ ],
+ "tests/erp/test_export_layout.py": [
+  0.0,
+  0.0
+ ],
+ "tests/erp/test_exports_bulk.py": [
+  1.3,
+  0.8
+ ],
+ "tests/erp/test_finance_hub.py": [
+  3.6,
+  3.6
+ ],
+ "tests/erp/test_import_specs.py": [
+  4.9,
+  4.9
+ ],
+ "tests/erp/test_insights.py": [
+  2.1,
+  0.4
+ ],
+ "tests/erp/test_invoice_summary.py": [
+  68.8,
+  4.7
+ ],
+ "tests/erp/test_jde.py": [
+  4.7,
+  2.4
+ ],
+ "tests/erp/test_jde_ais.py": [
+  1.2,
+  1.2
+ ],
+ "tests/erp/test_jde_ais_safety.py": [
+  0.1,
+  0.1
+ ],
+ "tests/erp/test_jde_api_and_hub.py": [
+  2.6,
+  2.6
+ ],
+ "tests/erp/test_jde_api_web.py": [
+  3.6,
+  3.6
+ ],
+ "tests/erp/test_jde_companies.py": [
+  1.8,
+  1.8
+ ],
+ "tests/erp/test_jde_gl_mode.py": [
+  0.1,
+  0.1
+ ],
+ "tests/erp/test_jde_keying.py": [
+  7.6,
+  7.6
+ ],
+ "tests/erp/test_jde_post.py": [
+  2.3,
+  2.3
+ ],
+ "tests/erp/test_jde_post_runs.py": [
+  72.8,
+  10.2
+ ],
+ "tests/erp/test_jde_post_safety.py": [
+  8.1,
+  8.1
+ ],
+ "tests/erp/test_jde_readiness.py": [
+  0.3,
+  0.3
+ ],
+ "tests/erp/test_jde_settings.py": [
+  0.1,
+  0.1
+ ],
+ "tests/erp/test_jde_sync.py": [
+  3.1,
+  3.1
+ ],
+ "tests/erp/test_jde_sync_safety.py": [
+  1.2,
+  1.2
+ ],
+ "tests/erp/test_jde_sync_scale.py": [
+  1.6,
+  1.6
+ ],
+ "tests/erp/test_jde_sync_volume.py": [
+  126.2,
+  0.0
+ ],
+ "tests/erp/test_jde_tax_lines.py": [
+  0.0,
+  0.0
+ ],
+ "tests/erp/test_jde_terms.py": [
+  0.5,
+  0.5
+ ],
+ "tests/erp/test_jde_zfiles.py": [
+  0.1,
+  0.1
+ ],
+ "tests/erp/test_journal.py": [
+  3.1,
+  3.1
+ ],
+ "tests/erp/test_operations.py": [
+  0.5,
+  0.5
+ ],
+ "tests/erp/test_registers.py": [
+  0.8,
+  0.8
+ ],
+ "tests/erp/test_safety.py": [
+  0.0,
+  0.0
+ ],
+ "tests/erp/test_search.py": [
+  0.6,
+  0.5
+ ],
+ "tests/erp/test_spend.py": [
+  3.2,
+  0.2
+ ],
+ "tests/erp/test_stamp.py": [
+  0.7,
+  0.7
+ ],
+ "tests/erp/test_statements.py": [
+  0.3,
+  0.2
+ ],
+ "tests/erp/test_suggest_recurring.py": [
+  0.6,
+  0.4
+ ],
+ "tests/intake/test_emails_and_inbox.py": [
+  4.1,
+  0.8
+ ],
+ "tests/intake/test_files.py": [
+  0.0,
+  0.0
+ ],
+ "tests/intake/test_half_written_pictures.py": [
+  0.1,
+  0.1
+ ],
+ "tests/intake/test_imports.py": [
+  3.3,
+  3.0
+ ],
+ "tests/intake/test_intake.py": [
+  1.6,
+  1.5
+ ],
+ "tests/intake/test_joined.py": [
+  1.2,
+  1.2
+ ],
+ "tests/intake/test_mailbox.py": [
+  0.4,
+  0.4
+ ],
+ "tests/intake/test_msg_and_triage.py": [
+  2.0,
+  1.6
+ ],
+ "tests/intake/test_unusual_files.py": [
+  5.8,
+  3.0
+ ],
+ "tests/launcher/test_browser_open.py": [
+  0.0,
+  0.0
+ ],
+ "tests/launcher/test_first_launch.py": [
+  3.8,
+  1.6
+ ],
+ "tests/launcher/test_install.py": [
+  0.1,
+  0.1
+ ],
+ "tests/launcher/test_launch.py": [
+  5.5,
+  5.3
+ ],
+ "tests/launcher/test_launch_build.py": [
+  8.1,
+  0.6
+ ],
+ "tests/launcher/test_launch_log.py": [
+  0.1,
+  0.1
+ ],
+ "tests/launcher/test_launch_platforms.py": [
+  1.1,
+  0.1
+ ],
+ "tests/launcher/test_launch_python.py": [
+  1.1,
+  0.9
+ ],
+ "tests/launcher/test_launch_update.py": [
+  3.7,
+  1.6
+ ],
+ "tests/launcher/test_launcher_scripts.py": [
+  0.0,
+  0.0
+ ],
+ "tests/launcher/test_release_proof.py": [
+  0.5,
+  0.5
+ ],
+ "tests/launcher/test_releases.py": [
+  3.8,
+  3.8
+ ],
+ "tests/launcher/test_running.py": [
+  3.5,
+  1.1
+ ],
+ "tests/launcher/test_screens.py": [
+  0.0,
+  0.0
+ ],
+ "tests/launcher/test_update.py": [
+  0.2,
+  0.2
+ ],
+ "tests/launcher/test_update_cleanup_data.py": [
+  0.1,
+  0.1
+ ],
+ "tests/launcher/test_update_file_paths.py": [
+  1.1,
+  1.1
+ ],
+ "tests/launcher/test_update_from_old_versions.py": [
+  0.0,
+  0.0
+ ],
+ "tests/meta/test_agent_friendly.py": [
+  0.0,
+  0.0
+ ],
+ "tests/meta/test_agent_profile.py": [
+  0.0,
+  0.0
+ ],
+ "tests/meta/test_browser_harness.py": [
+  0.1,
+  0.1
+ ],
+ "tests/meta/test_builds_workflow.py": [
+  0.2,
+  0.2
+ ],
+ "tests/meta/test_caches.py": [
+  1.8,
+  1.8
+ ],
+ "tests/meta/test_check_script.py": [
+  12.2,
+  12.2
+ ],
+ "tests/meta/test_ci_workflow.py": [
+  2.1,
+  2.1
+ ],
+ "tests/meta/test_claude_map.py": [
+  9.0,
+  9.0
+ ],
+ "tests/meta/test_code_rules.py": [
+  9.9,
+  6.7
+ ],
+ "tests/meta/test_combine.py": [
+  3.8,
+  3.8
+ ],
+ "tests/meta/test_core_imports.py": [
+  0.6,
+  0.6
+ ],
+ "tests/meta/test_data_files.py": [
+  0.0,
+  0.0
+ ],
+ "tests/meta/test_dialect.py": [
+  1.8,
+  0.0
+ ],
+ "tests/meta/test_doc_links.py": [
+  0.1,
+  0.1
+ ],
+ "tests/meta/test_function_length.py": [
+  3.1,
+  3.1
+ ],
+ "tests/meta/test_how_it_runs_doc.py": [
+  0.1,
+  0.1
+ ],
+ "tests/meta/test_isolation.py": [
+  0.0,
+  0.0
+ ],
+ "tests/meta/test_lockstep.py": [
+  1.9,
+  1.9
+ ],
+ "tests/meta/test_log_entries.py": [
+  1.6,
+  1.6
+ ],
+ "tests/meta/test_moved_modules.py": [
+  0.3,
+  0.3
+ ],
+ "tests/meta/test_nested_writes.py": [
+  0.3,
+  0.3
+ ],
+ "tests/meta/test_new_databases.py": [
+  0.3,
+  0.3
+ ],
+ "tests/meta/test_old_windows_clock.py": [
+  3.8,
+  0.0
+ ],
+ "tests/meta/test_package_data.py": [
+  0.0,
+  0.0
+ ],
+ "tests/meta/test_release_workflow.py": [
+  0.2,
+  0.2
+ ],
+ "tests/meta/test_role_words.py": [
+  3.3,
+  3.3
+ ],
+ "tests/meta/test_same_behaviour.py": [
+  126.0,
+  1.1
+ ],
+ "tests/meta/test_sql_in_store.py": [
+  2.7,
+  2.7
+ ],
+ "tests/meta/test_test_map.py": [
+  5.2,
+  5.2
+ ],
+ "tests/offline/test_bundle_reproducible.py": [
+  2.5,
+  2.5
+ ],
+ "tests/offline/test_network_gates.py": [
+  0.1,
+  0.0
+ ],
+ "tests/offline/test_offline.py": [
+  6.7,
+  1.5
+ ],
+ "tests/offline/test_offline_guard.py": [
+  23.2,
+  1.2
+ ],
+ "tests/ops/test_awake.py": [
+  0.1,
+  0.1
+ ],
+ "tests/ops/test_backup_cmd.py": [
+  1.4,
+  1.4
+ ],
+ "tests/ops/test_chart_cmd.py": [
+  2.6,
+  2.6
+ ],
+ "tests/ops/test_cli_exports_and_data.py": [
+  0.8,
+  0.8
+ ],
+ "tests/ops/test_config_and_cli.py": [
+  0.5,
+  0.5
+ ],
+ "tests/ops/test_controls_watch.py": [
+  3.1,
+  1.1
+ ],
+ "tests/ops/test_demo.py": [
+  9.2,
+  1.9
+ ],
+ "tests/ops/test_demo_company.py": [
+  2.4,
+  0.2
+ ],
+ "tests/ops/test_demo_day.py": [
+  1.4,
+  1.4
+ ],
+ "tests/ops/test_end_to_end.py": [
+  1.4,
+  1.4
+ ],
+ "tests/ops/test_first_steps_order.py": [
+  1.8,
+  1.8
+ ],
+ "tests/ops/test_health.py": [
+  1.8,
+  1.8
+ ],
+ "tests/ops/test_help.py": [
+  1.0,
+  1.0
+ ],
+ "tests/ops/test_integration_e2e.py": [
+  0.8,
+  0.0
+ ],
+ "tests/ops/test_journal_cmd.py": [
+  8.5,
+  8.5
+ ],
+ "tests/ops/test_laptop_walk.py": [
+  2.4,
+  2.4
+ ],
+ "tests/ops/test_laptop_walk_jde.py": [
+  3.7,
+  3.7
+ ],
+ "tests/ops/test_pilot_score.py": [
+  2.3,
+  2.3
+ ],
+ "tests/ops/test_pilot_score_jde.py": [
+  0.2,
+  0.2
+ ],
+ "tests/ops/test_pilot_score_journal.py": [
+  9.8,
+  2.4
+ ],
+ "tests/ops/test_pilot_score_proposed.py": [
+  2.1,
+  2.1
+ ],
+ "tests/ops/test_real_world_findings.py": [
+  0.5,
+  0.3
+ ],
+ "tests/ops/test_safety.py": [
+  1.8,
+  1.8
+ ],
+ "tests/ops/test_server_mode_switch.py": [
+  0.0,
+  0.0
+ ],
+ "tests/ops/test_server_update.py": [
+  2.9,
+  2.9
+ ],
+ "tests/ops/test_server_update_downtime.py": [
+  0.8,
+  0.8
+ ],
+ "tests/ops/test_service.py": [
+  0.4,
+  0.4
+ ],
+ "tests/ops/test_service_linux.py": [
+  0.6,
+  0.6
+ ],
+ "tests/ops/test_service_macos.py": [
+  3.1,
+  3.1
+ ],
+ "tests/ops/test_setup_gate_and_doctor.py": [
+  3.8,
+  3.8
+ ],
+ "tests/ops/test_share.py": [
+  1.1,
+  1.1
+ ],
+ "tests/ops/test_system_log.py": [
+  0.1,
+  0.1
+ ],
+ "tests/ops/test_update_recovery.py": [
+  3.1,
+  3.1
+ ],
+ "tests/ops/test_users_cli.py": [
+  0.7,
+  0.7
+ ],
+ "tests/ops/test_working_together.py": [
+  1.9,
+  0.2
+ ],
+ "tests/web/test_account_lines.py": [
+  6.8,
+  6.8
+ ],
+ "tests/web/test_account_picker.py": [
+  0.0,
+  0.0
+ ],
+ "tests/web/test_admin_panel.py": [
+  1.8,
+  1.8
+ ],
+ "tests/web/test_admin_roles.py": [
+  2.9,
+  2.9
+ ],
+ "tests/web/test_chart_company_walk.py": [
+  12.7,
+  12.7
+ ],
+ "tests/web/test_chart_eligible.py": [
+  2.6,
+  2.6
+ ],
+ "tests/web/test_dashboard_and_launcher_review.py": [
+  2.3,
+  0.1
+ ],
+ "tests/web/test_dashboard_clerk_walk.py": [
+  2.5,
+  2.0
+ ],
+ "tests/web/test_dashboard_python_fixes.py": [
+  1.6,
+  1.6
+ ],
+ "tests/web/test_dashboard_round2.py": [
+  2.5,
+  0.7
+ ],
+ "tests/web/test_day_one.py": [
+  3.0,
+  2.7
+ ],
+ "tests/web/test_downloads.py": [
+  9.9,
+  3.6
+ ],
+ "tests/web/test_first_sign_in.py": [
+  2.9,
+  2.9
+ ],
+ "tests/web/test_guessed_accounts.py": [
+  0.4,
+  0.4
+ ],
+ "tests/web/test_hard_cases.py": [
+  14.3,
+  14.3
+ ],
+ "tests/web/test_header_details.py": [
+  2.2,
+  2.0
+ ],
+ "tests/web/test_laptop_sign_in.py": [
+  4.1,
+  4.1
+ ],
+ "tests/web/test_laptop_sign_in_browser.py": [
+  0.0,
+  0.0
+ ],
+ "tests/web/test_maintenance.py": [
+  1.4,
+  1.4
+ ],
+ "tests/web/test_manager.py": [
+  3.4,
+  3.4
+ ],
+ "tests/web/test_narrow_windows.py": [
+  0.0,
+  0.0
+ ],
+ "tests/web/test_navigation_settings_help.py": [
+  7.4,
+  6.7
+ ],
+ "tests/web/test_navigation_settings_help_review.py": [
+  2.7,
+  2.5
+ ],
+ "tests/web/test_network_identity.py": [
+  3.4,
+  2.8
+ ],
+ "tests/web/test_platform_security.py": [
+  5.4,
+  5.4
+ ],
+ "tests/web/test_queue_reason.py": [
+  0.3,
+  0.3
+ ],
+ "tests/web/test_reading_pages.py": [
+  6.5,
+  3.4
+ ],
+ "tests/web/test_readyz.py": [
+  2.9,
+  2.9
+ ],
+ "tests/web/test_refresh.py": [
+  43.2,
+  23.4
+ ],
+ "tests/web/test_role_permissions.py": [
+  1.0,
+  1.0
+ ],
+ "tests/web/test_roles.py": [
+  12.4,
+  1.5
+ ],
+ "tests/web/test_screens_fluid.py": [
+  0.0,
+  0.0
+ ],
+ "tests/web/test_server_browser.py": [
+  0.0,
+  0.0
+ ],
+ "tests/web/test_server_capacity.py": [
+  42.2,
+  8.8
+ ],
+ "tests/web/test_server_capture.py": [
+  1.7,
+  0.0
+ ],
+ "tests/web/test_server_hardening.py": [
+  18.1,
+  7.3
+ ],
+ "tests/web/test_server_https.py": [
+  13.9,
+  6.2
+ ],
+ "tests/web/test_server_role_pages.py": [
+  11.4,
+  1.9
+ ],
+ "tests/web/test_server_scale.py": [
+  17.3,
+  10.6
+ ],
+ "tests/web/test_server_second_approval.py": [
+  0.5,
+  0.5
+ ],
+ "tests/web/test_server_security.py": [
+  5.0,
+  4.4
+ ],
+ "tests/web/test_server_two_step.py": [
+  8.5,
+  2.1
+ ],
+ "tests/web/test_server_ux.py": [
+  4.1,
+  4.1
+ ],
+ "tests/web/test_server_web.py": [
+  9.2,
+  8.1
+ ],
+ "tests/web/test_server_wording_and_console.py": [
+  7.5,
+  7.5
+ ],
+ "tests/web/test_simple_screens.py": [
+  8.8,
+  8.8
+ ],
+ "tests/web/test_supplier_tax_id.py": [
+  2.2,
+  2.2
+ ],
+ "tests/web/test_touchless_pages.py": [
+  5.7,
+  2.5
+ ],
+ "tests/web/test_ui.py": [
+  0.0,
+  0.0
+ ],
+ "tests/web/test_voucher_bank_account.py": [
+  1.5,
+  1.5
+ ],
+ "tests/web/test_web_analytics.py": [
+  22.0,
+  5.5
+ ],
+ "tests/web/test_web_app.py": [
+  11.2,
+  4.6
+ ],
+ "tests/web/test_web_companies.py": [
+  8.1,
+  8.1
+ ],
+ "tests/web/test_web_ctxmenu.py": [
+  0.3,
+  0.2
+ ],
+ "tests/web/test_web_dashboard_flows.py": [
+  7.6,
+  6.6
+ ],
+ "tests/web/test_web_document.py": [
+  5.4,
+  4.5
+ ],
+ "tests/web/test_web_finance.py": [
+  13.2,
+  4.4
+ ],
+ "tests/web/test_web_help.py": [
+  4.2,
+  2.2
+ ],
+ "tests/web/test_web_imports.py": [
+  29.6,
+  17.2
+ ],
+ "tests/web/test_web_invoice.py": [
+  15.7,
+  8.8
+ ],
+ "tests/web/test_web_invoice_together.py": [
+  4.5,
+  4.5
+ ],
+ "tests/web/test_web_jde_files.py": [
+  62.8,
+  62.8
+ ],
+ "tests/web/test_web_jde_loaded.py": [
+  1.5,
+  1.5
+ ],
+ "tests/web/test_web_jde_workbook.py": [
+  6.4,
+  6.4
+ ],
+ "tests/web/test_web_joined.py": [
+  3.2,
+  3.2
+ ],
+ "tests/web/test_web_learning_corrections.py": [
+  0.9,
+  0.9
+ ],
+ "tests/web/test_web_learning_journal.py": [
+  2.5,
+  2.5
+ ],
+ "tests/web/test_web_masterdata.py": [
+  18.0,
+  11.1
+ ],
+ "tests/web/test_web_picker.py": [
+  0.1,
+  0.1
+ ],
+ "tests/web/test_web_pilot_walkthrough.py": [
+  5.0,
+  4.5
+ ],
+ "tests/web/test_web_process.py": [
+  13.7,
+  7.0
+ ],
+ "tests/web/test_web_process_listing.py": [
+  7.2,
+  7.2
+ ],
+ "tests/web/test_web_remark.py": [
+  1.7,
+  1.7
+ ],
+ "tests/web/test_web_review.py": [
+  6.2,
+  2.5
+ ],
+ "tests/web/test_web_review_bulk.py": [
+  11.0,
+  8.7
+ ],
+ "tests/web/test_web_review_leftovers.py": [
+  0.1,
+  0.1
+ ],
+ "tests/web/test_web_review_signoff.py": [
+  1.1,
+  1.1
+ ],
+ "tests/web/test_web_review_signoff2.py": [
+  0.3,
+  0.3
+ ],
+ "tests/web/test_web_review_voucher.py": [
+  5.8,
+  5.8
+ ],
+ "tests/web/test_web_robustness.py": [
+  10.0,
+  6.1
+ ],
+ "tests/web/test_web_rules.py": [
+  3.4,
+  3.4
+ ],
+ "tests/web/test_web_settings.py": [
+  15.0,
+  14.4
+ ],
+ "tests/web/test_web_tax_codes.py": [
+  0.3,
+  0.2
+ ],
+ "tests/web/test_web_ui_details.py": [
+  4.3,
+  4.3
+ ],
+ "tests/web/test_web_viewer.py": [
+  2.1,
+  0.8
+ ]
+}
